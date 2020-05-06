@@ -1,0 +1,22 @@
+#!/bin/bash
+
+set -e
+
+if [ "$1" == "" ]; then
+    echo "Usage: $0 <destination-directory>"
+fi
+
+# Get an absolute path for the dest dir
+pushd "$1" > /dev/null
+DEST="$(pwd)"
+popd > /dev/null
+
+cd "$(dirname "$0")/templates"
+
+for TEMPLATE in *; do
+    if [ -d "$TEMPLATE" ]; then
+        cd "$TEMPLATE"
+        zip -qr "$DEST/$TEMPLATE.zip" *
+        cd ..
+    fi
+done

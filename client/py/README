@@ -1,0 +1,5 @@
+Any .py files in this directory (and its subdirectories) will be available in Sk.builtinFiles.
+
+For example:
+
+./foo/bar.py   =>   Sk.builtinFiles.files["src/lib/foo/bar.py"]

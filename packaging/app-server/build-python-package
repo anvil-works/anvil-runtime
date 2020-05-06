@@ -1,0 +1,29 @@
+#!/bin/bash
+
+set -e
+
+cd "$(dirname "$0")"
+
+rm -rf python-package-build
+mkdir python-package-build
+cp -aL ../../downlink/python/anvil_downlink_{worker,host} python-package-build/
+cp -aL ../../downlink/python/anvil python-package-build/anvil_downlink_worker
+cp -aL anvil_app_server python-package-build/
+cp setup.py python-package-build/
+
+./package-templates ./python-package-build/anvil_app_server/
+
+# Fulfil AGPL requirement: Make source code available for download.
+rm ./build-tmp -rf
+mkdir ./build-tmp
+
+cd ../..
+
+git ls-files -z | xargs -0 tar -cf packaging/app-server/build-tmp/anvil-app-server-source.tgz
+
+cd packaging/app-server
+
+cp ../../server/app-server/target/anvil-app-server.jar build-tmp/anvil-app-server.jar
+zip -jg0u build-tmp/anvil-app-server.jar build-tmp/anvil-app-server-source.tgz
+
+mv build-tmp/anvil-app-server.jar python-package-build/anvil_app_server/anvil-app-server.SNAPSHOT.jar

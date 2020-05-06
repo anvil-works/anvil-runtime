@@ -1,0 +1,10 @@
+name: Segment.io
+prelude: {client: "import segment.client as analytics"}
+path_whitelist:
+  - segment/__init__.py
+  - segment/client.js
+client_config_properties:
+  - name: write_key
+    type: string
+    description: Your Segment.io write key
+server_config_properties: []

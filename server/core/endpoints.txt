@@ -1,0 +1,14 @@
+Endpoints:
+
+   /ide/...
+
+
+      /ide/apps                 - GET a list of apps for the currently logged-in user.
+      /ide/apps                 - POST a new app (Return as for apps, with ID of new project)
+      /ide/apps/:id             - GET/PUT an app YAML file
+
+
+   /apps/:id                    - GET to get the public version of an app (ie JSON with all the server-side stuff stripped out)
+
+   /apps/:id/ws/:session-id     - Web socket to talk to this app's server-side code. Start with an empty session-id.
+

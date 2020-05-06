@@ -1,0 +1,23 @@
+name: Stripe
+prelude: {client: "import stripe.checkout", server: "import anvil.stripe"}
+path_whitelist:
+  - stripe/__init__.py
+  - stripe/checkout.js
+  - stripe/checkout.py
+  - anvil/stripe.py
+client_config_properties:
+  - name: live_mode
+    type: boolean
+  - name: test_publishable_key
+    type: string
+    description: The Stripe publishable key for your account
+  - name: live_publishable_key
+    type: string
+    description: The Stripe publishable key for your account
+server_config_properties:
+  - name: test_secret_key
+    type: string
+    description: The Stripe secret key for your account
+  - name: live_secret_key
+    type: string
+    description: The Stripe secret key for your account

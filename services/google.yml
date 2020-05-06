@@ -1,0 +1,39 @@
+name: Google API
+prelude:
+  client: "import anvil.google.auth, anvil.google.drive\nfrom anvil.google.drive import app_files"
+  server: "import anvil.google.auth, anvil.google.drive, anvil.google.mail\nfrom anvil.google.drive import app_files"
+oldPreludes:
+  - "import google.auth, google.drive\nfrom google.drive import app_files"
+  - "import google.auth, google.drive, google.mail\nfrom google.drive import app_files"
+  - "import google.auth\nfrom google.drive import app_files"
+  - "import google.auth, google.drive\nfrom google.drive import app_files"
+  - "import google.auth, google.drive, google.mail\nfrom google.drive import app_files"
+path_whitelist:
+  - google/__init__.py
+  - google/auth.py
+  - google/drive.py
+  - google/mail.py
+  - google/sheets.py
+  - anvil/google/__init__.py
+  - anvil/google/auth.js
+  - anvil/google/auth.py
+  - anvil/google/drive.py
+  - anvil/google/mail.py
+  - anvil/google/sheets.py
+client_config_properties:
+  - name: delegated_files
+    type: list
+    description: "A list of delegated file objects. At a minimum, each must specify its Google Drive ID."
+server_config_properties:
+  - name: client_id
+    type: string
+    description: The Google client ID for this app.
+  - name: client_secret
+    type: string
+    description: The Google client secret for this app.
+  - name: delegation_refresh_token
+    type: string
+    description: The token used to refresh an access token for Google Drive
+  - name: delegated_files
+    type: list
+    description: A space- or comma-separated list of files this app may access on your behalf.

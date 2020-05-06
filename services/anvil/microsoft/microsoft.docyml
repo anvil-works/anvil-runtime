@@ -1,0 +1,296 @@
+id: microsoft
+docs_url: /docs/integrations/microsoft
+title: Microsoft Service
+description: |
+  The Microsoft API Service enables users to login to your app using their Azure Active Directory account.
+
+  This can be a [global Microsoft account](#microsoft_sso) or [restricted to users in your own Azure Active Directory](#using_your_own_azure_ad).
+
+  It also enables [easy access to Microsoft Azure's APIs](#accessing_microsoft_apis).
+
+  Please note: The Microsoft API Service is available for users on Business plans and above.
+
+includes: [microsoft_sso, linking_azure_and_anvil, using_your_own_azure_ad, accessing_microsoft_apis]
+---
+id: microsoft_sso
+docs_url: /docs/integrations/microsoft/microsoft-single-sign-on
+title: Microsoft Single Sign On
+description: |
+
+  Anvil has a built-in integration with Microsoft's Azure Active Directory. This means you
+  can allow users to sign in to their Microsoft accounts from your app. This includes Skype and outlook.com accounts.
+  If users are already logged in to their Microsoft account, they can log in to your app simply by clicking a button.
+
+  There are very similar integrations for [Facebook](#facebook) and [Google](#google_auth) accounts.
+
+  ```python
+  anvil.microsoft.auth.login()
+  ```
+
+  To display a login dialog, enable the Microsoft API Service and run `anvil.microsoft.auth.login()` on the client side.
+
+  The resulting login dialog looks like this:
+
+  ![A running app showing a dialog with 'cancel' and 'log in' buttons, and a message informing you you are about to log in with Microsoft.](img/microsoft/quickstart/microsoft-login-dialog.png)
+
+  If the user's browser is not logged in to their Microsoft account, they will be presented with the Microsoft Single Sign On
+  dialog in another browser window.
+
+  ![The Microsoft Single Sign On window.](img/microsoft/microsoft-single-sign-on/microsoft-sso.png)
+
+  If the user's browser is already logged in to Microsoft's Single Sign On, clicking on the Log In box will
+  log them in without requiring them to enter their password. This might be the case if they are logged in to the Azure
+  Portal in another tab, for example.
+
+  If the 'Cancel' button is clicked, the `anvil.microsoft.auth.login()` returns `None`. You can use this to
+  restrict part or all of your app to logged-in users.
+
+  ```python
+  anvil.microsoft.auth.get_user_email()
+  ```
+
+  Once the user has logged in, you can get the email address they are logged in with using
+  `anvil.microsoft.auth.get_user_email()`.
+
+  ### If you're already using the Users Service
+
+  If you're already using the [Users Service](#users), it is not necessary to enable the Microsoft API Service
+  and run `anvil.microsoft.auth.login()`. You can enable Microsoft login from the standard Users Service login dialog
+  by checking the 'Microsoft (Azure AD/Office 365)' box:
+
+  ![The Users Service config screen with Microsoft (Azure AD/Office 365 checked.](img/microsoft/microsoft-single-sign-on/users-service-microsoft-login.png)
+
+  With this box checked, the Users Service login dialog will show a 'Login with Microsoft' option:
+
+  ![The Users Service login dialog with a Login With Microsoft link](img/microsoft/microsoft-single-sign-on/users-service-login-dialog-with-microsoft.png)
+
+  Users that log in this way will be added to the `Users` Data Table just like users that signed up using any other
+  Users Service method.
+
+---
+id: linking_azure_and_anvil
+docs_url: /docs/integrations/microsoft/linking-azure-and-anvil
+title: Linking Azure and Anvil
+description: |
+
+  For advanced use of Anvil's Microsoft integration, you need to let Microsoft Azure know about your app.
+
+  If you want to do either of these things:
+
+   - [Restrict your Microsoft login to users in your organization](#using_your_own_azure_ad)
+   - [Access Microsoft Azure APIs from Anvil](#accessing_microsoft_apis)
+
+  You need to tweak some settings in the Azure Portal so that Anvil can identify your Azure account.
+  The following sections will take you through it step-by-step (it usually only takes a couple of minutes).
+
+  ### Create an Active Directory in Azure
+
+  <div style="border:2px solid #444; margin: 0 28px 28px; padding: 20px;">
+  If you already have an Azure Active Directory resource, you can skip this step.
+  </div>
+
+  Sign in to the [Azure Portal](https://portal.azure.com) and click 'Create a Resource'. Create a resource of type 'Azure Active Directory'.
+
+  ![Azure Portal showing the navbar on the left with Create A Resource circled in red. The main part of the page shows an Active Directory resource being created.](img/microsoft/linking-azure-and-anvil/azure-create-a-resource.png)
+
+  You will need to fill in an Organization Name and Domain Name for your resource.
+
+  ### Create an App Registration
+
+  Once your Azure Active Directory resource has finished creating, you can create an App Registration within it:
+
+  ![Azure Portal showing the screen for one Active Directory. The App Registrations menu item is circled in red, and the New Registration button is circled in red.](img/microsoft/linking-azure-and-anvil/new-app-registration.png)
+
+  Click on the New Registration button to get this form:
+
+  ![Azure Portal's app registration creation form. You can enter a name and select which category of users can log in to this app. You can also specify an OAuth redirect URI.](img/microsoft/linking-azure-and-anvil/app-registration-creation-form.png)
+
+  An App Registration represents Azure's knowledge of your Anvil App. Name it whatever you like -
+  it does not _need_ to be the same as the name of your Anvil App.
+
+  You have three options for who can access your app. You can restrict access to users in:
+
+    1. this Active Directory only,
+    2. in any Active Directory, or
+    3. all Microsoft accounts, including outlook.com and Skype accounts.
+
+  You can use any of these options with Anvil.
+
+  In the Redirect URI field, enter `https://anvil.works/apps/_/microsoft_auth_callback`. You can add this later if
+  you forget at this stage.
+
+  You will see an overview screen with an 'Application (client) ID' and a 'Directory (tenant) ID'. Make a note
+  of each of these.
+
+  ![Azure Portal's app registration overview. There are two relevant GUIDs: one marked 'Application (client) ID', and another marked 'Directory (tenant) id'.](img/microsoft/linking-azure-and-anvil/app-registration-overview.png)
+
+  ### Create a Client Secret
+
+  Now click on Certificates and Secrets and click New Client Secret. This will create a secret that enables a secure
+  connection between Anvil and Azure. Copy it now - it will not be available in full after you browse
+  away from this page.
+
+  ![Azure Portal's app registration Certificates and Secrets view. The Certificates and Secrets menu item and the New Client Secret button are both circled in red.](img/microsoft/linking-azure-and-anvil/add-secret.png)
+
+  ### Copy the relevant IDs into Anvil
+
+  Open your Anvil app in the Anvil editor and enable the Microsoft API under 'Services'.
+
+  ![App browser showing the plus next to Services](img/microsoft/add-new-service.png)
+
+  You'll see the view shown in the image below.
+
+  Check the box marked 'Link to your own Azure app'. Some fields will appear that allow you to enter the IDs from the previous step.
+
+  In the box marked 'Enter Application ID', enter the 'Application (client) ID' from the previous step.
+
+  In the box marked 'Enter Tenant ID', enter the 'Directory (tenant) ID' from the previous step.
+
+  Select 'Multi-tenant' if you chose options 2 or 3 in the list above (allowing access to accounts in any Active Directory, or
+  all Microsoft accounts). In this case you do not need to enter a Tenant ID.
+
+  Once you've entered the correct values, you're done! Time to test it works.
+
+  ![Anvil's Microsoft API Service config view. There is a 'link to your own Azure App' checkbox, which is checked. There are boxed for Application ID, Application Client Secret, and Tenant ID. These have the relevant keys copied in from Azure.](img/microsoft/linking-azure-and-anvil/anvil-enter-details.png)
+
+  ### Test that it works
+
+  ```
+      anvil.microsoft.auth.login()
+      print(anvil.microsoft.auth.get_user_access_token())
+  ```
+
+  To check it works, go to the Code view for Form1. Add these lines to the `__init__` method.
+
+  If everything is working, you should successfully get an access token.
+
+  This checks that your Anvil app is successfully linked to your Azure app - if it were not linked, Azure would
+  not provide an access token.
+
+---
+id: using_your_own_azure_ad
+docs_url: /docs/integrations/microsoft/using-your-own-azure-active-directory
+title: Using your own Azure Active Directory
+description: |
+  You can limit your app to users within a particular Azure Active Directory. This is useful if your organization uses Azure Active Directory
+  to manage its user accounts - your Anvil apps will be limited to only users within your organization.
+
+  ### Configuration
+
+  You must point Anvil to your Azure Active Directory by setting an App Registration up in Azure and pasting the relevant IDs into Anvil. This only takes a few minutes - [follow Linking Azure and Anvil](#linking_azure_and_anvil) to see how.
+
+  ![Part of Anvil's Microsoft API Service config view. There is a 'link to your own Azure App' checkbox, which is checked. There are boxed for Application ID, Application Client Secret, and Tenant ID. These have the relevant keys copied in from Azure.](img/microsoft/using-your-own-azure-active-directory/pasting-in-the-keys.png)
+
+  ### Presenting a login form
+
+  ```python
+  anvil.microsoft.auth.login()
+  ```
+
+  To present users with a login form, run `anvil.microsoft.auth.login()` in your client-side code.
+
+  This is the same function call you use for global [Microsoft Single-Sign-On](#microsoft_sso). The difference is that when the 'Link to your own Azure app' box is checked and 'Single-tenant' is selected, you are restricting access to within your own Azure Active Directory.
+
+  ### User authorization
+
+  ```python
+  anvil.microsoft.auth.get_user_email()
+  ```
+
+  To check if a user is logged in, run `anvil.microsoft.auth.get_user_email()` in your client or server-side code.
+
+  If the user has logged in successfully, this returns the email address they logged in with. It returns `None` if
+  the user dismissed the login form.
+
+  ```python
+  if anvil.microsoft.auth.get_user_email() is not None:
+    self.do_what_the_app_does()
+  ```
+
+  You can check for `None` in order to restrict part or all of your app to logged-in users.
+
+  ```python
+  user_role = app_tables.user_roles.get(
+    email=anvil.microsoft.auth.get_user_email()
+  )
+  if user_role['role'] == 'admin':
+    self.show_admin_view()
+  else:
+    self.show_standard_view()
+  ```
+
+  If you want to restrict access to particular users, you can check the email address of the logged-in user. Imagine you
+  have a Data Table called `user_roles` with `email` and `role` columns. Such a table maps user email addresses to
+  roles that give them certain privileges. You could use it to control who can do what in your app using an `if` statement
+  like this.
+
+---
+id: accessing_microsoft_apis
+docs_url: /docs/integrations/microsoft/accessing-microsoft-apis
+title: Accessing Microsoft APIs
+description: |
+  Microsoft provides a huge range of REST APIs to give you machine-readable access to Azure services.
+
+  For documentation on any particular Microsoft Azure REST API, head to [the Microsoft documentation](https://docs.microsoft.com/en-us/rest/api/azure/).
+
+  ### Using Microsoft Azure APIs from Anvil
+
+  Anvil gives you an OAuth token you can use to access Microsoft APIs from client-side or server-side code.
+
+  You need to link Anvil to your Azure account as described in [Connecting Azure to Anvil](#linking_azure_and_anvil).
+  It only takes a few minutes.
+
+  ```python
+  anvil.microsoft.auth.login()
+  ```
+
+  Once you've done that, you can allow users to log in with their Microsoft accounts by calling `anvil.microsoft.auth.login()`
+  from client side code.
+
+  ```python
+  token = anvil.microsoft.auth.get_user_access_token()
+  ```
+
+  You can get a Microsoft API token for the currently logged-in user by calling `get_user_access_token` in client-side or
+  server-side code.
+
+  ```python
+      import anvil.http
+
+      anvil.microsoft.auth.login()
+      token = anvil.microsoft.auth.get_user_access_token()
+
+      me = anvil.http.request(
+        'https://graph.microsoft.com/v1.0/me/',
+        headers={'Authorization': 'Bearer ' + token},
+        json=True,
+      )
+      self.headline_1.text = "Hello, %s!" % me['displayName']
+  ```
+
+  You can use the [`anvil.http` library](#http_apis) to make HTTP requests against your chosen API. You can do this from client-side or
+  server-side code. Put your
+  API token in an `Authorization` header.
+
+  This example uses the [Microsoft Graph](https://docs.microsoft.com/en-us/graph/overview) API, which allows you to access
+  a range of Microsoft 365 application data such as user accounts, calendar events and emails. Here we've used it
+  to display the user's real name in our Anvil app:
+
+  ![An Anvil app using Microsoft Graph API to greet the user by name.](img/microsoft/accessing-microsoft-apis/anvil-integrated-with-microsoft.png)
+
+  ### OAuth Scopes
+
+  Many of the Microsoft Azure REST APIs require you to request particular OAuth scopes to gain access.
+
+  OAuth scopes are particular sets of permissions that you request when logging in. The API token
+  becomes associated with those scopes, so once your user has logged in, you can use the token to make any API
+  requests allowed under the scopes you've requested.
+
+  To set up the scopes you wish to request, go to the Microsoft API Service in the Anvil Editor and
+  select 'Yes' under 'Request extra OAuth Scopes'. You can then enter any number of OAuth scopes in the
+  text box. To request multiple scopes, enter each scope **separated by a space**.
+
+  ![Part of the Anvil Microsoft API Service view with the Request extra OAuth scopes selector set to 'yes' and User.Read entered into the adjacent text box.](img/microsoft/accessing-microsoft-apis/request-oauth-scopes.png)
+
+  In our example, making a GET request to `https://graph.microsoft.com/v1.0/me/` requires the `User.Read` scope, so
+  we have instructed Anvil to request it.

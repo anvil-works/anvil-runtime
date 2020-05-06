@@ -1,0 +1,1 @@
+migrator-core/resources/migrations/base/schema.sql

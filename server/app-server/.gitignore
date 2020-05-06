@@ -1,0 +1,12 @@
+/target
+/classes
+pom.xml
+pom.xml.asc
+*.jar
+*.class
+/.lein-*
+/.nrepl-port
+.hgignore
+.hg/
+.anvil-data
+/test-files

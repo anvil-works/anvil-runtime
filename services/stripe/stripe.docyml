@@ -1,0 +1,179 @@
+id: stripe
+docs_url: /docs/integrations/stripe
+title: Stripe Service
+tooltip: Learn more about accepting payments with Stripe
+description: |
+  <div class="tutorial-link">Tutorial: Payments with Stripe<br><a href="/blog/stripe"><i class="fa fa-play"></i> Play video</a></div>
+
+  Add the Stripe service to your project to accept credit card payments through <a href="https://stripe.com" target="_blank">Stripe <i class="fa fa-external-link"></i></a> in your app.
+
+  <img src="img/add_service.png" style="border: 1px solid #ccc; margin: 10px 0;">
+
+  In order to use the Stripe service, you must connect your Stripe account. If you don't already have one, 
+  simply click "I need to create an account" on the Stripe service settings page. You can also sign up [on the Stripe website](https://dashboard.stripe.com/register), which asks for less information (just email, name and password).
+
+  Stripe apply a transaction fee to payments you receive through Stripe - [see their pricing page](https://stripe.com/pricing) for more information.
+
+  ### Taking one-off payments
+
+  ```python
+  import stripe.checkout
+
+  # Take a payment of £9.99
+  charge = stripe.checkout.charge(currency="GBP", amount=999)
+  print "The result of the payment is: %s" % charge["result"]
+
+  ```
+ 
+  To take a credit card payment from your app, call `stripe.checkout.charge`, supplying your required 
+  currency and the amount in pence (or equivalent). Make sure you `import stripe.checkout` first.
+
+  \**This code is just an example. There are many ways a charge could fail - if the user closes the 
+  dialog box, for example. You should make sure to wrap all calls to `stripe.checkout.charge` in 
+  a `try...except` block.**
+
+  If the payment succeeds, `stripe.checkout.charge` will return a dict containing useful information 
+  about the charge, including an ID and URL that will allow you to look it up in your [Stripe Dashboard](https://dashboard.stripe.com).
+  If the payment fails, or the user cancels, `stripe.checkout.charge` will raise an exception.
+
+  ```python
+  charge = stripe.checkout.charge(currency="GBP",
+                                  amount=999,
+                                  title="Acme Store",
+                                  description="3 Widgets",
+                                  zipcode=True,
+                                  icon_url=anvil.server.get_app_origin()+"_/theme/icon.png",
+                                  billing_address=True)
+
+  # Print a link to the transaction on the console:
+  print charge["url"]
+  ```
+     
+  You can specify extra, optional parameters to the `charge` function (see the example on the right). 
+  Set `zipcode` to `True` if you wish to verify the zipcode (postal code) of the customer when taking 
+  payment, and set `billing_address` to `True` in order to collect a billing address.
+
+  The `stripe.checkout.charge` function returns a dictionary containing useful information about the 
+  transaction. The example on the right displays a link to the new transaction on your Stripe dashboard. 
+  In practice, you would probably want to save this to a Google Spreadsheet or similar.
+
+  Setting the `title`, `description` and `icon_url` parameters will allow you to customise the payment form: 
+
+  ![Payment form](img/stripe_checkout.png)
+
+
+  ### Charging on the server
+
+  ```python
+  # In a form:
+  token, info = stripe.checkout.get_token(amount=999, currency="USD")
+  anvil.server.call('charge_user', token, info['email'])
+
+  # In a server module:
+  @anvil.server.callable
+  def charge_user(token, email):
+    stripe_customer = anvil.stripe.new_customer(email, token)
+    stripe_customer.charge(amount=999, currency="USD")
+  ```
+
+  For greater security and control, you can collect card information in client code, and then make a
+  charge or set up a subscription on the server. Because there are lots of regulatory issues with handling
+  credit card details directly, Stripe turns card details into an opaque *token*. You can then pass this
+  token to the server and make charges there.
+
+  Anvil has a simple built-in interface to the Stripe API, in the `anvil.stripe` module, which we will
+  describe here.
+
+  Note that the `get_token()` function does not charge money, it only collects card information.
+  The "amount" and "currency" supplied are just for display while collecting card details.
+  `get_token()` takes the same arguments as `charge()`.
+
+  ```python
+  customer = anvil.stripe.new_customer(email, token)
+  user['stripe_id'] = customer['id']
+  ```
+  To create a new "Customer" object in Stripe, use `anvil.stripe.new_customer()`. You can use square
+  brackets to look up attributes of the Customer object -- most useful is the `id` by which you can
+  look them up again in future.
+
+  ```python
+  @anvil.server.callable
+  def add_card(token, email):
+    user = anvil.users.get_user()
+
+    if user['stripe_id'] is None:
+      customer = anvil.stripe.new_customer(email, token)
+      user['stripe_id'] = customer['id']
+    else:
+      customer = anvil.stripe.get_customer(user['stripe_id'])
+
+    customer.add_token(token)
+  ```
+
+  You can add payment methods to an existing customer with `add_token()`. Here is an example that
+  creates a new customer, or retrieves an existing one, using a column in the [Users table](#users).
+
+  <div style="clear:both"></div>
+
+  ### Recurring Subscriptions
+  ```python
+  subscription = customer.new_subscription("my-plan-id")
+  ```
+
+
+  You can create recurring subscriptions for your customers using the `new_subscription()` function. 
+  Make sure you have created a plan ID in your [Stripe Dashboard](https://dashboard.stripe.com), then reference 
+  it as in the example on the right. You can optionally specify a `quantity=` parameter to charge multiples
+  of a plan (eg if you want to charge per user). For more information, consult the Stripe API documentation.
+
+  ```python
+  if "my-plan-id" in customer.get_subscription_ids():
+    # ...the user is subscribed...
+  ```
+
+  You can check which subscription plans a user has by calling `get_subscription_ids()` to get a list of
+  IDs. By default, it will only return "live" subscriptions (currently active; this corresponds to the Stripe
+  states "live", "active" and "past_due"). You can change this by passing `live_only=False`.
+
+  ```python
+  for subscription in customer.get_subscriptions():
+    subscription.cancel()
+  ```
+  You can also call `get_subscription()` to get a list of subscriptions for that customer. By default, it will
+  only return "live" subscriptions. You can change this by passing `live_only=False`.
+
+  Once you have a subscription object, you can use square brackets to access its full Stripe attributes,
+  or call one of these methods:
+
+  \* `subscription.cancel()` - Cancel the subscription
+  \* `subscription.is_live()` - Returns `True` if this subscription is active (ie paid and up to date)
+  \* `subscription.set_plan(plan_id)` - Change which plan this subscription is for (eg if a user upgrades)
+
+
+  ### Testing Stripe
+
+  Stripe provides a simple way to test your app without making actual payments. When you first add the 
+  Stripe service, it is in `TEST` mode. In this mode, you can take 'dummy' payments using special, fake 
+  card details. These payments will show up in the test-mode dashboard on Stripe. See the 
+  [Stripe documentation](https://stripe.com/docs/testing#cards) for more details.
+ 
+  When you are ready to accept real payments, simply click "Switch to live mode" on the Stripe service 
+  settings page.
+
+  You can find out whether you are in live or test mode by calling `stripe.checkout.is_live_mode()`.
+includes: [stripe_raw]
+---
+id: stripe_raw
+docs_url: /docs/integrations/stripe/raw-api-tokens
+title: Raw Tokens in Stripe
+description: |
+  If you're using the [Full Python runtimes](#python_versions), you can choose not to use Anvil's simplified APIs, and instead use the official [Stripe Python API](https://stripe.com/docs/api?lang=python) from your Server Modules.
+
+  ```python
+  # Use Stripe Checkout to generate a raw token
+  token, info = stripe.checkout.charge(amount=999, currency="USD", raw=True)
+  ```
+
+  To use this API, however, you will still need to collect users' card details and generate Stripe tokens. To do this, you will need to enter your **Publishable Keys** into Anvil's Stripe configuration page. In your Form code, you can then call `stripe.checkout.get_token()` with the `raw=True` parameter. This will generate a token that you can use with the Stripe Python API.
+
+  \**Hint:** If you do this, you'll need to put your Stripe Secret Key into your Anvil app. Use the [App Secrets](#app_secrets) service to protect it, rather than leaving it in your source code!

@@ -1,0 +1,209 @@
+id: google
+docs_url: /docs/integrations/google
+title: Google Service
+description: |
+ <div class="tutorial-link">Tutorial: Authentication with Google<br><a href="/blog/google-auth"><i class="fa fa-play"></i> Play video</a></div>
+
+ Add the Google service to your project to use Google Drive, Google Sheets, GMail or Google authentication in your app.
+
+ \**You must add the Google service to your app in the [App Browser](#app_browser) in order to use anything discussed in this section. Watch our tutorial for a walkthrough.**
+
+ <img src="img/add_service.png" style="border: 1px solid #ccc; margin: 10px 0;">
+
+
+includes: [google_auth,google_mail,google_drive,google_rest_api,linking_anvil_and_google]
+---
+id: google_mail
+docs_url: /docs/integrations/google/gmail
+title: Sending email with GMail
+description: |
+  ```python
+  import anvil.google.mail
+
+  anvil.google.mail.send(
+      to = "Sarah <sarah@example.com>",
+      subject = "Meeting today",
+      text = "See you at 5pm")
+  ```
+
+  You can use Anvil to send email via your GMail account. Here is a simple example, sending a text-only email to one address.
+
+  <b>Beware: GMail is not intended for heavy usage. If you send more than ~100 messages per day through Anvil, consider using the [Email Service](#email).</b>
+
+
+  ```python
+  anvil.google.mail.send(
+     from_address = "Al <al@example.com>",
+     to = ["sarah@example.com",
+           "Bob <bob@example.com>"],
+     cc = "jane@example.com",
+     bcc = "mark@example.com",
+     subject = "Meeting today",
+     text =
+     """
+     Dear all,
+
+     There will be a meeting today at 5pm.
+
+     Best Regards,
+     Joseph
+     """,
+     html =
+     """
+     Dear all,
+
+     <p>There will be a meeting today at <b>5pm</b>.
+
+     <p>Best regards,
+     <p>Joseph
+     """)
+  ```
+  Here is a more complex example, illustrating all the possible parameters to `anvil.google.mail.send`:
+
+  \* `from_address` - The email address from which this email is sent. Must be a string. You can add a name to the From field with a string like `"Name <email@address.com>"`. (You can specify any name, but the email address must be an address registered to this GMail account.)
+
+  \* `to` - The email address(es) this email is sent to. Can be a string or a list of strings.
+
+  \* `cc` - The email address(es) to which this email is CCed. Can be a string or a list of strings.
+
+  \* `bcc` - The email address(es) to which this email is Blind CCed. Can be a string or a list of strings.
+
+  \* `subject` - The subject line of the email
+
+  \* `text` - The plain text of the email. You must specify either **text** or **html** (or both).
+
+  \* `html` - An HTML-formatted version of the email. You must specify either **text** or **html** (or both).
+
+---
+id: google_rest_api
+docs_url: /docs/integrations/google/google-rest-apis
+title: Google REST API
+description: |
+
+  <p>If you are an advanced user, you might want to use one of Google's REST APIs directly. To do this, you will need a Google API client id from the <a href="#linking_anvil_and_google" target="_blank">Google Developer Console <i class="fa fa-external-link"></i></a>. When registering the app with Google, set the "Authorized Redirect URI" to `https://anvil.works/apps/_/client_auth_callback`. The client ID and secret you generate must be pasted into the settings page for the Google service.</p>
+
+  ```python
+    # Log in and request access to a user's mailbox
+    anvil.google.auth.login(["https://www.googleapis.com/auth/gmail.readonly"])
+  ```
+  To request additional OAuth scopes, call `anvil.google.auth.login()` with a list of scope names. In this case we are requesting the ability to read the user's GMail inbox with the [GMail API](https://developers.google.com/gmail/api/).
+
+  ```python
+    access_token = anvil.google.auth.get_user_access_token()
+
+    email_threads = anvil.http.request(
+        "https://www.googleapis.com/gmail/v1/users/me/threads",
+        json=True, headers={
+          'Authorization':
+            'Bearer ' + access_token
+        })
+  ```
+  Once logged in, you can get an access token for the current user's session by calling `anvil.google.auth.get_access_token()`. This token is a string, and you can use it to make requests to the Google REST API. In this example, we are getting a list of threads in the user's inbox using the [GMail API](https://developers.google.com/gmail/api/).
+
+
+  ```python
+    refresh_token = anvil.google.auth.get_user_refresh_token()
+ 
+    # ... some time later ...
+
+    access_token = anvil.google.auth.refresh_access_token(refresh_token)
+  ```
+  Access tokens expire within a short period of time (typically less than an hour). If you want to retain access after this time, you need to store a refresh token. This refresh token can be converted into an access token later by calling `anvil.google.auth.refresh_access_token()`.
+
+---
+id: linking_anvil_and_google
+docs_url: /docs/integrations/google/linking-google-and-anvil
+title: Linking Anvil and Google
+description: |
+
+  For advanced use of Anvil's Google integration, you need to let Google Developer Console know about your app.
+
+  If you want to do either of these things:
+
+    - [Access users' own Google Drive files from your app](#drive_user_files)
+    - [Use Google's REST APIs from Anvil](#google_rest_api)
+
+  You need to configure some credentials using [Google Developer Console](https://console.developers.google.com/apis/).
+
+  [This Google support answer](https://support.google.com/googleapi/answer/6158849?ref_topic=7013279) describes
+  the basic process. We'll go through it in more detail in the following sections.
+
+  ### Create a Project and open the Credentials screen
+
+  First, create a project or select an existing project.
+
+  <img src="img/google/linking-google-and-anvil/select-project.png" style="border: 1px solid #ccc;" alt="The top bar of the Google Developer Console, with the project selection dropdown circled">
+
+  Then select 'APIs and services' from the hamburger menu:
+
+  <img src="img/google/linking-google-and-anvil/select-apis-and-services.png" style="border: 1px solid #ccc;" alt="The hamburger menu of the Google Developer Console, showing options including 'APIs and Services'">
+
+  Select 'Credentials':
+
+  <img src="img/google/linking-google-and-anvil/select-credentials.png" style="border: 1px solid #ccc;" alt="The side navbar of the Google Developer Console, with Credentials highlighted">
+
+  First, you need to set up an OAuth consent screen. Then, you can create an OAuth Client ID that allows your Anvil
+  app to identify your Google project.
+
+  ### Set up an OAuth consent screen
+
+  Click on 'OAuth consent screen'. This is where you set up the screen that your users will
+  see to give your app certain permissions on their Google account. You've probably seen this sort of screen before when using a new app,
+  it will say something like "App X would like to: use your location".
+
+  The first part of this form is pretty self-explanatory; keep the application type as 'Public' and set your
+  application name and logo as appropriate.
+
+  <img src="img/google/linking-google-and-anvil/oauth-consent-screen.png" style="border: 1px solid #ccc;" alt="The top of the OAuth Consent screen, where you can add an application name and logo.">
+
+  The 'Scopes for Google APIs' section allows you to list the permissions to request from the user. If you want
+  to access your users' Google Drive files, you will need to add `../auth/drive.file`.
+
+  <img src="img/google/linking-google-and-anvil/google-apis-scopes.png" style="border: 1px solid #ccc;" alt="The scopes list with ../auth/drive.file added to it.">
+
+  In the 'Authorised domains' section, add any domains your app will be running under. This may be `anvil.works`
+  for running your app in the editor, `anvil.app` for the live version, or your own domain if you're using a
+  [Custom Domain](#publishing_an_app).
+
+  <img src="img/google/linking-google-and-anvil/authorised-domains.png" style="border: 1px solid #ccc;" alt="The Authorised Domains list with anvil.works added to it.">
+
+  ### Create an OAuth Client ID
+
+  Click on 'Credentials', then 'Create Credentials' and select OAuth Client ID:
+
+  <img src="img/google/linking-google-and-anvil/create-oauth-client-id.png" style="border: 1px solid #ccc;" alt="The
+  Credentials view in Google Developer Console - OAuth Client ID selected from the Create Credentials dropdown.">
+
+  You're given a list of application types - choose 'Web application':
+
+  <img src="img/google/linking-google-and-anvil/application-type-web-app.png" style="border: 1px solid #ccc;" alt="The first part of the Create OAuth Client ID form. The application type 'web application' is selected.">
+
+  Now enter `https://anvil.works/apps/_/client_auth_callback` in 'Authorised redirect URIs'. Be sure to press enter
+  in this box so that it gets added to the list - it will look like this:
+
+  <img src="img/google/linking-google-and-anvil/authorised-redirect-uris.png" style="border: 1px solid #ccc;" alt="The Authorised Redirect URIs list with the Anvil client_auth_callback URI added.">
+
+  Hit 'create' and you will be shown the client ID and secret:
+
+  <img src="img/google/linking-google-and-anvil/client-id-and-secret.png" style="border: 1px solid #ccc;" alt="Google Developer Console modal stating that an OAuth client has been created and giving the client ID and secret.">
+
+  Now go to your Anvil app and open the Google API Service. Paste the client ID and secret into the boxes in the
+  "Access your users' Google Drive files" section:
+
+  <img src="img/google/linking-google-and-anvil/client-id-secret-in-anvil.png" style="border: 1px solid #ccc;" alt="Google API Service view in Anvil showing the Client ID and Secret pasted in to the 'Access your users' Google Drive files' section.">
+
+  ### Test that it works
+
+  ```python
+      anvil.google.drive.login()
+
+    folder = anvil.google.drive.get_user_files()
+
+    for f in folder.list_files():
+      print f["title"]
+  ```
+
+  You should now be able to use any Google REST APIs you have requested scopes for. If you have requested the `../auth/drive.file`
+  scope, you can run this code to log someone in with their Google account read the names of their Google Drive files (after they give their permission):
+
+  If this works, you've correctly set up Anvil to access your Users' Google Drive files and use Google REST APIs.

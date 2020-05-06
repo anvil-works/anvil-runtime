@@ -1,0 +1,265 @@
+id: users
+docs_url: /docs/users
+title: Users service
+description: |
+  It's common for apps to have multiple users who log into your app. They sign in with a username or password
+
+  Perhaps you use an existing authentication framework - such as Active Directory or PKI certificates, or even with an external service like Google.
+
+  Anvil makes it easy to add users to your application. The Users service takes care of sign-up, log-in, email verification, password reset, and much more.
+
+  \**You must add the Users service to your app in the [App Browser](#app_browser) in order to use anything discussed in this section.**
+
+  <img src="img/add_service.png" style="border: 1px solid #ccc; margin: 10px 0;">
+
+lineBetweenIncludes: true
+includes: [users_basic, users_other_auth, users_configuration, users_api, users_table]
+
+---
+
+id: users_basic
+docs_url: /docs/users/quickstart-login
+title: Basic Usage
+description: |
+  To start logging users into your app, you need two things:
+
+  #### 1. Log in / Sign Up
+
+  <img src="img/users_login.png" style="border: 1px solid #ccc; margin: 10px; float: right; height: 300px;">
+
+  Call `anvil.users.login_with_form()` to launch a login form.
+
+  By default, users can sign in with their email address and password, or sign up for a new account. By default, they will need to confirm their email address by clicking on a link. All of this is configurable in the Users service.
+
+
+  <div class="clear:both"></div>
+
+  You can see all registered users when you open the Users service:
+
+  <center><img src="img/users_table.png" style="max-width: 90%; margin: 0px 0 30px"></center>
+
+
+  #### 2. Get the logged-in user
+
+  ```python
+  @anvil.server.callable
+  def get_secret_data():
+    user = anvil.users.get_user()
+
+    if user['email'] == 'john.smith@example.com':
+      return app_tables.secret_table.client_readable()
+  ```
+
+  You can get the current logged-in user with `anvil.users.get_user()`. Do this when they are about to do something for which they need to be authorised (e.g. access private data).
+
+  This function returns a user object, which is a [Data Table](#data_tables) row, or `None` if no user is logged in. In this example, we check the user's email address. If this is an authorised user, we give them access to our secret data (by returning a [client-readable view](#data_tables_views) on a data table).
+
+  You can pass an optional keyword argument `allow_remembered` to `get_user()`, which is `True` by default. To un-remember a user's login session, delete the contents of the `remembered_logins` column for that user.
+
+  Setting this to `False` will prevent `get_user` from returning a User who logged in in a previous session and selected "Remember me".
+
+  `anvil.users.get_user()` can be used from Server Modules and from client code. To be sure that the results are correct, you should call it from a Server Module.
+  The user has ultimate control of anything running in their browser, but [the server environment is secure](#security_model).
+
+  Calling `anvil.users.get_user()` accesses the database if a cache miss occurs, so making the call from client code causes a spinner to be displayed.
+
+  #### That's it!
+
+  That's all you need to use basic authentication with Anvil. The next sections will go more deeply into the advanced features of the Users service.
+
+  ------
+
+---
+
+id: users_other_auth
+docs_url: /docs/users/authentication_choices
+title: Other authentication methods
+description: |
+  The Users service supports the following sign-in methods:
+
+  #### Email + Password
+  Users sign in with an email address and a password. These will be stored in the `email` and `password_hash` columns of the Users table. The password is hashed with the industry standard [bcrypt](https://en.wikipedia.org/wiki/Bcrypt) algorithm, which means that knowing the `password_hash` does not tell you the password. (You should still keep the hashes secret, to avoid [brute force attacks](https://en.wikipedia.org/wiki/Password_cracking) on weak passwords.)
+
+  If email confirmation is enabled (the default), a user cannot use their account until they confirm ownership of their email address by clicking a confirmation link.
+
+  A user can reset their password by confirming ownership of their email address. If authentication fails, the built-in log-in form (`login_with_form()`) will offer a password reset option. If you are not using the built-in log-in form, see below for instructions on using `anvil.users.send_password_reset_email()`.
+
+  Email + password authentication is enabled by default.
+
+
+  #### Sign in with Google
+  Users sign in with a Google account. Their identity is stored in the `email` column of the Users table. (This means that a user who registers with "Email + Password" can then sign in with Google if the email address is the same.)
+
+  Google authentication is disabled by default. If you enable Google authentication, you also need to add the [Google service](#google) to your app.
+
+  #### Sign in with Facebook
+  Users sign in with a Facebook account.
+
+  Facebook authentication is disabled by default. If you enable Facebook authentication, you also need to add the Facebook service to your app.
+
+  #### Active Directory
+  Anvil can authenticate users against your organisation's Active Directory. This means you can easily re-use your existing security investments for your business applications.
+
+  This is available on our Enterprise plans. Please email [contact@anvil.works](mailto:contact@anvil.works?subject=Active+Directory) for more information.
+
+  #### Client certificates
+  Anvil can authenticate users using X.509 client certificates or PKI (Public Key Infrastructure). This means you can easily re-use your existing security investments for your business applications.
+
+  This is available on our Enterprise plans. Please email [contact@anvil.works](mailto:contact@anvil.works?subject=Client+certificates) for more information.
+  
+  ------
+
+
+---
+
+id: users_configuration
+docs_url: /docs/users/presenting-a-login-form#configuration-options
+title: Configuration options
+description: |
+  As well as choosing the available authentication methods, there are various other options that can be customised.
+
+  #### Require Secure Passwords
+  When this option is selected, users signing up with an email address and password will be required to choose a password that is at least 8 characters long and that has not been previously leaked online. This check is performed [without sharing the password with any third-party services](https://blog.cloudflare.com/validating-leaked-passwords-with-k-anonymity/).
+
+  #### Remember login between sessions
+  When this option is selected, users will see a "Remember me" checkbox on the login form. If they leave this checked (the default), the fact that they are logged in will be stored in an [Anvil cookie](#cookies) for a configurable time (30 days is the default).
+
+  Which cookie is used depends on the "share login status" option, below. If a user visits an app where they are already logged in, `anvil.users.get_user()` will return that user without the need for them to log in again. You can still allow them to log in as a different user by calling `anvil.users.login_with_form()` as usual. Calling `anvil.users.logout()` will remove their login status from the cookie as well as logging them out in the current session.
+
+  This logic also applies to manual calls to `login_with_email()`, `force_login()`, and similar functions. They each accept `remember=` keyword argument to control whether to remember this user's login.
+
+  #### Share login status with other apps
+  Selects which [Anvil cookie](#cookies) is used to store the user's login status. If not selected (the default), user login status will only be remembered for this app and will not affect (or be affected by) user behaviour on any other apps. When selected, users' login status is stored in the shared Anvil cookie, meaning that they will be automatically logged into any other apps sharing the same Users table and on the same top-level domain (anvil.app by default).
+---
+
+id: users_api
+docs_url: /docs/users/logging_in_using_code
+title: Python API
+description: |
+  #### Basic API
+  ```python
+  user = anvil.users.login_with_form()
+  ```
+  The simplest way to use the Users service is to call `anvil.users.login_form()` on the client. This function shows a graphical login form, including all the options configured in the Users service (eg password, Google, and new-account registration). If login succeeds, `anvil.users.login_form()` returns the user object; if it is cancelled, it returns `None`.
+
+  ```python
+  anvil.users.signup_with_form()
+  ```
+  You can also explicitly bring up the new-user registration form by calling `anvil.users.signup_with_form()`. If signup succeeds, this function returns the new user object; if cancelled, it returns `None`.
+
+  Note that, even if a new user has been created, they will not be logged in if their account is not yet enabled. For example, if the user needs to confirm their email address, `anvil.users.signup_with_form()` can return a user object, but `anvil.users.get_user()` will still return `None` because they are not yet logged in. If no confirmation is required, the new user will be logged in immediately.
+
+  ```python
+  user = anvil.users.get_user()
+  ```
+  To get the currently logged-in user, call `anvil.users.get_user()`. This returns the currently logged-in user, or `None` if no user is logged in.
+
+  Call this function in a server module before doing anything you need to protect: Remember, form code cannot be trusted, because a malicious user can change it to do whatever they want!
+
+  ```python
+  anvil.users.logout()
+  ```
+  To log a user out, call `anvil.users.logout()`. After this function returns, `anvil.users.get_user()` will return `None`.
+
+
+  #### Logging in manually
+
+  As well as using the built-in login and sign-up forms, you can create your own forms and call the following functions yourself. If they fail, they will raise an `anvil.users.AuthenticationFailed` exception. There are a few subclasses if you wish to handle them separately:
+
+  \* `anvil.users.UserExists` - You have attempted to sign up with an email address which is already in the Users table.
+
+  \* `anvil.users.EmailNotConfirmed` - You have attempted to log in with an email address that has not yet been confirmed. (Only occurs with Email + password login, when email confirmation is enabled)
+
+  \* `anvil.users.AccountIsNotEnabled` - This account is disabled (the `enabled` box is not ticked in the Users table). This happens if an administrator has manually disabled an account, or if the Users service is configured not to enable newly-registered accounts.
+
+  \* `anvil.users.AuthenticationFailed` - This is the parent class of all these exceptions. It indicates that authentication has failed for some reason.
+
+  All of the manual login and signup functions take an optional keyword argument `remember`, which is `False` by default (for `login_with_form` and `signup_with_form`, the argument is called `remember_by_default`). If set to true, and the "Remember login between sessions" configuration option is enabled, the user's login status will be remembered between sessions for the configured amount of time.
+
+  ##### Email + password
+  ```python
+  user = anvil.users.login_with_email("abc@example.com",
+                                      "<password>")
+  ```
+  To log in manually with an email and password, call `anvil.users.login_with_email()`, passing the email address and password as arguments. This function returns the newly-logged-in user, or raises an `AuthenticationFailed` exception if the login failed.
+
+  This function can be called from client or server code.
+
+  ```python
+  anvil.users.send_password_reset_email("abc@example.com")
+  ```
+  To reset a user's password, call `anvil.users.send_password_reset_email()`. If the specified email address is in the Users table, Anvil will send them an email with a link where they can set a new password for their account.
+
+  This function can be called from client or server code.
+
+  ```python
+  anvil.users.signup_with_email("abc@example.com",
+                                "<password>")
+  ```
+  To register a new account with an email and password, call `anvil.users.signup_with_email()`. If signup succeeds, this function returns the newly-created user object. The new user will also be logged in if email confirmation is *not* required, and new-user registrations are automatically enabled.
+
+  This function can be called from client or server code, if the "allow signups" option is enabled in the users service configuration. Otherwise, it can only be called from server code.
+
+
+  ##### Google authentication
+  ```python
+  user = anvil.users.login_with_google()
+  ```
+  To log in with Google, call `anvil.users.login_with_google()`. This function will prompt the user to log into Google, then attempt to authenticate that user with the Users service. It will return a user object, or `None` if the Google login is cancelled, or raise an `AuthenticationFailed` exception.
+
+  This function may only be called from client code (eg an event handler on a form).
+
+  ```python
+  anvil.users.signup_with_google()
+  ```
+  To sign up a new user with Google, call `anvil.users.signup_with_google()`. This will prompt the user to log into Google, then attempt to register this user with the Users service. It will return a user object, or `None` if the Google login is cancelled, or raise a `UserExists` exception. If signup succeeds, the user is automatically logged in.
+
+  This function may only be called from client code (eg an event handler on a form).
+
+  The [Google Service](#google) must be enabled for Google authentication to work.
+
+  ##### Build your own authentication flow
+  ```python
+  @anvil.server.callable
+  def login_with_password(username, password):
+    user = app_tables.users.get(username=username)
+    if user is not None and \
+         bcrypt.hashpw(password, user['password_hash']).decode() == user['password_hash']:
+      anvil.users.force_login(user)
+      return user
+  ```
+
+  You can implement your own login mechanism. To log a user in, pass a row from the users table into `anvil.users.force_login()` in server code. `anvil.users.force_login()` returns the now-logged-in user. Passing `None` is the equivalent of `anvil.users.logout()`, and will return `None`.
+
+  This example shows a simple implementation of username/password login. (This is approximately the logic used by `anvil.users.login_with_email()`.)
+
+  \**Note:** If you're using Python 2, you don't need to call `decode()` on the output of `bcrypt.hashpw()`.
+
+---
+
+id: users_table
+docs_url: /docs/users/the_users_table
+title: The Users table
+description: |
+  The table of users is a [data table](#data_tables). Although we create a new table called `Users` for you by default, you can configure which table the service uses, or even share user data between several apps!
+
+  When you add the Users service to your app, it looks for a table called `Users` in your app. If no such table exists, it creates a new one. However, if you delete the Users table in the [data tables configuration](#data_tables) page, the Users service will prompt you to select a new one. You can select an existing table in your app - or a table from any other app in your account! By sharing one Users table between many apps, you can provide single-sign-on for all your apps simultaneously.
+
+  You can also add columns to your Users table to store extra information about a user (eg "is this user an administrator?").
+
+  ### Columns
+  The following columns will be automatically added to the Users table. Feel free to use or manipulate them yourself, or add more:
+
+  \* `email` - The user's email address
+
+  \* `password_hash` - A bcrypt hash of the user's password (password-based authentication only)
+
+  \* `enabled` - A boolean value indicating whether this user is allowed to log in. Uncheck to lock an account.
+
+  \* `signed_up` - The date and time when this user registered
+
+  \* `last_login` - The date and time when this user most recently logged in
+
+  \* `confirmed_email` - A boolean value indicating whether this user has confirmed their email address (password-based authentication only; only if email confirmation is enabled)
+
+  \* `confirmation_key` - A secret value used in the confirmation and password-reset links (password-based authentication only)

@@ -1,0 +1,24 @@
+#!/bin/bash
+
+set -e
+
+cd "$(dirname "$0")/../.."
+DIR="$(pwd)"
+
+echo "*** Building core runtime *********************************"
+cd $DIR/server/core
+lein install
+
+echo ; echo "*** Building database migration ***************************"
+cd $DIR/database/migrator-core
+lein install
+
+echo ; echo "*** Building app server ***********************************"
+cd $DIR/server/app-server
+lein uberjar
+
+echo ; echo "*** Building Python package *******************************"
+cd $DIR/packaging/app-server
+./build-python-package
+
+echo "*** Build complete."

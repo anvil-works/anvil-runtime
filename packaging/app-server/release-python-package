@@ -1,0 +1,33 @@
+#!/bin/bash
+
+#
+# This script is used to generate official releases of the Anvil App Server.
+# You probably want the `build-python-package` script.
+#
+# If you do want to make your own releases, you must provide the runtime's
+# source code under the AGPL. (This is done automatically for you by
+# `build-python-package`.)
+#
+
+set -e
+
+cd "$(dirname "$0")"
+
+
+rm -rf python-package-release
+mkdir python-package-release
+cp -aL ../../downlink/python/anvil_downlink_{worker,host} python-package-release/
+cp -aL ../../downlink/python/anvil python-package-release/anvil_downlink_worker
+cp -aL anvil_app_server python-package-release/
+grep -Pv '# BUILD:OMIT\s*$' setup.py > python-package-release/setup.py
+
+./package-templates python-package-release/anvil_app_server
+
+# Instead of copying the App Server jar directly into the package, upload it to S3.
+
+TIME=$(date +%Y%m%d-%H%M%S)
+
+sed -i s/.SNAPSHOT./.$TIME./ python-package-release/anvil_app_server/__init__.py 
+
+aws s3 cp ../../server/app-server/target/anvil-app-server.jar s3://anvil-public-assets/app-server/anvil-app-server.$TIME.jar
+aws s3api put-object-acl --bucket anvil-public-assets --key app-server/anvil-app-server.$TIME.jar --acl public-read

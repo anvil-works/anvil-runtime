@@ -1,0 +1,32 @@
+<html>
+<head>
+</head>
+<body>
+
+<script>
+
+    var args = {};
+    var params = { fn: "facebookAuthSuccessCallback", args: args };
+
+    qsParams = window.location.search.substring(1).split("&");
+    for (var i in qsParams) {
+    	var p = qsParams[i].split("=")[0];
+    	var q = qsParams[i].split("=")[1];
+
+    	args[p] = decodeURIComponent(q);
+    }
+
+    // For some reason, window.opener is null after a Stripe OAuth flow.
+    // In that case, we just have to watch from the parent, waiting for a
+    // flag to say we're done.
+    if (window.opener) {
+	    window.opener.postMessage(params, "{{canonical-url}}");
+    }
+    
+	window.callbackDone = true;
+    window.close();
+
+</script>
+
+</body>
+</html>

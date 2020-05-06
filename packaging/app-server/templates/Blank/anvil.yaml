@@ -1,0 +1,10 @@
+dependencies: []
+services: []
+package_name: MyApp
+allow_embedding: false
+name: My App
+runtime_options: {version: 2, client_version: '3', server_version: python3-sandbox}
+metadata: {}
+startup_form: Form1
+db_schema: []
+renamed: true

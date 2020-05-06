@@ -1,0 +1,168 @@
+id: email
+docs_url: /docs/email
+title: Email Service
+description: |
+
+  <div class="tutorial-link">Email examples and tutorials<br><a href="/blog/email-driven-apps#email-watch-video"><i class="fa fa-play"></i> Play video</a><br><a href="/blog/email-driven-apps#email-example-code"><i class="fa fa-file-text-o"></i> Example snippets</a></div>
+
+  Your apps can send and receive email using the built-in Email Service.
+
+  Start by adding the Email service to your app in the [App Browser](#app_browser):
+
+  <img src="img/add_service.png" style="border: 1px solid #ccc; margin: 10px 0;">
+
+
+  ### Sending Email
+
+  ```python
+  anvil.email.send(
+    to="customer@example.com",
+    from_address="support",
+    from_name="MyApp Support",
+    subject="Welcome to MyApp",
+    html="<h1>Welcome!</h1>"
+  )
+  ```
+
+  To send an email, use the `anvil.email.send` function, passing in data as keyword parameters. This can only be called from a Server Module. The available parameters are:
+
+  \* **`to`** - The address (or comma-separated addresses) to deliver this email to. Can also be a list of strings if sending to multiple addresses. If no address is given, the email will be sent to the owner of the app.
+  \* **`cc`** - The address (or comma-separated addresses) to copy this email to. Can also be a list of strings if copying to multiple addresses.
+  \* **`bcc`** - The address (or comma-separated addresses) to blind-copy this email to. Can also be a list of strings if blind-copying to multiple addresses.
+  \* **`from_address`** - The address to send this email from. If it does not contain an "`@`", the domain of your app will be used. Defaults to "no-reply", meaning emails will come from `no-reply@YOUR_APP_ID.anvil.app` or `no-reply@YOUR_CUSTOM_DOMAIN` if your app has a custom domain. If you do specify a full email address, the domain **must** be a valid domain for your app, or it will be replaced with a valid domain.
+  \* **`from_name`** - The name that will be displayed in the "From" field of this email. Defaults to the empty string `""`.
+  \* **`subject`** - The subject line of this email.
+  \* **`text`** - The plain text content of this email.
+  \* **`html`** - The HTML content of this email.
+  \* **`attachments`** - A list of [Media](#media) objects to attach to this email.
+
+
+  ### Receiving Email
+
+  ```python
+  @anvil.email.handle_message
+  def handle_incoming_emails(msg):
+    
+    msg.reply(text="Thank you for your message.")
+
+    msg_row = app_tables.received_messages.add_row(
+                from_addr=msg.envelope.from_address, 
+                to=msg.envelope.recipient,
+                text=msg.text, 
+                html=msg.html
+              )
+    for a in msg.attachments:
+      app_tables.attachments.add_row(
+        message=msg_row, 
+        attachment=a
+      )
+  ```
+
+  To receive emails to your app, register a server function to handle incoming messages using the `@anvil.email.handle_message` decorator. Any emails sent to *anything*@YOUR_APP_ID.anvil.app (or *anything*@YOUR_CUSTOM_DOMAIN) will be passed to the decorated function.
+
+  The example on the right stores incoming email messages and attachments in [Data Tables](#data_tables) and sends a reply to each message.
+
+  The `msg` argument is of type `anvil.email.Message`, which has the following attributes:
+
+  \* **`envelope`** - An object with two attributes, `from_address` and `recipient`. E.g. `msg.envelope.from_address` is the simplest way to get the sender of an email.
+  \* **`addressees`** - An object containing the parsed addressees of this message. See below.
+  \* **`dkim`** - An object with two attributes, `valid_from_sender` (a boolean, true if this message was signed by the domain in its envelope `from_address`) and `domains` (a list of DKIM domains that signed this message).
+  \* **`text`** - The plain text part of the incoming email, if any.
+  \* **`html`** - The HTML part of the incoming email, if any.
+  \* **<code>get_header(<i>header_name</i>)</code>** - A function that returns the value of the named header (returning only the first value if there are several).
+  \* **<code>list_header(<i>header_name</i>)</code>** - A function that returns all the values of the named header as a list.
+  \* **`headers`** - A list of tuples, one for each header in the message. E.g. `[("From", "me@here.com"),("To", "you@there.com"), ...]`
+  \* **`attachments`** - A list of attachments in the message, as [Media objects](#media).
+  \* **<code>reply(<i>\\*\\*kwargs</i>)</code>** - A function that takes all the same keyword arguments as `anvil.email.send` to send a reply to the sender of this message. By default, replies to `message.envelope.from_address` with the same subject, but this can be overridden by setting those keyword arguments.
+
+  #### Addressees
+
+  ```python
+    @anvil.email.handle_message
+    def handle_incoming_emails(msg):
+      
+      msg.reply(text="Hi %s, thank you for your message." %
+        msg.addressees.from_address.name
+      )
+  ```
+
+  The `msg.addressees` object contains all the parsed addressees of the message. This saves you from having to parse addresses like `"John.Doe <john.doe@domain.com>"` manually. The `addressees` object has three attributes:
+
+  \* **`from_address`** - A parsed address from the FROM header.
+  \* **`to_addresses`** - A list of parsed addresses from the TO headers.
+  \* **`cc_addresses`** - A list of parsed addresses from the CC headers.
+
+  Parsed addresses have three attributes:
+
+  \* **`address`** - The plain email address of this addressee, e.g. `john.doe@domain.com`.
+  \* **`name`** - The display name of this addressee, e.g. `John Doe`.
+  \* **`raw_value`** - A single string containing both address and display name, e.g. `John Doe <john.doe@domain.com>`.
+
+  In the example on the right, we use the parsed name of the sender to greet them by name in the reply.
+
+  ```python
+    @anvil.email.handle_message
+    def handle_incoming_emails(msg):
+      
+      raise anvil.email.DeliveryFailure("Delivery failed for some reason")
+  ```
+  To reject an incoming email, raise an `anvil.email.DeliveryFailure` exception. This will return an SMTP failure response (code 554) to the sender of the message.
+
+  ### Configuration Options
+
+  The Email Service has two configuration options:
+
+  \* #### Test Mode
+     When test mode is enabled, all outgoing email will be sent to the owner of the app instead of the specified recipients. This allows you to test changes to your app without accidentally emailing your real users.
+
+  \* #### Custom Mail Server
+     You can configure the Email Service to use your own SMTP server if you wish. Simply tick "Use Custom Mail Server", then enter your SMTP connection settings. The password will be encrypted and stored using the same mechanism as used by the [Secrets Service](#secrets). After entering the settings, click "Test settings" to check that they work.
+
+  ### Quotas
+
+  Outgoing email is subject to a monthly quota, depending on your account plan. If you exceed your monthly quota, all outgoing emails will be re-routed to the app owner, just like in Test Mode. Your monthly quota resets on the 1st of each month. Email sent through a custom SMTP server does not count towards your monthly quota.
+
+  ### Trusting Incoming Email
+
+  Email is easy to *spoof* - to give it an inaccurate `From` address. Therefore, it's important not to do drastic things (eg release sensitive data) just because you got an email claiming to be from someone.
+
+  #### Use a secret address
+
+  One way to verify that a message is genuine is to have a secret email address (for example `8317bb91@myapp.anvil.app`). This functions like a password - only genuine users would know to send an email to that address!
+
+  A variation is to send an email *from* a secret address, and tell the user to reply to it. The real user's replies will go to the secret address, but nobody else knows the secret address.
+
+  #### Verify the sender with DKIM
+
+  Anvil has built-in support for DKIM, which lets the sending domain prove that an email is genuine. For example, every mail from `someone@gmail.com` is signed by GMail, so you can prove it's genuine.
+
+  ```python
+  @anvil.email.handle_message(require_dkim=True)
+  def handle_message(msg):
+    print("This message is definitely from %s"
+             % msg.envelope.from)
+  ```
+  If you specify `@anvil.email.handle_message(require_dkim=True)`, then you will *only* allow messages with valid DKIM signatures for the domain in `msg.envelope.from`. So, if `msg.envelope.from` is `"someone@gmail.com"`, the email must have been signed by `gmail.com`.
+
+
+  ```python
+  @anvil.email.handle_message
+  def handle_message(msg):
+    if msg.dkim.domains is not None and 
+        "gmail.com" in msg.dkim.domains:
+      print("This message was signed by GMail")
+
+    elif msg.dkim.domains == []:
+      print("This message wasn't signed at all")
+  ```
+  You can also check this by hand. `msg.dkim.domains` is a list of all the domains that have signed this email (sometimes there can be more than one, but usually there are none or one).
+
+  `msg.dkim.valid_from_sender` is `True` if one of those domains is the domain of the sending address (`msg.envelope.sender`).
+
+  ##### Technical notes for experts
+
+  Anvil's DKIM support accepts only signatures that cover the entire message (no `l=` parameter).
+
+  `msg.dkim.domains` is a list of the `d=` fields of all acceptable DKIM signatures.
+
+  `msg.dkim.valid_from_sender` is `True` only if the SMTP envelope `from` address ends in `@<domain>`, where `domain` is the `d=` field in an acceptable DKIM signature.

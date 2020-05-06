@@ -1,0 +1,778 @@
+/**
+ This CSS implements the Material Design look and feel for Anvil apps.
+ **/
+
+/* Stop panel-cols cutting off drop shadows */
+.anvil-panel-col {
+  padding-bottom: 10px;
+  margin-bottom: -10px;
+}
+
+.content > .placeholder {
+  margin: 16px;
+  color: #888;
+  font-size: 18px;
+  outline: 1px dotted;
+  padding: 16px;
+  text-align: center;
+}
+
+/* Put things on a 4px grid (none of this 7px nonsense) */
+.has-text .anvil-component-icon.left-icon { margin-right: 8px; }
+.has-text .anvil-component-icon.right-icon { margin-left: 8px; }
+
+a>.anvil-component-icon.left_edge-icon,
+a>.anvil-component-icon.right_edge-icon,
+.anvil-label>.anvil-component-icon.left_edge-icon,
+.anvil-label>.anvil-component-icon.right_edge-icon {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.anvil-label>.label-text, a>.link-text {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.file-loader>label {
+    padding: 8px;
+}
+.checkbox label, .radio label {
+    padding-top: 8px; padding-right: 8px; padding-bottom: 8px;
+}
+.anvil-spacing-above-none { margin-top: 0px; }
+.anvil-spacing-above-small { margin-top: 4px; }
+.anvil-spacing-above-medium { margin-top: 8px; }
+.anvil-spacing-above-large { margin-top: 16px; }
+.anvil-spacing-below-none { margin-bottom: 0px; }
+.anvil-spacing-below-small { margin-bottom: 4px; }
+.anvil-spacing-below-medium { margin-bottom: 8px; }
+.anvil-spacing-below-large { margin-bottom: 16px; }
+
+
+.col-padding.col-padding-tiny { padding: 0 2px; }
+.column-panel.col-padding-tiny > .anvil-panel-section > .anvil-panel-section-container > .anvil-panel-section-gutter { margin: 0 -2px; }
+
+.col-padding.col-padding-small { padding: 0 4px; }
+.column-panel.col-padding-small > .anvil-panel-section > .anvil-panel-section-container > .anvil-panel-section-gutter { margin: 0 -4px; }
+
+.col-padding.col-padding-medium { padding: 0 8px; }
+.column-panel.col-padding-medium > .anvil-panel-section > .anvil-panel-section-container > .anvil-panel-section-gutter { margin: 0 -8px; }
+
+.col-padding.col-padding-large { padding: 0 12px; }
+.column-panel.col-padding-large > .anvil-panel-section > .anvil-panel-section-container > .anvil-panel-section-gutter { margin: 0 -12px; }
+
+.col-padding.col-padding-huge { padding: 0 20px; }
+.column-panel.col-padding-huge > .anvil-panel-section > .anvil-panel-section-container > .anvil-panel-section-gutter { margin: 0 -20px; }
+
+.flow-panel.flow-spacing-tiny > .flow-panel-gutter { margin: 0 -2px; }
+.flow-panel.flow-spacing-tiny > .flow-panel-gutter > .flow-panel-item { margin: 0 2px; }
+
+.flow-panel.flow-spacing-small > .flow-panel-gutter { margin: 0 -4px; }
+.flow-panel.flow-spacing-small > .flow-panel-gutter > .flow-panel-item { margin: 0 4px; }
+
+.flow-panel.flow-spacing-medium > .flow-panel-gutter { margin: 0 -8px; }
+.flow-panel.flow-spacing-medium > .flow-panel-gutter > .flow-panel-item { margin: 0 8px; }
+
+.flow-panel.flow-spacing-large > .flow-panel-gutter { margin: 0 -12px; }
+.flow-panel.flow-spacing-large > .flow-panel-gutter > .flow-panel-item { margin: 0 12px; }
+
+.flow-panel.flow-spacing-huge > .flow-panel-gutter { margin: 0 -20px; }
+.flow-panel.flow-spacing-huge > .flow-panel-gutter > .flow-panel-item { margin: 0 20px; }
+
+
+/* Typography */
+body {
+  font-family: Roboto, Noto, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.4286;
+  background-color: #fafafa;
+}
+
+@media print {
+  body {
+    background-color: white;
+  }
+}
+
+a, a:focus {
+  text-decoration: none;
+  color: %color:Primary 700%;
+}
+
+a:hover, a:active {
+  color: %color:Primary 500%;
+}
+
+.anvil-label {
+/*  font-size: 16px;*/
+}
+
+.anvil-role-subheading {
+  font-size: 16px;
+  line-height: 24dp;
+}
+
+.anvil-role-headline {
+  font-size: 24px;
+  line-height: 32px;
+}
+
+.anvil-role-input-prompt {
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.anvil-role-display-4 {
+  font-size: 112px;
+  font-weight: light;
+}
+
+.anvil-role-text {
+  font-size: 14px;
+}
+.anvil-role-text > .label-text, .anvil-role-text .link-text {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+/* Page structure: App bar with optional left nav */
+.structure {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  height: 0; /* To make flex-grow work in IE */
+}
+
+/* However, this breaks the designer's height measurement. IE isn't supported for the designer, so set it back. */
+.designer .structure {
+  height: initial;
+}
+
+.app-bar {
+  flex: 0 0;
+  flex-basis: auto;
+  flex-basis: content;
+}
+
+.nav-holder {
+  flex-grow: 1;
+  overflow-y: auto;
+}
+
+/* Mobile and desktop margins for content */
+.content > * > .anvil-container {
+  padding: 8px;
+}
+
+@media(min-width:991px) {
+  .content > * > .anvil-container {
+    padding: 16px 24px;
+  }
+}
+
+.content .anvil-measure-this {
+  padding-bottom: 1px; /* Prevent margin collapse messing up embedding */
+}
+
+/* Allow overflows to show drop shadows in ColumnPanels
+   This can create unwanted scrollbars; we compensate for this at the top level with .nav-holder .content {overflow-x: hidden;}
+*/
+.anvil-container-overflow {
+  overflow-x: visible;
+  overflow-y: visible;
+}
+
+
+/* Desktop: Nav bar pinned */
+
+.nav-holder {
+  display: flex;
+  flex-direction: row;
+}
+
+.nav-holder .left-nav {
+  position: relative;
+  flex-shrink: 0;
+  min-width: 160px;
+  max-width: 400px;
+}
+
+.nav-shield {
+  display: none;
+}
+
+/* Mobile: Nav bar is a modal overlay */
+
+@media(max-width:998px) {
+  html:not(.designer) .nav-holder {
+    display: block;
+  }
+  html:not(.designer) .nav-holder .left-nav {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    width: calc(100% - 56px);
+    max-width: 360px;
+    z-index: 3;
+    border-right: none;
+  /* 16dp */ box-shadow: 0 16px 24px 2px rgba(0, 0, 0, 0.14), 0 6px 30px 5px rgba(0, 0, 0, 0.12), 0 8px 10px -5px rgba(0, 0, 0, 0.2);
+
+    display: none;
+    transition: right 0.5s;
+  }
+  
+  html:not(.designer) .nav-holder .left-nav.shown {
+    display: block;
+  }
+  .nav-shield.shown {
+    display: block;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 2;
+    background-color: rgba(0,0,0,0.2);
+  }
+ }
+
+.nav-holder .left-nav, .left-nav-placeholder {
+  display: flex;
+  flex-direction: column;
+  background: white;
+  border-right: 1px solid #e0e0e0;
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(0,0,0,0.87);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.left-nav-placeholder {
+  display: block;
+  padding: 8px;
+  line-height: 1;
+  width: 58px;
+}
+.left-nav-placeholder .prompt {
+  display: inline-block;
+  white-space: nowrap;
+  transform: translate(-50%,0) rotate(-90deg) translate(-50%,0) translate(15px,16px);
+  padding: 16px 16px;
+  color: #888;
+  outline: 1px dotted #888;
+  visibility: hidden;
+}
+.anvil-highlight .left-nav-placeholder .prompt {
+  visibility: visible;
+}
+
+.left-nav > .column-panel {
+  padding: 24px 0;
+}
+.left-nav > .column-panel > .anvil-panel-section > .anvil-panel-section-container:not(.full-width-row) {
+  margin: 0 16px;
+  width: initial;
+  max-width: initial;
+  overflow-x: visible;
+}
+.left-nav > .column-panel > .anvil-panel-section:first-child > .anvil-panel-section-container.full-width-row {
+  margin-top: -24px;
+}
+.left-nav > .column-panel > .anvil-panel-section > .anvil-panel-section-container > .anvil-panel-section-gutter > .anvil-panel-row > .anvil-panel-col {
+  overflow-x: visible;
+}
+
+/* Make all the sidebar icons look nice */
+
+.left-nav .anvil-component-icon {
+  font-size: 160%;
+}
+
+.left-nav .anvil-component-icon.left-icon {
+  width: 0;
+  margin-right: 56px;
+  position: relative;
+  top: 0.15em;  
+}
+
+.left-nav .anvil-component-icon.left_edge-icon, .left-nav .anvil-component-icon.right_edge-icon {
+  left: 16px;
+  padding-top: 2px;
+  width: 0;
+}
+
+.left-nav .anvil-component-icon.right_edge-icon {
+  left: initial;
+  right: 16px;
+  top: 0;
+  padding-top: 2px;
+}
+
+/* Sidebar links (and labels with edge icons) go +16px wider
+   (Top-level columns in ColumnPanels get overflow-x visible [see above]to enable this)
+*/
+
+.left-nav a, .left-nav .anvil-label.left_edge-icon, .left-nav .anvil-label.right_edge-icon {
+  color: rgba(0,0,0,0.87);
+  margin: 0 -16px;
+  padding: 4px 16px;
+}
+
+.left-nav .anvil-component.left_edge-icon {
+  padding-left: 72px;
+}
+
+.left-nav a:hover, .left-nav .anvil-role-selected {
+  color: %color:Primary 700%;
+  background-color: rgba(0,0,0,.08);
+}
+
+.designer .nav-holder .left-nav {
+  min-width: 56px;
+}
+
+.designer .nav-holder .left-nav > .anvil-component {
+  min-width: 160px;
+}
+
+.nav-holder .left-nav > .anvil-component {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.nav-holder .content {
+  flex: 1;
+  overflow-x: hidden;
+}
+
+/* Components: App Bar */
+.app-bar {
+  min-height: 56px;
+  line-height: 40px;
+  padding: 0 16px 0 72px;
+
+  font-size: 20px;
+  font-weight: 500;
+  color: white;
+  background-color: %color:Primary 500%;
+  
+  z-index: 1;
+  /* 4dp */ box-shadow: 0 4px 5px 0 rgba(0, 0, 0, 0.14), 0 1px 10px 0 rgba(0, 0, 0, 0.12), 0 2px 4px -1px rgba(0, 0, 0, 0.2);  
+}
+
+.app-bar .anvil-component {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.app-bar > .sidebar-toggle { display:block; float:left;  margin-left: -61px; }
+.app-bar > .top-left-btn { float: left; margin-left: -60px; margin-right: -40px; }
+.app-bar > .title { float: left; }
+.app-bar > .title > .placeholder { outline: 1px dotted; padding-left: 16px; padding-right: 16px; margin: 8px 8px 0; display:none; }
+.app-bar > .app-bar-nav { float: right; font-weight: normal; }
+.app-bar > .app-bar-nav .placeholder { margin-top: 8px; padding: 0 8px; }
+.anvil-highlight .app-bar > .app-bar-nav .placeholder { outline: 1px dotted #ccc; }
+.anvil-highlight .app-bar > .title > .placeholder { display:block; }
+
+.app-bar a, .app-bar .anvil-component {
+  display: block;
+  color: white;
+  line-height: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  margin: 5px 4px 0;
+}
+
+.app-bar .title .anvil-component {
+  margin-left: 0;
+}
+
+.app-bar input.anvil-component, .app-bar .anvil-component input {
+  line-height: 30px;
+  color: white;
+}
+
+.app-bar select.form-control {
+  height: 43px; /* 30px line height + 12px padding + 1px border */
+}
+
+.app-bar .anvil-component-icon-present .anvil-component-icon, .app-bar .sidebar-toggle .fa {
+  width: 30px;
+  text-align: center;
+}
+
+/* Don't put spacing on the top-level container (eg FlowPanel) */
+.app-bar-nav > .anvil-container {
+  margin: 0;
+  padding: 0;
+  min-height: 56px;
+}
+
+.anvil-highlight .app-bar-nav > .anvil-container:not(.has-components):not(a) {
+  outline: 1px dotted #fff;
+  margin-top: 8px;
+  min-height: 40px;
+  padding: 5px 8px;
+}
+
+.anvil-highlight .app-bar-nav > .anvil-container:not(.has-components):not(a)::after {  
+  content: "Drop Links here"
+}
+
+/* Rejig margin vs padding to give links the halo */
+.app-bar a, .app-bar a.anvil-component {
+  padding: 5px;
+  margin: 8px 0 0;
+  border-radius: 20px;
+}
+
+.app-bar a .link-text {
+  padding: 0 4px;
+}
+.app-bar a.has-text .anvil-component-icon.left {
+  margin-right: 4px;
+}
+.app-bar a.has-text .anvil-component-icon.right {
+  margin-left: 4px;
+}
+
+.app-bar a:hover, .app-bar a:active {
+  color: #eee; text-decoration: none;
+  background-color: %color:Primary 700%;
+}
+
+
+/* Component: Dialog (alert), Notification */
+.modal-content, body>div[data-notify="container"] {
+  border-radius: 2px;
+  /* 24dp */ box-shadow: 0 9px 46px 8px rgba(0, 0, 0, 0.14), 0 11px 15px -7px rgba(0, 0, 0, 0.12), 0 24px 38px 3px rgba(0, 0, 0, 0.2)
+    !important;
+}
+
+.modal-header {
+  padding: 24px 24px 0px;
+  font-size: 24px;
+  line-height: 32px;
+  border: 0;
+}
+
+.modal-body {
+  padding: 20px 24px 24px;
+  font-size: 16px;
+  color: #747474;
+}
+
+.modal-footer {
+  padding: 8px 8px 8px 24px;
+  border: 0;
+}
+
+.modal-footer .btn {
+  background-color: transparent;
+  color: %color:Primary 500%;
+}
+.modal-footer .btn, .modal-footer .btn:focus, .modal-footer .btn:active {
+  box-shadow: none;
+  top: 0;
+}
+
+/* Notifications */
+body>div[data-notify="container"] {
+  background: white;
+  border: none;
+  padding: 24px;
+}
+
+body>div[data-notify="container"]>span[data-notify="title"] {
+  display: block;
+  font-size: 18px;
+  font-weight: 500;
+  color: #333333;
+}
+
+body>div[data-notify="container"]>span[data-notify="message"] {
+  display: block;
+  padding: 20px 0 0;
+  font-size: 16px;
+  color: #747474;  
+}
+
+body>div[data-notify="container"].alert-success{
+  background-color: #d4edda;
+}
+
+body>div[data-notify="container"].alert-success>span[data-notify="title"]{
+  color: #155724;
+}
+
+body>div[data-notify="container"].alert-danger{
+  background-color: #f8d7da;
+}
+
+body>div[data-notify="container"].alert-danger>span[data-notify="title"]{
+  color: #721c24;
+}
+
+body>div[data-notify="container"].alert-warning{
+  background-color: #fff3cd;
+}
+
+body>div[data-notify="container"].alert-warning>span[data-notify="title"]{
+  color: #856404;
+}
+
+
+/* Component: Button */
+
+.btn, .btn-default, .file-loader>label {
+  border-radius: 2px;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 8px 16px;
+  min-height: calc(16px + 1.42857143em);
+  text-transform: uppercase;
+
+  border: 0;
+  background-image: none;
+  background-color: transparent;
+  color: %color:Primary 500%;
+  text-shadow: none;
+  box-shadow: none;
+  -webkit-box-shadow: none;
+  
+  position: relative;
+}
+
+.btn:hover, .btn:focus, .file-loader>label:hover {
+  background-color: rgba(153,153,153,0.2);
+  background-image: none;
+  outline: none;
+  color: %color:Primary 500%;
+}
+
+.btn:active, .btn:active:focus {
+  background-color: rgba(153,153,153,0.4);
+  background-image: none;
+  outline: none;
+  box-shadow: none;
+  color: %color:Primary 500%;
+}
+
+.btn[disabled] { color: rgba(0, 0, 0, .25); }
+.anvil-role-raised > .btn[disabled], .anvil-role-primary-color > .btn[disabled], .anvil-role-secondary-color > .btn[disabled] {
+  background-color: rgba(0,0,0,0.12) !important;
+  color: rgba(0,0,0,0.25) !important;
+  box-shadow: none !important;
+}
+
+.anvil-role-raised > .btn, .anvil-role-primary-color > .btn, .anvil-role-secondary-color > .btn, .anvil-role-raised.file-loader>label, .anvil-role-primary-color.file-loader>label, .anvil-role-secondary-color.file-loader>label,
+.btn-primary, .btn-success, .btn-info, .btn-warning, .btn-danger
+{
+  /* 2dp */  box-shadow: 0 2px 2px 0 rgba(0, 0, 0, 0.14), 0 3px 1px -2px rgba(0, 0, 0, 0.2), 0 1px 5px 0 rgba(0, 0, 0, 0.12);
+}
+
+.anvil-role-raised > .btn:active, .anvil-role-primary-color > .btn:active, .anvil-role-secondary-color > .btn:active, .btn-primary:active,
+.btn-primary:active, .btn-success:active, .btn-info:active, .btn-warning:active, .btn-danger:active {
+  /* 8dp */ box-shadow: 0 8px 10px 1px rgba(0, 0, 0, 0.14), 0 3px 14px 2px rgba(0, 0, 0, 0.12), 0 5px 5px -3px rgba(0, 0, 0, 0.2);  
+  top: -1px;
+}
+
+.anvil-role-primary-color > .btn, .btn-primary, .anvil-role-primary-color.file-loader>label {
+  color: white;
+  background-color: %color:Primary 500%;
+}
+
+.anvil-role-secondary-color > .btn, .anvil-role-secondary-color.file-loader>label {
+  color: white;
+  background-color: %color:Secondary 500%;
+}
+
+.btn-success, .btn-info, .btn-warning, .btn-danger {
+  color: white;
+}
+
+.anvil-role-primary-color > .btn:hover, .anvil-role-primary-color > .btn:active, .anvil-role-primary-color > .btn:focus,
+.btn-primary:hover, .btn-primary:active, .btn-primary:focus {
+  color: white;
+  background-color: %color:Primary 700%;
+}
+
+.anvil-role-secondary-color > .btn:hover, .anvil-role-secondary-color > .btn:active, .anvil-role-secondary-color > .btn:focus {
+  color: white;
+  background-color: %color:Secondary 700%;
+}
+
+/* Component: Card */
+
+.anvil-role-card {
+  overflow: hidden;
+  border-radius: 2px;
+  background-color: white;
+  padding: 8px 12px;
+  /* 2dp */  box-shadow: 0 2px 2px 0 rgba(0, 0, 0, 0.14), 0 3px 1px -2px rgba(0, 0, 0, 0.2), 0 1px 5px 0 rgba(0, 0, 0, 0.12);
+}
+
+/* full_width_row sections go full bleed */
+.column-panel.anvil-role-card > .anvil-panel-section > .anvil-panel-section-container.full-width-row {
+  margin-left: -12px;
+  margin-right: -12px;
+  width: initial;
+  max-width: initial;
+}
+
+/* If the first row of a card is a full_width_row, it goes to the top */
+.column-panel.anvil-role-card > .anvil-panel-section:first-child > .anvil-panel-section-container.full-width-row {
+  margin-top: -8px;
+}
+.column-panel.anvil-role-card > .anvil-panel-section:last-child > .anvil-panel-section-container.full-width-row {
+  margin-bottom: -8px;
+}
+
+
+
+/* Component: TextBox + TextArea */
+
+input.anvil-component, textarea.anvil-component, .anvil-component select, .anvil-datepicker input {
+  font-size: 16px;
+  line-height: 1.5;
+  border-radius: 0;
+  background-color: transparent;
+  color: rgba(0,0,0,0.87);
+  
+  box-shadow: none;
+}
+
+.anvil-dropdown {
+  font-size: 16px;
+}
+.anvil-component select {
+  font-size: inherit;
+}
+
+input.anvil-component, .anvil-component select, .anvil-datepicker input {
+  padding: 8px 0 4px;
+  border: 0;
+  border-bottom: 1px solid rgba(0,0,0,0.42);
+
+  transition: border-bottom 0.2s, padding-bottom 0.2s;
+  -moz-transition: none; /* Firefox is jumpy, so disable transitions */
+}
+
+textarea.anvil-component {
+  padding: 4px 8px;
+  border: 1px solid rgba(0,0,0,0.42);
+  border-radius: 2px;
+  transition: border 0.2s, padding 0.2s;
+  -moz-transition: none; /* Firefox is jumpy, so disable transitions */
+}
+
+.anvil-dropdown select.form-control {
+  
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding: 8px 2em 4px 0;
+  
+  /* ew ew ew - select elements are weird and don't obey line-height, so we just
+     set the height explicitly. Ugh. */
+  height: calc(1.5em + 13px); /* 8px + 4px padding + 1px border = 13px */
+}
+
+.anvil-dropdown {
+  position: relative;
+}
+/* Select arrow styling */
+.anvil-dropdown form:before {
+    content: "\25BC";
+    position: absolute;
+    right: 0;
+    font-size: 80%;
+    line-height: calc(1.8em + 8px);
+    color: #555;
+    pointer-events:none;
+    padding: 4px 4px;
+}
+
+.anvil-component select, .anvil-datepicker input { margin-bottom: 4px; }
+input.anvil-component.anvil-spacing-below-none { margin-bottom: 4px; }
+input.anvil-component.anvil-spacing-below-small { margin-bottom: 8px; }
+input.anvil-component.anvil-spacing-below-medium { margin-bottom: 12px; }
+input.anvil-component.anvil-spacing-below-large { margin-bottom: 20px; }
+
+input.anvil-component::-webkit-input-placeholder, textarea.anvil-component::-webkit-input-placeholder {
+  color: rgba(0,0,0,0.54);
+}
+input.anvil-component::-moz-placeholder, textarea.anvil-component::-moz-placeholder {
+  color: rgba(0,0,0,0.54);
+}
+input.anvil-component::placeholder, textarea.anvil-component::placeholder  {
+  color: rgba(0,0,0,0.54);
+}
+
+.app-bar input.anvil-component::-webkit-input-placeholder, .app-bar textarea.anvil-component::-webkit-input-placeholder {
+  color: rgba(255,255,255,0.8);
+}
+.app-bar input.anvil-component::-moz-placeholder, .app-bar textarea.anvil-component::-moz-placeholder {
+  color: rgba(255,255,255,0.8);
+}
+.app-bar input.anvil-component::placeholder, .app-bar textarea.anvil-component::placeholder  {
+  color: rgba(255,255,255,0.8);
+}
+
+input.anvil-component:hover, .anvil-component select:hover, .anvil-datepicker input:hover {
+  border-bottom: 2px solid rgba(0,0,0,.87);
+  padding-bottom: 3px;
+}
+
+input.anvil-component:focus, .anvil-component select:focus, .anvil-datepicker input:focus {
+  border-bottom: 2px solid %color:Primary 700%;
+  padding-bottom: 3px;
+  box-shadow: none;
+}
+
+input.anvil-component[disabled], .anvil-component select[disabled], .anvil-datepicker input[disabled] {
+  border-bottom: 1px dashed #888;
+  padding-bottom: 4px;
+  background-color: transparent;
+}
+
+textarea.anvil-component:hover {
+  border: 2px solid rgba(0,0,0,0.87);
+  padding: 3px 7px;
+}
+
+textarea.anvil-component:focus {
+  border: 2px solid %color:Primary 700%;
+  padding: 3px 7px;
+  box-shadow: none;
+}
+
+textarea.anvil-component[disabled] {
+  border: 1px dashed #888;
+  padding: 4px 8px;
+  background-color: transparent;
+}
+
+.daterangepicker td.active {
+  background-color: %color:Primary 500%;
+}
+
+.daterangepicker td.active:hover {
+  background-color: %color:Primary 700%;
+}
+
+.daterangepicker .btn-success {
+  color: %color:Primary 500%;
+}
+
+/* Component: CheckBox, RadioButton */
+/* Ugh. These are definitely TODO right now. */
+
+.checkbox, .radio {
+  font-size: 16px;
+}
+
+/* Shadow values taken from 
+https://stackoverflow.com/questions/30533055/calculating-shadow-values-for-all-material-design-elevations
+*/
+
+

@@ -1,0 +1,62 @@
+<link href="https://fonts.googleapis.com/css?family=Roboto:300,400,500" rel="stylesheet" rel="preload" as="font" crossorigin="anonymous">
+
+<div class="structure">
+  <div class="app-bar" anvil-drop-container=".anvil-container" anvil-drop-redirect=".placeholder">
+    <a class="sidebar-toggle" anvil-if-slot-empty="top-left-btn" anvil-hide-if-slot-empty="left-nav" anvil-drop-slot="top-left-btn" href="javascript:void(0)"><i class="fa fa-bars"></i></a>
+    <a class="sidebar-toggle anvil-designer-only" anvil-if-slot-empty="top-left-btn" anvil-if-slot-empty="left-nav" anvil-drop-slot="top-left-btn"><i class="fa fa-blank"></i></a>
+    <div class="top-left-btn" anvil-slot="top-left-btn"></div>
+    <div class="title" anvil-slot="title">
+      <div class="placeholder anvil-designer-only" anvil-if-slot-empty="title" anvil-drop-here>Drop title here</div>
+    </div>
+    <div class="app-bar-nav" anvil-slot="nav-right">
+      <div class="placeholder anvil-designer-only" anvil-if-slot-empty="nav-right" anvil-drop-here>Drop a FlowPanel here</div>
+    </div>
+    <div style="clear:both"></div>
+  </div>
+
+  <div class="nav-holder">
+    <div class="left-nav anvil-measure-this" anvil-slot-repeat="left-nav" anvil-drop-container=">.anvil-container">
+    </div>
+    <div class="left-nav-placeholder anvil-designer-only" anvil-if-slot-empty="left-nav" anvil-drop-slot="left-nav">
+      <div class="prompt">To add a sidebar, drop a ColumnPanel here.</div>
+    </div>
+
+    <div class="content">
+      <div anvil-slot-repeat="default" class="anvil-measure-this"></div>
+    </div>
+  </div>
+  <div class="nav-shield"></div>
+</div>
+<div anvil-drop-default anvil-drop-redirect=".placeholder" anvil-drop-container=".anvil-container"></div>
+ 
+<script>
+  function hideSidebar() {
+    var ln = $('.structure > .nav-holder > .left-nav');
+    ln.animate({left: -ln.outerWidth()}, function() {
+      ln.removeClass("in-transition shown").addClass("hidden");
+      $('.nav-shield').removeClass("shown");
+      $(window).trigger('resize');
+    });
+  }
+  function showSidebar() {
+    var ln = $('.structure > .nav-holder > .left-nav');
+    $('.nav-shield').addClass("shown");
+    ln.addClass("shown").removeClass("hidden").css({left: "-100%"}).css({left: -ln.outerWidth()}).animate({left: 0}, function() {
+      ln.removeClass("in-transition");
+    });
+    $(window).trigger('resize');
+  }
+  $('.sidebar-toggle, .nav-shield').off('click').on('click', function() {
+    var ln = $('.structure > .nav-holder > .left-nav');
+    if (ln.is(":visible") || $('.nav-shield').is(".shown")) {
+      hideSidebar();
+    } else if(!ln.is(":empty")) {
+      showSidebar();
+    }
+  });
+  $('.left-nav').off('click').on('click', 'a, button', function() {
+    if ($('.nav-shield').is(":visible")) {
+      $('.nav-shield').trigger('click');
+    }
+  });
+</script>

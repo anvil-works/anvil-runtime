@@ -1,0 +1,63 @@
+# Copyright (C) 2018 The Android Open Source Project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+read: 1
+lseek: 1
+open: 1
+brk: 1
+write: 1
+fstat: 1
+mmap: arg2 in ~PROT_EXEC || arg2 in ~PROT_WRITE
+close: 1
+mprotect: arg2 in ~PROT_EXEC || arg2 in ~PROT_WRITE
+access: 1
+stat: 1
+rt_sigaction: 1
+munmap: 1
+fcntl: 1
+geteuid: 1
+arch_prctl: 1
+execve: 1
+getdents: 1
+unlink: 1
+exit_group: 1
+getuid: 1
+wait4: 1
+clone: 1
+pipe: 1
+getpid: 1
+getegid: 1
+rt_sigreturn: 1
+getgid: 1
+faccessat: 1
+getppid: 1
+dup2: 1
+statfs: 1
+futex: 1
+getrlimit: 1
+rt_sigprocmask: 1
+exit: 1
+restart_syscall: 1
+set_robust_list: 1
+getrusage: 1
+set_tid_address: 1
+getcwd: 1
+setgroups: 1
+setresuid: 1
+quotactl: 1
+move_pages: 1
+getrandom: 1
+openat: 1
+prlimit64: 1
+getdents64: 1

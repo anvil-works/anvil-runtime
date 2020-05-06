@@ -1,0 +1,22 @@
+<html>
+<head>
+</head>
+<body>
+
+<script>
+
+	// The error message will be our hash
+
+	var err = decodeURIComponent(window.location.hash.substring(1).replace(/\+/g,"%20"));
+    var params = { fn: "ravenAuthErrorCallback", args: { message: err } };
+
+    if (window.opener) {
+	    window.opener.postMessage(params, "*");
+    }
+
+    window.close();
+
+</script>
+
+</body>
+</html>

@@ -1,0 +1,17 @@
+name: Facebook
+prelude: "import anvil.facebook.auth"
+old_preludes:
+  - "import facebook.auth"
+path_whitelist:
+  - facebook/__init__.py
+  - facebook/auth.py
+  - anvil/facebook/__init__.py
+  - anvil/facebook/auth.js
+  - anvil/facebook/auth.py
+server_config_properties:
+  - name: app_id
+    type: string
+    description: The Facebook client ID for this app.
+  - name: app_secret
+    type: string
+    description: The Facebook client secret for this app.

@@ -1,0 +1,20 @@
+id: facebook
+docs_url: /docs/integrations/facebook
+title: Facebook Service
+description: |
+  You can allow your users to sign in with Facebook using the Facebook Service.
+
+  <img src="img/screenshots/facebook/log_in_with_facebook.png" style="border: 1px solid #ccc; margin: 10px 0;">
+
+  Follow these steps to configure Facebook Login to allow Anvil to communicate with it:
+
+  1. Create an App in Facebook for Developers, if you haven't already: go to https://developers.facebook.com/ and click on 'get started'.
+  2. After some basic setup steps, you'll be presented with 'Add A Product'. Add Facebook Login.<br>
+  <img src="img/screenshots/facebook/add_product.png" style="border: 1px solid #ccc; margin: 10px 0;">
+  3. In the Facebook Login Product's Settings, there is a box marked 'Valid OAuth Redirect URIs'. Add `https://anvil.works/apps/_/facebook_auth_callback` to it.<br>
+  <img src="img/screenshots/facebook/login_settings.png" style="border: 1px solid #ccc; margin: 10px 0;">
+  4. Now go to Settings->Basic. Copy the App ID and App Secret for your app.<br>
+  <img src="img/screenshots/facebook/app_id_and_secret.png" style="border: 1px solid #ccc; margin: 10px 0;">
+  5. Add the Facebook Service to your Anvil app from the Anvil Editor, and paste your App ID and App Secret into the appropriate boxes.<br>
+  6. Add the Users Service and check the Sign In With Facebook box.<br>
+  7. Your login form will now show a 'Log In With Facebook' link, which opens the Facebook login dialog when clicked.<br>

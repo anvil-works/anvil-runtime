@@ -1,0 +1,180 @@
+roles:
+- name: text
+  components: [Label, Link]
+- name: subheading
+  components: [Label]
+- name: input-prompt
+  components: [Label]
+- name: headline
+  components: [Label]
+  displayInToolbox: true
+  title: Headline
+  display_in_toolbox: true
+- name: display-4
+  components: [Label]
+- name: card
+  components: [ColumnPanel, LinearPanel, XYPanel, RepeatingPanel]
+  displayInToolbox: true
+  title: Card
+  display_in_toolbox: true
+- name: raised
+  components: [Button, FileLoader]
+- name: primary-color
+  components: [Button, FileLoader]
+  title: Highlighted Button
+  display_in_toolbox: true
+- name: secondary-color
+  components: [Button, FileLoader]
+- name: dense
+  components: [TextBox]
+- name: selected
+  components: [Link]
+color_scheme:
+  preset_groups:
+  - name: Primary Colour
+    options:
+    - name: Blue
+      colors:
+      - {name: Primary 500, color: '#2196F3'}
+      - {name: Primary 700, color: '#1976D2'}
+    - name: Orange
+      colors:
+      - {name: Primary 500, color: '#FF9800'}
+      - {name: Primary 700, color: '#F57C00'}
+    - name: Red
+      colors:
+      - {name: Primary 500, color: '#F44336'}
+      - {name: Primary 700, color: '#D32F2F'}
+    - name: Pink
+      colors:
+      - {name: Primary 500, color: '#E91E63'}
+      - {name: Primary 700, color: '#C2185B'}
+    - name: Purple
+      colors:
+      - {name: Primary 500, color: '#9C27B0'}
+      - {name: Primary 700, color: '#7B1FA2'}
+    - name: Deep Purple
+      colors:
+      - {name: Primary 500, color: '#673AB7'}
+      - {name: Primary 700, color: '#512DA8'}
+    - name: Indigo
+      colors:
+      - {name: Primary 500, color: '#3F51B5'}
+      - {name: Primary 700, color: '#303F9F'}
+    - name: Light Blue
+      colors:
+      - {name: Primary 500, color: '#03A9F4'}
+      - {name: Primary 700, color: '#0288D1'}
+    - name: Cyan
+      colors:
+      - {name: Primary 500, color: '#00BCD4'}
+      - {name: Primary 700, color: '#0097A7'}
+    - name: Teal
+      colors:
+      - {name: Primary 500, color: '#009688'}
+      - {name: Primary 700, color: '#00796B'}
+    - name: Green
+      colors:
+      - {name: Primary 500, color: '#4CAF50'}
+      - {name: Primary 700, color: '#388E3C'}
+    - name: Light Green
+      colors:
+      - {name: Primary 500, color: '#8BC34A'}
+      - {name: Primary 700, color: '#689F38'}
+    - name: Lime
+      colors:
+      - {name: Primary 500, color: '#CDDC39'}
+      - {name: Primary 700, color: '#AFB42B'}
+    - name: Deep orange
+      colors:
+      - {name: Primary 500, color: '#FF5722'}
+      - {name: Primary 700, color: '#E64A19'}
+    - name: Brown
+      colors:
+      - {name: Primary 500, color: '#795548'}
+      - {name: Primary 700, color: '#5D4037'}
+    - name: Grey
+      colors:
+      - {name: Primary 500, color: '#9E9E9E'}
+      - {name: Primary 700, color: '#616161'}
+  - name: Secondary Colour
+    options:
+    - name: Blue
+      colors:
+      - {name: Secondary 500, color: '#2196F3'}
+      - {name: Secondary 700, color: '#1976D2'}
+    - name: Orange
+      colors:
+      - {name: Secondary 500, color: '#FF9800'}
+      - {name: Secondary 700, color: '#F57C00'}
+    - name: Red
+      colors:
+      - {name: Secondary 500, color: '#F44336'}
+      - {name: Secondary 700, color: '#D32F2F'}
+    - name: Pink
+      colors:
+      - {name: Secondary 500, color: '#E91E63'}
+      - {name: Secondary 700, color: '#C2185B'}
+    - name: Purple
+      colors:
+      - {name: Secondary 500, color: '#9C27B0'}
+      - {name: Secondary 700, color: '#7B1FA2'}
+    - name: Deep Purple
+      colors:
+      - {name: Secondary 500, color: '#673AB7'}
+      - {name: Secondary 700, color: '#512DA8'}
+    - name: Indigo
+      colors:
+      - {name: Secondary 500, color: '#3F51B5'}
+      - {name: Secondary 700, color: '#303F9F'}
+    - name: Light Blue
+      colors:
+      - {name: Secondary 500, color: '#03A9F4'}
+      - {name: Secondary 700, color: '#0288D1'}
+    - name: Cyan
+      colors:
+      - {name: Secondary 500, color: '#00BCD4'}
+      - {name: Secondary 700, color: '#0097A7'}
+    - name: Teal
+      colors:
+      - {name: Secondary 500, color: '#009688'}
+      - {name: Secondary 700, color: '#00796B'}
+    - name: Green
+      colors:
+      - {name: Secondary 500, color: '#4CAF50'}
+      - {name: Secondary 700, color: '#388E3C'}
+    - name: Light Green
+      colors:
+      - {name: Secondary 500, color: '#8BC34A'}
+      - {name: Secondary 700, color: '#689F38'}
+    - name: Lime
+      colors:
+      - {name: Secondary 500, color: '#CDDC39'}
+      - {name: Secondary 700, color: '#AFB42B'}
+    - name: Deep orange
+      colors:
+      - {name: Secondary 500, color: '#FF5722'}
+      - {name: Secondary 700, color: '#E64A19'}
+    - name: Brown
+      colors:
+      - {name: Secondary 500, color: '#795548'}
+      - {name: Secondary 700, color: '#5D4037'}
+    - name: Grey
+      colors:
+      - {name: Secondary 500, color: '#9E9E9E'}
+      - {name: Secondary 700, color: '#616161'}
+  colors:
+  - {name: Primary 500, color: '#2196F3'}
+  - {name: Primary 700, color: '#1976D2'}
+  - {name: Secondary 500, color: '#FF9800'}
+  - {name: Secondary 700, color: '#F57C00'}
+  - {name: White, color: '#FFFFFF'}
+  - {name: Gray 50, color: '#FAFAFA'}
+  - {name: Gray 100, color: '#F5F5F5'}
+  - {name: Gray 200, color: '#EEEEEE'}
+  - {name: Gray 300, color: '#E0E0E0'}
+  - {name: Gray 600, color: '#757575'}
+  - {name: Gray 800, color: '#424242'}
+  - {name: Gray 900, color: '#212121'}
+  - {name: Black, color: '#000000'}
+

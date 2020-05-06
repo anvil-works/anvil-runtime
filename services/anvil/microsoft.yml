@@ -1,0 +1,20 @@
+name: Microsoft API
+prelude: "import anvil.microsoft.auth"
+preload_module: "anvil.microsoft"
+path_whitelist:
+  - microsoft/__init__.py
+  - microsoft/auth.js
+  - microsoft/auth.py
+server_config_properties:
+  - name: application_id
+    type: string
+    description: The Microsoft Application ID for this app.
+  - name: application_secret
+    type: string
+    description: The Microsoft Application Secret for this app.
+  - name: tenant_id
+    type: string
+    description: The tenant ID of this app, or "organizations" for a multi-tenant app
+  - name: additional_oauth_scopes
+    type: string
+    description: Any additional OAuth Scopes to request when logging in with Microsoft, separated by spaces.

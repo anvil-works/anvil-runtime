@@ -1,0 +1,669 @@
+id: data_tables
+docs_url: /docs/data-tables
+title: Data Tables Service
+description: |
+  <div class="tutorial-link">Tutorial: Data Tables walkthrough<br><a href="/blog/storing-data"><i class="fa fa-play"></i> Play video</a></div>
+
+  The Data Tables service stores tables of information for your Anvil app. You can think of them a bit like spreadsheets.
+
+  To add Data Tables to your app, first add the Data Tables service in the [app browser](#app_browser).
+  
+  <img src="img/add_service.png" style="border: 1px solid #ccc; margin: 10px 0;">
+
+
+
+
+includes: [data_tables_edit, data_tables_types, data_tables_permissions,sharing_data_tables,data_tables_api,data_tables_views, data_tables_indexing, data_tables_sql]
+popup_includes: [data_tables_api]
+---
+id: data_tables_edit
+docs_url: /docs/data-tables#editing-data-tables-in-the-ide
+title: Editing Data Tables in the IDE
+description: |
+  From the Data Tables page, you can create a new, empty table, or you can add tables from any of your other apps.
+
+  Each table has its own columns. For example, if we are making a table of people for our organisation, we might
+  have columns for name, age and employment status. Each row in the table represents an item - in this case, a person.
+
+  Here's an example table, as it looks in the app editor:
+
+  ![An example table](img/tables_people.png)
+
+  Each column has a type of value that it can contain. For example, the *Name* column is always a string, *Age* is always
+  a number, and *Employed* is a boolean value (either True or False). Any column can also be empty (`None` in Python).
+
+  Click to edit any data in the table (just like a spreadsheet). To add a new row, click in the blank row at the bottom of the
+  table, and start typing! You can add more columns with the <i class="fa fa-plus"></i> button.
+
+  To change a table's title, click on it (in the tabs at the top). Each table also has a **Python name** you can use to
+  refer to it in your code. Editing the table's title does not affect the Python name, and vice versa. (If multiple apps share a
+  table, they may all have different Python names for it, but you will see the same title for the table in each app.)
+
+  If you delete your app, its tables will be deleted as well (if no other apps are using it).
+
+
+---
+id: data_tables_types
+docs_url: /docs/data-tables#column-types
+tooltip: Click to learn about Data Table Types
+title: Data Types
+description: |
+  All columns of a data table have fixed types. You choose the type of a column when it is created or, if it does not already exist, when a value is first set using `add_row`. The available types are listed below, along with their corresponding python types.
+
+  \* **Text** - A Python `str`
+  \* **Number** - Any Python number
+  \* **True/False** - A Python boolean, `True` or `False`
+  \* **Date** - A Python `datetime.date`
+  \* **Date and Time** - A Python `datetime.datetime`
+  \* **Simple Object** - Can hold Python strings, numbers, dicts or lists
+  \* **Media** - Binary data (a [Media object](#media))
+  \* **Link** - A row (or list of rows) from another table
+
+
+---
+id: data_tables_permissions
+docs_url: /docs/data-tables/data-security#permissions
+tooltip: Click to learn about Data Table permissions
+title: Permissions
+description: |
+  Without the Share link for your app, nobody can access your app's tables.
+
+  But often, even people with the share link should not be able to see or edit all of your app's data. So we can restrict access each data table:
+
+  ![Table permissions](img/tables_permissions.png)
+
+  Because the code for Forms executes in the user's browser, it is under the user's control. A determined attacker can access anything that
+  your Forms are allowed to access.
+
+  Therefore, by default, your Forms are not given any access to your data tables. You can instead access the data by writing
+  [server modules](#server_modules) and exposing [views](#data_tables_views).
+
+  Server modules are *not* under the user's control. So you can trust them, eg, not to return table data to unauthorised users.
+
+  You can return table rows (or `search()` results) from server module functions. The (client-side) Form code will be able to read them,
+  but not update them. If you pass a row object into a server function, the server module can update it.
+
+  #### Relaxing permissions
+
+  You may want to relax these restrictions. For example, if your app is a blog, it's OK for every visitor to be able to view your blog
+  posts (but not edit them). Or if you will only send the Share link to a small group of co-workers, it's OK that they can all edit your data.
+
+  You can choose from three levels of permission, for either Forms or server modules:
+
+   <i class="fa fa-ban"></i> <b>No access</b><br>
+   Your code will not be able to search, update, or edit the table. If it gets a row from this table (eg returned
+   from a server function), it can read that row and any linked rows. But it cannot update or delete that row.
+
+   <i class="fa fa-eye"></i> <b>Can search table</b><br>
+   Your code can call `search()` and `get()` on this table, and read all the data in its rows (and linked rows). However, it cannot add new
+   rows, or update or delete existing rows.
+
+   <i class="fa fa-pencil"></i> <b>Can search, edit and delete</b><br>
+   Your code can perform any operation on this table.
+
+
+  #### More notes
+
+   \* You can also restrict what server modules can do. For example, you can make the table read-only for your app by making sure
+      even server modules can't write to the table.
+
+   \* If multiple apps share the same table, the permissions are per-app. This means you can, eg, have one app for displaying data
+      to the public (with **Can search** permissions), and one app for updating your data (with **Can edit and delete** permissions -
+      you'll want to keep this one's Share link secret!).
+
+   \* [Uplink](#uplink) code can do everything that server modules can. This includes accessing and updating tables.
+
+
+---
+id: data_tables_api
+docs_url: /docs/data-tables/data-tables-in-code
+title: Using Data Tables in Python
+description: |
+    #### Adding Data
+
+
+    ```python
+    from anvil.tables import app_tables
+
+    app_tables.people.add_row(Name="Jane Smith",
+                              Age=7,
+                              Employed=False)
+    ```
+
+    You can add a new row to a data table with the `add_row()` method.
+
+    Use keyword arguments to specify the value for each column. If you name a column that does not exist, a new column will be created.
+
+    Remember that in Python, `"Name"` and `"name"` are two different strings, and they will create two different columns if you mix them up.
+
+    #### Row Objects
+
+    ```python
+    james_row = app_tables.people.add_row(Name="James Smith")
+    james_row["Age"] = 12
+    ```
+
+    The `add_row()` method returns a row object, which you can use to get or set column values.
+
+    <div style="clear:both"></div>
+
+    #### Searching (querying) a Table
+
+    ```python
+    for row in app_tables.people.search():
+      print "%s is %d years old" % (row["Name"], row["Age"])
+    ```
+
+    You can list the contents of a table with the `search()` method.
+
+
+    ```python
+    people_called_dave = app_tables.people.search(Name="Dave")
+    ```
+    Use keyword arguments to search for a particular value in a particular column.
+
+    ```python
+    import anvil.tables.query as q
+
+    people_over_50 = app_tables.people.search(Age=q.greater_than(50))
+
+    from datetime import date
+    late_projects = app_tables.projects.search(Complete=False, Due_Date=q.less_than(date.today()))
+    ```
+
+    Use the Query Operators from the `anvil.tables.query` module to perform more complex searches.
+
+    The following query functions are available. These can only be used as values of keyword arguments to match column values:
+
+    \* **<code>between(*min*, *max*, [*min_inclusive*=True], [*max_inclusive*=False])</code>** - Match values between ***`min`*** and ***`max`***. By default, ***`min`*** is inclusive and ***`max`*** is exclusive. This can be changed by supplying alternative values as keyword arguments.
+    \* **<code>full_text_match(*pattern*, [*raw*=False])</code>** - By default, matches values which contain all the words in ***`pattern`***, ignoring the particular form of the word (E.g. 'Walk', 'walk', 'walked' and 'walking' will all match one another). For more control, set ***`raw`*** to `True`, then provide a full [PostgreSQL `tsquery` pattern](https://www.postgresql.org/docs/10/datatype-textsearch.html#DATATYPE-TSQUERY). Ignores [very common words](/kb/full-text-search-ignored-words).
+    \* **<code>greater_than(*value*)</code>** - Matches any values greater than ***`value`***.
+    \* **<code>greater_than_or_equal_to(*value*)</code>** - Matches any values greater than or equal to ***`value`***.
+    \* **<code>ilike(*pattern*)</code>** - Provides case-insensitive string matching using the [PostgreSQL pattern-matching syntax](https://www.postgresql.org/docs/10/functions-matching.html#FUNCTIONS-LIKE).
+    \* **<code>less_than(*value*)</code>** - Matches any values less than ***`value`***.
+    \* **<code>less_than_or_equal_to(*value*)</code>** - Matches any values less than or equal to ***`value`***.
+    \* **<code>like(*pattern*)</code>** - Provides case-sensitive string matching using the [PostgreSQL pattern-matching syntax](https://www.postgresql.org/docs/10/functions-matching.html#FUNCTIONS-LIKE).
+
+    ```python
+    # Find anyone called Dave or Brian
+    x = app_tables.people.search(Name=q.any_of("Dave", "Brian"))
+
+    # Find anyone not called Steve or John
+    x = app_tables.people.search(Name=q.none_of("Steve", "John"))
+    ```
+
+    The `any_of`, `all_of` and `none_of` functions let you build up arbitrary expressions. When used as values for keyword arguments, the arguments to these functions should also be values, as in the example on the right.
+
+    ```python
+    # Find anyone called Dave *or* 35 years old.
+    y = app_tables.people.search(q.any_of(Name="Dave", Age=35))
+
+    # Find anyone less than 20 or more than 30 years old
+    x = app_tables.people.search(Age=q.any_of(q.less_than(20), q.greater_than(30)))
+
+    # Find anyone who is 35 years old, or 34 and called Dave or Brian
+    z = app_tables.people.search(q.any_of(q.all_of(Age=34, Name=q.any_of("Dave", "Brian")), Age=35))
+    ```
+    Alternatively, when used as positional arguments, the `any_of`, `all_of` and `none_of` functions allow you to build up arbitrarily complex nested search expressions.
+
+    ```python
+    oldest_first = app_tables.people.search(tables.order_by("Age", ascending=False))
+    ```
+
+    Pass in extra positional arguments to customise the search. For example, use `tables.order_by()` to sort the rows returned. This takes the name of the column to sort by, and a keyword argument `ascending`, which defaults to `True`.
+
+    ```python
+    ten_oldest = app_tables.people.search(tables.order_by("Age", ascending=False))[:10]
+    ```
+
+    Slice a table search to return just a portion of the results.
+
+    `search()` returns a _search object_, which is a iterable - you can use it in a `for` loop or a list comprehension. If your search returns lots of results, Anvil only loads a few at a time.
+
+    ```python
+    print "There are %d people" % len(app_tables.people.search())
+    ```
+    
+    You can call `len()` on a search object to efficiently find out how many rows it would return (without loading them all!).
+
+    ```python
+    # Make a Python list from this search
+    people = list(app_tables.people.search(tables.order_by("Name")))
+
+    first_person = people[0]
+    print "First alphabetical name: %s" % first_person['Name']
+    ```
+    
+    If you want to access the returned rows by index, you can use the `list()` function to turn a search object into a Python list. Be careful when doing this with searches that return large numbers of rows - it will load them all and return the full list.
+
+    ```python
+    # Make a Python list from this search
+
+    for person in app_tables.people.search(tables.order_by("Name")):
+      break
+    else:
+      print("No people found")
+
+    print "First alphabetical name: %s" % person['Name']
+    ```
+
+    A safer and faster way to do the same thing would be to iterate through the results, but `break` after the first.
+
+    ```python
+    # Print the names of all the adults:
+
+    adult_names = " and ".join([p['Name'] for p in app_tables.people.search(Age=q.greater_than_or_equal_to(18))])
+
+    print adult_names
+    # ^^ Prints "Tom and Dick and Harry"
+    ```
+    You can use Python's normal sequence operations to work with search results.
+
+    <div style="clear:both"></div>
+
+    See the [Querying Data Tables cookbook](/blog/querying-data-tables) for more examples.
+
+    <div style="clear:both"></div>
+
+    #### Getting One Row from a Table
+
+    ```python
+    zaphod_row = app_tables.people.get(name="Zaphod Beeblebrox")
+    ```
+    Sometimes, you only want a single row. The `get()` method returns a single row that matches the arguments (which are the same as those for the `search` method), or `None` if no such row exists. If more than one row matches, it raises an exception.
+
+    ```python
+    zaphod_row = (app_tables.people.get(name="Zaphod Beeblebrox")
+                   or app_tables.people.add_row(name="Zaphod Beeblebrox", age=42))
+    ```
+    You can use this neat trick to fetch a row if it exists, or create a new one if it does not.
+
+    Because `get()` returns `None` if a row does not exist, we use "short circuiting" of the `or` operator to make sure we only run the `add_row()` if no such row already exists.
+
+
+    #### Updating and Deleting Rows
+
+    ```python
+    # Increase Jane Smith's age (from 7 to 8)
+    jane_row = app_tables.people.get(Name="Jane Smith"):
+    jane_row["Age"] += 1
+    ```
+    You can set new values for a row. This updates the database, not just the data on the client side.
+
+    ```python
+    # Set Jane Smith's age to 9
+    jane_row.update(Age=9, Name="Jane E. Smith")
+    ```
+
+    You can set the value of multiple columns at once by calling the `update()` method on a row. Again, this updates the database.
+
+    ```python
+    # Remove Jane Smith from the table
+    jane_row = app_tables.people.get(Name="Jane E. Smith"):
+    if jane_row is not None:
+      jane_row.delete()
+    ```
+
+    You can also delete a row by calling its `delete()` method. The row is removed from the database.
+
+    ```python
+    # Delete all rows in the table
+    app_tables.people.delete_all_rows()
+    ```
+    
+    You can delete all rows in a table by calling the table's `delete_all_rows()` method. All data is cleared from the database for this table!
+
+    <div style="clear:both"></div>
+
+    #### Links Between Tables
+
+    ```python
+    # Get Jane Smith's row from the table
+    jane_smith = app_tables.people.get(Name="Jane Smith")
+
+    # Add a row to the 'notes' table, referencing her
+    n = app_tables.notes.add_row(Person=jane_smith,
+                                 Text="Jane is a good kid")
+
+    # Print the name of the person this note is linked to
+    # (prints "Jane Smith")
+    print n["Person"]["Name"]
+
+    # Search by reference to a row. Eg,
+    # How many notes do we have about Jane?
+    janes_notes = app_tables.notes.search(Person=jane_smith)
+    print "There are %d notes about Jane." % len(janes_notes)
+    ```
+
+    You can store a reference to one table in another table, using a link column. In this example, we have a `people` table, and a `notes` table containing notes about a person. The `notes` table has a "Person" column, which links to a row from the `people` table.
+
+    Once we have a row object representing Jane Smith's row in the `people` table, we can add a new row to the `notes` table that refers to her, by passing that row object into `add_row()`. We can also search for all notes that refer to this person, by passing her row object into `search()`.
+
+    Note that we use the `len()` function here - `len()` runs very efficiently over search iterators.
+
+    ```python
+    zaphod = app_tables.people.get(Name="Zaphod Beeblebrox")
+
+    zaphod["Friends"] = [jane_smith, john_smith]
+    ```
+
+    You can also create columns that link to multiple rows from another table. In this example, the "Friends" column links to multiple rows from the "People" table. We set it to a list of row objects.
+
+    ```python
+    friends_of_jane = app_tables.people.search(Friends=[jane_smith])
+
+    mutual_friends = app_tables.people.search(Friends=[jane_smith, john_smith])
+    ```
+    You can search using a "link to multiple rows" column. If you pass a list of row objects to `search()`, it will return only rows that link to all of those rows. (If you specify multiple rows, the order doesn't matter - it matches anything that links to both of them.)
+
+    <div style="clear:both"></div>
+
+    #### Searching Simple Objects
+
+    A Simple Object column can store strings, numbers, `None`, lists of any simple object, and dictionaries whose keys are strings and whose values are any simple object. (In other words, it's the values that can be represented as JSON.)
+
+    ```python
+    # This finds all rows where object_col is a
+    # dict and contains a key 'the_answer' with
+    # the value '42' - no matter what other keys
+    # are in the dict.
+    r = app_tables.my_table.search(object_col={'the_answer': 42})
+    ```
+
+    When you search on a Simple Object column, you search by object specifying an object pattern. The rules are:
+
+    \* If you specify a dictionary, all specified keys must be present in the column, and all values must match the pattern specified in the dictionary.
+
+    \* If you specify a list, the object you're matching must be a list, and it must contain elements matching all elements you specify. Order doesn't matter, though, so if you specify `[1,3]` as your search you will match a column containing `[3,2,1]`.
+
+    \* If you specify a string, number or `None` (a "primitive value"), the object you're matching must be exactly the same, **or** be a list containing that primitive value.
+
+    (The Simple Object search semantics are derived directly from the Postgres [JSON containment](https://www.postgresql.org/docs/9.5/static/datatype-json.html#JSON-CONTAINMENT) rules.)
+
+    #### Updating Multiple Links and Simple Objects
+
+    ```python
+    zaphod = app_tables.people.get(Name="Zaphod Beeblebrox")
+    ford_prefect = app_tables.people.get(Name="Ford Prefect")
+
+    zaphod["Friends"] += [ford_prefect]
+    ```
+    Values in Multiple Link columns are represented as lists in Python. Lists from Simple Objects are also Python lists.
+
+    To add a new item to a Multiple Link or a Simple Object, use the `+=` operator.
+
+    ```python
+    zaphod = app_tables.people.get(Name="Zaphod Beeblebrox")
+    ford_prefect = app_tables.people.get(Name="Ford Prefect")
+
+    zaphod["Friends"] = [r for r in zaphod['Friends'] if r != ford_prefect]
+    ```
+
+    To remove rows, remove the item from the list and re-assign it using the `=` operator.
+
+    NB: the `append` operator will not update the database, it will simply update the list in-memory. You must use
+    assignment (`=`) if you want to update the database.
+
+    #### Row IDs
+
+    ```python
+    # 'jane_smith' is a Row object from the 'people' table
+    janes_id = jane_smith.get_id()
+
+    r = app_tables.people.get_by_id(janes_id)
+
+    # r and jane_smith are equal, as they both
+    # point to the same row.
+    # (jane_smith == r)
+    ```
+
+    Each row of each table has unique ID, which is a string. You can get the ID of any row, and use it to retrieve that row later.
+
+    This is useful if you want to store a reference to a table row somewhere else (for example, in a file).
+
+    \**Note: If you just want to refer to one row in a data table from another row in a data table, don't mess with IDs -- use link columns instead!**
+
+    <div style="clear:both"></div>
+
+    #### CSV export
+    ```python
+    # In a Form:
+    self.link_1.url = app_tables.people.search().to_csv().url
+    ```
+
+    If you want to provide a download from a data table, you can call `to_csv()` to obtain a downloadable [Media object](#media) from any `search()`.
+
+    ```python
+    janes_notes = app_tables.notes.client_readable(person=jane_smith)
+    self.link_1.url = janes_notes.search().to_csv().url
+    ```
+
+    You can also call `to_csv()` on table views. This can be used to provide downloads of only certain columns of a data table.
+
+    <div style="clear:both"></div>
+
+    #### Transactions
+
+    ```python
+    # Server code only
+    import anvil.tables
+
+    @anvil.server.callable
+    @anvil.tables.in_transaction
+    def do_update():
+      jane_smith = app_tables.people.get(Name="Jane Smith")
+      jane_smith['age'] = 21
+      app_tables.notes.add(Person=jane_smith,
+                           Text="She's really grown up")
+    ```
+    If multiple users are accessing data at the same time, you might want to place it in a *transaction*. All table accesses within a transaction will only become visible when the transaction completes. Even if they're happening at the same time, it's as if every transaction block was executing one after another.
+
+    If an exception is raised before that happens, all changes are discarded. If two transactions *conflict* - that is, they've written to the same row of a data table, or one transaction writes into a row another is reading from - one or both of them will be aborted.
+
+    The easiest way to run an operation in a transaction is to call a function decorated with `@anvil.tables.in_transaction`. If an `@anvil.tables.in_transaction` function aborts due to conflict, it will automatically be tried again (after a short timeout) up to 5 times before throwing an exception.
+
+    Transactions are only available from server code (server modules and the Uplink).
+
+    (Database expert note: Anvil provides full serialisable transaction isolation.)
+
+
+
+    ```python
+    import anvil.tables
+
+    with anvil.tables.Transaction() as txn:
+      jane_smith = app_tables.people.get(Name="Jane Smith")
+      jane_smith['age'] += 10
+    ```
+
+    You can also create transactions by creating a `with anvil.tables.Transaction():` block. This will *not* automatically retry conflicting transations: If a transaction is aborted because of a conflict, a `tables.TransactionConflict` exception is thrown. You can also abort a transaction manually by calling `txn.abort()`.
+
+    If you observe a `TransactionConflict`, it is generally safe to retry. You could write a loop that detects a conflict and tries again, but this is such a common pattern that it is usually preferable to use `@anvil.tables.in_transaction` (which retries the transaction automatically, up to 5 times, before throwing the `TransactionConflict` as normal.)
+
+    You can specify `@anvil.tables.in_transaction` after `@anvil.server.callable` to make a [server function](#server_modules) transactional. Make sure to specify `@anvil.tables.in_transaction` *after* `@anvil.server.callable`. Python applies function decorators from "inside" to "outside", and you want the `in_transaction` decorator applied *before* you make the function callable.)
+
+    <div style="clear:both"></div>
+
+    \*Some more notes:*
+
+    \* The `search()` method returns an iterable Python object, not a list. This is so, if your search returns a lot of rows, you don't have to
+       fetch them all before you can start processing them. If you want a list, pass the search result to Python's `list()` function.
+
+    <!--\* If you want to get a `dict` with all the column values in your row (for example, to print out when debugging), you can just call `dict(row)`.-->
+
+    \* You can list all the columns in a Data Table by calling `list_columns()` on the table object. This returns a list of strings.
+
+
+---
+id: data_tables_views
+docs_url: /docs/data-tables/data-security#views
+title: Exposing Data Tables to Client Code
+description: |
+  <div class="tutorial-link">Tutorial: Multi-User Apps with Data Tables<br><a href="/blog/advanced-data-storage"><i class="fa fa-play"></i> Play video</a></div>
+
+  If you don't want to give every visitor access to a data table, you'll want to use [server modules](#server_modules) to control access to them. Server modules can return **views** on a data table to client code, with extra permissions or restrictions.
+
+  Data tables have three view methods, which offer the client code different levels of access:
+
+  \* `client_readable()` allows the client to read this table, and any rows linked to from rows in this table.
+  \* `client_writable()` allows the client to update rows in this table, and add new rows. Client code can also read any linked rows.
+  \* `client_writable_cascade()` allows the client to write to this table, and update any rows linked to in this table.
+
+  A table view is just like a table - you can call `search()`, `add_row()`, and so on on it.
+
+  ```python
+  @anvil.server.callable
+  def get_data():
+    if user_is_authorised():
+      return app_tables.my_table.client_writable()
+  ```
+  This is a simple example: This server function returns a `client_writable` view on this table, but only for authorised users.
+
+  This pattern can be used to implement simple applications where all users must log in, but any logged-in user may access all the data in a table.
+
+  ```python
+  @anvil.server.callable
+  def get_data_for_logged_in_user():
+    email = anvil.google.auth.get_user_email()
+    if email is not None:
+      return app_tables.my_table.client_writable(owner = email)
+  ```
+  View methods can also take keyword parameters, just like the `search()` function. This returns a *restricted view*, that only contains matching rows. In this case, we use [Google authentication](#google) to return a view that can only access rows whose `owner` column matches the email address of the current logged-in user. (If no user is logged in, it returns `None`.)
+
+  <img src="/img/videothumbs/advanced-data-storage.png">
+
+  ```python
+  my_data = anvil.server.call('get_data_for_logged_in_user')
+
+  # This adds a row with a message and my email address
+  my_data.add_row(message = "Hello, world!")
+
+  # This raises an error, because the 'email'
+  # column is fixed by the view, and we cannot
+  # override it.
+  my_data.add_row(email = "bob@example.com",
+                  message = "Hello!")
+  ```
+  If you call `add_row` on a restricted view, the fixed columns (`email` in this example) are filled in automatically. If you attempt to specify a fixed column in `add_row()`, the request will fail.
+
+  In this example, this means that any row a user adds to this table will always have their email address attached to it.
+
+
+  ```python
+  # This also raises an error, because fixed
+  # columns are not accessible from code:
+  for row in my_data.search():
+    # Raises an error:
+    print row['email']
+  ```
+  Fixed columns are not accessible in code. This means that the client does not gain read or write access to rows referenced in a fixed column.
+
+  Columns cannot be automatically added to a restricted view.
+
+---
+id: sharing_data_tables
+docs_url: /docs/data-tables#sharing-data-tables-between-apps
+title: Sharing Data Tables Between Apps
+description: |
+  Data Tables can be shared between apps. When you click the '+' button in the Data Tables Service, you will be given a list
+  of tables from your apps to add to the current app.
+
+  ![Adding tables from other apps](img/screenshots/tables-from-other-apps.png)
+
+  Modifications to the table data and schema made in one app will be available from the other apps that use it.
+
+  Table permissions are on a per-app basis: if you make a table client-writable in one app, other apps that use it
+  will not be affected. The 'Python name' of a table is also per-app.
+
+  A table that is included in several apps will only be deleted when it is removed from all apps that use it.
+
+---
+id: data_tables_indexing
+docs_url: /docs/data-tables/indexing-and-sql
+title: Data Table Indexing
+description: |
+  Data in Anvil Data Tables is fully indexed for simple equality searches (e.g. `name="Brian"`) using a GIN Index by default. Users on the Dedicated Server plan and above have the option to add further indexes on particular Data Table columns to speed up more advanced queries using [operators in the `anvil.tables.query` namespace](#data_tables_api).
+
+includes: [tables_index_b_tree, tables_index_trigram, tables_index_full_text]
+
+---
+id: tables_index_b_tree
+docs_url: /docs/data-tables/indexing-and-sql#index-types
+title: Range Queries
+tooltip: Creates a B-Tree index on this column, for use by 'greater_than', 'less_than' and 'between' searches.
+description: |
+  Optimising a Data Table column for range queries adds a B-Tree index to the data in that column. Range queries include:
+  \* `less_than` and `greater_than` queries: E.g. `due_date=q.less_than(date.today())`
+  \* `between` queries: E.g. `age=q.between(30,45)`
+
+---
+id: tables_index_trigram
+docs_url: /docs/data-tables/indexing-and-sql#index-types
+title: Pattern Matching
+tooltip: Creates a Trigram index on this column, for use by 'like' and 'ilike' searches.
+description: |
+  Optimising a Data Table column for pattern matching adds a Trigram index to the data in that column. This allows `like` and `ilike` searches to run much faster on large tables.
+
+---
+id: tables_index_full_text
+docs_url: /docs/data-tables/indexing-and-sql#index-types
+title: Full-Text Search
+tooltip: Creates a Full-Text index on this column, for use by 'full_text_match' searches.
+description: |
+  Optimising a Data Table column for full-text queries adds a Full-Text index to the data in that column. This allows `full_text_match` searches to run much faster on large tables.
+
+
+---
+id: data_tables_sql
+docs_url: /docs/data-tables/indexing-and-sql#running-sql-on-your-data-tables
+title: Data Tables and SQL
+description: |
+  Developers more familiar with traditional database systems may prefer to access their data using SQL (a specialised database query language).
+
+  Users on Dedicated Hosting or Enterprise plans can access the data in their Data Tables using SQL directly. To get started, contact [support@anvil.works](mailto:support@anvil.works) to get your dedicated database credentials.
+
+  ```python
+  # Assuming your password is stored in the Anvil Secrets Service as 'db_pw'
+
+  import psycopg2
+  conn = psycopg2.connect("""host=anvil-db 
+                             port=5432 
+                             user=anvil 
+                             dbname=anvil 
+                             password=%s""" % anvil.secrets.get_secret('db_pw'))
+  cur = conn.cursor()
+  cur.execute("SELECT * FROM data_tables.table_4851")
+  ...
+
+  ```
+  Anvil Data Tables are stored in PostgreSQL, and you have access to _writeable views_ of these tables through SQL. Every table created in your account can be accessed through the `data_tables` schema in the database. The example on the right shows a typical query for a table with ID 4851.
+
+  ```python
+  conn = psycopg2.connect("""host=anvil-db 
+                             port=5432 
+                             user=anvil 
+                             dbname=anvil 
+                             password=%s 
+                             options='-c search_path=data_tables'""" % anvil.secrets.get_secret('db_pw'))
+  cur = conn.cursor()
+  cur.execute("SELECT * FROM table_4851")
+  ...
+
+  ```
+
+  You can also choose to set the default schema to `'data_tables'` to simplify your queries, as in the example on the right.
+
+  Every row in these views has an `_id` column, which is a unique identifier for the row. Columns that link to other tables show the ID of the linked row, so you can use standard `JOIN` queries if you wish.
+
+  <div style="clear:both"></div>
+
+  The `data_tables.*` views are writeable, meaning you can update the data in your tables in the usual way with `INSERT`, `UPDATE` and `DELETE` queries. Note that you cannot update Media objects or links between tables via SQL right now - you must use the [Python APIs](#data_tables_api) for that.
+
+
+  In order to prevent malformed queries from harming performance or security for other users, we do not permit users to execute SQL queries against data tables for apps hosted on our shared hosting plans. If you are used to using SQL, there are three options available:
+
+  1. **Use our [Python APIs](#data_tables_api).** It is often sufficient to use Python list comprehensions instead of complicated `SELECT` statements.
+
+  2. **Connect to an existing, external database.** Anvil's Full Python runtimes provide [many modules](#python_packages), including libraries for connecting to popular databases such as PostgreSQL, MySQL, MongoDB, Microsoft SQL Server, and Oracle. If you require a driver for an external database we don't support yet, please email [contact@anvil.works](mailto:contact@anvil.works) and we can usually get it installed within 24 hours.
+
+  3. **Purchase a dedicated or on-site installation of Anvil.** With a dedicated or private installation, you will receive full SQL access to all of your data tables. Please email [sales@anvil.works](mailto:sales@anvil.works) for more details.

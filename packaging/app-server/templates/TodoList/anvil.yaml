@@ -1,0 +1,27 @@
+dependencies: []
+services:
+- source: /runtime/services/tables.yml
+  client_config: {}
+  server_config: {auto_create_missing_columns: true}
+package_name: MyCRUDApp
+allow_embedding: false
+name: My CRUD App
+runtime_options: {version: 2, client_version: '3', server_version: python3-sandbox}
+metadata: {}
+startup_form: Form1
+db_schema:
+- name: tasks
+  id: 12345
+  python_name: tasks
+  columns:
+    E9e2ASS2uyU=:
+      name: name
+      type: string
+      admin_ui: {order: 0, width: 200}
+    Lk958fQHwJ0=:
+      name: complete
+      type: bool
+      admin_ui: {order: 0, width: 200}
+  access: {python_name: tasks, app_id: MyCRUDApp, server: full, client: none,
+    table_id: 12345}
+renamed: true

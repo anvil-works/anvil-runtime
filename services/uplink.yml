@@ -1,0 +1,8 @@
+name: Anvil Uplink
+path_whitelist:
+  - uplink.py
+client_config_properties: []
+server_config_properties:
+  - name: key
+    type: string
+    description: The uplink key for this app

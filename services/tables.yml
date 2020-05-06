@@ -1,0 +1,10 @@
+name: Data Tables
+prelude: "import anvil.tables as tables\nimport anvil.tables.query as q\nfrom anvil.tables import app_tables"
+oldPreludes:
+  - "import tables\nfrom tables import app_tables"
+path_whitelist:
+  - tables/__init__.py
+  - anvil/tables/__init__.py
+  - anvil/tables/query.py
+client_config_properties: []
+server_config_properties: []

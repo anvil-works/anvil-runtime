@@ -1,0 +1,39 @@
+name: Users
+prelude: "import anvil.users"
+preload_module: anvil.users
+path_whitelist:
+  - users.py
+client_config_properties:
+  - name: allow_signup
+    type: boolean
+    defaultValue: true
+    description: Allow anyone to sign up for a new account
+  - name: enable_automatically
+    type: boolean
+    defaultValue: true
+    description: New user accounts are enabled automatically (no approval needed)
+  - name: use_email
+    type: boolean
+    defaultValue: true
+    description: Allow users to authenticate with a password
+  - name: confirm_email
+    type: boolean
+    defaultValue: true
+    description: Require users to click a confirmation link in their email before logging in
+  - name: use_google
+    type: boolean
+    description: Allow users to authenticate with Google
+  - name: use_facebook
+    type: boolean
+    description: Allow users to authenticate with Facebook
+  - name: use_microsoft
+    type: boolean
+    description: Allow users to authenticate with Microsoft
+  - name: use_raven
+    type: boolean
+    description: Allow users to authenticate with Raven
+server_config_properties:
+  - name: user_table
+    type: number
+    description: The ID of the table in which users are stored
+

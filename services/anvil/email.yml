@@ -1,0 +1,28 @@
+name: Email
+prelude:
+  server: "import anvil.email"
+preload_module: anvil.email
+path_whitelist:
+  - email.py
+server_config_properties:
+  - name: custom_smtp
+    type: boolean
+    description: Whether to use custom SMTP configuration
+  - name: test_mode
+    type: boolean
+    description: Reroute all outgoing emails to the app owner to allow testing
+  - name: smtp_encryption
+    type: string
+    description: Can be "", "ssl" or "starttls"
+  - name: smtp_host
+    type: string
+    description: The host name of your SMTP server for outgoing mail
+  - name: smtp_port
+    type: number
+    description: The port number on which to connect to your SMTP server for outgoing mail
+  - name: smtp_user
+    type: string
+    description: The username for connecting to your SMTP server
+  - name: smtp_password
+    type: string
+    description: The password for connecting to your SMTP server
