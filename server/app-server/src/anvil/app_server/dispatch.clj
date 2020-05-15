@@ -21,7 +21,7 @@
                  (fn []
                    (while (not @shutting-down?)
                      (log/info "Launching built-in downlink...")
-                     (let [pb (ProcessBuilder. #^"[Ljava.lang.String;" (into-array String ["python" "-m" "anvil_downlink_host.run"]))
+                     (let [pb (ProcessBuilder. #^"[Ljava.lang.String;" (into-array String [(or (System/getenv "PYTHON_INTERPRETER") "python") "-m" "anvil_downlink_host.run"]))
                            env (.environment pb)]
                        (.put env "DOWNLINK_SERVER" (str "ws://" server-host ":" server-port "/_/downlink"))
                        (.put env "DOWNLINK_KEY" downlink-key)
@@ -56,6 +56,7 @@
 
 (dispatcher/register-dispatch-handler! ::downlink dispatcher/DOWNLINK-PRIORITY (fn [_req] @downlink))
 
+(defn downlink-connected? [] (boolean @downlink))
 
 (defonce next-uplink-id (atom 0))
 ;; reg-id -> {:func func-pattern, :uplink-id id, :executor executor}

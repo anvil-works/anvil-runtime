@@ -1,25 +1,28 @@
-FROM ubuntu:18.04
+FROM python:3
 
-# This replicates a bug in OpenJDK 11. If you install openjdk-8-jdk, it will work
-RUN apt-get -yyy update && apt-get -yyy install openjdk-11-jdk python python-pip
+RUN apt-get -yyy update && apt-get -yyy install software-properties-common && \
+    wget -O- https://apt.corretto.aws/corretto.key | apt-key add - && \
+    add-apt-repository 'deb https://apt.corretto.aws stable main'
 
-COPY python-package-build /anvil-app-server-bin
+RUN wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && \
+    (dpkg -i google-chrome-stable_current_amd64.deb || apt install -y --fix-broken) && \
+    rm google-chrome-stable_current_amd64.deb 
 
-RUN pip install /anvil-app-server-bin
+
+RUN apt-get -yyy update && apt-get -yyy install java-1.8.0-amazon-corretto-jdk ghostscript
+
+RUN pip install anvil-app-server
+RUN anvil-app-server || true
 
 VOLUME /apps
-
 WORKDIR /apps
 
-ENV APP=MainApplication
+RUN mkdir /anvil-data
 
 RUN useradd anvil
-
+RUN chown -R anvil:anvil /anvil-data
 USER anvil
 
-CMD ["bash", "-c", "anvil-app-server --app $APP"]
+ENTRYPOINT ["anvil-app-server", "--data-dir", "/anvil-data"]
 
-# To run:
-# mkdir ~/tmp/anvil-apps/.anvil-data
-# chown -R 1000 ~/tmp/anvil-apps/.anvil-data
-# docker run --rm -v ~/tmp/anvil-apps:/apps -e APP=Feedbackform container-name
+CMD ["--app", "MainApp"]

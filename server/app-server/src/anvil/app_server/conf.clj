@@ -30,6 +30,8 @@
 
 (def-config-var get-client-uplink-key :client-uplink-key)
 
+(def-config-var is-proxied? :proxied?)
+
 (defn set-config! [conf]
   (reset! config (-> (merge DEFAULTS conf)
                      (update-in [:hostname] #(or % (second (re-matches #".*://([^/:]+).*" (str (:url config)))) "localhost"))

@@ -1092,6 +1092,14 @@ window.loadApp = function(params, preloadModules) {
     var appOrigin = params["appOrigin"];
     if (appLoaded) { console.log("Rejected duplicate app load"); return {}; }
 
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register(`${appOrigin}/_/service-worker`, {scope: `${appOrigin}`})
+        .catch((error) => {
+            console.error('Service worker registration failed:', error);
+        });
+    }
+
+
     var appLoadPromise = loadApp(params["app"], params["appId"], appOrigin, preloadModules);
     appLoaded = true;
 

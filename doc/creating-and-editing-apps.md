@@ -57,7 +57,8 @@ MyApp
 │   └───assets
 │       ├── standard-page.html
 │       └───theme.css
-└── anvil.yaml
+├──  anvil.yaml
+└──  LICENSE
 ```
 
 To learn more about this directory structure and what each of the files is responsible for, see our [app structure guide](app-structure.md).
@@ -65,6 +66,10 @@ To learn more about this directory structure and what each of the files is respo
 ## Edit your app
 
 Once you've launched the web server with the `anvil-app-server` command, you can simply refresh your browser to see changes you make locally - there's no need to restart the web server!
+
+## Licensing
+
+The sample code provided in these template Anvil apps is permissively licensed for anyone to use. See the 'LICENSE' files in each app directory for more information. 
 
 
 

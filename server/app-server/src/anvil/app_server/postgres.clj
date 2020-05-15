@@ -1,7 +1,8 @@
 (ns anvil.app-server.postgres
   (:require [clojure.java.jdbc :as jdbc]
             [clojure.tools.logging :as log]
-            [crypto.random :as random])
+            [crypto.random :as random]
+            clj-logging-config.log4j)
   (:import (java.net ServerSocket BindException URLEncoder)
            (java.io File FileOutputStream)
            (io.zonky.test.db.postgres.embedded EmbeddedPostgres)
@@ -28,68 +29,76 @@ host    all             all             ::1/128                 md5
       (System/exit 1)))
 
 
-  (let [data-dir (File. anvil-data-dir "db")
-        bin-dir (File. anvil-data-dir "db-bin")
-        pg-hba-conf (File. data-dir "pg_hba.conf")
-        log-stdout (File. anvil-data-dir "postgres.log")
-        log-stderr (File. anvil-data-dir "postgres.err")
-        password-file (File. anvil-data-dir "postgres.password")]
+  (try
+    (let [data-dir (File. anvil-data-dir "db")
+          bin-dir (File. anvil-data-dir "db-bin")
+          pg-hba-conf (File. data-dir "pg_hba.conf")
+          log-stdout (File. anvil-data-dir "postgres.log")
+          log-stderr (File. anvil-data-dir "postgres.err")
+          password-file (File. anvil-data-dir "postgres.password")]
 
-    (clj-logging-config.log4j/set-logger! "io.zonky.test.db.postgres.embedded"
-                                          :level :trace
-                                          :out (File. anvil-data-dir "postgres-embedding.log")
-                                          :pattern "[%-5p %c] %m%n")
+      (clj-logging-config.log4j/set-logger! "io.zonky.test.db.postgres.embedded"
+                                            :level :trace
+                                            :out (File. anvil-data-dir "postgres-embedding.log")
+                                            :pattern "[%-5p %c] %m%n")
 
-    (log/info "Launching embedded Postgres database. Find Postgres daemon logs in" (.getPath anvil-data-dir))
+      (log/info "Launching embedded Postgres database. Find Postgres daemon logs in" (.getPath anvil-data-dir))
 
-    (when (.exists (-> anvil-data-dir (File. "db") (File. "postmaster.pid")))
-      (log/info "Found postmaster.pid; attempting to shut down orphaned DB")
+      (when (.exists (-> anvil-data-dir (File. "db") (File. "postmaster.pid")))
+        (log/info "Found postmaster.pid; attempting to shut down orphaned DB")
 
-      ;; Quick and dirty call to "pg_ctl stop"
-      (-> (doto (ProcessBuilder. #^"[Ljava.lang.String;" (into-array String [(str (.getPath (first (.listFiles bin-dir))) "/bin/pg_ctl")
-                                                                             "-D" (.getPath data-dir) "stop" "-m" "fast" "-w" ]))
-            (.redirectError (ProcessBuilder$Redirect/appendTo log-stdout))
-            (.redirectOutput (ProcessBuilder$Redirect/appendTo log-stderr)))
-          (.start)
-          (.waitFor)))
+        ;; Quick and dirty call to "pg_ctl stop"
+        (-> (doto (ProcessBuilder. #^"[Ljava.lang.String;" (into-array String [(str (.getPath (first (.listFiles bin-dir))) "/bin/pg_ctl")
+                                                                               "-D" (.getPath data-dir) "stop" "-m" "fast" "-w"]))
+              (.redirectError (ProcessBuilder$Redirect/appendTo log-stdout))
+              (.redirectOutput (ProcessBuilder$Redirect/appendTo log-stderr)))
+            (.start)
+            (.waitFor)))
 
-    ;; TODO set up some authentication, my goodness.
+      ;; TODO set up some authentication, my goodness.
 
-    (let [pg-config (-> (EmbeddedPostgres/builder)
-                        (.setOutputRedirector (ProcessBuilder$Redirect/appendTo log-stdout))
-                        (.setErrorRedirector (ProcessBuilder$Redirect/appendTo log-stderr))
-                        (.setDataDirectory data-dir)
-                        (.setOverrideWorkingDirectory bin-dir)
-                        (.setCleanDataDirectory false))
+      (let [pg-config (-> (EmbeddedPostgres/builder)
+                          (.setOutputRedirector (ProcessBuilder$Redirect/appendTo log-stdout))
+                          (.setErrorRedirector (ProcessBuilder$Redirect/appendTo log-stderr))
+                          (.setDataDirectory data-dir)
+                          (.setOverrideWorkingDirectory bin-dir)
+                          (.setCleanDataDirectory false))
 
-          ;; By default, this library brings up a DB with no password for the superuser(!)
-          ;; Set a password, then overwrite pg_hba.conf with something more sane.
-          password (if (.exists password-file)
-                     (slurp password-file)
-                     (let [password (random/base32 32)
-                           pg (.start pg-config)]
+            ;; By default, this library brings up a DB with no password for the superuser(!)
+            ;; Set a password, then overwrite pg_hba.conf with something more sane.
+            password (if (.exists password-file)
+                       (slurp password-file)
+                       (let [password (random/base32 32)
+                             pg (.start pg-config)]
 
-                       (log/info "Initialising embedded Postgres database...")
+                         (log/info "Initialising embedded Postgres database...")
 
-                       ;; Yes, command substitution doesn't work here, so we do That Thing You
-                       ;; Should Never Do. Mercifully, we only just generated `password`, and
-                       ;; random/base32 produces only numbers and letters.
-                       (jdbc/execute! {:classname      "org.postgresql.Driver"
-                                       :connection-uri (.getJdbcUrl pg "postgres" "postgres")}
-                                      [(str "ALTER USER postgres WITH PASSWORD '" password "'")])
+                         ;; Yes, command substitution doesn't work here, so we do That Thing You
+                         ;; Should Never Do. Mercifully, we only just generated `password`, and
+                         ;; random/base32 produces only numbers and letters.
+                         (jdbc/execute! {:classname      "org.postgresql.Driver"
+                                         :connection-uri (.getJdbcUrl pg "postgres" "postgres")}
+                                        [(str "ALTER USER postgres WITH PASSWORD '" password "'")])
 
-                       (.close pg)
+                         (.close pg)
 
-                       (with-open [f (FileOutputStream. password-file)]
-                         (.write f (.getBytes password)))
-                       (with-open [f (FileOutputStream. pg-hba-conf)]
-                         (.write f (.getBytes OVERRIDE-PG-HBA-CONF)))
-                       password))
+                         (with-open [f (FileOutputStream. password-file)]
+                           (.write f (.getBytes password)))
+                         (with-open [f (FileOutputStream. pg-hba-conf)]
+                           (.write f (.getBytes OVERRIDE-PG-HBA-CONF)))
+                         password))
 
-          pg-config (.setConnectConfig pg-config "password" password)
+            pg-config (.setConnectConfig pg-config "password" password)
 
-          pg (.start pg-config)]
+            pg (.start pg-config)]
+        ;; Our embedded postgres library
 
-      ;; Our embedded postgres library
-
-      (str (.getJdbcUrl pg "postgres" "postgres") "&password=" (URLEncoder/encode password)))))
+        (str (.getJdbcUrl pg "postgres" "postgres") "&password=" (URLEncoder/encode password))))
+    (catch Exception e
+      (println (str "Failed to start built-in Postgres database: " (str e)
+                    "\nMore logs are available in " (.getPath (File. anvil-data-dir "postgres.log")) "."
+                    "\nSome common causes of this problem:"
+                    "\n - Are you launching this server as 'root' on a UNIX system? "
+                    "\n   Postgres will not run as root; try launching the server as an ordinary user."
+                    "\n - Are you running this server on an unusual architecture or OS? (" (System/getProperty "os.name") "/" (System/getProperty "os.arch") ")"))
+      (System/exit 1))))

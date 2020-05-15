@@ -2,6 +2,7 @@
   (:use org.httpkit.server
         [slingshot.slingshot :only [throw+ try+]])
   (:require
+    [slingshot.slingshot :refer [throw+ try+]]
     [clojure.stacktrace]
     [digest]
     [anvil.util :as util]
@@ -123,7 +124,7 @@
                   (fn [json-or-binary]
                     (when-not @closed
                       (log/trace "Uplink got data: " json-or-binary)
-                      (try
+                      (try+
                         (if-not (string? json-or-binary)
                           (when @app-id
                             (serialisation/processBlob @ds json-or-binary))
@@ -191,7 +192,7 @@
 
                                     (swap! my-fn-registrations conj (set-uplink-handler! @connection-cookie (re-pattern (:name raw-data)) handler)))
                                   (catch PatternSyntaxException _e
-                                    (send channel "{\"error\": \"Invalid function name specification\"}")
+                                    (send! channel "{\"error\": \"Invalid function name specification\"}")
                                     (log/info "Closing uplink channel: Invalid function spec")
                                     (close channel))))
 
@@ -251,7 +252,10 @@
                                 (when-let [p (@pending-responses (:id raw-data))]
                                   (ws-utils/process-update-from-ws (:return-path p) raw-data))))))
 
-
+                        (catch :anvil/server-error e
+                          (send! channel (util/write-json-str {:error (:anvil/server-error e)}))
+                          (log/info "Closing uplink channel:" (:anvil/server-error e))
+                          (close channel))
                         (catch Exception e
                           (let [error-id (random/hex 6)]
                             (log/error e "Error processing message from uplink. Internal server error:" error-id)

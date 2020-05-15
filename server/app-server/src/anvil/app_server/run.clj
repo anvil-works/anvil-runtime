@@ -77,7 +77,7 @@
   (doto (Thread. ^Runnable
                  (fn []
                    (log/info "Launching interactive Python shell...")
-                   (let [pb (ProcessBuilder. #^"[Ljava.lang.String;" (into-array String ["python" "-m" "anvil_app_server.shell"]))]
+                   (let [pb (ProcessBuilder. #^"[Ljava.lang.String;" (into-array String [(or (System/getenv "PYTHON_INTERPRETER") "python") "-m" "anvil_app_server.shell"]))]
                      (doto (.environment pb)
                        (.put "ANVIL_UPLINK_URL" (str "ws://" server-host ":" server-port "/_/uplink"))
                        (.put "ANVIL_UPLINK_KEY" uplink-key)
@@ -107,8 +107,8 @@
 
 ;; Don't give runtime a choice of app
 (defn wrap-constant-app [handler]
-  (fn [{:keys [uri server-name server-port scheme] :as req}]
-    (let [app-origin (str (name scheme) "://" server-name ":" server-port) #_(conf/get-app-origin)]
+  (fn [{:keys [uri server-name origin-scheme origin-port] :as req}]
+    (let [app-origin (str origin-scheme "://" server-name ":" origin-port)]
       (handler (assoc req :app-id (conf/get-main-app-id)
                           :app-info (:info (load-app (conf/get-main-app-id)))
                           :app-origin app-origin
@@ -212,6 +212,10 @@
     (let [[_ real-remote-address] (re-matches #".*<->.*/(.*):\d+$" (str (:async-channel request)))]
       (f (assoc request :remote-addr real-remote-address)))))
 
+(defn wrap-with-origin-scheme-and-port [f scheme port]
+  (fn [req]
+    (f (assoc req :origin-scheme scheme :origin-port port))))
+
 (Thread/setDefaultUncaughtExceptionHandler
   (reify Thread$UncaughtExceptionHandler
     (uncaughtException [_ thread ex]
@@ -310,20 +314,14 @@
 
         options (update-in options [:ip] #(or % "0.0.0.0"))
 
-        options (update-in options [:port] #(or
-                                              (when (number? %)
-                                                %)
+        coerce-number #(cond (number? %) %
+                             (string? %) (Integer/parseInt %))
 
-                                              (when (string? %)
-                                                (Integer/parseInt %))))
+        options (update-in options [:port] coerce-number)
 
-        options (update-in options [:smtp-server-port] #(or
-                                                          (when (number? %) %)
+        options (update-in options [:smtp-port] coerce-number)
 
-                                                          (when (string? %) (Integer/parseInt %))
-
-                                                          25))
-
+        options (update-in options [:smtp-server-port] #(or (coerce-number %) 25))
 
         options (update-in options [:origin] #(or (when %
                                                     (.replaceAll (str %) "/$" ""))
@@ -435,9 +433,14 @@
                              (site
                                (ring-json/wrap-json-response
                                  (wrap-provide-source
-                                   (if (or use-reverse-proxy? (:disable-tls options))
-                                     #'app
-                                     (wrap-retrieve-original-remote-address #'app))))))
+                                   (wrap-with-origin-scheme-and-port
+                                     (if (or use-reverse-proxy? (:disable-tls options))
+                                       #'app
+                                       (wrap-retrieve-original-remote-address #'app))
+                                     (.getScheme origin-uri)
+                                     (if (= (.getScheme origin-uri) "https")
+                                       (or (get-port (:origin options)) 443)
+                                       (or (get-port (:origin options)) 80)))))))
 
     (log/info "App URL: " (:origin options))
 
@@ -455,21 +458,25 @@
         (SMTPServer. email-server/smtp-listener-factory)
         (.setPort (:smtp-server-port options))
         (.start))
+      (log/info "SMTP Server running on port" (:smtp-server-port options))
       (catch Exception e
         (log/error "Failed to start mail server on port" (:smtp-server-port options)
                    "- this application will not be able to receive email: " (str (.getMessage e)))))
+    
     (clj-logging-config.log4j/set-logger! "org.subethamail.smtp" :level :off)
 
-    (log/info "SMTP Server running on port" (:smtp-server-port options))
 
 
     (tables-util/start-transaction-tidy-timer)
 
     (future
+      (Thread/sleep 5000)
       (while true
-        (try
-          (while (cron/launch-cron-jobs!))
-          (catch Exception e
-            (util/report-uncaught-exception "launching scheduled tasks" e)))
+        (if (dispatch/downlink-connected?)
+          (try
+            (while (cron/launch-cron-jobs!))
+            (catch Exception e
+              (util/report-uncaught-exception "launching scheduled tasks" e)))
+          (log/info "No downlink connected; postponing check for scheduled tasks"))
         (Thread/sleep 60000)))
     nil))

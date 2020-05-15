@@ -199,6 +199,8 @@
               (resp/header "Referrer-Policy" "no-referrer")
               (resp/header "X-UA-Compatible" "IE=edge")
               (resp/header "Content-Type" "text/html")
+              (resp/header "X-Anvil-Cacheable" true)
+              (resp/header "Access-Control-Expose-Headers" "X-Anvil-Cacheable")
               (resp/set-cookie "anvil-test-cookie" true)
               (#(if-not (contains? (:cookies req) (:shared conf/app-cookie-names))
                   (assoc-in % [:cookies (:shared conf/app-cookie-names)] {:value     "x"
@@ -523,6 +525,8 @@
         (-> (Base64/decodeBase64 ^String (:content asset))
             (ByteArrayInputStream.)
             (resp/response)
+            (resp/header "X-Anvil-Cacheable" true)
+            (resp/header "Access-Control-Expose-Headers" "X-Anvil-Cacheable")
             (resp/content-type mime-type)))))
 
   (ANY ["/_/lm/:manager/:media-key/:media-id/*"] [manager media-key media-id nodl :as request]
@@ -544,6 +548,12 @@
           (ws/ws-handler (assoc request :app-version (:version app)) (:content app)))
         (catch :anvil/app-dependency-error e
           (log/error (:throwable &throw-context) "App dependency error when connecting websocket")))))
+
+  (GET "/_/service-worker" req
+    (-> (slurp (io/resource "runtime-client-core/js/sw.bundle.js"))
+        (resp/response)
+        (resp/header "Service-Worker-Allowed" (hiccup-util/escape-html (:app-origin req)))
+        (resp/content-type "application/javascript")))
 
   (POST "/_/request_cookies" req
     (with-anvil-cookies (resp/response "") (:app-session req)))

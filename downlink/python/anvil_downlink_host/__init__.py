@@ -344,8 +344,8 @@ class BaseWorker(object):
 def init_pdf_worker():
     global launch_pdf_worker
 
-    if sys.version_info < (3,0,0):
-        print("Warning: PDF Rendering not supported in Python 2. Renderer not initialised")
+    if sys.version_info < (3,7,0):
+        print("Warning: PDF Rendering requires Python 3.7. Renderer not initialised")
     elif IS_WINDOWS:
         print("Warning: PDF Rendering not supported on Windows. Renderer not initialised")
     else:

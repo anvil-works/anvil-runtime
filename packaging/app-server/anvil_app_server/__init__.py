@@ -1,4 +1,4 @@
-import os.path, sys, subprocess, shlex, zipfile, progressbar
+import os.path, re, sys, subprocess, shlex, zipfile, progressbar
 
 if sys.version_info < (3,0,0):
     import urllib
@@ -11,8 +11,16 @@ else:
 def launch():
     jar_path = find_or_download_app_server()
     java_args = ["java", "-jar", jar_path]
+    if sys.executable:
+        os.environ["PYTHON_INTERPRETER"] = sys.executable
     try:
         return_code = subprocess.call(java_args + sys.argv[1:])
+    except OSError:
+        print("Failed to launch: java -jar {}".format(jar_path))
+        print("The Anvil App Server requires a Java Virtual Machine (JVM) installed.")
+        print("Install with 'apt install openjdk-8-jdk' or 'brew install openjdk', or")
+        print("download it from https://adoptopenjdk.net")
+        return_code = 1
     except KeyboardInterrupt:
         return_code = 0
     sys.exit(return_code)
@@ -55,6 +63,12 @@ def create_app():
     # Find zip file corresponding to name
     filename = TEMPLATES[template_input]['filename']
     directory_name = sys.argv[2]
+
+    if not re.match('^[A-Za-z_][A-Za-z0-9_]*$', directory_name):
+        print("\nThe directory '{}' is not a valid Python package name.".format(directory_name))
+        print("Packages must start with a letter or underscore, and be made up of letters, numbers and underscores.")
+        sys.exit(1)
+
     package_dir = os.path.dirname(__file__)
     package_dir_path = os.path.join(package_dir, filename)
 

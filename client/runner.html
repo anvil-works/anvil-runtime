@@ -20,13 +20,13 @@
 
   <title>{{app-title}}</title>
 
-  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/bootstrap.css?buildTime=0">
-  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/bootstrap-theme.min.css?buildTime=0">
-  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/runner.css?buildTime=0">
-  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/daterangepicker.css" />
-  <link rel="stylesheet" href="{{cdn-origin}}/runtime/node_modules/animate.css/animate.min.css" />
+  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/bootstrap.css?buildTime=0" crossorigin/>
+  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/bootstrap-theme.min.css?buildTime=0" crossorigin/>
+  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/runner.css?buildTime=0" crossorigin/>
+  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/daterangepicker.css" crossorigin/>
+  <link rel="stylesheet" href="{{cdn-origin}}/runtime/node_modules/animate.css/animate.min.css" crossorigin/>
 
-  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/font-awesome.min.css">
+  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/font-awesome.min.css" crossorigin/>
 
   <style>
     #loadingSpinner {
@@ -53,19 +53,19 @@
   <style>{{shim-css}}</style>
   <style>{{theme-css}}</style>
 
-  <script src="{{cdn-origin}}/runtime/node_modules/jquery/dist/jquery.min.js?buildTime=0"></script>
-  <script src="{{cdn-origin}}/runtime/node_modules/jquery-migrate/dist/jquery-migrate.min.js"></script>
+  <script src="{{cdn-origin}}/runtime/node_modules/jquery/dist/jquery.min.js?buildTime=0" crossorigin></script>
+  <script src="{{cdn-origin}}/runtime/node_modules/jquery-migrate/dist/jquery-migrate.min.js" crossorigin></script>
 
   {{head-html}}
 </head>
 <body class="{{display-header}}">
 <div id="anvil-header">
   <a href="https://anvil.works/?utm_source=app_banner" target="_blank" class="cta"><span class="hidden-xs">Build web apps for free with</span><span class="visible-xs-inline">Built with</span> Anvil</a>
-  <a href="https://anvil.works/?utm_source=app_banner" target="_blank"><span class="hidden-xs">Built with </span><img src="{{cdn-origin}}/runtime/img/logo-35-white.png"></a>
+  <a href="https://anvil.works/?utm_source=app_banner" target="_blank"><span class="hidden-xs">Built with </span><img src="{{cdn-origin}}/runtime/img/logo-35-white.png" crossorigin></a>
 </div>
 
 <a id="anvil-badge" href="https://anvil.works/?utm_source=app_banner" target="_blank">
-  <img src="{{cdn-origin}}/runtime/img/made-with-anvil.png">
+  <img src="{{cdn-origin}}/runtime/img/made-with-anvil.png" crossorigin>
 </a>
 
 <div class="anvil-root-container">
@@ -121,7 +121,7 @@
         <h4 class="modal-title">Log in with Google</h4>
       </div>
       <div class="modal-body text-center">
-        <button id="googleLogInButton" type="button" class="btn" data-dismiss="modal"><img src="{{cdn-origin}}/runtime/img/google-signin-buttons/btn_google_signin_light_normal_web.png"/></button>
+        <button id="googleLogInButton" type="button" class="btn" data-dismiss="modal"><img src="{{cdn-origin}}/runtime/img/google-signin-buttons/btn_google_signin_light_normal_web.png" crossorigin/></button>
       </div>
       <div class="modal-footer">
         <button id="googleCancelButton" type="button" class="btn btn-default" data-dismiss="modal">Cancel</button>
@@ -248,16 +248,16 @@
         <div style="clear:both"></div>
     </div>
 
-  <script src="{{cdn-origin}}/runtime/node_modules/html5-boilerplate/dist/js/vendor/modernizr-3.8.0.min.js?buildTime=0"></script>
+  <script src="{{cdn-origin}}/runtime/node_modules/html5-boilerplate/dist/js/vendor/modernizr-3.8.0.min.js?buildTime=0" crossorigin></script>
 
-  <script src="{{cdn-origin}}/runtime/node_modules/bootstrap/dist/js/bootstrap.min.js?buildTime=0"></script>
-  <script src="{{cdn-origin}}/runtime/node_modules/moment/min/moment.min.js?buildTime=0"></script>
-  <script src="{{cdn-origin}}/runtime/node_modules/moment-timezone/builds/moment-timezone-with-data-2012-2022.min.js?buildTime=0"></script>
-  <script src="{{cdn-origin}}/runtime/js/lib/daterangepicker.js?buildTime=0"></script>
-  <script src="{{cdn-origin}}/runtime/js/lib/bootstrap-notify.min.js?buildTime=0"></script>
+  <script src="{{cdn-origin}}/runtime/node_modules/bootstrap/dist/js/bootstrap.min.js?buildTime=0" crossorigin></script>
+  <script src="{{cdn-origin}}/runtime/node_modules/moment/min/moment.min.js?buildTime=0" crossorigin></script>
+  <script src="{{cdn-origin}}/runtime/node_modules/moment-timezone/builds/moment-timezone-with-data-2012-2022.min.js?buildTime=0" crossorigin></script>
+  <script src="{{cdn-origin}}/runtime/js/lib/daterangepicker.js?buildTime=0" crossorigin></script>
+  <script src="{{cdn-origin}}/runtime/js/lib/bootstrap-notify.min.js?buildTime=0" crossorigin></script>
 
-  <script src="{{cdn-origin}}/runtime/node_modules/js-yaml/dist/js-yaml.min.js?buildTime=0"></script>
-  <script src="{{cdn-origin}}/runtime/js/lib/mutationobserver.min.js?buildTime=0"></script>
+  <script src="{{cdn-origin}}/runtime/node_modules/js-yaml/dist/js-yaml.min.js?buildTime=0" crossorigin></script>
+  <script src="{{cdn-origin}}/runtime/js/lib/mutationobserver.min.js?buildTime=0" crossorigin></script>
 
   <script src="https://www.youtube.com/iframe_api"></script>
   <script>
@@ -268,10 +268,10 @@
   <script src="https://checkout.stripe.com/checkout.js"></script>
 
 
-  <script src='{{cdn-origin}}/runtime/js/lib/skulpt.min.js?buildTime=0'></script>
-  <script src='{{cdn-origin}}/runtime/js/lib/skulpt-stdlib.js?buildTime=0'></script>
+  <script src='{{cdn-origin}}/runtime/js/lib/skulpt.min.js?buildTime=0' crossorigin></script>
+  <script src='{{cdn-origin}}/runtime/js/lib/skulpt-stdlib.js?buildTime=0' crossorigin></script>
 
-  <script src="{{cdn-origin}}/runtime/js/runner.bundle.js?buildTime=0"></script>
+  <script src="{{cdn-origin}}/runtime/js/runner.bundle.js?buildTime=0" crossorigin></script>
 
   <script>
       window.anvilCDNOrigin = "{{cdn-origin}}";
