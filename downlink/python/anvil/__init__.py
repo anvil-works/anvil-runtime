@@ -60,13 +60,14 @@ class Media(object):
         return None
 
 
+_byte_string_type = bytes if sys.version_info >= (3,) else str
 _unicode_string_type = str if sys.version_info >= (3,) else unicode
 
 
 class BlobMedia(Media):
     def __init__(self, content_type, content, name=None):
         self._content_type = content_type
-        if content is None:
+        if not isinstance(content, _byte_string_type):
             raise TypeError("BlobMedia content must be a byte string.")
         elif isinstance(content, _unicode_string_type):
             content = content.encode("utf-8")
