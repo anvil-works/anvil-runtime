@@ -95,7 +95,7 @@ All configuration options can be supplied from a YAML file of keys and values in
 Here is an example config file that configures the App Server to use an existing database and specifies some app secrets:
 
 ```
-database: "jdbc:postgresql://localhost/my_database?username=alice&password=mypassword"
+database: "jdbc:postgresql://localhost/my_database?user=alice&password=mypassword"
 secret:
   api_key: "iepaicu6aeSu3Voa1Phe"
   admin_password: "sheiGei9xq"
@@ -124,7 +124,7 @@ The Anvil Runtime stores most of its data in a Postgres database. By default, th
 If you want to use an existing database, specify its JDBC URI as the `database` option. Here is an example:
 
 ```
-"jdbc:postgresql://localhost/my_database?username=alice&password=mypassword"
+"jdbc:postgresql://localhost/my_database?user=alice&password=mypassword"
 ```
 
 The user specified in this URI must have permissions to create tables within this database. The first time the App Server launches, it will create all the tables it needs.
