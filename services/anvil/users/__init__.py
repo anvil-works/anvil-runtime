@@ -1,47 +1,13 @@
 import anvil.server
 from anvil import *
+from .exceptions import UserExists, AuthenticationFailed, EmailNotConfirmed, AccountIsNotEnabled, PasswordNotAcceptable, MFARequired, PasswordResetRequested
+from .config import get_client_config
 
 #!suggestAttr(anvil.users,login_with_form)!0:
-
-#!defFunction(anvil.users,_,[allow_remembered=True])!2: "Get the row from the users table that corresponds to the currently logged-in user. If allow_remembered is true (the default), the user may have logged in in a previous session. Returns None if no user is logged in." ["get_user"]
-def get_user(allow_remembered=True):
-    return anvil.server.call("anvil.private.users.get_current_user", allow_remembered=allow_remembered)
 
 #!defFunction(anvil.users,_)!2: "Forget the current logged-in user" ["logout"]
 def logout():
     anvil.server.call("anvil.private.users.logout")
-
-_config = None
-
-def get_client_config():
-    global _config
-    if _config is None:
-        _config = anvil._get_service_client_config("/runtime/services/anvil/users.yml")
-    return _config
-
-#!defClass(anvil.users,UserExists)!:
-class UserExists(anvil.server.AnvilWrappedError):
-    pass
-
-
-#!defClass(anvil.users,AuthenticationFailed)!:
-class AuthenticationFailed(anvil.server.AnvilWrappedError):
-    pass
-
-
-#!defClass(anvil.users,EmailNotConfirmed)!:
-class EmailNotConfirmed(AuthenticationFailed):
-    pass
-
-
-#!defClass(anvil.users,AccountIsNotEnabled)!:
-class AccountIsNotEnabled(AuthenticationFailed):
-    pass
-
-
-#!defClass(anvil.users,PasswordNotAcceptable)!:
-class PasswordNotAcceptable(anvil.server.AnvilWrappedError):
-    pass
 
 
 anvil.server._register_exception_type("anvil.users.UserExists", UserExists)
@@ -49,10 +15,12 @@ anvil.server._register_exception_type("anvil.users.AuthenticationFailed", Authen
 anvil.server._register_exception_type("anvil.users.EmailNotConfirmed", EmailNotConfirmed)
 anvil.server._register_exception_type("anvil.users.AccountIsNotEnabled", AccountIsNotEnabled)
 anvil.server._register_exception_type("anvil.users.PasswordNotAcceptable", PasswordNotAcceptable)
+anvil.server._register_exception_type("anvil.users.MFARequired", MFARequired)
+anvil.server._register_exception_type("anvil.users.PasswordResetRequested", PasswordResetRequested)
 
 #!defFunction(anvil.users,_,email,password,[remember=False])!2: "Log in with the specified email address and password. Returns None if authentication failed.\n\nBy default, login status is not remembered between sessions; set remember=True to remember login status." ["login_with_email"]
-def login_with_email(email, password, remember=False):
-    return anvil.server.call("anvil.private.users.login_with_email", email, password, remember=remember)
+def login_with_email(email, password, remember=False, mfa=None):
+    return anvil.server.call("anvil.private.users.login_with_email", email, password, remember=remember, mfa=mfa)
 
 #!defFunction(anvil.users,_,email,password,[remember=False])!2: "Sign up for a new account with the specified email address and password. Raises anvil.users.UserExists if an account is already registered with this email address.\n\nBy default, login status is not remembered between sessions; set remember=True to remember login status." ["signup_with_email"]
 def signup_with_email(email, password, remember=False):
@@ -62,7 +30,18 @@ def signup_with_email(email, password, remember=False):
 def send_password_reset_email(email):
     anvil.server.call("anvil.private.users.send_password_reset_email", email)
 
+#!defFunction(anvil.users,_,email_address)!2: "Send a login link email to the specified user" ["send_token_login_email"]
+def send_token_login_email(email):
+    anvil.server.call("anvil.private.users.send_token_login_email", email)
+
+#!defFunction(anvil.users,_,old_password,new_password)!2: "Reset the password for the current user" ["reset_password"]
+def reset_password(old_password, new_password):
+    anvil.server.call("anvil.private.users.reset_password", old_password, new_password)
+
+
 if is_server_side():
+    def get_user(allow_remembered=True):
+        return anvil.server.call("anvil.private.users.get_current_user", allow_remembered=allow_remembered)
 
     #!defFunction(anvil.users,_,user_row,[remember=False])!2: "Set the specified user object (a row from a Data Table) as the current logged-in user. It must be a row from the users table. By default, login status is not remembered between sessions." ["force_login"]
     def force_login(user, remember=False):
@@ -77,6 +56,20 @@ if is_server_side():
         globals()[n] = _fail(n)
 
 else:
+    from . import mfa
+
+    #!defFunction(anvil.users,_,[allow_remembered=True])!2: "Get the row from the users table that corresponds to the currently logged-in user. If allow_remembered is true (the default), the user may have logged in in a previous session. Returns None if no user is logged in." ["get_user"]
+    def get_user(allow_remembered=True):
+        try:
+            return anvil.server.call("anvil.private.users.get_current_user", allow_remembered=allow_remembered)
+        except MFARequired:
+            # This should only happen if the user has arrived with a login token and needs to configure MFA
+            mfa.configure_mfa_with_form()
+            return None
+        except PasswordResetRequested:
+            change_password_with_form(False)
+            return anvil.server.call("anvil.private.users.get_current_user", allow_remembered=allow_remembered)
+
 
     def force_login(user, remember=False):
         raise Exception("You can only use force_login() in server modules")
@@ -169,8 +162,28 @@ else:
 
     _label_style = {}
 
+    def _email_token_login_with_form(initial_email=""):
+        panel = LinearPanel()
+
+        email_box = TextBox(placeholder="Email address", text=initial_email)
+        panel.add_component(Label(text="To receive a login link by email, enter your registered email address"))
+        panel.add_component(email_box)
+
+        def show(**e):
+            email_box.focus()
+            email_box.select()
+
+        email_box.set_event_handler("show", show)
+        email_box.set_event_handler("pressed_enter", lambda **e: panel.raise_event("x-close-alert", value=True))
+
+        if alert(panel, title="Login by email", buttons=[("Send email", True, 'success'),("Cancel", False, "default")], dismissible=True):
+            return email_box.text
+
+
+
+
     #!defFunction(anvil.users,!,[remember_by_default=True],[allow_cancel=False])!2: "Display a sign-up form allowing a user to create a new account. Returns the new user object, or None if cancelled.\n\nremember_by_default: if True, the 'remember me' checkbox will be enabled by default.\n\nallow_cancel: if True, the signup form has a Cancel button that the user can use to dismiss the form." ["signup_with_form"]
-    def signup_with_form(_link_back_to_login_on_already_exists=False,remember_by_default=True, allow_cancel=False):
+    def signup_with_form(_link_back_to_login_on_already_exists=False,remember_by_default=True, allow_cancel=False, initial_email="", initial_password=""):
         if not get_client_config().get("allow_signup"):
             raise Exception("New user signup is not enabled")
 
@@ -195,7 +208,7 @@ else:
         if get_client_config().get("use_email", False):
             some_method_available = True
             lp.add_component(Label(text="Email:", **_label_style))
-            email_box = TextBox(placeholder="address@example.com")
+            email_box = TextBox(placeholder="address@example.com", text=initial_email)
             email_box.set_event_handler("pressed_enter", email_pressed_enter)
             lp.add_component(email_box)
 
@@ -204,6 +217,7 @@ else:
             passwd_box = [TextBox(hide_text=True, placeholder=p) for p in ["password", "repeat password"]]
             lp.add_component(Label(text="Password:", **_label_style))
             passwd_box[0].set_event_handler("pressed_enter", passwd_1_pressed_enter)
+            passwd_box[0].text = initial_password
             lp.add_component(passwd_box[0])
             lp.add_component(Label(text="Retype password:", **_label_style))
             passwd_box[1].set_event_handler("pressed_enter", passwd_2_pressed_enter)
@@ -269,10 +283,16 @@ else:
             remember_me_checkbox = CheckBox(text="Remember me", checked=remember_by_default)
             lp.add_component(remember_me_checkbox)
 
+        if email_box and passwd_box:
+            lp.set_event_handler("show", lambda **e: (email_box.focus() if not initial_email else (passwd_box[0].focus() if not passwd_box[0].text else passwd_box[1].focus())))
+
+        attempts = 0
         while True:
-            if passwd_box:
+            if passwd_box and attempts > 0:
                 for pb in passwd_box:
                     pb.text = ""
+
+            attempts += 1
 
             maybe_cancel_button = [("Cancel", None)] if allow_cancel else []
 
@@ -304,9 +324,21 @@ else:
                     if passwd_box[1].text != passwd_box[0].text:
                         error_lbl.text = "Passwords do not match"
                         continue
-                    user = anvil.server.call("anvil.private.users.signup_with_email", email_box.text, passwd_box[0].text, remember=remember)
+
+                    try:
+                        user = anvil.server.call("anvil.private.users.signup_with_email", email_box.text, passwd_box[0].text, remember=remember)
+                    except MFARequired:
+                        mfa_method, _ = mfa._configure_mfa(email_box.text, None, False, [("Cancel", None)], "Sign up")
+                        if mfa_method:
+                            user = anvil.server.call("anvil.private.users.signup_with_email", email_box.text, passwd_box[0].text, mfa_method=mfa_method, remember=remember)
+                        else:
+                            continue
+
                     if get_client_config().get("confirm_email", False):
                         alert("We've sent a confirmation email to " + email_box.text + ". Open your inbox and click the link to complete your signup.", title="Confirm your Email", buttons=[("OK", None, "primary")])
+                    
+                    return user
+
                 else:
                     raise Exception("Invalid configuration for Users service")
 
@@ -322,14 +354,13 @@ else:
 
             return user
 
-
     #!defFunction(anvil.users,!,[show_signup_option=True],[remember_by_default=True],[allow_remembered=True],[allow_cancel=False])!2: "Display a login form and allow user to log in. Returns user object if logged in, or None if cancelled.\n\nshow_signup_option: if True, the form will also show the option to sign up for a new account.\n\nremember_by_default: if True, the 'remember me' checkbox will be enabled by default.\n\nallow_remembered: if False, users with remembered login status will still be required to log in.\n\nallow_cancel: if True, the login form has a Cancel button that the user can use to dismiss the form." ["login_with_form"]
     def login_with_form(show_signup_option=True,remember_by_default=True, allow_remembered=True, allow_cancel=False):
         
         if allow_remembered:
-            u = get_user()
-            if u:
-                return u
+           u = get_user()
+           if u:
+               return u
 
         lp = LinearPanel()
         email_box = None
@@ -337,10 +368,12 @@ else:
         remember_me_checkbox = None
 
         def focus_email(**kws):
-            email_box.focus()
+            if email_box:
+                email_box.focus()
 
         def focus_password(**kws):
-            passwd_box.focus()
+            if passwd_box:
+                passwd_box.focus()
 
         def close_alert(**kws):
             lp.raise_event('x-close-alert', value='login')
@@ -415,6 +448,12 @@ else:
             b.set_event_handler('click', raven_login)
             lp.add_component(b)
 
+        if get_client_config().get("use_token", False):
+            some_method_available = True
+            b = Link(text="Log in via email", icon="fa:envelope", icon_align="left", align="center")
+            b.set_event_handler('click', lambda **e: lp.raise_event('x-close-alert', value='email_token'))
+            lp.add_component(b)
+
         if not some_method_available:
             raise Exception("This app has no supported sign-in methods. Please check settings in the Users Service configuration.")
 
@@ -461,6 +500,10 @@ else:
                     user = anvil.server.call("anvil.private.users.login_with_raven", remember=remember)
                     if user or allow_cancel:
                         return user
+                elif ar == 'email_token':
+                    if _email_token_login_with_form(email_box.text if email_box else ""):
+                        send_token_login_email(email_box.text)
+                        alert("An email with a login link has been sent to you. You can now close this window.", buttons=[], dismissible=False)
                 elif ar == 'reset_password':
                     reset_email_box = TextBox(placeholder="email@address.com", text=email_box.text)
                     pnl = LinearPanel()
@@ -472,9 +515,26 @@ else:
                         error_lbl.text = ""
                     # Continue around loop
                 elif ar == 'login':
-                    return anvil.server.call("anvil.private.users.login_with_email", email_box.text, passwd_box.text, remember=remember)
+
+                    try:
+                        return login_with_email(email_box.text, passwd_box.text, remember=remember)
+                    except MFARequired:
+                        
+                        r = mfa.mfa_login_with_form(email_box.text, passwd_box.text)
+                        
+                        if r == 'reset_mfa':
+                            mfa.send_mfa_reset_email(email_box.text)
+                            error_lbl.text = "Requested 2-factor authentication reset for " + email_box.text + ". Check your email."
+                        elif r == None:
+                            if allow_cancel:
+                                return None
+                            # Else continue around the loop
+                        else:
+                            # We got an MFA dict. Log in with it.
+                            return login_with_email(email_box.text, passwd_box.text, mfa=r, remember=remember)
+
                 elif ar == 'sign-up':
-                    if signup_with_form(_link_back_to_login_on_already_exists=True, allow_cancel=True):
+                    if signup_with_form(_link_back_to_login_on_already_exists=True, allow_cancel=True, initial_email=email_box.text if email_box else "", initial_password=passwd_box.text if passwd_box else ""):
                         user = get_user(allow_remembered=False)
                         if user:
                             return user
@@ -483,3 +543,75 @@ else:
                     return None
             except AuthenticationFailed as e:
                 error_lbl.text = e.args[0]
+
+    #!defFunction(anvil.users,_,[require_old_password=True])!2: "Display a form allowing the current user to reset their password. " ["change_password_with_form"]
+    def change_password_with_form(require_old_password=True):
+
+        err = None
+        while True:
+            panel = LinearPanel()
+
+            old_pwd = TextBox(hide_text=True, placeholder="Old password")
+            new_pwd = [TextBox(hide_text=True, placeholder="New password"), TextBox(hide_text=True, placeholder="Confirm new password")]
+
+            if require_old_password:
+                panel.add_component(old_pwd)
+                old_pwd.set_event_handler("show", lambda **e: old_pwd.focus())
+                old_pwd.set_event_handler("pressed_enter", lambda **e: new_pwd[0].focus())
+            else:
+                new_pwd[0].set_event_handler("show", lambda **e: new_pwd[0].focus())
+
+            new_pwd[0].set_event_handler("pressed_enter", lambda **e: new_pwd[1].focus())
+            new_pwd[1].set_event_handler("pressed_enter", lambda **e: panel.raise_event("x-close-alert", value=True))
+
+            panel.add_component(new_pwd[0])
+            panel.add_component(new_pwd[1])
+
+            if err:
+                panel.add_component(Label(text=err, foreground="red"))
+
+            r = alert(panel, title="Change password" if require_old_password else "Reset password", buttons=[("Change" if require_old_password else "Reset", True, "success"), ("Cancel", False, "default")], dismissible=True)
+
+            if r:
+                if new_pwd[0].text == new_pwd[1].text:
+                    try:
+                        # Reset password for the currently logged-in user
+                        reset_password(old_pwd.text, new_pwd[0].text)
+                        return
+                    except AuthenticationFailed as e:
+                        err = str(e.args[0])
+                    except PasswordNotAcceptable as e:
+                        err = str(e.args[0])
+                else:
+                    err = "Passwords do not match"
+            else:
+                anvil.server.call("anvil.private.users.cancel_password_reset")
+                return
+
+
+    #!defFunction(anvil.users,_)!2: "Display a form allowing the current user to configure their account. The form contains links for password reset and two-factor authentication configuration." ["configure_account_with_form"]
+    def configure_account_with_form():
+
+        if not get_user():
+            raise Exception("Cannot configure user account: Not logged in.")
+
+        while True:
+            panel = LinearPanel()
+
+            reset_password_link = Link(text="Change password")
+            configure_mfa_link = Link(text="Configure two-factor authentication")
+
+            reset_password_link.set_event_handler("click", lambda **e: panel.raise_event("x-close-alert", value="reset_password"))
+            configure_mfa_link.set_event_handler("click", lambda **e: panel.raise_event("x-close-alert", value="configure_mfa"))
+
+            panel.add_component(reset_password_link)
+            panel.add_component(configure_mfa_link)
+
+            choice = alert(panel, title="Configure Account", buttons=[("Done", None, "success")], dismissible=True)
+
+            if choice == "reset_password":
+                change_password_with_form()
+            elif choice == "configure_mfa":
+                mfa.configure_mfa_with_form(True)
+            else:
+                break

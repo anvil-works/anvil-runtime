@@ -33,7 +33,8 @@
             [clj-yaml.core :as yaml]
             [clojure.java.io :as io]
             [anvil.util :as util]
-            [anvil.metrics :as metrics])
+            [anvil.metrics :as metrics]
+            [anvil.core.worker-pool :as worker-pool])
   (:import (java.io ByteArrayInputStream)
            (anvil.dispatcher.types Media MediaDescriptor InputStreamMedia ChunkedStream)
            (org.apache.commons.codec.binary Base64)
@@ -119,9 +120,10 @@
                       (merge {:value     (or (when-let [cookie @(get-in @session [:cookies type])] (cookies/serialise-cookie cookie)) "")
                               :path      "/"
                               :http-only true
-                              :max-age   2147483647
-                              :same-site :none
-                              :secure    true}
+                              :max-age   2147483647}
+                             (when conf/force-secure-cookies?
+                               {:same-site :none
+                                :secure    true})
                              (when (= type :shared)
                                {:domain (:shared-cookie-domain @session)}))))
 
@@ -203,13 +205,14 @@
               (resp/header "Access-Control-Expose-Headers" "X-Anvil-Cacheable")
               (resp/set-cookie "anvil-test-cookie" true)
               (#(if-not (contains? (:cookies req) (:shared conf/app-cookie-names))
-                  (assoc-in % [:cookies (:shared conf/app-cookie-names)] {:value     "x"
-                                                                          :max-age   2147483647
-                                                                          :domain    (:shared-cookie-domain @(:app-session req))
-                                                                          :path      "/"
-                                                                          :http-only true
-                                                                          :same-site :none
-                                                                          :secure    true})
+                  (assoc-in % [:cookies (:shared conf/app-cookie-names)] (merge {:value     "x"
+                                                                                 :max-age   2147483647
+                                                                                 :domain    (:shared-cookie-domain @(:app-session req))
+                                                                                 :path      "/"
+                                                                                 :http-only true}
+                                                                                (when conf/force-secure-cookies?
+                                                                                  {:same-site :none
+                                                                                   :secure    true})))
                   %))
               (#(if (and (not (or (:allow_embedding app-map) (nil? (:allow_embedding app-map))))
                          apps-always-embeddable-from)
@@ -240,9 +243,16 @@
             with-safe-anvil-cookies (fn [resp headers]
                                       (let [resp-with-safe-headers (reduce (fn [resp [k v]]
                                                                              (let [h (.toLowerCase (name k))]
-                                                                               (if (and (= h "set-cookie")
-                                                                                        ((set (vals conf/app-cookie-names)) (first (string/split v #"[=\s]+"))))
+                                                                               (cond
+                                                                                 (and (= h "set-cookie")
+                                                                                      ((set (vals conf/app-cookie-names)) (first (string/split v #"[=\s]+"))))
                                                                                  resp
+
+                                                                                 (= h "content-type")
+                                                                                 ; Because this has already been set, we need to explicitly override it
+                                                                                 (assoc-in resp [:headers "Content-Type"] v)
+
+                                                                                 :else
                                                                                  (update-in resp [:headers h] conj v)))) resp headers)]
                                         (if (and @anvil-cookies-updated? (not (:cross-origin request)))
                                           (-> resp-with-safe-headers
@@ -440,7 +450,7 @@
       (let [app (app-data/get-app (app-data/get-app-info-insecure (:app-id request))
                                        (:app-version request)
                                        false)]
-        (future
+        (worker-pool/run-task! ::serve-lazy-media
           (try+
             (when-let [m (lazy-media/get-lazy-media (:app-id request) (:content app) (:app-session request)
                                                     manager media-key media-id request)]
@@ -490,6 +500,11 @@
         (serve-templated-html request (io/resource "runtime-client-core/user_email_password_reset.html")
                               {"{{email-address}}" (hiccup-util/escape-html email)
                                "{{error}}" ""}))))
+
+  (GET ["/_/:path/:token" :path #"login|reset_password" :token #".*"] [token :as request]
+    (when-let [app (get-app-from-request request)]
+      (when (user-service/do-login-with-token app (request :app-session) (codec/url-decode token))
+        (resp/redirect (str (:app-origin request) "?s=" (get @(request :app-session) :id))))))
 
   (POST "/_/email-pw-reset/:email/:email-key" [email email-key password :as request]
     (when-let [app (get-app-from-request request)]

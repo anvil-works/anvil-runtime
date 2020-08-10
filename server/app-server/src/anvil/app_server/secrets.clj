@@ -68,7 +68,7 @@
   (throw (UnsupportedOperationException.)))
 
 (defn encrypt-str-with-global-key [key-specialisation plaintext]
-  (runtime-secrets/encrypt-str @secret-key (str (name key-specialisation) ":" plaintext)))
+  (runtime-secrets/encrypt-str @secret-key (str key-specialisation ":" plaintext)))
 
 (defn decrypt-str-with-global-key [key-specialisation ciphertext]
   (let [key-specialisation (str key-specialisation)

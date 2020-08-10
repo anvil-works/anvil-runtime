@@ -228,7 +228,7 @@ function loadApp(app, appId, appOrigin, preloadModules) {
 
     var accumulatingPrints = null;
 
-    var sendLog = function(details) { console.log(logDetails); };
+    var sendLog = function(details) { console.log(details); };
 
     var stdout = function(text, fromServer) {
         if (text != "\n") {
@@ -301,7 +301,7 @@ function loadApp(app, appId, appOrigin, preloadModules) {
                 }
             };
 
-            if (errorObj instanceof serverModuleAndLog.pyMod["SessionExpiredError"]) {
+            if (serverModuleAndLog && errorObj instanceof serverModuleAndLog.pyMod["SessionExpiredError"]) {
                 $("#session-expired-modal button.refresh").off("click").on("click", function() {
                     document.location.href = window.anvilAppOrigin + "/" + (window.anvilParams.accessKey || '');
                 });

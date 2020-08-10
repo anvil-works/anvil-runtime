@@ -118,7 +118,7 @@
                              :app-id            app_id
                              :app-branch        (if published-version "published" "master")
                              :app-version       published-version
-                             :session-state     (atom {})
+                             :session-state     (atom {:app-id app_id, :debug? false})
                              :origin            :server}
                             ;; Return path
                             {:update!  (constantly nil)

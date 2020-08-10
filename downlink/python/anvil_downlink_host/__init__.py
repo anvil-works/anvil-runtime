@@ -1,4 +1,4 @@
-import collections, json, os, random, signal, sys, threading, time, traceback, platform
+import collections, json, os, psutil, random, signal, subprocess, sys, threading, time, traceback, platform
 from ws4py.client.threadedclient import WebSocketClient
 
 
@@ -11,6 +11,8 @@ USER_ID = os.environ.get("DOWNLINK_USER_ID", None)
 ORG_ID = os.environ.get("DOWNLINK_ORG_ID", None)
 APP_CACHE_SIZE = int(os.environ.get("APP_CACHE_SIZE", "16"))
 ENABLE_PDF_RENDER = os.environ.get("ENABLE_PDF_RENDER")
+PER_WORKER_SOFT_MEMORY_LIMIT = int(os.environ["PER_WORKER_SOFT_MEMORY_LIMIT_MB"])*1024*1024 \
+                                    if "PER_WORKER_SOFT_MEMORY_LIMIT_MB" in os.environ else None
 
 IS_WINDOWS = "Windows" in platform.system() or "CYGWIN" in platform.system()
 
@@ -57,20 +59,32 @@ def maybe_quit_if_draining_and_done():
 # Utility functions
 
 def get_demote_fn(app_id):
-    if os.name == "nt" or not DROP_PRIVILEGES:
+    if os.name == "nt":
         return None
 
     # TODO: Use app_id here to seed UID generation. It might be an actual app ID, or None
     uid = 20000
     def do_demotion():
-        if os.getuid() == 0:
+        if DROP_PRIVILEGES and os.getuid() == 0:
             os.setgroups([])
             os.setgid(uid)
             os.setegid(uid)
             os.setuid(uid)
             os.seteuid(uid)
 
+        # Give ourselves an isolated process group so we can take child processes with us when we go
+        os.setpgid(0, 0)
+
     return do_demotion
+
+
+class PopenWithGroupKill(subprocess.Popen):
+    def terminate(self):
+        try:
+            os.killpg(self.pid, 9)
+        except:
+            pass
+        super(PopenWithGroupKill, self).terminate()
 
 
 # Handle communication with API router
@@ -144,7 +158,7 @@ class Connection(WebSocketClient):
                     print("Bogus output, probably for an old request (worker: %s): %s" %
                           ("FOUND" if calling_worker else "MISSING", repr(data)[:100]))
 
-            elif type in ["CALL_WITH_APP", "LAUNCH_BACKGROUND_WITH_APP", "CALL", "LAUNCH_BACKGROUND"]:
+            elif type in ["CALL_WITH_APP", "LAUNCH_BACKGROUND_WITH_APP", "CALL", "LAUNCH_BACKGROUND", "LAUNCH_REPL"]:
 
                 if "app" not in data:
                     cached_app = app_cache.get((data["app-id"], data["app-version"]))
@@ -166,6 +180,20 @@ class Connection(WebSocketClient):
                         launch_worker(data)
 
                 #print "Launched"
+
+            elif type in ["REPL_COMMAND", "REPL_KEEPALIVE", "TERMINATE_REPL"]:
+                worker = workers_by_id.get(data['repl'])
+
+                # TODO allow REPL commands to be run on us too
+
+                if worker is not None:
+                    worker.handle_inbound_message(data)
+                else:
+                    print("Couldn't find repl %s; current workers: %s" % (data['repl'], workers_by_id.keys()))
+                    connection.send_with_header(
+                        {'error': {'type': 'anvil.server.NotRunningTask', 'message': 'No such REPL running'},
+                         'id': data['id']}
+                    )
 
             elif type == "KILL_TASK":
 
@@ -227,20 +255,41 @@ class Connection(WebSocketClient):
                 WebSocketClient.send(self, blob, True)
 
 
+# Defined in two places, so it can be used by BaseWorker and the full-python worker. Yeuch.
+def report_worker_stats(self):
+    p = self.proc_info
+    if p is None:
+        return {}
+    try:
+        cpu = p.cpu_times()
+        mem = p.memory_full_info()
+        return {
+            "info": self.task_info,
+            "age":  time.time() - p.create_time(),
+            "cpu": {
+                "user": cpu.user + cpu.children_user,
+                "system": cpu.system + cpu.children_system,
+                "total": cpu.user + cpu.system + cpu.children_user + cpu.children_system
+            },
+            "mem": {"vms": mem.vms, "uss": mem.uss},
+        }
+    except psutil.Error:
+        return {}
+
 
 # Shared tools for managing worker processes.
 # Nomenclature: "Inbound" calls come from the API server. "Outbound" calls come from the server.
 class BaseWorker(object):
-    def __init__(self, initial_msg):
+    def __init__(self, initial_msg, task_info):
         self.req_ids = set()
         self.outbound_ids = {} # Outbound ID -> inbound ID it came from
         self._media_tracking = {} # reqID -> (set([mediaId, mediaId, ]), finishedCallback)
         self.lock = threading.RLock() # TODO do we need this?
         self.start_times = {}
+        self.proc_info = None
+        self.task_info = task_info
 
         self.initial_req_id = initial_msg['id']
-        self.record_inbound_call_started(initial_msg)
-        self.handle_inbound_message(initial_msg)
 
     # Handle bookkeeping for which requests we're handling and waiting for
 
@@ -291,6 +340,8 @@ class BaseWorker(object):
     def on_all_inbound_calls_complete(self):
         raise Exception("on_all_inbound_calls_complete() not implemented")
 
+    def repl_keepalive(self):
+        raise Exception("repl_keepalive() not implemented")
 
     # A common task is to track when the worker has finished sending media for a particular request,
     # so we can safely kill it.
@@ -337,6 +388,7 @@ class BaseWorker(object):
                     o["path"].insert(1,"children")
                     o["path"].insert(2, 0)
 
+    report_stats = report_worker_stats
 
 
 # Import the actual worker modules
@@ -376,6 +428,23 @@ def signal_drain(_signum, _frame):
     maybe_quit_if_draining_and_done()
 
 
+def report_stats():
+    workers = set(workers_by_id.values())
+    worker_stats = []
+    for worker in workers:
+        stats = worker.report_stats()
+        mem_usage = stats.get("mem", {}).get("uss", 0)
+        if PER_WORKER_SOFT_MEMORY_LIMIT is not None and mem_usage > PER_WORKER_SOFT_MEMORY_LIMIT:
+            print("Worker is using %.0fMB: %s " % (mem_usage/(1024*1024.0), stats.get('info')))
+            worker.drain()
+        worker_stats.append(stats)
+    connection.send_with_header({
+        "type": "STATS",
+        "data": worker_stats
+    })
+
+
+
 def run_downlink_host():
     global connection
 
@@ -400,7 +469,10 @@ def run_downlink_host():
     n = 0
     while True:
         try:
-            time.sleep(30)
+            for _ in range(6):
+                time.sleep(5)
+                report_stats()
+
             connection.send_with_header({
                 "type": "CALL",
                 "id": "downlink-keepalive-%d" % n,
@@ -409,6 +481,7 @@ def run_downlink_host():
                 "kwargs": {},
             })
             n += 1
-        except:
-            print("Keepalive failed. The downlink has probably disconnected.")#print print_exc(file=sys.stdout)
+        except Exception as e:
+            print("Keepalive failed. The downlink has probably disconnected.")
+            print(e)
             os._exit(1)

@@ -1,9 +1,10 @@
-import os, marshal, random, sys, threading, time
-from subprocess import Popen, PIPE
+import  marshal, os, psutil, random, sys, threading, time
+from subprocess import PIPE
 
 # State representing which workers are running here
 from anvil_downlink_host import workers_by_id, send_with_header, maybe_quit_if_draining_and_done, \
-                                    get_demote_fn, TIMEOUT
+                                    PopenWithGroupKill, get_demote_fn, TIMEOUT, \
+                                    report_worker_stats
 
 CAN_PERSIST = (os.environ.get("DOWNLINK_CAN_PERSIST", "false").lower() in {"true", "1"})
 
@@ -11,13 +12,16 @@ cached_workers = {}
 CACHE_LOCK = threading.Lock()
 
 class Worker:
-    def __init__(self, first_req_id, enable_profiling=False, app_id=None, app_version=None, cache_key=None, set_timeout=True):
+    def __init__(self, first_req_id, enable_profiling=False, app_id=None, app_version=None, cache_key=None, set_timeout=True, task_info=None):
         self.req_ids = {first_req_id}
         self.outbound_ids = {} # Outbound ID -> inbound ID it came from
         self.lock = threading.RLock()
         self.media_tracking = {} # reqID -> (set([mediaId, mediaId, ]), finishedCallback)
 
-        self.proc = Popen([sys.executable, "-um", "anvil_downlink_worker.full_python_worker"], bufsize=0, stdin=PIPE, stdout=PIPE, preexec_fn=get_demote_fn(app_id))
+        self.proc = PopenWithGroupKill([sys.executable, "-um", "anvil_downlink_worker.full_python_worker"],
+                                       bufsize=0, stdin=PIPE, stdout=PIPE, preexec_fn=get_demote_fn(app_id))
+        self.proc_info = psutil.Process(self.proc.pid)
+        self.task_info = task_info
 
         workers_by_id[first_req_id] = self
         self.cache_key = cache_key
@@ -28,7 +32,7 @@ class Worker:
                 cached_workers[cache_key] = (app_version, self)
             if displaced_worker is not None:
                 print("Displacing persistent worker for %s:\nVersion %s -> %s" % (cache_key, old_version, app_version))
-                displaced_worker.displace()
+                displaced_worker.drain()
             else:
                 print("New persistent worker for %s (version %s)" % (cache_key, app_version))
 
@@ -94,17 +98,19 @@ class Worker:
         self.timed_out = True
         self.proc.terminate()
 
-    def displace(self):
+    def drain(self):
         # Finish up our execution and time out.
-        if len(self.req_ids) == 0:
-            print("Cache worker for %s displaced, terminating instantly (version %s)" % (self.cache_key, self.app_version))
+        if self.cache_key is None:
+            print("Worker for %s is not cached, ignoring drain request" % self.req_ids)
+        elif len(self.req_ids) == 0:
+            print("Worker for %s drained, terminating instantly (version %s)" % (self.cache_key, self.app_version))
             try:
                 self.proc.terminate()
             except:
                 pass
         else:
-            print("Cache worker for %s displaced, setting timeout while we drain (version %s)" % (self.cache_key, self.app_version))
-            self.set_timeout("DISPLACED")
+            print("Worker for %s draining, setting timeout (version %s)" % (self.cache_key, self.app_version))
+            self.set_timeout("DRAINED")
 
     def responded(self, req_id):
         self.clear_timeout(req_id)
@@ -241,7 +247,6 @@ class Worker:
             if self.cache_key is not None and cached_workers.get(self.cache_key, (None,None))[1] is self:
                 cached_workers.pop(self.cache_key, None)
 
-
             error_id = "".join([random.choice('0123456789abcdef') for x in range(10)])
             for i in self.req_ids:
                 if self.timed_out:
@@ -265,12 +270,19 @@ class Worker:
 
         if not bin:
             id = msg.get("id")
-            if msg.get("type") == "CALL" or msg.get("type") == "CALL_WITH_APP" or msg.get("type") == "GET_TASK_STATE":
+            if msg.get("type") in ["CALL", "CALL_WITH_APP", "GET_TASK_STATE", "LAUNCH_REPL", "REPL_COMMAND", "TERMINATE_REPL"]:
                 # It's a new request! Start the timeout
                 #print ("Setting timeout and routing for new request ID %s" % id)
                 workers_by_id[id] = self
                 self.req_ids.add(id)
-                self.set_timeout(id)
+                if msg["type"] != "REPL_COMMAND":
+                    self.set_timeout(id)
+
+            elif msg.get("type") == "REPL_KEEPALIVE":
+                self.clear_timeout(msg["repl"])
+                self.set_timeout(msg["repl"])
+                send_with_header({"id": id, "response": None})
+                return
 
             # A horrid hack - a one-char "activation" that's not marshalled, because marshal holds the GIL and Windows doesn't support select() on pipes and urrrggghhh
             self.proc.stdin.write(b"X")
@@ -297,29 +309,34 @@ class Worker:
             if msg.get("last_chunk"):
                 self.transmitted_media(msg.get("requestId"), msg.get("mediaId"))
 
+    report_stats = report_worker_stats
 
 
 def launch(data):
-    type = data["type"] if 'type' in data else None
-    id = data["id"] if 'id' in data else None
+    type = data.get("type")
+    id = data.get("id")
 
-    print ("Calling function '%s' for app '%s' (ID %s)" % (data.get("command", "<LiveObjectCall>"), data.get("app-id", "<unknown>"), id))
     persist_key = data.get("persist-key")
 
     start_time = time.time()
 
-    is_background_task = (type == "LAUNCH_BACKGROUND_WITH_APP")
+    is_background_task = (type in ["LAUNCH_BACKGROUND", "LAUNCH_BACKGROUND_WITH_APP"])
+    is_repl_launch = type == "LAUNCH_REPL"
     cache_key = None
     worker = None
     version = None
     supplied_version = data.get("app-version")
+
+    print ("%s '%s' for app '%s' (ID %s)" % ("Launching REPL" if is_repl_launch else "Launching BG task" if is_background_task else "Calling function",
+                                             data.get("command", "<no func>"), data.get("app-id", "<unknown>"), id))
+
     if CAN_PERSIST and not is_background_task and persist_key is not None and "app-id" in data and supplied_version is not None:
         cache_key = repr((data["app-id"], persist_key))
         #print("Attempt persistence: %s" % cache_key)
         version, worker = cached_workers.get(cache_key, (None,None))
         #print("Version %s:\n%s\nvs\n%s" % (("MATCH" if version==supplied_version else "MISMATCH"), version, supplied_version))
 
-    if data['command'] == "anvil.private.pdf.get_component" and not is_background_task:
+    if data.get('command') == "anvil.private.pdf.get_component" and not is_background_task:
         wid = data['args'][0][0]
         worker = workers_by_id.get(wid)
         if worker is None:
@@ -328,9 +345,13 @@ def launch(data):
 
     elif worker is None or version != supplied_version:
         worker = Worker(id, data.get("enable-profiling", False), data.get("app-id", "<unknown>"),
-                        cache_key=cache_key, app_version=supplied_version, set_timeout=not is_background_task)
-
-    worker.start_time[id] = start_time
+                        cache_key=cache_key, app_version=supplied_version, set_timeout=not is_background_task and not is_repl_launch,
+                        task_info={
+                            "app_id": data["app-id"],
+                            "type": "repl" if is_repl_launch else "background_task" if is_background_task else "persistent_worker" if cache_key else "server_call",
+                            "task": data.get("command"),
+                            "persist": {"key": persist_key, "version": supplied_version} if cache_key else None,
+                        })
 
     worker.send(data)
 

@@ -328,7 +328,6 @@
 
 
       ;;(log/trace "Using executor:" executor)
-      (metrics/inc! :api/runtime-dispatch-total metric-labels)
       (reset! metrics-timer (metrics/start-timer :api/runtime-dispatch-duration-seconds metric-labels))
 
       (try

@@ -13,6 +13,16 @@ module.exports = function(appOrigin, uncaughtExceptions) {
 
     let ByteString = Sk.__future__.python3 ? Sk.builtin.bytes : Sk.builtin.str;
 
+    let arrayBufferToStr = arrayBuffer => {
+        let binary = "";
+        var bytes = new Uint8Array(arrayBuffer);
+        var length = bytes.byteLength;
+        for (var i = 0; i < length; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return binary;
+    }
+
     /**
     id: anvil_module
     docs_url: /docs/client/python#the-anvil-module
@@ -164,7 +174,13 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                 let leafName = ps[ps.length-1];
                 // Yes, sysmodules is indexed with JS strings.
                 // No, this makes no sense.
-                let pyFormMod = Sk.sysmodules.mp$subscript(window.anvilAppMainPackage + "." + formName);
+                let pyFormMod;
+                try {
+                    pyFormMod = Sk.sysmodules.mp$subscript(window.anvilAppMainPackage + "." + formName);
+                } catch (e) {
+                    pyFormMod = Sk.sysmodules.mp$subscript(formName);
+                }
+
 
                 var formConstructor = pyFormMod.$d[leafName];
 
@@ -299,7 +315,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                     $.ajax({
                       url: self._url,
                       type: "GET",
-                      dataType: "text",
+                      dataType: "binary",
                       processData: false,
                     }).then(function(r,ts,xhr) {
                         window.setLoading(false);
@@ -326,7 +342,11 @@ module.exports = function(appOrigin, uncaughtExceptions) {
 
         $loc["get_bytes"] = new Sk.builtin.func(function(self) {
             return new PyDefUtils.suspensionPromise(function(resolve, reject) {
-                doFetch(self).then(function(r) { resolve(new ByteString(r.data)); }, reject);
+                doFetch(self).then(function(r) {
+                    return r.data.arrayBuffer();
+                }, reject).then(function(arrayBuffer) {
+                    resolve(new ByteString(arrayBufferToStr(arrayBuffer)))
+                });
             });
         });
 
@@ -407,13 +427,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                         fr.readAsBinaryString(self._data);
                     } else {
                         fr.onloadend = function() { 
-                            let binary = "";
-                            var bytes = new Uint8Array(fr.result);
-                            var length = bytes.byteLength;
-                            for (var i = 0; i < length; i++) {
-                                binary += String.fromCharCode(bytes[i]);
-                            }
-                            resolve(new ByteString(binary));
+                            resolve(new ByteString(arrayBufferToStr(fr.result)));
                         };
                         fr.readAsArrayBuffer(self._data);
                     }

@@ -1,5 +1,6 @@
 argparse==1.4.0
 configparser==4.0.2
+psutil==5.7.0
 future==0.17.1
 safety==1.8.7
 six==1.14.0

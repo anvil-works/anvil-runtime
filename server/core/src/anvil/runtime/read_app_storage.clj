@@ -120,7 +120,7 @@ __pycache__
   (reduce (fn [yaml [name subtree]]
             (cond
               (or (and ignore-py-and-yaml? (re-matches #".*\.(py|yaml)" name))
-                  (and top-level? (#{"anvil.yaml" "theme"} name))
+                  (and top-level? (#{"anvil.yaml" "theme" "CONFLICTS.yaml"} name))
                   (and top-level? (bytes? subtree)
                        (contains? default-file-contents name)
                        (Arrays/equals ^bytes subtree (.getBytes ^String (get default-file-contents name)))))
@@ -141,11 +141,14 @@ __pycache__
 
 (def get-app-yaml-from-resource-directory)
 (defn tree-map-to-yaml [tm ignore-extra-files?]
-  (let [core-app-files (->
+  (let [read-yaml #(when-let [^bytes ymlb (get-in tm %)]
+                    (yaml/parse-string (String. ymlb)))
+
+        core-app-files (->
                          (merge
-                           (when-let [^bytes ymlb (get tm "anvil.yaml")]
-                             (let [parsed (yaml/parse-string (String. ymlb))]
-                               (when (map? parsed) parsed)))
+                           (when-let [parsed (read-yaml ["anvil.yaml"])]
+                             (when (map? parsed) parsed))
+
                            {:forms
                             (->>
                               (for [[src-name, src] (get tm "forms")
@@ -170,17 +173,12 @@ __pycache__
                                    {:name mod-name, :code (String. ^bytes @src)})
                                  (sort-by :name))}
 
-                           ;; This is a temporary hack pending asset implementation
                            (if (get tm "theme")
                              {:theme
                               {:templates
-                               (when-let [^bytes s (get-in tm ["theme" "templates.yaml"])]
-                                 (yaml/parse-string (String. s)))
+                               (read-yaml ["theme" "templates.yaml"])
                                :parameters
-                               (or
-                                 (when-let [^bytes s (get-in tm ["theme" "parameters.yaml"])]
-                                   (yaml/parse-string (String. s)))
-                                 {})
+                               (or (read-yaml ["theme" "parameters.yaml"]) {})
                                :assets
                                (let [extract-assets (fn extract-assets [tree prefix]
                                                       (apply concat
@@ -190,7 +188,10 @@ __pycache__
                                                                (extract-assets @dir (str prefix name "/")))))]
                                  (extract-assets (get-in tm ["theme" "assets"]) ""))}}
                              ;; Else, fill it in blank!
-                             {:theme (get (get-app-yaml-from-resource-directory (io/resource "app_templates/blank_theme") false) "theme")}))
+                             {:theme (get (get-app-yaml-from-resource-directory (io/resource "app_templates/blank_theme") false) "theme")})
+
+                           (when-let [conflicts (read-yaml ["CONFLICTS.yaml"])]
+                             {:conflicts conflicts}))
                          (add-subtree-to-yaml [] (get tm "client_code") true)
                          (add-subtree-to-yaml [] (get tm "server_code") false))]
     (if ignore-extra-files?

@@ -9,7 +9,8 @@
             [clojure.tools.logging :as log]
             [anvil.dispatcher.serialisation.live-objects :as live-objects]
             [ring.util.codec :as codec]
-            [anvil.util :as util]))
+            [anvil.util :as util]
+            [anvil.core.worker-pool :as worker-pool]))
 
 (defn- feed [url start-index map-fn creds]
   (let [resp (request {:url (str url (if (.contains url "?") "&" "?") "start-index=" (or start-index 1) "&alt=json")} creds)
@@ -117,16 +118,17 @@
 
 (defn list-rows [kwargs list-feed-url query _limit creds]
   ;; TODO: Implement limit.
-  (let [wl-access (get-whitelist-access ::worksheet-list-feed-url list-feed-url creds)
-        _ (ensure-whitelist-access-ok wl-access false "list rows")
-        results (feed (str list-feed-url (when (not-empty query)
-                                           (str "?sq=" (codec/url-encode query))))
-                      (:start_index kwargs)
-                      #(row->live-object creds % wl-access)
-                      creds)]
-    (whitelist! ::worksheet-list-feed-post-url (:post_url results) creds wl-access)
+  (worker-pool/with-expanding-threadpool-when-slow
+    (let [wl-access (get-whitelist-access ::worksheet-list-feed-url list-feed-url creds)
+          _ (ensure-whitelist-access-ok wl-access false "list rows")
+          results (feed (str list-feed-url (when (not-empty query)
+                                             (str "?sq=" (codec/url-encode query))))
+                        (:start_index kwargs)
+                        #(row->live-object creds % wl-access)
+                        creds)]
+      (whitelist! ::worksheet-list-feed-post-url (:post_url results) creds wl-access)
 
-    results))
+      results)))
 
 (defn add-row [_kwargs list-feed-url values creds]
   (let [wl-access (get-whitelist-access ::worksheet-list-feed-url list-feed-url creds)

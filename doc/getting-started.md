@@ -142,7 +142,7 @@ $ sudo su
 \# exit
 $ virtualenv -p python3 venv
 $ . venv/bin/activate
-$ pip install anvil-standalone-runtime
+$ pip install anvil-app-server
 $ git clone git@anvil.works:2222/SOME_APP.git MyApp
 $ anvil-app-server --app MyApp --origin https://my-hostname.example.com
 ```

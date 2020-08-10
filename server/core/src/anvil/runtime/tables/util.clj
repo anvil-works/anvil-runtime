@@ -15,7 +15,8 @@
             [clojure.string :as str]
             [anvil.runtime.app-data :as app-data]
             [clojure.string :as string]
-            [anvil.core.server :as anvil-server])
+            [anvil.core.server :as anvil-server]
+            [anvil.core.worker-pool :as worker-pool])
   (:import (java.sql Connection SQLException)
            (anvil.dispatcher.types Date DateTime LiveObjectProxy MediaDescriptor SerialisableForRpc)
            (java.io InputStream ByteArrayInputStream SequenceInputStream OutputStream)
@@ -28,9 +29,10 @@
 
 
 (defonce db-for-app (fn [app-id] util/db))
+(defonce db-for-app-transaction (fn [app-id] util/db))
 (defonce mutate-db-for-app? (fn [app-id] false))
 
-(def set-table-hooks! (util/hook-setter [db-for-app mutate-db-for-app?]))
+(def set-table-hooks! (util/hook-setter [db-for-app db-for-app-transaction mutate-db-for-app?]))
 
 
 (defn general-tables-error
@@ -416,7 +418,7 @@
           _ (when (@open-transactions thread-id)
               (throw+ (general-tables-error "You already have a transaction open here")))
 
-          db-map (db)
+          db-map (db-for-app-transaction rpc-util/*app-id*)
 
           conn (try
                  (doto (jdbc/get-connection db-map)
@@ -442,23 +444,26 @@
     (throw+ (general-tables-error "Cannot open a transaction in an unidentified thread"))))
 
 (defn close-app-transaction! [_kwargs rollback?]
-  (if-let [thread-id rpc-util/*thread-id*]
-    (do
-      (try+
-        (require-app-transaction
-          (when-let [conn ^Connection (:connection (db))]
-            (if rollback?
-              (.rollback conn)
-              (.commit conn))
-            (.close conn)))
-        (catch [:type "anvil.tables.TransactionError"] e
-          (when-not rollback?
-            (throw+)))
-        (finally
-          (swap! rpc-util/*session-state* update-in [::transaction-threads] disj thread-id)
-          (swap! open-transactions dissoc thread-id)))
-      nil)
-    (throw+ (general-tables-error "Cannot close a transaction in an unidentified thread"))))
+  (when-not rpc-util/*thread-id*
+    (throw+ (general-tables-error "Cannot close a transaction in an unidentified thread")))
+  ;; Atomically remove and retrieve the value of the 'thread-id' key from this map
+  (if-let [{{:keys [^Connection connection]} :db-map} (-> (swap-vals! open-transactions dissoc rpc-util/*thread-id*)
+                                                          (first)
+                                                          (get rpc-util/*thread-id*))]
+    ;; We now MUST close connection before returning, because nobody else will
+    (try
+      (swap! rpc-util/*session-state* update-in [::transaction-threads] disj rpc-util/*thread-id*)
+      (if-not rollback?
+        (.commit connection)
+        (.rollback connection))
+      (finally
+        (.close connection)))
+
+    ;; Else, there is no transaction for our thread. Throw an appropriate error.
+    (if (contains? (::transaction-threads @rpc-util/*session-state*) rpc-util/*thread-id*)
+      (when-not rollback?                                   ;; Rolling back an expired transaction is not an error
+        (throw+ (general-tables-error "This transaction has expired" "anvil.tables.TransactionError")))
+      (throw+ {:anvil/server-error "No transaction currently running"}))))
 
 
 (defn -mk-use-quota-fns [decrement! decrement-if-possible!]
@@ -899,7 +904,7 @@
                    (throw (Exception. (str "Could not create index of type '" type "': " IDX-NAME))))]
              (log/trace (pr-str SQL))
              (util/with-metric-query "CREATE INDEX"
-               (binding [util/*db-query-timeout* 300000]
+               (util/with-long-query
                  (jdbc/execute! db SQL {:transaction? false}))))))
 
        (log/trace "Finished updating indexes.")))))
@@ -925,7 +930,7 @@
                                                        (fn [& _args]
                                                          (throw (Exception. "Cannot use quota here.")))))
   ([table-id new-cols old-cols use-quota!]
-   (anvil-server/with-expanding-threadpool-when-slow
+   (worker-pool/with-expanding-threadpool-when-slow
      (with-table-transaction
        (let [col-records (for [[id desc] (-> (jdbc/query (db) ["UPDATE app_storage_tables SET columns = ?::jsonb WHERE id = ? RETURNING columns"
                                                                new-cols table-id])

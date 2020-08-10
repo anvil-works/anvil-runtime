@@ -54,6 +54,7 @@
 (defonce app-cookie-names {:local  "anvilapp"
                            :shared "anvilapp-shared"})
 
+(def force-secure-cookies? true)
 
 (defn set-config! [hook-map]
   (let [vars (-> (ns-publics 'anvil.runtime.conf)

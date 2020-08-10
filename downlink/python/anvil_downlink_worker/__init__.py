@@ -163,6 +163,8 @@ def load_app_modules():
     for n in modules_to_import:
         importlib.import_module(n)
 
+repl_scopes = {}
+
 
 def handle_incoming_call(msg, send_to_host):
     if msg['type'].startswith("LAUNCH_BACKGROUND"):
@@ -175,7 +177,30 @@ def handle_incoming_call(msg, send_to_host):
             send_to_host({"type": "GET_APP", "id": _threaded_server.gen_id(), "originating-call": msg['id'],
                           "app-id": msg["app-id"], "app-version": msg["app-version"]})
 
+    # This part happens out here because uplinks can't do REPLs:
+    run_fn = None
+    if msg['type'] == "LAUNCH_REPL":
+        repl_scopes[msg['id']] = {}
+
+        def run_fn():
+            send_to_host({'output': "Application loaded\n", 'id': msg['id']})
+            raise _threaded_server.SendNoResponse
+
+    elif msg['type'] == "REPL_COMMAND":
+        scope = repl_scopes.get(msg['repl'], {})
+
+        def run_fn():
+            cobj = compile(msg['command'], "<input>", "single")
+            do_exec(cobj, scope)
+
+    elif msg['type'] == "TERMINATE_REPL":
+        repl_scopes.pop(msg['repl'], None)
+        send_to_host({"id": msg['repl'], "response": None})
+        return
+
     try:
-        _threaded_server.IncomingRequest(msg, load_app_modules, dump_task_state=(msg['type'].startswith("LAUNCH_BACKGROUND")))
+        _threaded_server.IncomingRequest(msg, load_app_modules,
+                                         run_fn=run_fn,
+                                         dump_task_state=(msg['type'].startswith("LAUNCH_BACKGROUND")))
     except:
         send_to_host(_server._report_exception(msg['id']))

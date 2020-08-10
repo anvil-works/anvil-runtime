@@ -48,7 +48,7 @@
   (let [data-path #(.getPath (File. ^String (:data-dir @config) ^String %))]
     (runtime-conf/set-config!
       {:static-root-url                     "/_/static"
-       :runtime-common-url                  ""
+       :runtime-common-url                  (:origin conf)
        :db                                  {:classname      "org.postgresql.Driver"
                                              :connection-uri (:database conf)}
        :force-data-table-views-for-everyone true

@@ -138,9 +138,14 @@ class LocalAppInfo(ThreadLocal):
 anvil.app = LocalAppInfo()
 
 
+class SendNoResponse(Exception):
+    pass
+
+
 class IncomingRequest(_serialise.IncomingReqResp):
-    def __init__(self, json, import_modules=None, dump_task_state=False):
+    def __init__(self, json, import_modules=None, run_fn=None, dump_task_state=False):
         self.import_modules = import_modules
+        self.run_fn = run_fn
         self.dump_task_state = dump_task_state
         _serialise.IncomingReqResp.__init__(self, json)
 
@@ -170,16 +175,18 @@ class IncomingRequest(_serialise.IncomingReqResp):
                 self.reconstruct_remaining_data()
                 call_info.session = _server._reconstruct_objects(sjson, None).get("session", {})
 
-                if 'liveObjectCall' in self.json:
+                if self.run_fn is not None:
+                    response = self.run_fn()
+                elif 'liveObjectCall' in self.json:
                     loc = self.json['liveObjectCall']
                     spec = dict(loc)
 
-                    if self.json["id"].startswith("server-"):
-                        spec["source"] = "server"
-                    elif self.json["id"].startswith("client-"):
-                        spec["source"] = "client"
-                    else:
+                    if call_context.remote_caller is None:
                         spec["source"] = "UNKNOWN"
+                    elif call_context.remote_caller.is_trusted:
+                        spec["source"] = "server"
+                    else:
+                        spec["source"] = "client"
 
                     del spec["method"]
                     backend = loc['backend']
@@ -238,6 +245,8 @@ class IncomingRequest(_serialise.IncomingReqResp):
                     send_reqresp(resp)
                 except _server.SerializationError as e:
                     raise _server.SerializationError("Cannot serialize return value from function. " + str(e))
+            except SendNoResponse:
+                pass
             except:
 
                 e = _server._report_exception(self.json["id"])

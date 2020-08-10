@@ -1,7 +1,8 @@
 (ns anvil.dispatcher.types
   (:require [anvil.runtime.conf :as conf]
             [crypto.random :as random]
-            [anvil.util :as util])
+            [anvil.util :as util]
+            [anvil.core.worker-pool :as worker-pool])
   (:import (java.io File FileOutputStream ByteArrayInputStream ByteArrayOutputStream)))
 
 (defprotocol SerialisableForRpc
@@ -111,9 +112,10 @@
 
     (consume chunked-stream add-bytes)
 
-    (BlobMedia. (.getContentType chunked-stream)
-                @consumed-bytes
-                (.getName chunked-stream))))
+    (worker-pool/with-expanding-threadpool-when-slow
+      (BlobMedia. (.getContentType chunked-stream)
+                  @consumed-bytes
+                  (.getName chunked-stream)))))
 
 (defn ?->InputStream
   "Turn ChunkedStream or Media into an InputStream. Use of this function is a code smell,

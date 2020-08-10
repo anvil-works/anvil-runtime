@@ -35,7 +35,7 @@
 (defonce failsafe-timeout (atom nil))
 
 (defn setup-failsafe-timer! []
-  (reset! failsafe-timeout (Timer.)))
+  (reset! failsafe-timeout (Timer. true)))
 
 (def check-dkim)
 
@@ -61,9 +61,8 @@
                                 (deliver response-promise r)
                                 true))
 
-        timer-task (proxy [TimerTask] []
-                     (run []
-                       (simple-smtp-result! {:error {:type "unknown", :message "Server code timed out"}})))
+        timer-task (util/timer-task "timing out SMTP response"
+                     (simple-smtp-result! {:error {:type "unknown", :message "Server code timed out"}}))
 
         smtp-result! (fn [r]
                        (when (simple-smtp-result! r)

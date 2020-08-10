@@ -48,8 +48,13 @@ $ npm run build
 Next, build the server components and produce a Python package ready for distribution:
 
 ```bash
-$ cd ../packaging/standalone
+$ cd ../packaging/app-server
 $ ./build-all
+```
+
+And now you can install the app-server:
+```bash
+pip install /anvil/runtime/packaging/app-server/python-package-build
 ```
 
 ## Building and Running for Development

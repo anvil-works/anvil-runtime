@@ -10,7 +10,8 @@
             [anvil.runtime.secrets :as secrets]
             [anvil.dispatcher.core :as dispatcher]
             [anvil.util :as util]
-            [crypto.random :as random])
+            [crypto.random :as random]
+            [anvil.core.worker-pool :as worker-pool])
   (:import (javax.mail.internet MimeBodyPart InternetAddress AddressException MimeMessage MimeMultipart)
            (javax.mail.util ByteArrayDataSource)
            (javax.activation DataHandler)
@@ -206,9 +207,10 @@
                     (when *client-request?*
                       (throw+ {:anvil/server-error "Permission denied. Cannot send email from client code. Call anvil.email.send() from a server module instead!"}))
 
-                    (let [report (send! kwargs)]
-                      (when allow-return?
-                        report)))))
+                    (worker-pool/with-expanding-threadpool-when-slow
+                      (let [report (send! kwargs)]
+                        (when allow-return?
+                          report))))))
 
 (def handlers {"anvil.private.email.send"    (wrapped-send false) ; This one doesn't return anything, for backwards compatibility with old Uplinks that can't accept ValueTypes. Remove when all uplinks are >= v7
                "anvil.private.email.send.v2" (wrapped-send true)})

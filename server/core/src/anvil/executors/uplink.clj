@@ -14,7 +14,8 @@
     [crypto.random :as random]
     [anvil.executors.ws-utils :as ws-utils]
     [anvil.metrics :as metrics]
-    [anvil.runtime.util :as runtime-util])
+    [anvil.runtime.util :as runtime-util]
+    [anvil.core.worker-pool :as worker-pool])
   (:import (java.util.regex PatternSyntaxException)))
 
 
@@ -101,7 +102,9 @@
 
       (on-close channel
                 (fn [why]
-                  (log/debug "Uplink websocket closed for app" @app-id (pr-str why))
+                  (worker-pool/set-task-info! :websocket ::close)
+                  (when @app-id
+                    (log/debug "Uplink websocket closed for app" @app-id (pr-str why)))
                   (metrics/set! :api/runtime-connected-uplinks-total (swap! connected-uplink-count dec))
 
                   (clear-uplink-registrations! @connection-cookie @my-fn-registrations)
@@ -122,6 +125,7 @@
 
       (on-receive channel
                   (fn [json-or-binary]
+                    (worker-pool/set-task-info! :websocket ::receive)
                     (when-not @closed
                       (log/trace "Uplink got data: " json-or-binary)
                       (try+
@@ -145,7 +149,7 @@
                                   (not app-info)
                                   (do
                                     (send! channel "{\"error\": \"Incorrect uplink key\"}")
-                                    (log/debug "Closing connecting uplink channel: Incorrect uplink key for app " (pr-str (:id app-info)))
+                                    (log/debug "Closing connecting uplink channel: Uplink key did not match a known app")
                                     (close channel))
 
                                   (util/app-locked? (:id app-info))

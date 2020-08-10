@@ -6,7 +6,7 @@ module.exports = {
 
   // We want to generate two bundles. One for runner. one for its Service Worker
   entry: {
-    runner: ['babel-polyfill', './runner.js'],
+    runner: ['./runner.js'],
     sw: ['babel-polyfill',  './sw.js'],
   },
 

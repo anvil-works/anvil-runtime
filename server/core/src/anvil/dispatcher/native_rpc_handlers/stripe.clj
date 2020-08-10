@@ -5,7 +5,8 @@
             [clojure.tools.logging :as log]
             [anvil.dispatcher.types :as types]
             [anvil.util :as util]
-            [anvil.dispatcher.core :as dispatcher])
+            [anvil.dispatcher.core :as dispatcher]
+            [anvil.core.worker-pool :as worker-pool])
   (:import (com.stripe.model Charge Customer Subscription Card HasId)
            (com.stripe.net RequestOptions)
            (java.util Map HashMap)
@@ -41,10 +42,11 @@
                  (integer? amount) amount
                  :else (Math/round (double amount)))
         [request-options live-mode? _stripe-user-id] (get-request-options)
-        charge (Charge/create ^Map (merge {"amount"   amount
-                                           "currency" currency
-                                           "source"   token})
-                              ^RequestOptions request-options)]
+        charge (worker-pool/with-expanding-threadpool-when-slow
+                 (Charge/create ^Map (merge {"amount"   amount
+                                             "currency" currency
+                                             "source"   token})
+                                ^RequestOptions request-options))]
     (when live-mode?
       (log/info "STRIPE PAY:" (float (/ amount 100)) currency "(Token:" token ")"))
 
@@ -71,10 +73,11 @@
                                       request-options)
 
             subscription (try
-                           (Subscription/create ^Map (merge {"items"    [{"plan" plan
-                                                                     "quantity" quantity}]
-                                                        "customer" (.getId customer)})
-                                                ^RequestOptions request-options)
+                           (worker-pool/with-expanding-threadpool-when-slow
+                             (Subscription/create ^Map (merge {"items"    [{"plan"     plan
+                                                                            "quantity" quantity}]
+                                                               "customer" (.getId customer)})
+                                                  ^RequestOptions request-options))
                            (catch Exception e
                              (.delete customer request-options)
                              (throw e)))]
@@ -135,11 +138,12 @@
   (boolean (#{"trialling" "active" "past_due"} (.getStatus sub))))
 
 (defn get-subs-for-customer [id live-only?]
-  (->> (retrieve Customer id)
-       (.getSubscriptions)
-       (.autoPagingIterable)
-       (filter #(or (not live-only?)
-                    (sub-is-live? %)))))
+  (worker-pool/with-expanding-threadpool-when-slow
+    (->> (retrieve Customer id)
+         (.getSubscriptions)
+         (.autoPagingIterable)
+         (filter #(or (not live-only?)
+                      (sub-is-live? %))))))
 
 (defn first-bool [& s]
   (first (filter #(contains? #{true false} %) s)))
@@ -214,11 +218,12 @@
 
 (defn new-customer [_kwargs email token]
   (require-server!)
-  (let [[^RequestOptions request-options] (get-request-options)
-        customer (Customer/create ^Map (merge {"email" email}
-                                              (when token {"source" token}))
-                                  request-options)]
-    (mk-Customer customer)))
+  (worker-pool/with-expanding-threadpool-when-slow
+    (let [[^RequestOptions request-options] (get-request-options)
+          customer (Customer/create ^Map (merge {"email" email}
+                                                (when token {"source" token}))
+                                    request-options)]
+      (mk-Customer customer))))
 
 (def handlers {"anvil.private.stripe.charge" (wrap-native-fn charge)
                "anvil.private.stripe.subscribe" (wrap-native-fn subscribe)

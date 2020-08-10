@@ -222,3 +222,6 @@
       ;; Hack - force the ID in all app_storage_access rows
       (jdbc/execute! util/db ["UPDATE app_storage_access SET app_id = ? WHERE python_name IN (SELECT * FROM json_array_elements_text(?))"
                               main-app-id (vec (map :python_name schema-tables))]))))
+
+
+(tables-util/set-table-hooks! {:mutate-db-for-app? (fn [app-id] true)})

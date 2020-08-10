@@ -4,6 +4,12 @@
   :dependencies [[org.clojure/clojure "1.9.0"]
                  [compojure "1.6.1"]
 
+                 ; Everything depends on different versions of Jackson. Force this one.
+                 [com.fasterxml.jackson.core/jackson-core "2.11.0"]
+                 [com.fasterxml.jackson.core/jackson-databind "2.11.0"]
+                 [com.fasterxml.jackson.dataformat/jackson-dataformat-cbor "2.11.0"]
+                 [com.fasterxml.jackson.dataformat/jackson-dataformat-smile "2.11.0"]
+
                  [ring/ring-core "1.8.0"]
                  [ring/ring-defaults "0.3.2"]
                  [ring/ring-devel "1.8.0"]
@@ -54,13 +60,15 @@
                  [com.google.guava/guava "23.6-jre"]
 
                  [one-time "0.4.0"]
+                 [me.grison/cljwebauthn "0.1.2"]
+                 [com.webauthn4j/webauthn4j-core "0.11.1.RELEASE"]
 
                  [org.subethamail/subethasmtp "3.1.7"]
                  [org.apache.james.jdkim/apache-jdkim "0.2" :extension "pom" :exclusions [[org.apache.geronimo.javamail/geronimo-javamail_1.4_mail]]]
 
-                 [org.bouncycastle/bcprov-jdk15on "1.60"]
-                 [buddy/buddy-core "1.5.0" :exclusions [org.bouncycastle/bcprov-jdk15on]]
-                 [buddy/buddy-sign "3.0.0"]
+                 [org.bouncycastle/bcprov-jdk15on "1.65"]
+                 [buddy/buddy-core "1.6.0" :exclusions [org.bouncycastle/bcprov-jdk15on]]
+                 [buddy/buddy-sign "3.1.0"]
 
                  [io.prometheus/simpleclient_hotspot "0.6.0"]
                  [clj-commons/iapetos "0.1.9"]
@@ -73,6 +81,6 @@
   :auto-clean false
   :omit-source true
   ;; :jvm-opts ["-Djavax.net.debug=all"] ; Useful for debugging SSL issues
-  :profiles {:provided {:dependencies [[org.bouncycastle/bcprov-jdk15on "1.60"]]}
+  :profiles {:provided {:dependencies [[org.bouncycastle/bcprov-jdk15on "1.65"]]}
              :uberjar {:exclusions [org.bouncycastle/bcprov-jdk15on]}}
   )

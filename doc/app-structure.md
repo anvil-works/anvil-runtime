@@ -380,13 +380,13 @@ If the database is already configured with a different schema, the App Server wi
 
 Anvil's [Users Service](https://anvil.works/docs/users) handles authentication, including signup, login and user permissions, and provides a range of functionality to make user management easy and flexible.
 
-You can enable the Users Service in `anvil.yaml`, as well as configuring the service itself. If you’re using the Users Service, user accounts are stored in a Data Table, conventionally called "users" (see above for information on Data Tables).
+The best way to enable the Users Service is to enable it in the [online IDE](https://anvil.works/build), and then [clone your app onto your local machine](https://anvil.works/docs/version-control/git). You can also enable the Users Service in `anvil.yaml`, as well as configuring the service itself. 
+
+If you're using the Users Service, user accounts are stored in a Data Table, conventionally called "users" (see above for information on Data Tables).
 
 The Users service supports a number of [sign-in methods](https://anvil.works/docs/users/authentication_choices). These are configured using `client_config` in the `anvil.yaml` entry. The `server_config` tells the database which of your Data Tables should be used to store user accounts. By convention, this should be "users".
 
-Here's an example entry in `anvil.yaml` which adds and configures the User Service (the Data Tables service is required to use the Users service):
-
-<!-- TODO: should this also include the db_schema for the users table? -->
+Here's an example entry in `anvil.yaml`, produced by enabling the Users Service in the online IDE. It adds and configures the User Service (the Data Tables service is required to use the Users service):
 
 ```
 services:
@@ -394,11 +394,47 @@ services:
   client_config: {}
   server_config: {auto_create_missing_columns: false}
 - source: /runtime/services/anvil/users.yml
-  client_config: {use_microsoft: true, require_secure_passwords: true, share_login_status: true,
+  client_config: {use_microsoft: false, require_secure_passwords: true, share_login_status: true,
     use_email: true, allow_remember_me: true, allow_signup: true, enable_automatically: true,
-    confirm_email: true, remember_me_days: 7, use_google: true, use_facebook: true}
+    confirm_email: true, remember_me_days: 7, use_google: false, use_facebook: false}
   server_config: {user_table: 'users'}
+db_schema:
+- name: Users
+  id: 3
+  python_name: users
+  columns:
+    Jiv3u_GvZ+M=:
+      name: email
+      type: string
+      admin_ui: {order: 0, width: 200}
+    e5qNZNN248Y=:
+      name: enabled
+      type: bool
+      admin_ui: {order: 1, width: 100}
+    haSy3ivjtXM=:
+      name: signed_up
+      type: datetime
+      admin_ui: {order: 2, width: 200}
+    aHRjjIgDub0=:
+      name: password_hash
+      type: string
+      admin_ui: {order: 3, width: 200}
+    uJDnnYdBrt8=:
+      name: confirmed_email
+      type: bool
+      admin_ui: {order: 4, width: 100}
+    jUfJHJ+557v=:
+      name: email_confirmation_key
+      type: string
+      admin_ui: {order: 5, width: 200}
+    jALyyGoERn0=:
+      name: last_login
+      type: datetime
+      admin_ui: {order: 6, width: 200}
+  access: {python_name: users, server: full, client: none, table_id: 3}
 ```
+
+For more information on the Users Table, and the columns in the `db_schema` above, see the [reference docs](https://anvil.works/docs/users/the_users_table)
 
 #### Email
 

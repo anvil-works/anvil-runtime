@@ -278,7 +278,7 @@ Port for outbound SMTP server (see `smtp-host`).
 
 #### smtp-encryption
 
-Enable TLS for connecting to outbound SMTP server (see `smtp-host`).
+Enable TLS for connecting to outbound SMTP server (see `smtp-host`). Takes "starttls" or "ssl" as a string value.
 
 #### smtp-username
 

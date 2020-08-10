@@ -2,7 +2,11 @@ name: Users
 prelude: "import anvil.users"
 preload_module: anvil.users
 path_whitelist:
-  - users.py
+  - users/__init__.py
+  - users/exceptions.py
+  - users/mfa/__init__.py
+  - users/mfa/webauthn.js
+  - users/config.py
 client_config_properties:
   - name: allow_signup
     type: boolean

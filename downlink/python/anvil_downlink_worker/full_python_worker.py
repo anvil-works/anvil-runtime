@@ -63,7 +63,8 @@ def run():
         PIPE_IN.read(1) # signal byte to wake us up
         msg = marshal.load(PIPE_IN)
         type = msg.get("type", None)
-        if type in ["CALL_WITH_APP", "LAUNCH_BACKGROUND_WITH_APP", "CALL", "LAUNCH_BACKGROUND"]:
+        if type in ["CALL_WITH_APP", "LAUNCH_BACKGROUND_WITH_APP", "CALL", "LAUNCH_BACKGROUND",
+                    "LAUNCH_REPL", "REPL_COMMAND", "TERMINATE_REPL"]:
             handle_incoming_call(msg, write_pipe)
 
         elif type == "PROVIDE_APP":

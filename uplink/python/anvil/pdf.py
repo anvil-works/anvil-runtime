@@ -1,7 +1,10 @@
 import anvil.server
 
-def form_to_pdf(*args, **kwargs):
+def render_form(*args, **kwargs):
     return anvil.server.call("anvil.private.pdf.component_to_pdf", {}, args, kwargs)
+
+
+form_to_pdf = render_form
 
 
 class PdfRenderer(object):

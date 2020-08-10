@@ -12,20 +12,24 @@
                             (jvm/initialize)
                             (prometheus/register
                               (prometheus/counter :api/http-request-calls-total {:labels #{:method :path :status}})
-                              (prometheus/histogram :api/http-request-queue-wait-seconds {:buckets DEFAULT-BUCKETS})
-                              (prometheus/histogram :api/http-request-duration-seconds {:buckets DEFAULT-BUCKETS
-                                                                                        :labels  #{:method :path}})
 
-                              (prometheus/gauge :api/http-active-worker-threads-total)
-                              (prometheus/gauge :api/http-max-thread-pool-size-total)
-                              (prometheus/gauge :api/http-request-queue-length-total)
-                              (prometheus/counter :api/http-request-execution-seconds-total)
+
+                              (prometheus/gauge :api/active-worker-threads-total) ;; TODO: Max, avg
+                              (prometheus/gauge :api/max-thread-pool-size-total)
+                              (prometheus/gauge :api/task-queue-length-total) ;; TODO: Max, avg
+                              (prometheus/histogram :api/task-queue-wait-seconds {:buckets DEFAULT-BUCKETS})
+                              (prometheus/histogram :api/task-execution-seconds {:buckets DEFAULT-BUCKETS
+                                                                                 :labels  #{:type :name}})
 
                               (prometheus/histogram :api/jdbc-query-duration-seconds {:buckets DEFAULT-BUCKETS
                                                                                       :labels  #{:query :uri}})
 
                               (prometheus/counter :api/uncaught-exceptions-total)
                               (prometheus/counter :api/jdbc-query-timeouts)
+                              (prometheus/counter :api/jdbc-pool-checkouts-total {:labels #{:uri :pool}})
+                              (prometheus/gauge :api/jdbc-pool-checkouts-max {:labels #{:uri :pool}}) ;; TODO: Remove
+                              (prometheus/gauge :api/jdbc-pool-active-connections-total {:labels #{:uri :pool}}) ;; TODO: Max, avg
+                              (prometheus/counter :api/jdbc-pool-usage-seconds-total {:labels #{:uri :pool}})
 
                               (prometheus/gauge :api/runtime-active-sessions-total)
                               (prometheus/gauge :api/runtime-connected-downlinks-total)
@@ -33,7 +37,6 @@
                               (prometheus/counter :api/runtime-serve-app-total)
                               (prometheus/counter :api/runtime-serve-api-total)
                               (prometheus/counter :api/runtime-errors-total)
-                              (prometheus/counter :api/runtime-dispatch-total {:labels #{:executor :type :version :native-fn}})
                               (prometheus/histogram :api/runtime-dispatch-duration-seconds {:buckets DEFAULT-BUCKETS
                                                                                             :labels  #{:executor :type :version :native-fn}})))))
 
@@ -46,9 +49,15 @@
     (catch Exception e
       (log/error e "Failed to increment metric"))))
 
-(defn set! [metric value]
+(defn set! [metric value & [labels]]
   (try
-    (prometheus/set @registry metric value)
+    (prometheus/set @registry metric (or labels {}) value)
+    (catch Exception e
+      (log/error e "Failed to set metric"))))
+
+(defn observe! [metric value labels]
+  (try
+    (prometheus/observe @registry metric (or labels {}) value)
     (catch Exception e
       (log/error e "Failed to set metric"))))
 
@@ -61,3 +70,4 @@
 
 (defn register-metric [metric]
   (swap! registry prometheus/register metric))
+

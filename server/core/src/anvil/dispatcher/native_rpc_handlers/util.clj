@@ -7,7 +7,8 @@
             [anvil.dispatcher.serialisation.live-objects :as live-objects]
             [anvil.dispatcher.types :as types]
             [anvil.runtime.quota :as quota]
-            [anvil.dispatcher.core :as dispatcher]))
+            [anvil.dispatcher.core :as dispatcher]
+            [anvil.core.worker-pool :as worker-pool]))
 
 (def ^:dynamic *app* nil)
 (def ^:dynamic *app-info* nil)
@@ -49,7 +50,8 @@
           :keys                                           [app app-id app-info app-origin session-state origin thread-id app-version app-branch]
           :as                                             request}
          return-path]
-      (future
+      (worker-pool/run-task! {:type :native-rpc,
+                              :name (if live-object (format "%s.%s" (:backend live-object) func) func)}
         (binding [*app-id* app-id
                   *app* app
                   *app-info* app-info
@@ -69,6 +71,7 @@
                   *client-request?* (= origin :client)
                   *profiles* (atom [])
                   *lo-cache-updates* (atom nil)]
+
 
 
           (try

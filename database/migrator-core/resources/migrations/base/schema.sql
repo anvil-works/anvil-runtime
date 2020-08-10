@@ -49,7 +49,6 @@ GRANT SELECT ON db_version TO $ANVIL_USER;
 GRANT EXECUTE ON FUNCTION parse_anvil_timestamp TO $ANVIL_USER;
 GRANT EXECUTE ON FUNCTION to_anvil_timestamp TO $ANVIL_USER;
 
-GRANT ALL ON app_storage_tables, app_storage_access, app_storage_data, app_storage_media TO $ANVIL_USER;
-GRANT USAGE ON app_storage_data_id_seq TO $ANVIL_USER;
+GRANT ALL ON app_storage_tables, app_storage_access, app_storage_data, app_storage_media, app_storage_data_id_seq TO $ANVIL_USER;
 GRANT SELECT ON pg_largeobject TO $ANVIL_USER; -- To measure the size of Media objects
 --[/GRANTS]--

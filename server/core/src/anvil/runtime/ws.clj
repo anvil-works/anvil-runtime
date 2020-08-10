@@ -9,7 +9,8 @@
             [anvil.dispatcher.serialisation.core :as serialisation]
             [anvil.util :as util]
             [anvil.runtime.app-log :as app-log]
-            [anvil.metrics :as metrics]))
+            [anvil.metrics :as metrics]
+            [anvil.core.worker-pool :as worker-pool]))
 
 (defn ws-handler [{:keys [app-id app-session app-branch app-version] :as request} app-yaml]
   (util/with-opening-channel request channel on-open
@@ -30,6 +31,7 @@
 
       (on-close channel
                 (fn [why]
+                  (worker-pool/set-task-info! :websocket ::close)
                   (log/debug "Client websocket closed: " (:id @app-session) (pr-str why))
                   ;; A websocket closing constitutes 'activity' on this session,
                   ;; so reset its expiry countdown.
@@ -38,6 +40,7 @@
 
       (on-receive channel
                   (fn [json-or-binary]
+                    (worker-pool/set-task-info! :websocket ::receive)
                     (log/trace "Got websocket data from client: " json-or-binary)
                     (touch-session! app-session)
                     (try

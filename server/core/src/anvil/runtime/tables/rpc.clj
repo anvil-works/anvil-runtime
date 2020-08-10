@@ -819,7 +819,7 @@
                                                                         "EQ" (let [col (:col view-query)
                                                                                    value (:value view-query)
                                                                                    col-type (:type view-query)]
-                                                                               {col (fixup-view-value col-type value)})
+                                                                               {(keyword col) (fixup-view-value col-type value)})
                                                                         (throw+ (general-tables-error "Invalid view query object.")))))
 
                                                     row-data (merge row-data media-object-ids (get-view-data view-query))

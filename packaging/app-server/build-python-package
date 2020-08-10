@@ -14,7 +14,7 @@ cp setup.py python-package-build/
 ./package-templates ./python-package-build/anvil_app_server/
 
 # Fulfil AGPL requirement: Make source code available for download.
-rm ./build-tmp -rf
+rm -rf ./build-tmp
 mkdir ./build-tmp
 
 cd ../..

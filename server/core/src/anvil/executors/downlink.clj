@@ -9,7 +9,8 @@
             [crypto.random :as random]
             [anvil.executors.ws-utils :as ws-utils]
             [anvil.dispatcher.core :as dispatcher]
-            [anvil.dispatcher.background-tasks :as background-tasks]))
+            [anvil.dispatcher.background-tasks :as background-tasks]
+            [anvil.core.worker-pool :as worker-pool]))
 
 
 (clj-logging-config.log4j/set-logger! :level :info)
@@ -18,29 +19,34 @@
 (defonce register-downlink! (fn [registration-request executor] (throw (UnsupportedOperationException.))))
 (defonce drain-downlink! (fn [cookie] nil))
 (defonce unregister-downlink! (fn [cookie] (throw (UnsupportedOperationException.))))
+(defonce report-downlink-stats (fn [cookie stats] nil))
 
-(def set-downlink-hooks! (util/hook-setter [register-downlink! drain-downlink! unregister-downlink!]))
+(def set-downlink-hooks! (util/hook-setter [register-downlink! drain-downlink! unregister-downlink! report-downlink-stats]))
 
 (defn- sanitise-app-for-downlink [app]
   (select-keys app [:modules :server_modules :forms :runtime_options :dependency_code :dependency_order :package_name]))
 
-(defn executor-fn [channel pending-responses bg-task-id
-                {{:keys [live-object args kwargs func vt_global] :as _call} :call
-                 :keys [app-id app-branch app-version app-origin app session-state origin stale-uplink? background? call-stack] :as _request}
-                return-path]
+(defn gen-id [hint]
+  (str (name hint) "-" (random/base64 16)))
 
-  (let [new-id (str (if (= origin :client) "client-" "server-") (random/base64 16))
-        ;; We key the downlink cache with a blend of *all* versions (incl dependencies),
-        ;; but any calls the downlink makes in the meantime are tagged with the original app-version.
-        blended-version (apply str app-version (for [[_ {:keys [version]}] (sort-by first (:dependency_code app))] version))]
-    (swap! pending-responses assoc new-id {:app                   app
+(defn send-request! [channel pending-responses bg-task-id req-id
+                     {{:keys [live-object args kwargs func vt_global] :as _call} :call
+                      :keys [app-id app-branch app-version app-origin app session-state origin stale-uplink? call-stack]
+                      :as _request}
+                     message
+                     return-path]
+
+  ;; We key the downlink cache with a blend of *all* versions (incl dependencies),
+  ;; but any calls the downlink makes in the meantime are tagged with the original app-version.
+  (let [blended-version (apply str app-version (for [[_ {:keys [version]}] (sort-by first (:dependency_code app))] version))]
+    (swap! pending-responses assoc req-id {:app                   app
                                            :app-id                app-id
                                            :app-branch            app-branch
                                            :app-version           app-version
                                            :blended-version       blended-version
                                            :app-origin            app-origin
                                            :bg-task-id            bg-task-id
-                                           :return-path           {:update!  #(dispatcher/update! return-path (assoc % :id new-id))
+                                           :return-path           {:update!  #(dispatcher/update! return-path (assoc % :id req-id))
                                                                    :respond! #(dispatcher/respond! return-path (dissoc % :id))}
                                            :call-stack            call-stack
                                            :session-state         session-state
@@ -49,11 +55,10 @@
     (log/debug "Executing RPC function on downlink:" (str func (when live-object (str " (" (:backend live-object) ")"))))
 
     (try
-      (serialisation/serialise-to-websocket! (merge {:id               new-id
-                                                     :call-stack-id    new-id
+      (serialisation/serialise-to-websocket! (merge {:id               req-id
+                                                     :call-stack-id    req-id
                                                      :call-stack       (map #(select-keys % [:type]) call-stack)
                                                      :client           (:client @session-state)
-                                                     :type             (if background? "LAUNCH_BACKGROUND" "CALL")
                                                      :sessionData      (or (:pymods @session-state) {})
                                                      :app-id           app-id
                                                      :app-info         {:id app-id, :branch app-branch}
@@ -67,15 +72,28 @@
                                                      :vt_global        vt_global}
                                                     (when (or (not blended-version) (= blended-version ""))
                                                       {:app (sanitise-app-for-downlink app)})
-                                                    (if live-object
-                                                      {:liveObjectCall (assoc live-object :method func)}
-                                                      {:command func})) channel false nil true)
-      new-id
+                                                    message) channel false nil true)
+      req-id
 
       (catch Exception e
         (let [error-id (random/hex 6)]
           (log/error e "Error serialising downlink request:" error-id)
           (dispatcher/respond! return-path {:error {:type "anvil.server.SerializationError" :message (str "Internal server error: " error-id)}}))))))
+
+(defn call-fn [channel pending-responses
+               {{:keys [live-object func]} :call
+                :keys [origin]
+                :as request}
+               return-path]
+  (send-request! channel pending-responses nil
+                 (gen-id (if (= origin :client) "client" "server"))
+                 request
+                 (merge
+                   {:type "CALL"}
+                   (if live-object
+                     {:liveObjectCall (assoc live-object :method func)}
+                     {:command func}))
+                 return-path))
 
 ;; [app-id id] -> {:channel, :call-id}
 (defonce background-tasks (atom {}))
@@ -92,13 +110,14 @@
 
         _ (swap! background-tasks assoc lookup-key {:channel channel, :pending-responses pending-responses})
 
-        call-id (executor-fn channel pending-responses id request new-return-path)
+        call-id (send-request! channel pending-responses id (gen-id :bgtask) request
+                               {:type "LAUNCH_BACKGROUND", :command (get-in request [:call :func])}
+                               new-return-path)
 
         _ (swap! background-tasks #(if (get % lookup-key)
                                     (assoc-in % [lookup-key :call-id] call-id)
                                     %))]
     id))
-
 
 
 (swap! background-tasks/implementations assoc :downlink
@@ -133,11 +152,13 @@
           pending-responses (atom {}) ;; id -> {:app-id app-id :respond! respond!, :send-update! send-update, :ssm-state ssm-state}
           ds (serialisation/mk-Deserialiser :permitted-live-object-backends #{"uplink."})
           internal-error (atom nil)
-          executor {:fn (partial executor-fn channel pending-responses nil)
-                    :bg-fn (partial launch-bg-fn channel pending-responses)}]
+          executor {:fn (partial call-fn channel pending-responses)
+                    :bg-fn (partial launch-bg-fn channel pending-responses)
+                    ::send-fn (partial send-request! channel pending-responses nil)}]
 
       (on-close channel
                 (fn [why]
+                  (worker-pool/set-task-info! :websocket ::close)
                   (log/info "Downlink client disconnected:" (pr-str why))
 
                   ;; Remove closing channel from list of registered downlinks
@@ -158,6 +179,7 @@
 
       (on-receive channel
                   (fn [json-or-binary]
+                    (worker-pool/set-task-info! :websocket ::receive)
                     (log/trace "Downlink got data: " json-or-binary)
                     (try
                       (if-not (string? json-or-binary)
@@ -199,10 +221,11 @@
 
                             ;; Fetch app (missed cache)
                             (= (:type raw-data) "GET_APP")
-                            (when-let [{:keys [app-id blended-version app]} (get @pending-responses (:originating-call raw-data))]
+                            (if-let [{:keys [app-id blended-version app]} (get @pending-responses (:originating-call raw-data))]
                               (send! channel (util/write-json-str {:type "PROVIDE_APP", :id (:id raw-data),
                                                                    :app-id app-id, :app-version blended-version,
-                                                                   :app (sanitise-app-for-downlink app)})))
+                                                                   :app (sanitise-app-for-downlink app)}))
+                              (log/warn "Downlink made GET_APP request without originating-call data:" raw-data))
 
                             ;; Command (request from downlink, ie remote-initiated RPC)
                             (= (:type raw-data) "CALL")
@@ -223,6 +246,10 @@
                                                              {:use-quota? false,
                                                               :prune-liveobjects? true
                                                               :update-bypass! (when return-path #(dispatcher/update! return-path %))}))
+
+                            ;; Statistics
+                            (= (:type raw-data) "STATS")
+                            (report-downlink-stats @registration-cookie (:data raw-data))
 
                             ;; Response from downlink
                             (or (contains? raw-data :response) (contains? raw-data :error))
