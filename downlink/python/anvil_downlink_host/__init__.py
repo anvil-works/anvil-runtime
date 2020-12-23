@@ -423,7 +423,8 @@ def signal_drain(_signum, _frame):
     connection.send_with_header({
         "type": "DRAIN"
     })
-    print("Draining downlink. %s call(s) remaining." % len(workers_by_id))
+    print("Draining downlink. %s call(s) remaining:" % len(workers_by_id))
+    print(list(workers_by_id.keys()))
     draining_start_time = time.time()
     maybe_quit_if_draining_and_done()
 

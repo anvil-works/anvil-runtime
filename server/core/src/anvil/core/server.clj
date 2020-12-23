@@ -3,8 +3,8 @@
             [anvil.runtime.conf :as conf]
             [clojure.tools.logging :as log]
             [anvil.util :as util]
-            [anvil.metrics :as metrics]
-            [anvil.core.worker-pool :as worker-pool]))
+            [anvil.core.worker-pool :as worker-pool])
+  (:import (java.util.concurrent AbstractExecutorService)))
 
 (clj-logging-config.log4j/set-logger! :level :info)
 
@@ -14,7 +14,9 @@
                         :port         port
                         :max-ws       conf/max-websocket-payload
                         :max-body     conf/max-http-body
-                        :worker-pool  worker-pool/pool
+                        :worker-pool  (proxy [AbstractExecutorService] []
+                                        (execute [^Runnable r]
+                                          (worker-pool/enqueue-one-task! r [])))
                         :error-logger util/report-uncaught-exception
                         :warn-logger  util/report-uncaught-exception})
 

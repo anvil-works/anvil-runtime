@@ -150,7 +150,7 @@ class Message(object):
     #!defClass(anvil.email,#Message)!:
 
 
-@anvil.server.serializable_type
+@anvil.server.portable_class
 class SendReport(object):
 
     #!defAttr()!1: {name: "message_id", type: "string", description: "The Message-ID header given to this outgoing message."}

@@ -3,30 +3,46 @@
             [clojure.string :as str]
             [anvil.util :as util]
             [clj-yaml.core :as yaml]
-            [lazy-map.core :refer [lazy-map]])
+            [lazy-map.core :refer [lazy-map]]
+            [crypto.random :as random])
   (:import (java.net URL JarURLConnection)
            (java.io File FileInputStream)
            (java.util.jar JarFile JarEntry)
            (org.apache.commons.codec.binary Base64)
            (java.util Arrays)))
 
+;; Values here are a list of past default contents. Current version is head of the list.
 (def default-file-contents
   {"__init__.py"
-   "#
+   ["#
 # This repository is an Anvil app. Learn more at https://anvil.works/
 # To run the server-side code on your own machine, run:
 # pip install anvil-uplink
 # python -m anvil.run_app_via_uplink YourAppPackageName
 
 __path__ = [__path__[0]+\"/server_code\", __path__[0]+\"/client_code\"]
-"
-   ;;;
+"]
+
+   ;;; .gitignore
    ".gitignore"
-   "*.pyc
+
+   ; Current Version
+   ["*.pyc
 *.pyo
 __pycache__
+.anvil-data
 "
+    ; Previous versions
+
+    "*.pyc
+*.pyo
+__pycache__
+.anvil-data
+"]
    })
+
+(defn gen-item-uid []
+  (random/base32 20))
 
 (defmulti resource-directory-to-map #(keyword (.getProtocol %)))
 
@@ -66,7 +82,7 @@ __pycache__
                                                                              (.close is)
                                                                              ary))))) {} dir-entries)))
 
-(defn- add-subtree-to-yaml [yaml package-path tree client?]
+(defn- add-subtree-to-yaml [yaml package-path tree client? get-unique-id]
   (let [dotted-name #(clojure.string/join "." (concat package-path [%]))]
     (reduce
       (fn [yaml [^String name content]]
@@ -83,17 +99,19 @@ __pycache__
                                   [(assoc form-yaml
                                      :code package-py
                                      :class_name (dotted-name name)
-                                     :is_package true)])
+                                     :is_package true
+                                     :id (get-unique-id :forms (dotted-name name)))])
                        package-py
                        (update-in yaml [(if client? :modules :server_modules)] concat
-                                  [{:name (dotted-name name)
-                                    :code package-py
-                                    :is_package true}])
+                                  [{:name       (dotted-name name)
+                                    :code       package-py
+                                    :is_package true
+                                    :id         (get-unique-id (if client? :modules :server_modules) (dotted-name name))}])
                        :else
                        yaml)]
             (add-subtree-to-yaml yaml (concat package-path [name])
                                  (dissoc content "__init__.py" "form_template.yaml")
-                                 client?))
+                                 client? get-unique-id))
 
           (.endsWith name ".py")
           ;; Is it a module or a module-style form?
@@ -105,10 +123,12 @@ __pycache__
               (update-in yaml [:forms] concat
                          [(assoc form-yaml
                             :class_name (dotted-name module-name)
-                            :code module-py)])
+                            :code module-py
+                            :id (get-unique-id :forms (dotted-name module-name)))])
               (update-in yaml [(if client? :modules :server_modules)] concat
                          [{:name (dotted-name module-name)
-                           :code module-py}])))
+                           :code module-py
+                           :id (get-unique-id (if client? :modules :server_modules) (dotted-name module-name))}])))
 
           :else
           ;; Ignore everything else
@@ -120,10 +140,10 @@ __pycache__
   (reduce (fn [yaml [name subtree]]
             (cond
               (or (and ignore-py-and-yaml? (re-matches #".*\.(py|yaml)" name))
-                  (and top-level? (#{"anvil.yaml" "theme" "CONFLICTS.yaml"} name))
+                  (and top-level? (#{"anvil.yaml" ".anvil_editor.yaml" "theme" "CONFLICTS.yaml"} name))
                   (and top-level? (bytes? subtree)
                        (contains? default-file-contents name)
-                       (Arrays/equals ^bytes subtree (.getBytes ^String (get default-file-contents name)))))
+                       (some #(Arrays/equals ^bytes subtree (.getBytes ^String %)) (get default-file-contents name))))
               yaml
 
               (map? subtree)
@@ -140,9 +160,16 @@ __pycache__
           yaml tm))
 
 (def get-app-yaml-from-resource-directory)
-(defn tree-map-to-yaml [tm ignore-extra-files?]
+(defn tree-map-to-yaml [tm ignore-extra-files? generate-item-uids?]
   (let [read-yaml #(when-let [^bytes ymlb (get-in tm %)]
                     (yaml/parse-string (String. ymlb)))
+
+        editor-yaml (read-yaml [".anvil_editor.yaml"])
+
+        get-id (fn [item-key item-name]
+                 (or (get-in editor-yaml [:unique-ids item-key (keyword item-name)])
+                     (when generate-item-uids?
+                       (gen-item-uid))))
 
         core-app-files (->
                          (merge
@@ -155,7 +182,8 @@ __pycache__
                                     :let [[_ form-name] (re-matches #"(.+)\.py" src-name)
                                           ^bytes yaml (when form-name (get-in tm ["forms" (str form-name ".yaml")]))]
                                     :when yaml]
-                                (assoc (yaml/parse-string (String. yaml)) :class_name form-name :code (String. ^bytes @src)))
+                                (assoc (yaml/parse-string (String. yaml)) :class_name form-name :code (String. ^bytes @src)
+                                                                          :id (get-id :forms form-name)))
                               (sort-by :class_name))
 
                             :modules
@@ -163,14 +191,16 @@ __pycache__
                               (for [[src-name, src] (get tm "modules")
                                     :let [[_ mod-name] (re-matches #"(.+)\.py" src-name)]
                                     :when mod-name]
-                                {:name mod-name, :code (String. ^bytes @src)})
+                                {:name mod-name, :code (String. ^bytes @src)
+                                 :id (get-id :modules mod-name)})
                               (sort-by :name))
 
                             :server_modules
                             (->> (for [[src-name, src] (get tm "server_modules")
                                        :let [[_ mod-name] (re-matches #"(.+)\.py" src-name)]
                                        :when mod-name]
-                                   {:name mod-name, :code (String. ^bytes @src)})
+                                   {:name mod-name, :code (String. ^bytes @src)
+                                    :id (get-id :server_modules mod-name)})
                                  (sort-by :name))}
 
                            (if (get tm "theme")
@@ -183,7 +213,8 @@ __pycache__
                                (let [extract-assets (fn extract-assets [tree prefix]
                                                       (apply concat
                                                              (for [[name, src] tree :when (bytes? @src)]
-                                                               {:name (str prefix name), :content (Base64/encodeBase64String ^bytes @src)})
+                                                               {:name (str prefix name), :content (Base64/encodeBase64String ^bytes @src),
+                                                                :id   (get-id :assets (str prefix name))})
                                                              (for [[name, dir] tree :when (map? @dir)]
                                                                (extract-assets @dir (str prefix name "/")))))]
                                  (extract-assets (get-in tm ["theme" "assets"]) ""))}}
@@ -192,14 +223,16 @@ __pycache__
 
                            (when-let [conflicts (read-yaml ["CONFLICTS.yaml"])]
                              {:conflicts conflicts}))
-                         (add-subtree-to-yaml [] (get tm "client_code") true)
-                         (add-subtree-to-yaml [] (get tm "server_code") false))]
+                         (add-subtree-to-yaml [] (get tm "client_code") true get-id)
+                         (add-subtree-to-yaml [] (get tm "server_code") false get-id))]
     (if ignore-extra-files?
       core-app-files
       (add-extra-files-to-yaml core-app-files tm [:extra_files] true false))))
 
 ; Directory can be a file URL or a JAR URL
-(defn get-app-yaml-from-resource-directory [^URL directory ignore-extra-files?]
-  (let [dir-map (resource-directory-to-map directory)
-        yaml (tree-map-to-yaml dir-map ignore-extra-files?)]
-    yaml))
+(defn get-app-yaml-from-resource-directory
+  ([^URL directory ignore-extra-files?] (get-app-yaml-from-resource-directory directory ignore-extra-files? true))
+  ([^URL directory ignore-extra-files? generate-uids?]
+   (let [dir-map (resource-directory-to-map directory)
+         yaml (tree-map-to-yaml dir-map ignore-extra-files? generate-uids?)]
+     yaml)))

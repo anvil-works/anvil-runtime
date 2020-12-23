@@ -14,6 +14,7 @@
             digest
             [clojure.string :as str]
             [anvil.runtime.app-data :as app-data]
+            [anvil.runtime.tables.util :as table-util]
             [clojure.string :as string]
             [anvil.core.server :as anvil-server]
             [anvil.core.worker-pool :as worker-pool])
@@ -27,12 +28,29 @@
 
 (clj-logging-config.log4j/set-logger! :level :info)
 
+(defonce table-mapping-for-environment (fn [environment] {}))
+(defonce db-for-mapping (fn ([mapping] util/db) ([session-state mapping] util/db)))
+(defonce db-for-mapping-transaction (fn [mapping] util/db))
+(defonce mutate-db-for-mapping? (fn [mapping] false))
 
-(defonce db-for-app (fn [app-id] util/db))
-(defonce db-for-app-transaction (fn [app-id] util/db))
-(defonce mutate-db-for-app? (fn [app-id] false))
+(defonce get-table-access
+         (fn [_mapping table-id]
+           (first (jdbc/query util/db
+                              ["SELECT name,columns,client,server FROM app_storage_tables,app_storage_access WHERE id = table_id AND table_id = ?"
+                               table-id]))))
 
-(def set-table-hooks! (util/hook-setter [db-for-app db-for-app-transaction mutate-db-for-app?]))
+(defonce get-table-id-by-name
+         (fn [db-c _mapping python-name]
+           (:table_id (first (jdbc/query db-c ["SELECT table_id FROM app_storage_access WHERE python_name = ?" python-name])))))
+
+(defonce get-all-table-access-records
+         (fn [_mapping]
+           (jdbc/query util/db ["SELECT table_id, python_name FROM app_storage_access"])))
+
+(defonce delete-table-access-record!
+         (fn [db-c _mapping table-id]
+           (-> (jdbc/query db-c ["DELETE FROM app_storage_access WHERE table_id = ? RETURNING 1" table-id])
+               (first) (boolean))))
 
 
 (defn general-tables-error
@@ -43,16 +61,16 @@
     :docId              "data_tables"
     :docLinkTitle       "Learn more about Data tables"}))
 
-(def ^:dynamic *app-for-admin-call* nil)
+(def ^:dynamic *environment-for-admin-call* nil)
 
-(defn current-app-id []
-  (if-let [app-id (or rpc-util/*app-id* *app-for-admin-call*)]
-    app-id
-    (throw (Exception. "(current-app-id) called outside native RPC handler or admin call"))))
+(defn current-environment []
+  (or rpc-util/*environment*
+      *environment-for-admin-call*
+      (throw (Exception. "(current-environment) called outside native RPC handler or admin call"))))
 
 
 (defn db-for-current-app []
-  (db-for-app (current-app-id)))
+  (db-for-mapping rpc-util/*session-state* (table-mapping-for-environment (current-environment))))
 
 (defn as-int [x]
   (if (integer? x)
@@ -134,9 +152,6 @@
 
     :else {:error "You can only store strings, numbers, dates, references to other table rows, or simple objects in a table",
            ::unknown-type? true}))
-
-(defn get-table-id [c app-id python-name]
-  (:table_id (first (jdbc/query c ["SELECT table_id FROM app_storage_access WHERE app_id = ? AND python_name = ?" app-id python-name]))))
 
 (defn- get-table-name [c table-id]
   (:name (first (jdbc/query c ["SELECT name FROM app_storage_tables WHERE id = ?" table-id]))))
@@ -418,7 +433,7 @@
           _ (when (@open-transactions thread-id)
               (throw+ (general-tables-error "You already have a transaction open here")))
 
-          db-map (db-for-app-transaction rpc-util/*app-id*)
+          db-map (db-for-mapping-transaction (table-mapping-for-environment rpc-util/*environment*))
 
           conn (try
                  (doto (jdbc/get-connection db-map)
@@ -511,9 +526,9 @@
 (defmacro with-use-quota
   "Define a function that uses quota from the local app in a transaction, and rolls back on exception.
    If app-id is not specified, uses the current app for admin"
-  [[use-quota! & [app-id]] & body]
-  `(-with-use-quota [(partial quota/decrement! rpc-util/*session-state* ~(or app-id `(current-app-id)))
-                     (partial quota/decrement-if-possible! rpc-util/*session-state* ~(or app-id `(current-app-id)))]
+  [[use-quota!] & body]
+  `(-with-use-quota [(partial quota/decrement! rpc-util/*session-state* (current-environment))
+                     (partial quota/decrement-if-possible! rpc-util/*session-state* (current-environment))]
                     [~use-quota!]
                     ~@body))
 
@@ -666,66 +681,64 @@
 
 (defn drop-view! [db table-id]
   (let [VIEW-NAME (get-view-name-from-table-id db table-id)]
-    (util/with-metric-query "DROP VIEW" (jdbc/execute! db [(str "DROP VIEW IF EXISTS " VIEW-NAME)]))
+    (util/with-metric-query "DROP VIEW" (jdbc/execute! db [(str "DROP VIEW IF EXISTS " VIEW-NAME " CASCADE")]))
     (util/with-metric-query "DROP FUNCTION" (jdbc/execute! db [(str "DROP FUNCTION IF EXISTS " VIEW-NAME "_update")]))
     (util/with-metric-query "DROP TRIGGER" (jdbc/execute! db [(str "DROP TRIGGER IF EXISTS update_trigger ON " VIEW-NAME)]))))
 
 
-(defn update-table-view!
-  ([db table-id] (update-table-view! db table-id (get-cols db table-id)))
-  ([db table-id cols]
-   (drop-view! db table-id)
-   (when (mutate-db-for-app? (current-app-id))
-     (log/trace "Updating view for table" table-id "with cols" (pr-str cols))
-     (let [VIEW-NAME (get-view-name-from-table-id db table-id)
+(defn update-table-view! [db table-id cols]
+  (when (mutate-db-for-mapping? (table-mapping-for-environment (current-environment)))
+    (drop-view! db table-id)
+    (log/trace "Updating view for table" table-id "with cols" (pr-str cols))
+    (let [VIEW-NAME (get-view-name-from-table-id db table-id)
 
-           view-cols (for [col (sort-by (fn [c] (-> c :admin_ui :order)) (for [[col-id col-spec] cols]
-                                                                           (assoc col-spec :id col-id)))]
-                       (do
-                         (when-not (re-matches #"[-A-Za-z0-9+_=]+" (name (:id col)))
-                           (throw (Exception. (str "Invalid column ID " (:id col)))))
-                         (assoc col :VIEW-NAME (-> (:name col)
-                                                   (.toLowerCase)
-                                                   (clojure.string/replace #"[^a-zA-Z0-9]" "_"))
-                                    :ID (name (:id col)))))
+          view-cols (for [col (sort-by (fn [c] (-> c :admin_ui :order)) (for [[col-id col-spec] cols]
+                                                                          (assoc col-spec :id col-id)))]
+                      (do
+                        (when-not (re-matches #"[-A-Za-z0-9+_=]+" (name (:id col)))
+                          (throw (Exception. (str "Invalid column ID " (:id col)))))
+                        (assoc col :VIEW-NAME (-> (:name col)
+                                                  (.toLowerCase)
+                                                  (clojure.string/replace #"[^a-zA-Z0-9]" "_"))
+                                   :ID (name (:id col)))))
 
-           ;; TODO: Check for clashing col-names. Currently blows up silently, but then so does everything else.
+          ;; TODO: Check for clashing col-names. Currently blows up silently, but then so does everything else.
 
-           create-view-sql [(str "CREATE VIEW " VIEW-NAME " AS"
-                                 " SELECT "
-                                 " id as _id"
-                                 (->> (for [col view-cols
-                                            :let [ID (:ID col)]]
-                                        (str
-                                          (condp = (:type col)
+          create-view-sql [(str "CREATE VIEW " VIEW-NAME " AS"
+                                " SELECT "
+                                " id as _id"
+                                (->> (for [col view-cols
+                                           :let [ID (:ID col)]]
+                                       (str
+                                         (condp = (:type col)
 
-                                            "number"
-                                            (str ", (data->>'" ID "')::float")
+                                           "number"
+                                           (str ", (data->>'" ID "')::float")
 
-                                            "bool"
-                                            (str ", (data->>'" ID "')::bool")
+                                           "bool"
+                                           (str ", (data->>'" ID "')::bool")
 
-                                            "date"
-                                            (str ", (data->>'" ID "')::date")
+                                           "date"
+                                           (str ", (data->>'" ID "')::date")
 
-                                            "datetime"
-                                            (str ", (parse_anvil_timestamp(data->>'" ID "'))::timestamptz")
+                                           "datetime"
+                                           (str ", (parse_anvil_timestamp(data->>'" ID "'))::timestamptz")
 
-                                            "simpleObject"
-                                            (str ", (data->'" ID "')::jsonb")
+                                           "simpleObject"
+                                           (str ", (data->'" ID "')::jsonb")
 
-                                            "liveObject"
-                                            (str ", (trim('\"' from data->'" ID "'->>'id')::jsonb->>1)::int")
+                                           "liveObject"
+                                           (str ", (trim('\"' from data->'" ID "'->>'id')::jsonb->>1)::int")
 
-                                            ;"string" or anything else
-                                            (str ", data->>'" ID "'"))
+                                           ;"string" or anything else
+                                           (str ", data->>'" ID "'"))
 
-                                          " AS " (:VIEW-NAME col)))
-                                      (apply str))
-                                 " FROM app_storage_data"
-                                 " WHERE table_id = " table-id)]
+                                         " AS " (:VIEW-NAME col)))
+                                     (apply str))
+                                " FROM app_storage_data"
+                                " WHERE table_id = " table-id)]
 
-           create-update-trigger-fn [(str "
+          create-update-trigger-fn [(str "
           CREATE FUNCTION " VIEW-NAME "_update() RETURNS trigger AS $$
             DECLARE
               deleted_oid integer;
@@ -739,108 +752,111 @@
                 END IF;
 
                 "
-                                          (->> (for [col view-cols
-                                                     :let [COL-NAME (:VIEW-NAME col)
-                                                           ERR (get {"liveObject"      "Cannot update links to other rows using SQL. Please use the Python Data Tables API."
+                                         (->> (for [col view-cols
+                                                    :let [COL-NAME (:VIEW-NAME col)
+                                                          ERR (get {"liveObject"      "Cannot update links to other rows using SQL. Please use the Python Data Tables API."
 
-                                                                     "liveObjectArray" "Cannot update links to other rows using SQL. Please use the Python Data Tables API."
+                                                                    "liveObjectArray" "Cannot update links to other rows using SQL. Please use the Python Data Tables API."
 
-                                                                     "media"           "Cannot update Media objects in Data Tables using SQL. Please use the Python Data Tables API."}
-                                                                    (:type col))]
-                                                     :when ERR]
-                                                 (str "IF (NEW." COL-NAME " != OLD." COL-NAME ") OR (NEW." COL-NAME " IS NULL AND OLD." COL-NAME " IS NOT NULL) OR (NEW." COL-NAME " IS NOT NULL AND OLD." COL-NAME " IS NULL) THEN RAISE EXCEPTION '" ERR "'; END IF;"))
-                                               (interpose "\n")
-                                               (apply str))
-                                          "
+                                                                    "media"           "Cannot update Media objects in Data Tables using SQL. Please use the Python Data Tables API."}
+                                                                   (:type col))]
+                                                    :when ERR]
+                                                (str "IF (NEW." COL-NAME " != OLD." COL-NAME ") OR (NEW." COL-NAME " IS NULL AND OLD." COL-NAME " IS NOT NULL) OR (NEW." COL-NAME " IS NOT NULL AND OLD." COL-NAME " IS NULL) THEN RAISE EXCEPTION '" ERR "'; END IF;"))
+                                              (interpose "\n")
+                                              (apply str))
+                                         "
 
-                 UPDATE public.app_storage_data SET data = data || jsonb_build_object("
-                                          (->> (for [col view-cols
-                                                     :let [ID (:ID col)]
-                                                     :when (not (#{"liveObject" "liveObjectArray" "media"} (:type col)))]
-                                                 (str
-                                                   "'" ID "',"
-                                                   (condp = (:type col)
+                UPDATE public.app_storage_data SET data = data || jsonb_build_object("
+                                         (->> (for [col view-cols
+                                                    :let [ID (:ID col)]
+                                                    :when (not (#{"liveObject" "liveObjectArray" "media"} (:type col)))]
+                                                (str
+                                                  "'" ID "',"
+                                                  (condp = (:type col)
 
-                                                     "number"
-                                                     (str "NEW." (:VIEW-NAME col) "::float")
+                                                    "number"
+                                                    (str "NEW." (:VIEW-NAME col) "::float")
 
-                                                     "bool"
-                                                     (str "NEW." (:VIEW-NAME col) "::bool")
+                                                    "bool"
+                                                    (str "NEW." (:VIEW-NAME col) "::bool")
 
-                                                     "date"
-                                                     (str "NEW." (:VIEW-NAME col) "::date")
+                                                    "date"
+                                                    (str "NEW." (:VIEW-NAME col) "::date")
 
-                                                     "datetime"
-                                                     (str "public.to_anvil_timestamp(NEW." (:VIEW-NAME col) "::timestamptz)")
+                                                    "datetime"
+                                                    (str "public.to_anvil_timestamp(NEW." (:VIEW-NAME col) "::timestamptz)")
 
-                                                     "simpleObject"
-                                                     (str "NEW." (:VIEW-NAME col) "::jsonb")
+                                                    "simpleObject"
+                                                    (str "NEW." (:VIEW-NAME col) "::jsonb")
 
-                                                     (str "NEW." (:VIEW-NAME col)))))
-                                               (interpose ",")
-                                               (apply str))
+                                                    (str "NEW." (:VIEW-NAME col)))))
+                                              (interpose ",")
+                                              (apply str))
 
-                                          ") WHERE table_id = " table-id " AND id = NEW._id;
+                                         ") WHERE table_id = " table-id " AND id = NEW._id;
                 RETURN NEW;
               ELSIF TG_OP = 'INSERT' THEN
                 INSERT INTO public.app_storage_data (table_id, data) VALUES (" table-id ", jsonb_build_object("
-                                          (->> (for [col view-cols
-                                                     :let [ID (:ID col)]]
-                                                 (str
-                                                   "'" ID "',"
-                                                   (condp = (:type col)
+                                         (->> (for [col view-cols
+                                                    :let [ID (:ID col)]]
+                                                (str
+                                                  "'" ID "',"
+                                                  (condp = (:type col)
 
-                                                     "number"
-                                                     (str "NEW." (:VIEW-NAME col) "::float")
+                                                    "number"
+                                                    (str "NEW." (:VIEW-NAME col) "::float")
 
-                                                     "bool"
-                                                     (str "NEW." (:VIEW-NAME col) "::bool")
+                                                    "bool"
+                                                    (str "NEW." (:VIEW-NAME col) "::bool")
 
-                                                     "date"
-                                                     (str "NEW." (:VIEW-NAME col) "::date")
+                                                    "date"
+                                                    (str "NEW." (:VIEW-NAME col) "::date")
 
-                                                     "datetime"
-                                                     (str "public.to_anvil_timestamp(NEW." (:VIEW-NAME col) "::timestamptz)")
+                                                    "datetime"
+                                                    (str "public.to_anvil_timestamp(NEW." (:VIEW-NAME col) "::timestamptz)")
 
-                                                     "simpleObject"
-                                                     (str "NEW." (:VIEW-NAME col) "::jsonb")
+                                                    "simpleObject"
+                                                    (str "NEW." (:VIEW-NAME col) "::jsonb")
 
-                                                     ;; else
-                                                     (str "NEW." (:VIEW-NAME col)))))
-                                               (interpose ",")
-                                               (apply str))
-                                          ")) RETURNING id INTO NEW._id;
-                    RETURN NEW;
-                  ELSIF TG_OP = 'DELETE' THEN
-                    "
-                                          (->> (for [col view-cols
-                                                     :let [ID (:ID col)]
-                                                     :when (= (:type col) "media")]
-                                                 (str "DELETE FROM public.app_storage_media WHERE table_id = " table-id " AND row_id = OLD._id AND column_id = '" ID "' RETURNING object_id INTO deleted_oid;"
-                                                      "PERFORM lo_unlink(deleted_oid);"))
-                                               (apply str))
-                                          "
-                    DELETE FROM public.app_storage_data WHERE table_id = " table-id " AND id = OLD._id;
+                                                    ;; else
+                                                    (str "NEW." (:VIEW-NAME col)))))
+                                              (interpose ",")
+                                              (apply str))
+                                         ")) RETURNING id INTO NEW._id;
+                   RETURN NEW;
+                 ELSIF TG_OP = 'DELETE' THEN
+                   "
+                                         (->> (for [col view-cols
+                                                    :let [ID (:ID col)]
+                                                    :when (= (:type col) "media")]
+                                                (str "DELETE FROM public.app_storage_media WHERE table_id = " table-id " AND row_id = OLD._id AND column_id = '" ID "' RETURNING object_id INTO deleted_oid;"
+                                                     "PERFORM lo_unlink(deleted_oid);"))
+                                              (apply str))
+                                         "
+                   DELETE FROM public.app_storage_data WHERE table_id = " table-id " AND id = OLD._id;
                 IF NOT FOUND THEN RETURN NULL; END IF;
                 RETURN OLD;
               END IF;
             END;
             $$ LANGUAGE plpgsql;")]
 
-           create-update-trigger-sql [(str "
+          create-update-trigger-sql [(str "
           CREATE TRIGGER update_trigger
             INSTEAD OF INSERT OR UPDATE OR DELETE ON " VIEW-NAME "
             FOR EACH ROW EXECUTE PROCEDURE " VIEW-NAME "_update();")]]
-       (util/with-metric-query "CREATE VIEW" (jdbc/execute! db create-view-sql))
-       (util/with-metric-query "CREATE/UPDATE TRIGGER FUNCTION" (jdbc/execute! db create-update-trigger-fn))
-       (util/with-metric-query "CREATE/UPDATE TRIGGER SQL" (jdbc/execute! db create-update-trigger-sql))))))
+      (util/with-metric-query "CREATE VIEW" (jdbc/execute! db create-view-sql))
+      (util/with-metric-query "CREATE/UPDATE TRIGGER FUNCTION" (jdbc/execute! db create-update-trigger-fn))
+      (util/with-metric-query "CREATE/UPDATE TRIGGER SQL" (jdbc/execute! db create-update-trigger-sql)))))
+
+(defonce update-table-views! (fn ([db table-id] (update-table-view! db table-id (get-cols db table-id)))
+                               ([db table-id cols] (update-table-view! db table-id cols))))
 
 (defn update-col-indexes
   ([db table-id] (update-col-indexes db table-id (get-cols db table-id)))
   ([_ table-id cols]
     ; This doesn't use the DB passed in, because it can't run in a transaction.
-   (when (mutate-db-for-app? (current-app-id))
-     (let [db (db-for-app (current-app-id))
+   (when (mutate-db-for-mapping? (table-mapping-for-environment (current-environment)))
+     (let [db (db-for-current-app)
            valid-index-types {"b_tree" #{"string" "number" "date" "datetime" "bool"}
                               "trigram" #{"string"}
                               "full_text" #{"string"}}
@@ -909,21 +925,6 @@
 
        (log/trace "Finished updating indexes.")))))
 
-(defn delete-table-access! [db-c app-id table-id]
-  (when (first (jdbc/query db-c ["DELETE FROM app_storage_access WHERE app_id = ? AND table_id = ? RETURNING 1"
-                                 app-id table-id]))
-    ;; Now delete the whole table if it's orphaned
-    (when-not (first (jdbc/query db-c ["SELECT app_id FROM app_storage_access WHERE table_id = ?" table-id]))
-      (drop-view! db-c table-id)
-      (binding [*current-db-transaction* db-c]
-        ;; Ew.
-        (with-use-quota [use-quota!]
-          (delete-media-in-table table-id use-quota!)
-          (let [deleted-row-count (first (jdbc/execute! db-c ["DELETE FROM app_storage_data WHERE table_id = ?" table-id]))]
-            (use-quota! (- deleted-row-count) 0)))
-        (jdbc/execute! db-c ["DELETE FROM app_storage_tables WHERE id = ?" table-id])))
-    true))
-
 
 (defn update-cols-returning
   ([table-id new-cols old-cols] (update-cols-returning table-id new-cols old-cols
@@ -932,22 +933,23 @@
   ([table-id new-cols old-cols use-quota!]
    (worker-pool/with-expanding-threadpool-when-slow
      (with-table-transaction
-       (let [col-records (for [[id desc] (-> (jdbc/query (db) ["UPDATE app_storage_tables SET columns = ?::jsonb WHERE id = ? RETURNING columns"
-                                                               new-cols table-id])
-                                             (first) (:columns))]
-                           (assoc desc :id id))
-             added-cols (filter #(not (contains? old-cols (:id %))) col-records)
-             removed-cols (filter (fn [[id _c]] (not (contains? new-cols id))) old-cols)]
+       (util/with-long-query
+         (let [col-records (for [[id desc] (-> (jdbc/query (db) ["UPDATE app_storage_tables SET columns = ?::jsonb WHERE id = ? RETURNING columns"
+                                                                 new-cols table-id])
+                                               (first) (:columns))]
+                             (assoc desc :id id))
+               added-cols (filter #(not (contains? old-cols (:id %))) col-records)
+               removed-cols (filter (fn [[id _c]] (not (contains? new-cols id))) old-cols)]
 
-         (doseq [[id _c] removed-cols]
-           (delete-media-in-column table-id id use-quota!))
-         (when (seq added-cols)
-           (jdbc/execute! (db) ["UPDATE app_storage_data SET data = data || ?::jsonb WHERE table_id = ?"
-                                (into {} (for [{:keys [id type]} added-cols] [id (if (= type "bool") false nil)]))
-                                table-id]))
-         (update-col-indexes (db) table-id new-cols)
-         (update-table-view! (db) table-id new-cols)
-         col-records)))))
+           (doseq [[id _c] removed-cols]
+             (delete-media-in-column table-id id use-quota!))
+           (when (seq added-cols)
+             (jdbc/execute! (db) ["UPDATE app_storage_data SET data = data || ?::jsonb WHERE table_id = ?"
+                                  (into {} (for [{:keys [id type]} added-cols] [id (if (= type "bool") false nil)]))
+                                  table-id]))
+           (update-col-indexes (db) table-id new-cols)
+           (update-table-views! (db) table-id new-cols)
+           col-records))))))
 
 
 #_(defn update-table-views-for-org! [org-id]
@@ -956,5 +958,12 @@
       (throw (Exception. "Org does not have dedicated DB.")))
     (let [table-ids (map :id (jdbc/query db ["SELECT id, name FROM app_storage_tables"]))]
       (doseq [table-id table-ids]
-        (update-table-view! db table-id))
+        (update-table-views! db table-id))
       (println "Updated" (count table-ids) "table views."))))
+
+
+(def set-table-hooks! (util/hook-setter [table-mapping-for-environment db-for-mapping
+                                         db-for-mapping-transaction mutate-db-for-mapping?
+                                         get-table-access get-table-id-by-name
+                                         get-all-table-access-records delete-table-access-record!
+                                         update-table-views!]))

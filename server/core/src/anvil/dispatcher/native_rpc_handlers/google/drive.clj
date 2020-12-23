@@ -212,9 +212,10 @@
 (defn get-content [_kwargs ^String download-url creds]
   (ensure-whitelist-ok ::file-download-url download-url creds false "download file")
 
-  (let [resp @(http/request (add-credentials {:url    download-url
-                                              :method :get
-                                              :as :byte-array} creds) nil)
+  (let [resp @(http/request (add-credentials {:keepalive -1
+                                              :url       download-url
+                                              :method    :get
+                                              :as        :byte-array} creds) nil)
 
         arr (:body resp)]
 
@@ -256,7 +257,7 @@
 ;; we lazily get a HEAD
 (defn mk-http-media [request-map]
   (let [content-info (atom nil)
-        get-it #(let [r @(http/request (assoc request-map :method % :as :stream) nil)]
+        get-it #(let [r @(http/request (assoc request-map :method % :as :stream :keepalive -1) nil)]
                  (when-not (= (:status r) 200)
                    (throw+ {:anvil/server-error (str "Google Drive download failed (code " (:status r) ")")}))
                  (log/trace r)
@@ -275,7 +276,7 @@
       (getLength [_this] (:length (get-content-info)))
       (getInputStream [_this] (:body (get-it :get))))))
 
-(defn serve-lazy-media [_r media-id]
+(defn serve-lazy-media [media-id]
   (if-let [[_ creds id] (re-matches #"([^\.]*)\.(.*)" media-id)]
     ;; *any* whitelist access is OK (the MAC is checking that the client is allowed to see this;
     ;; we just need to check that the *app* is allowed to see it)

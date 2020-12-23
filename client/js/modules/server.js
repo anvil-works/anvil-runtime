@@ -9,7 +9,7 @@ module.exports = function(appId, appOrigin) {
     var tz = PyDefUtils.getModule("anvil.tz");
     var datetime = Sk.importModule("datetime");
 
-    pyMod["app_origin"] = Sk.ffi.basicwrap(appOrigin);
+    pyMod["app_origin"] = Sk.ffi.remapToPy(appOrigin);
 
     var globalSuppressLoading = 0;
 
@@ -31,7 +31,11 @@ module.exports = function(appId, appOrigin) {
         }
     }
 
-    function str2ab(str) {
+    function pyBytesOrStr2ab(py_bytes) {
+        if (Sk.__future__.python3) {
+            return py_bytes.v.buffer;
+        }
+        const str = Sk.ffi.remapToJs(py_bytes);
         var buf = new ArrayBuffer(str.length); // 1 byte for each char
         var bufView = new Uint8Array(buf);
         for (var i=0; i < str.length; i++) {
@@ -54,23 +58,7 @@ module.exports = function(appId, appOrigin) {
         return uuid;
     };
 
-    var maybeRemapToPy = function(jsObj) {
-        var oldRemap = Sk.ffi.remapToPy;
-        Sk.ffi.remapToPy = function(jsObj) {
-            if (jsObj == null) {
-                return Sk.builtin.none.none$;
-            } else if (jsObj.ob$type) {
-                return jsObj
-            } else {
-                return oldRemap(jsObj);
-            }
-        }
-        try {
-            return Sk.ffi.remapToPy(jsObj);
-        } finally {
-            Sk.ffi.remapToPy = oldRemap;
-        }
-    }
+    var maybeRemapToPy = Sk.ffi.remapToPy;
 
     var deserialiseObject = function(obj, mediaBlobs, knownLiveObjectMethods) {
         var handlers = {
@@ -104,7 +92,7 @@ module.exports = function(appId, appOrigin) {
                 return Sk.misceval.callsim(anvil.tp$getattr(new Sk.builtin.str("LiveObjectProxy")), obj);
             },
             "Capability": () => {
-                return Sk.misceval.callsim(pyMod["Capability"], Sk.ffi.remapToPy(obj.scope), Sk.builtin.str(obj.mac), Sk.builtin.none.none$);
+                return Sk.misceval.callsim(pyMod["Capability"], Sk.ffi.remapToPy(obj.scope), new Sk.builtin.str(obj.mac), Sk.builtin.none.none$);
             },
             "ValueType": () => {
                 return obj.typeName;
@@ -151,7 +139,7 @@ module.exports = function(appId, appOrigin) {
                 return dt;
             },
             "Long": function() {
-                return new Sk.builtin.lng(obj.value);
+                return new Sk.builtin.int_(obj.value);
             },
             "Float": function() {
                 return new Sk.builtin.float_(parseFloat(obj.value));
@@ -211,7 +199,7 @@ module.exports = function(appId, appOrigin) {
                         pyValueType = pyValueTypes[reconstructed];
                     }
                     if (!pyValueType) {
-                        throw Sk.misceval.callsim(pyMod['SerializationError'], Sk.builtin.str("No such serializable type: "+reconstructed));
+                        throw Sk.misceval.callsim(pyMod['SerializationError'], new Sk.builtin.str("No such serializable type: "+reconstructed));
                     }
                 }
 
@@ -227,7 +215,8 @@ module.exports = function(appId, appOrigin) {
                         pyObj = await Sk.misceval.asyncToPromise(() => pyObj);
                     }
                 } else {
-                    pyObj = Sk.misceval.callsim(Sk.builtin.object.tp$getattr(new Sk.builtin.str("__new__")), pyValueType);
+                    const newMethod = Sk.abstr.typeLookup(pyValueType, Sk.builtin.str.$new);
+                    pyObj = Sk.misceval.callsim(newMethod, pyValueType);
                     let pyDeserialize = pyObj.tp$getattr(new Sk.builtin.str("__deserialize__"));
                     if (pyDeserialize) {
                         let r = Sk.misceval.callsimOrSuspend(pyDeserialize, maybeRemapToPy(lastO[key]), pyVtGlobals);
@@ -264,21 +253,21 @@ module.exports = function(appId, appOrigin) {
 
             websocket = deferred.promise;
 
-            var ws = new WebSocket(appOrigin.replace(/^http/, "ws") + "/_/ws/" + (window.anvilParams.accessKey || '') + "?s=" + window.anvilSessionId);
+            var ws = new WebSocket(appOrigin.replace(/^http/, "ws") + "/_/ws/" + (window.anvilParams.accessKey || '') + "?s=" + window.anvilSessionToken);
 
             ws.onopen = function() { 
                 if (profile) connectProfile.end(); 
                 deferred.resolve(ws); 
             };
 
-            ws.onclose = ws.onerror = function() {
+            ws.onclose = ws.onerror = function(evt) {
                 console.log("WebSocket closed: ", arguments);
                 if (websocket == deferred.promise) { websocket = null; }
                 deferred.reject.apply(deferred, arguments);
 
                 // Let all outstanding requests know that they should either retry or fail
                 for (var i in outstandingRequests) {
-                    outstandingRequests[i].onerror();
+                    outstandingRequests[i].onerror(evt);
                 }
             };
 
@@ -286,7 +275,7 @@ module.exports = function(appId, appOrigin) {
 
             var assembleException = function(d) {
                 var exceptionType = pyNamedExceptions[d.error.type] || pyMod["AnvilWrappedError"];
-                var exception = Sk.misceval.callsim(exceptionType, Sk.builtin.str(d.error.message || "[unexpected error]"));
+                var exception = Sk.misceval.callsim(exceptionType, new Sk.builtin.str(d.error.message || "[unexpected error]"));
 
                 if (d.error.trace && exception.traceback) {
                     for (var i = 0; i < d.error.trace.length; i++) {
@@ -456,7 +445,7 @@ module.exports = function(appId, appOrigin) {
                 } else if (d.output) {
                     Sk.output(d.output, true); // The "true" is a Anvil-proprietary thing to mark this as from the server
                 } else if (d['set-cookie']) { 
-                    $.post(appOrigin + "/_/request_cookies?s=" + window.anvilSessionId);
+                    $.post(appOrigin + "/_/request_cookies?s=" + window.anvilSessionToken);
                 } else if (d.error) {
                     window.onerror(undefined, undefined, undefined, undefined, assembleException(d));
                 } else {
@@ -523,9 +512,9 @@ module.exports = function(appId, appOrigin) {
             let typeName = cls.anvil$serializableName;
 
             if (!typeName || !(typeName in pyValueTypes)) {
-                let name = cls.tp$name || "[unknown]";
+                let name = obj.tp$name || "[unknown]";
                 throw Sk.misceval.callsim(pyMod['SerializationError'],
-                    Sk.builtin.str(`Type ${cls.tp$name||'[unknown]'} is not registered with @anvil.server.serializable_type.`));
+                    new Sk.builtin.str(`Type ${name} is not registered with @anvil.server.portable_class.`));
             }
 
             let ms = [];
@@ -535,11 +524,6 @@ module.exports = function(appId, appOrigin) {
                 pyRet = Sk.misceval.callsim(pySerialize, pyGlobalData);
             } else {
                 pyRet = obj.tp$getattr(new Sk.builtin.str("__dict__"));
-            }
-            // Ew - work around a weirdness in how Skulpt implements "__dict__":
-            if (pyRet === obj.tp$getattr(new Sk.builtin.str("__dict__"))) {
-                pyRet = Sk.builtin.dict(pyRet);
-                Sk.abstr.objectDelItem(pyRet, new Sk.builtin.str("__dict__"));
             }
             let ret = remapToJSPlusMappings(pyRet, keySeq, ms, pyGlobalData);
             mappingsToPush.push(...ms);
@@ -571,7 +555,12 @@ module.exports = function(appId, appOrigin) {
         } else if (obj instanceof Sk.builtin.str) {
             return obj.v;
         } else if (obj instanceof Sk.builtin.int_) {
-            return Sk.builtin.asnum$(obj);
+            const val = obj.v;
+            if (typeof val === "number") {
+                return val;
+            }
+            mappingsToPush.push({path: keySeq.slice(), value: new Sk.builtin.lng(val)});
+            return null;
         } else if (obj instanceof Sk.builtin.float_ && obj != Infinity && obj != -Infinity && !isNaN(obj)) {
             return Sk.builtin.asnum$(obj);
         } else if (obj instanceof Sk.builtin.none) {
@@ -739,7 +728,7 @@ module.exports = function(appId, appOrigin) {
                             ).then(function(i, r) {
 
                         var mimeType = Sk.ffi.remapToJs(r[0]);
-                        var buffer = str2ab(Sk.ffi.remapToJs(r[1]));
+                        var buffer = pyBytesOrStr2ab(r[1]); // we want a binary string here
                         var name = Sk.ffi.remapToJs(r[2]);
                         var path = r[3];
 
@@ -922,8 +911,10 @@ module.exports = function(appId, appOrigin) {
 
 
                 var sendPromise = Promise.resolve();
+                let nWaiting = 0;
 
                 for (var id in outstandingRequests) {
+                    nWaiting++;
                     sendPromise = sendPromise.then(function() {
                         return new Promise(function(resolve, reject) {
                             if (id in outstandingRequests) {
@@ -950,16 +941,21 @@ module.exports = function(appId, appOrigin) {
                                                     suppressLoading: suppressLoading,
                                                     knownLiveObjectInstances: knownLiveObjectInstances,
                                                     knownCapabilities: knownCapabilities,
-                                                    onerror: function() {
+                                                    onerror: function(evt) {
                     // TODO be a bit more clever about retries here when preventRetry is true
 
                     if (!suppressLoading)
                         window.setLoading(false);
                     deleteOutstandingRequest(requestId)
-                    reject(new Sk.builtin.Exception("Connection to server failed"));
+                    console.error("Websocket connection failed", evt);
+                    reject(new Sk.builtin.Exception("Connection to server failed (" + (evt && (evt.message || evt.type) || "FAIL") + ")"));
                 }, profile: profile};
 
                 var sendProfile = profile.append("Send call");
+                if (nWaiting !== 0) {
+                    let waitingProfile = sendProfile.append("Waiting for " + nWaiting + " previous call(s) to complete");
+                    sendPromise = sendPromise.then(() => waitingProfile.end());
+                }
 
                 sendPromise = sendPromise.then(trySend.bind(null, call, null, sendProfile)).then(function() {
 
@@ -1012,7 +1008,7 @@ module.exports = function(appId, appOrigin) {
         });
     };
 
-    pyMod["call_$rn$"] = new Sk.builtin.func(PyDefUtils.withRawKwargs(function(pyKwargs, pyCmd) {
+    pyMod["call_$rw$"] = new Sk.builtin.func(PyDefUtils.withRawKwargs(function(pyKwargs, pyCmd) {
 
         // First, let's get the JSON we want to send, plus blobs
 
@@ -1031,7 +1027,7 @@ module.exports = function(appId, appOrigin) {
     }));
 
     pyMod["launch_background_task"] = new Sk.builtin.func(PyDefUtils.withRawKwargs((pyKwargs, pyCmd, ...args) => {
-        throw Sk.builtin.Exception("Cannot launch Background Tasks from client code.");
+        throw new Sk.builtin.Exception("Cannot launch Background Tasks from client code.");
     }));
 
     pyMod["__anvil$doRpcCall"] = doRpcCall; // Ew.
@@ -1042,11 +1038,13 @@ module.exports = function(appId, appOrigin) {
     pyMod["Serializable"] = Sk.misceval.buildClass(pyMod, ($gbl, $loc) => {
     }, "Serializable", [Sk.builtin.object]);
 
-    pyMod["serializable_type"] = new Sk.builtin.func((pyClass, pyName) => {
+    pyMod["portable_class"] = pyMod["serializable_type"] = new Sk.builtin.func((pyClass, pyName) => {
         let doRegister = (pyClass, pyName) => {
             let typeName = pyName ? pyName.v : null;
             if (!typeName) {
-                typeName = `${pyClass.__module__.v}.${pyClass.__name__.v}`;
+                const module_ = Sk.abstr.lookupSpecial(pyClass, Sk.builtin.str.$module);
+                const name_ = Sk.abstr.lookupSpecial(pyClass, Sk.builtin.str.$name);
+                typeName = `${module_}.${name_}`;
             }
             pyClass.anvil$serializableName = typeName;
             pyValueTypes[typeName] = pyClass;
@@ -1062,7 +1060,7 @@ module.exports = function(appId, appOrigin) {
     });
 
     pyMod["Capability"] = Sk.misceval.buildClass(pyMod, function($gbl, $loc) {
-        /*!defMethod(_,scope)!2*/ "Create a Capability object. Give it a list representing its scope - eg [\"my_database\", \"table_name\"]. The scope of user-created Capabilities may not begin with \"anvil\"."
+        /*!defMethod(_,scope)!2*/ "Create a Capability object. Give it a list representing its scope - eg [\"my_database\", \"table_name\"]. The scope of user-created Capabilities may not begin with \"_\"."
         $loc['__init__']    = new Sk.builtin.func(function init(self, pyScope, pyMac, pyNarrow) {
             self._scope = Sk.ffi.remapToJs(pyScope);
             self._mac = pyMac && Sk.ffi.remapToJs(pyMac);
@@ -1103,7 +1101,7 @@ module.exports = function(appId, appOrigin) {
             return Sk.misceval.callsim(pyMod["Capability"],
                                        Sk.ffi.remapToPy(self._scope),
                                        Sk.ffi.remapToPy(self._mac),
-                                       self._narrow ? Sk.abstr.objectAdd(Sk.ffi.remapToPy(self._narrow), pyAdditionalScope) : Sk.builtin.list(pyAdditionalScope));
+                                       self._narrow ? Sk.abstr.objectAdd(Sk.ffi.remapToPy(self._narrow), pyAdditionalScope) : new Sk.builtin.list(pyAdditionalScope));
         });
 
         /*!defMethod(_,apply_update:callable,[get_update:callable])!2*/ "Set a handler for what happens when an update is sent to this capability.\n\nOptionally provide a function for aggregating updates (default behaviour is to merge them, if they are all dictionaries, or to return only the most recent update otherwise.)"
@@ -1119,7 +1117,7 @@ module.exports = function(appId, appOrigin) {
 
 
         $loc["__repr__"] = new Sk.builtin.func((self) => {
-            return Sk.builtin.str("<anvil.server.Capability:[" + self._scope.concat(self._narrow || []) + "]>");
+            return new Sk.builtin.str("<anvil.server.Capability:[" + self._scope.concat(self._narrow || []) + "]>");
         });
     }, /*!defClass(anvil.server)!1*/ "Capability", []);
 
@@ -1133,6 +1131,7 @@ module.exports = function(appId, appOrigin) {
 
     pyMod["AnvilWrappedError"] = Sk.misceval.buildClass(pyMod, function($gbl, $loc) {
         $loc['__init__'] = new Sk.builtin.func(function init(self, message) {
+            message = message || Sk.builtin.str.$empty;
             self.tp$setattr(new Sk.builtin.str('message'),  message);
         });
     }, "AnvilWrappedError", [Sk.builtin.Exception]);
@@ -1223,7 +1222,7 @@ module.exports = function(appId, appOrigin) {
             globalSuppressLoading--;
             return Sk.builtin.none.none$;
         });
-    });
+    }, "no_loading_indicator", []);
 
     /*!defModuleAttr(anvil.server)!1*/
     ({
@@ -1237,7 +1236,7 @@ module.exports = function(appId, appOrigin) {
     pyMod["reset_session"] = new Sk.builtin.func(function() {
         // Prevent the session from complaining about expiry. 
         return PyDefUtils.suspensionFromPromise(PyDefUtils.callAsync(pyMod["call_s"], undefined, undefined, undefined, Sk.ffi.remapToPy("anvil.private.reset_session")).then(r => {
-            window.anvilSessionId = Sk.ffi.remapToJs(r);
+            window.anvilSessionToken = Sk.ffi.remapToJs(r);
         }));
     });
 

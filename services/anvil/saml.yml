@@ -1,0 +1,28 @@
+name: SAML Authentication
+preload_module: "anvil.saml"
+path_whitelist:
+  - saml/__init__.py
+  - saml/auth.js
+  - saml/auth.py
+server_config_properties:
+  - name: idp_entity_id
+    type: string
+    description: The Entity ID of the SAML Identity Provider
+  - name: idp_sso_url
+    type: string
+    description: The Single Sign-On URL of the SAML Identity Provider
+  - name: idp_cert
+    type: string
+    description: The x509 certificate of the SAML Identity Provider
+  - name: shared
+    type: boolean
+    description: Whether this app should share SAML configuration with other apps in your organisation
+  - name: email_attribute
+    type: string
+    description: The SAML response attribute containing the email address of the user. Only required if the Identity Provider doesn't support the 'emailaddress' NameID Format, and doesn't provide the email address in the standard attributes.
+  - name: signature_algorithm
+    type: string
+    description: The signature algorithm used to sign SAML requests. 
+  - name: force_authentication
+    type: boolean
+    description: Force users to re-authenticate on every login

@@ -42,8 +42,8 @@ class Worker:
         if cache_key is None and set_timeout:
             self.set_timeout(first_req_id)
 
-        self.start_time = {first_req_id: time.time()*1000}
-        self.enable_profiling = enable_profiling
+        self.start_time = {first_req_id: time.time()}
+        self.enable_profiling = {first_req_id: enable_profiling}
         self.killing_task = False
 
         threading.Thread(target=self.read_loop).start()
@@ -95,6 +95,7 @@ class Worker:
             self.timeout_timer.start()
 
     def hard_timeout(self):
+        print("TIMEOUT TERMINATE FOR %s" % self.req_ids)
         self.timed_out = True
         self.proc.terminate()
 
@@ -117,6 +118,7 @@ class Worker:
         self.req_ids.discard(req_id)
         workers_by_id.pop(req_id, None)
         self.start_time.pop(req_id, None)
+        self.enable_profiling.pop(req_id, None)
         if (self.cache_key is None or cached_workers.get(self.cache_key, (None,None))[1] is not self) and len(self.req_ids) == 0:
             # Drain complete; goodbye!
             if self.cache_key is not None:
@@ -137,6 +139,7 @@ class Worker:
         self.timeout_timer.start()
 
     def _hard_kill_background_task(self):
+        print("TIMEOUT KILLING BACKGROUND TASK %s" % self.req_ids)
         try:
             self.req_ids.discard('pre-kill-task-state')
             send_with_header({'type': 'NOTIFY_TASK_KILLED', 'id': list(self.req_ids)[0]})
@@ -184,7 +187,7 @@ class Worker:
                             self.transmitted_media(msg['requestId'], msg['mediaId'])
                     else:
 
-                        if "response" in msg and self.enable_profiling:
+                        if "response" in msg and self.enable_profiling.get(id):
                             p = msg.get("profile", None)
                             msg["profile"] = {
                                 "origin": "Server (Python)",
@@ -223,7 +226,7 @@ class Worker:
 
                     if "response" in msg or "error" in msg:
                         #if statsd and (id in self.start_time):
-                        #    statsd.timing('Downlink.WorkerLifetime', (time.time()*1000) - self.start_time.get(id, 0))
+                        #    statsd.timing('Downlink.WorkerLifetime', (time.time()*1000) - self.start_time.get(id, 0)*1000)
                         self.on_media_complete(msg, lambda: self.responded(id))
 
                 except UnicodeError:
@@ -274,6 +277,9 @@ class Worker:
                 # It's a new request! Start the timeout
                 #print ("Setting timeout and routing for new request ID %s" % id)
                 workers_by_id[id] = self
+                if msg.get("enable-profiling"):
+                    self.enable_profiling[id] = True
+                    self.start_time[id] = time.time()
                 self.req_ids.add(id)
                 if msg["type"] != "REPL_COMMAND":
                     self.set_timeout(id)
@@ -285,9 +291,12 @@ class Worker:
                 return
 
             # A horrid hack - a one-char "activation" that's not marshalled, because marshal holds the GIL and Windows doesn't support select() on pipes and urrrggghhh
-            self.proc.stdin.write(b"X")
 
-        marshal.dump(msg, self.proc.stdin)
+            d = b"X" + marshal.dumps(msg)
+        else:
+            d = marshal.dumps(msg)
+
+        self.proc.stdin.write(d)
         self.proc.stdin.flush()
 
         if not bin:

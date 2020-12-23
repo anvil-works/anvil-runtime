@@ -16,7 +16,7 @@ var $builtinmodule = window.memoise('anvil.facebook.auth', function() {
 
             var authParams = {
                 scopes: scopesToRequest,
-                s: window.anvilSessionId,
+                s: window.anvilSessionToken,
             };
 
             var authUrl = appPath + "/_/facebook_auth_redirect?" + $.param(authParams);
@@ -52,7 +52,7 @@ var $builtinmodule = window.memoise('anvil.facebook.auth', function() {
             $("#facebookLogInButton").off("click"); // Just in case they didn't click it last time.
             $("#facebookLogInButton").one("click", doLogin);
             $("#facebookCancelButton").off("click");
-            $("#facebookCancelButton").one("click", () => {
+            $("#facebookCancelButton").one("click", function() {
                 $("#facebook-login-modal").one("hidden.bs.modal.alertclear", function() {
                     loginCallbackResolve.reject("MODAL_CANCEL")
                 });
@@ -118,7 +118,7 @@ var $builtinmodule = window.memoise('anvil.facebook.auth', function() {
     mod["get_user_email"] = new Sk.builtin.func(function() {
         var server = PyDefUtils.getModule("anvil.server");
 
-        var call = server.tp$getattr(new Sk.builtin.str("call_$rn$"));
+        var call = server.tp$getattr(new Sk.builtin.str("call"));
         return Sk.misceval.callOrSuspend(call, undefined, undefined, undefined, Sk.ffi.remapToPy("anvil.private.facebook.auth.get_user_email"));
     })
 
@@ -126,7 +126,7 @@ var $builtinmodule = window.memoise('anvil.facebook.auth', function() {
     mod["get_user_id"] = new Sk.builtin.func(function() {
         var server = PyDefUtils.getModule("anvil.server");
 
-        var call = server.tp$getattr(new Sk.builtin.str(new Sk.builtin.str("call_$rn$")));
+        var call = server.tp$getattr(new Sk.builtin.str(new Sk.builtin.str("call")));
         return Sk.misceval.callOrSuspend(call, undefined, undefined, undefined, Sk.ffi.remapToPy("anvil.private.facebook.auth.get_user_id"));
     })
 
@@ -134,7 +134,7 @@ var $builtinmodule = window.memoise('anvil.facebook.auth', function() {
     mod["get_user_access_token"] = new Sk.builtin.func(function() {
         var server = PyDefUtils.getModule("anvil.server");
 
-        var call = server.tp$getattr(new Sk.builtin.str("call_$rn$"));
+        var call = server.tp$getattr(new Sk.builtin.str("call"));
         return Sk.misceval.callOrSuspend(call, undefined, undefined, undefined, Sk.ffi.remapToPy("anvil.private.facebook.auth.get_user_access_token"));
     })
 

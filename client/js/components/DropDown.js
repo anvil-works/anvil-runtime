@@ -115,14 +115,14 @@ description: |
 
         let updateItems = (self, e, pyVal) => {
             var s = e.find("select");
-            var currentPyVal = self._anvil.pyItems && self._anvil.pyItems.v[s.val()];
-            if (!(currentPyVal instanceof Sk.builtin.str) && currentPyVal instanceof Sk.builtin.seqtype) {
-                currentPyVal = currentPyVal.v[1];
-            }
+            var currentPyVal = self._anvil.jsItems && self._anvil.jsItems[s.val()];
+            currentPyVal = currentPyVal && currentPyVal[1];
 
             s.empty();
-            return Sk.misceval.chain(Sk.builtin.list(pyVal, true), pyVal => {
-                self._anvil.pyItems = pyVal
+            return Sk.misceval.chain(Sk.misceval.arrayFromIterable(pyVal, true), 
+            (arr) => {
+                pyVal = new Sk.builtin.list(arr);
+                self._anvil.pyItems = pyVal;
                 var foundSelectedValue = false;
 
                 if (self._anvil.getPropJS("include_placeholder")) {
@@ -133,31 +133,35 @@ description: |
                         delete self._anvil.cachedInvalidValue;
                     }
                 }
-
-                for (var i in pyVal.v) {
-                    var item = pyVal.v[i];
-                    if (item instanceof Sk.builtin.str) {
-                        s.append($("<option/>").text(item.v).val(i));
-                        var itemVal = item;
-                    } else if (item instanceof Sk.builtin.seqtype) {
-                        let lst = item.v;
-                        if (lst.length != 2 || !(lst[0] instanceof Sk.builtin.str))
-                            throw new Sk.builtin.Exception("Dropdown item tuples must be of the form ('label', value)");
-                        s.append($("<option/>").text(lst[0].v).val(i));
-                        var itemVal= lst[1];
+                const jsItems = self._anvil.jsItems = [];
+                let itemVal, itemKey;
+                arr.forEach((item, i) => {
+                    if (Sk.builtin.checkString(item)) {
+                        itemKey = item;
+                        itemVal = item;
+                        jsItems.push([itemKey, itemVal]);
+                        s.append($("<option/>").text(itemKey.toString()).val(i));
+                    } else if (!(item instanceof Sk.builtin.list || item instanceof Sk.builtin.tuple)) {
+                        throw new Sk.builtin.TypeError("'items' must be a list of strings or tuples");
                     } else {
-                        throw new Sk.builtin.Exception("'items' must be a list of strings or tuples");
+                        item = Sk.misceval.arrayFromIterable(item); // list and tuples won't suspend
+                        if (item.length !== 2 || !Sk.builtin.checkString(item[0])) {
+                            throw new Sk.builtin.TypeError("Dropdown item tuples must be of the form ('label', value)");
+                        }
+                        [itemKey, itemVal] = item;
+                        jsItems.push(item);
+                        s.append($("<option/>").text(itemKey.toString()).val(i));
                     }
-                    if (self._anvil.cachedInvalidValue && Sk.misceval.richCompareBool(self._anvil.cachedInvalidValue, itemVal, 'Eq')) {
+                    if (self._anvil.cachedInvalidValue && Sk.misceval.richCompareBool(self._anvil.cachedInvalidValue, itemVal, "Eq")) {
                         s.val(i);
                         delete self._anvil.cachedInvalidValue;
                         foundSelectedValue = true;
-                    } else if (currentPyVal && Sk.misceval.richCompareBool(currentPyVal, itemVal, 'Eq')) {
+                    } else if (currentPyVal && Sk.misceval.richCompareBool(currentPyVal, itemVal, "Eq")) {
                         s.val(i);
                         foundSelectedValue = true;
                     }
-                }
-                if (!foundSelectedValue && pyVal.v.length > 0) {
+                })
+                if (!foundSelectedValue && jsItems.length > 0) {
                     s.val(0);
                     delete self._anvil.cachedInvalidValue; // Just in case
                 }
@@ -169,7 +173,7 @@ description: |
             name: "items",
             type: "text[]",
             description: "The items to display in this dropdown.",
-            defaultValue: [],
+            defaultValue: new Sk.builtin.list([]),
             exampleValue: [["One", 1], ["Two", 2]],
             important: true,
             priority: 10,
@@ -178,7 +182,7 @@ description: |
                 return updateItems(self,e,pyVal); // So as not to blow up gendoc.
             },
             get: function(self, e) {
-                return self._anvil.pyItems;
+                return self._anvil.pyItems || new Sk.builtin.list([]);
             }
         });
 
@@ -188,7 +192,7 @@ description: |
             type: "object",
             suggested: true,
             description: "The value of the currently selected item. Can only be set at runtime.",
-            defaultValue: null,
+            defaultValue: Sk.builtin.none.none$,
             hideFromDesigner: true,
             important: true,
             priority: 10,
@@ -199,26 +203,18 @@ description: |
                     return; // INIT
                 }
 
-                var currentVal = e.find("select").val();
-
-                for (var i in self._anvil.pyItems.v) {
-                    var item = self._anvil.pyItems.v[i];
-
-                    if (item instanceof Sk.builtin.str) {
-                        var itemVal = item;
-                    } else if (item instanceof Sk.builtin.seqtype) {
-                        var itemVal = item.v[1];
-                    }
-
-                    if (Sk.misceval.richCompareBool(itemVal, pyVal, 'Eq')) {
+                const items = self._anvil.jsItems || [];
+                for (let i = 0; i < items.length; i++) {
+                    const [,itemVal] = items[i];
+                    if (Sk.misceval.richCompareBool(itemVal, pyVal, "Eq")) {
                         self._anvil.invalidItemElement.detach();
                         e.find("select").val(i);
                         delete self._anvil.cachedInvalidValue;
-                        return;
+                        return; 
                     }
                 }
 
-                if (self._anvil.getPropJS("include_placeholder") && pyVal == Sk.builtin.none.none$) {
+                if (self._anvil.getPropJS("include_placeholder") && pyVal === Sk.builtin.none.none$) {
                     e.find("select").val(-2);
                     delete self._anvil.cachedInvalidValue;
                 } else {
@@ -232,17 +228,10 @@ description: |
                     return self._anvil.cachedInvalidValue;
                 }
                 
-                var idx = e.find("select").val();
-                var item = self._anvil.pyItems.v[idx];
+                const idx = e.find("select").val();
+                const item = self._anvil.jsItems[idx];
 
-                if (item instanceof Sk.builtin.str) {
-                    return item;
-                } else if (item instanceof Sk.builtin.seqtype) {
-                    return item.v[1];
-                } else {
-                    return Sk.builtin.none.none$;
-                }
-
+                return item ? item[1] : Sk.builtin.none.none$;
             }
         });
 

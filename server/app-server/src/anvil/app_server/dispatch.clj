@@ -64,18 +64,23 @@
 ;; Contains str(func-pattern) -> func-pattern
 (defonce stale-uplink-funcs (atom {}))
 
+(defn get-default-environment []
+  {:env_id      ::default
+   :app_id      (conf/get-main-app-id)
+   :name        "App Server"})
+
 (uplink/set-uplink-hooks!
-  {:get-app-info-and-privileges-for-uplink-key
+  {:get-app-info-environment-and-privileges-for-uplink-key
    (fn [uplink-key]
      (cond
        (when-let [k (conf/get-uplink-key)] (= (sha-256 uplink-key) (sha-256 k)))
-       [(app-data/get-app-info-insecure (conf/get-main-app-id)) :uplink]
+       [(app-data/get-app-info-insecure (conf/get-main-app-id)) nil :uplink]
 
        (when-let [k (conf/get-client-uplink-key)] (= (sha-256 uplink-key) (sha-256 k)))
-       [(app-data/get-app-info-insecure (conf/get-main-app-id :client))]))
+       [(app-data/get-app-info-insecure (conf/get-main-app-id) nil :client)]))
 
    :on-uplink-connect
-   (fn [_app-id _app-branch _protocol-version]
+   (fn [_environment _protocol-version]
      (swap! next-uplink-id inc))
 
    :set-uplink-handler!

@@ -10,6 +10,10 @@
 
 (defonce live-object-mac-path (str data-path "/anvil-live-object-key.txt"))
 
+(defonce saml-paths {:private-key (str data-path "/anvil-saml-private-key.pem")
+                     :public-key  (str data-path "/anvil-saml-public-key.pem")
+                     :certificate (str data-path "/anvil-saml-cert.pem")})
+
 (defonce geoip-db-path nil)
 
 ;; Don't ask me why this (str) is required to keep Cursive happy
@@ -55,6 +59,8 @@
                            :shared "anvilapp-shared"})
 
 (def force-secure-cookies? true)
+
+(def permit-url-session-tokens? true)
 
 (defn set-config! [hook-map]
   (let [vars (-> (ns-publics 'anvil.runtime.conf)

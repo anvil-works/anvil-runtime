@@ -139,6 +139,7 @@ a:hover, a:active {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  min-height: calc(100vh - %anvil-banner-height%);
   height: 0; /* To make flex-grow work in IE */
 }
 

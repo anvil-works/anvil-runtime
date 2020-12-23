@@ -32,6 +32,7 @@ module.exports = function() {
             var offset = Sk.misceval.call(timedelta, Sk.ffi.remapToPy(kwargs), undefined, []);
 
             self.tp$setattr(new Sk.builtin.str("_offset"), offset);
+            return Sk.builtin.none.none$;
         });
 
         $loc["utcoffset"] = new Sk.builtin.func(function(self) {
@@ -57,7 +58,7 @@ module.exports = function() {
     pyMod["tzlocal"] = Sk.misceval.buildClass(pyMod, function($gbl, $loc) {
 
         $loc["__init__"] = new Sk.builtin.func(function(self) {
-            return Sk.misceval.call(pyMod["tzoffset"]["__init__"], undefined, undefined, ["minutes", Sk.ffi.remapToPy(-new Date().getTimezoneOffset())], self);
+            return Sk.misceval.call(pyMod["tzoffset"].prototype["__init__"], undefined, undefined, ["minutes", Sk.ffi.remapToPy(-new Date().getTimezoneOffset())], self);
         })
 
         $loc["tzname"] = new Sk.builtin.func(function(self) {
@@ -74,7 +75,7 @@ module.exports = function() {
     pyMod["tzutc"] = Sk.misceval.buildClass(pyMod, function($gbl, $loc) {
 
         $loc["__init__"] = new Sk.builtin.func(function(self) {
-            return Sk.misceval.call(pyMod["tzoffset"]["__init__"], undefined, undefined, ["minutes", Sk.ffi.remapToPy(0)], self);
+            return Sk.misceval.call(pyMod["tzoffset"].prototype["__init__"], undefined, undefined, ["minutes", Sk.ffi.remapToPy(0)], self);
         })
 
         $loc["tzname"] = new Sk.builtin.func(function(self) {
@@ -87,6 +88,8 @@ module.exports = function() {
         });
 
     }, "tzlocal", [pyMod["tzoffset"]]);
+
+    pyMod["UTC"] = Sk.misceval.callsim(pyMod["tzutc"]);
 
     return pyMod;
 }

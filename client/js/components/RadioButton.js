@@ -109,8 +109,8 @@ module.exports = function(pyModule) {
         }, pyModule, $loc, properties, events, pyModule["Component"]);
 
         $loc["get_group_value"] = new Sk.builtin.func(function(self) {
-            var v = $("input[name='" + self._anvil.element.find("input").attr("name") + "']:checked").val();
-            return v != null ? Sk.ffi.basicwrap(v) : Sk.builtin.none.none$;
+            var v = $("input[name=\"" + self._anvil.element.find("input").attr("name") + "\"]:checked").val();
+            return v != null ? Sk.ffi.remapToPy(v) : Sk.builtin.none.none$;
         })
 
     }, /*!defClass(anvil,RadioButton,Component)!*/ 'RadioButton', [pyModule["Component"]]);

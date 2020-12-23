@@ -347,7 +347,7 @@ module.exports = function(pyModule) {
                     }
                     col.append(component._anvil.element);
                 },
-                () => Sk.misceval.callsimOrSuspend(pyModule["Container"].add_component, self, component, kwargs),
+                () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs),
                 () => {
                     let oldRemove = component._anvil.parent.remove;
                     component._anvil.parent.remove = () => {
@@ -363,6 +363,7 @@ module.exports = function(pyModule) {
                         // We only need to repaginate ourselves if the component we just added understands pagination.
                         self._anvil.paginate(component)
                     }
+                    return Sk.builtin.none.none$;
                 },
             );
         });

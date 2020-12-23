@@ -3,11 +3,12 @@
         [slingshot.slingshot :only [throw+ try+]])
   (:require [digest]
             [anvil.util :as util]
+            [anvil.runtime.ws-util :as ws-util]
             [anvil.dispatcher.serialisation.core :as serialisation]
             [clojure.tools.logging :as log]
             [clojure.data.json :as json]
             [crypto.random :as random]
-            [anvil.executors.ws-utils :as ws-utils]
+            [anvil.executors.ws-calls :as ws-calls]
             [anvil.dispatcher.core :as dispatcher]
             [anvil.dispatcher.background-tasks :as background-tasks]
             [anvil.core.worker-pool :as worker-pool]))
@@ -29,25 +30,37 @@
 (defn gen-id [hint]
   (str (name hint) "-" (random/base64 16)))
 
-(defn send-request! [channel pending-responses bg-task-id req-id
+(defn- request-template-from-pending-response [pending-response]
+  (select-keys pending-response [:app-id :app :environment :app-origin :session-state :call-stack]))
+
+(defn send-request! [channel pending-responses bg-task req-id
                      {{:keys [live-object args kwargs func vt_global] :as _call} :call
-                      :keys [app-id app-branch app-version app-origin app session-state origin stale-uplink? call-stack]
+                      :keys [app-id environment app-origin app session-state origin stale-uplink? call-stack]
                       :as _request}
                      message
                      return-path]
 
   ;; We key the downlink cache with a blend of *all* versions (incl dependencies),
-  ;; but any calls the downlink makes in the meantime are tagged with the original app-version.
-  (let [blended-version (apply str app-version (for [[_ {:keys [version]}] (sort-by first (:dependency_code app))] version))]
+  ;; but any calls the downlink makes in the meantime are tagged with the original environment.
+  (let [blended-version (apply str (:commit-id environment) (for [[_ {:keys [commit-id]}] (sort-by first (:dependency_code app))] commit-id))
+        start-time (System/nanoTime)]
     (swap! pending-responses assoc req-id {:app                   app
                                            :app-id                app-id
-                                           :app-branch            app-branch
-                                           :app-version           app-version
+                                           :environment           environment
                                            :blended-version       blended-version
                                            :app-origin            app-origin
-                                           :bg-task-id            bg-task-id
+                                           :bg-task               bg-task
                                            :return-path           {:update!  #(dispatcher/update! return-path (assoc % :id req-id))
-                                                                   :respond! #(dispatcher/respond! return-path (dissoc % :id))}
+                                                                   :respond! (fn [resp]
+                                                                               (let [resp (merge resp
+                                                                                                 (when (:anvil/enable-profiling @session-state)
+                                                                                                   {:profile (merge {:origin      "Server (Downlink executor)"
+                                                                                                                     :description (str "Downlink execute (" func ")")
+                                                                                                                     :start-time  (/ start-time 1000000.0)
+                                                                                                                     :end-time    (/ (System/nanoTime) 1000000.0)}
+                                                                                                                    (when (:profile resp)
+                                                                                                                      {:children [(:profile resp)]}))}))]
+                                                                                 (dispatcher/respond! return-path (dissoc resp :id))))}
                                            :call-stack            call-stack
                                            :session-state         session-state
                                            :pymod-session-at-send (:pymods @session-state)})
@@ -61,10 +74,12 @@
                                                      :client           (:client @session-state)
                                                      :sessionData      (or (:pymods @session-state) {})
                                                      :app-id           app-id
-                                                     :app-info         {:id app-id, :branch app-branch}
+                                                     :app-info         {:id          app-id,
+                                                                        :branch      (:branch environment),
+                                                                        :environment (select-keys environment [:description :tags])}
                                                      :app-version      blended-version
                                                      :persist-key      (when (get-in app [:runtime_options :server_persist])
-                                                                         app-branch)
+                                                                         (str (:env_id environment)))
                                                      :stale-uplink?    stale-uplink?
                                                      :args             args
                                                      :kwargs           kwargs
@@ -99,39 +114,37 @@
 (defonce background-tasks (atom {}))
 
 (defn launch-bg-fn [channel pending-responses request]
-  (let [[{:keys [app_id id] :as bt} new-return-path]
+  (let [[{:keys [id] :as bt} new-return-path]
         (background-tasks/setup-background-task-context
-          request :downlink #(swap! background-tasks dissoc [(:app_id %) (:id %)]))
-
-        lookup-key [app_id id]
+          request :downlink #(swap! background-tasks dissoc (:id %)))
 
         ;; Ugly two-step setup because we don't know the call-id until executor-fn is finished.
         ;; Make this nicer (perhaps when we go horizontal?)
 
-        _ (swap! background-tasks assoc lookup-key {:channel channel, :pending-responses pending-responses})
+        _ (swap! background-tasks assoc id {:channel channel, :pending-responses pending-responses})
 
-        call-id (send-request! channel pending-responses id (gen-id :bgtask) request
+        call-id (send-request! channel pending-responses bt (gen-id :bgtask) request
                                {:type "LAUNCH_BACKGROUND", :command (get-in request [:call :func])}
                                new-return-path)
 
-        _ (swap! background-tasks #(if (get % lookup-key)
-                                    (assoc-in % [lookup-key :call-id] call-id)
+        _ (swap! background-tasks #(if (get % id)
+                                    (assoc-in % [id :call-id] call-id)
                                     %))]
     id))
 
 
 (swap! background-tasks/implementations assoc :downlink
-       {:kill!     (fn [app-id id return-path]
+       {:kill!     (fn [{:keys [id]} return-path]
                      (dispatcher/synchronous-return-path return-path
-                       (if-let [{:keys [channel call-id]} (@background-tasks [app-id id])]
+                       (if-let [{:keys [channel call-id]} (@background-tasks id)]
                          (when-not (send! channel (util/write-json-str {:type "KILL_TASK", :task call-id}))
                            (throw+ {:anvil/server-error "Downlink disconnected" :type "anvil.server.NotRunningTask"}))
                          (throw+ {:anvil/server-error "Downlink disconnected" :type "anvil.server.NotRunningTask"}))
                        nil))
 
-        :get-state (fn [app-id id return-path]
+        :get-state (fn [{:keys [id]} return-path]
                      (dispatcher/report-exceptions-to-return-path return-path
-                       (if-let [{:keys [channel call-id pending-responses]} (@background-tasks [app-id id])]
+                       (if-let [{:keys [channel call-id pending-responses]} (@background-tasks id)]
                          (let [new-state-request-id (str "bgquery-" (random/base64 16))]
                            ;; TODO this pending-response context is very minimal - could provide more
                            ;; (which gets used in serialiser)
@@ -146,7 +159,7 @@
 
 
 (defn handle-incoming-ws [request]
-  (util/with-opening-channel
+  (ws-util/with-opening-channel
     request channel on-open
     (let [registration-cookie (atom nil)
           pending-responses (atom {}) ;; id -> {:app-id app-id :respond! respond!, :send-update! send-update, :ssm-state ssm-state}
@@ -154,7 +167,8 @@
           internal-error (atom nil)
           executor {:fn (partial call-fn channel pending-responses)
                     :bg-fn (partial launch-bg-fn channel pending-responses)
-                    ::send-fn (partial send-request! channel pending-responses nil)}]
+                    ::send-fn (partial send-request! channel pending-responses nil)
+                    ::tag-channel! (partial ws-util/tag-channel! channel)}]
 
       (on-close channel
                 (fn [why]
@@ -215,9 +229,10 @@
 
                             ;; Background task shuffling off its mortal coil
                             (= (:type raw-data) "NOTIFY_TASK_KILLED")
-                            (when-let [{:keys [app-id app session-state bg-task-id]} (get @pending-responses (:id raw-data))]
-                              (let [data (serialisation/deserialise ds raw-data app-id app session-state :server)]
-                                (background-tasks/record-final-state! app-id bg-task-id (if (:taskState data) {:taskState (:taskState data)} {}) :killed)))
+                            (when-let [{:keys [bg-task] :as pending-response} (get @pending-responses (:id raw-data))]
+                              (let [data (serialisation/deserialise ds raw-data (assoc (request-template-from-pending-response pending-response)
+                                                                                  :origin :server))]
+                                (background-tasks/record-final-state! bg-task (if (:taskState data) {:taskState (:taskState data)} {}) :killed)))
 
                             ;; Fetch app (missed cache)
                             (= (:type raw-data) "GET_APP")
@@ -229,7 +244,7 @@
 
                             ;; Command (request from downlink, ie remote-initiated RPC)
                             (= (:type raw-data) "CALL")
-                            (let [{:keys [session-state app-id app-version app-branch app-origin app return-path call-stack]} (get @pending-responses (:call-stack-id raw-data))
+                            (let [{:keys [session-state app-id environment app-origin app return-path call-stack]} (get @pending-responses (:call-stack-id raw-data))
                                   call-stack-id (:call-stack-id raw-data)
                                   change-session! (fn [new-session]
                                                     (swap! pending-responses #(if (contains? % call-stack-id)
@@ -237,8 +252,8 @@
                                                                                                                     :pymod-session-at-send (:pymods @new-session)})
                                                                                 %)))]
 
-                              (ws-utils/process-call-from-ws channel ds raw-data
-                                                             {:app-id                                app-id, :app app, :app-branch app-branch, :app-version app-version, :app-origin app-origin,
+                              (ws-calls/process-call-from-ws channel ds raw-data
+                                                             {:app-id                                app-id, :app app, :environment environment, :app-origin app-origin,
                                                               :session-state                         session-state, :anvil.dispatcher/change-session! change-session!, :origin :downlink,
                                                               :call-stack                            (cons {:type :server_module} call-stack),
                                                               :thread-id                             (str "downlink-" app-id "-" call-stack-id),
@@ -253,20 +268,21 @@
 
                             ;; Response from downlink
                             (or (contains? raw-data :response) (contains? raw-data :error))
-                            (when-let [{:keys [session-state app-id app return-path pymod-session-at-send]} (@pending-responses (:id raw-data))]
+                            (when-let [{:keys [session-state app-id app return-path pymod-session-at-send] :as pending-response}
+                                       (@pending-responses (:id raw-data))]
 
                               (when-let [pysess (:sessionData raw-data)]
                                 (when (= (:pymods @session-state) pymod-session-at-send)
                                   (swap! session-state assoc :pymods pysess)))
                               (let [raw-data (dissoc raw-data :sessionData)
-                                    resp (ws-utils/process-response-from-ws ds return-path app-id app session-state raw-data :server)]
+                                    resp (ws-calls/process-response-from-ws ds (request-template-from-pending-response pending-response) return-path raw-data)]
                                 ; Don't do this until we're sure process-response didn't blow up.
                                 (swap! pending-responses dissoc (:id raw-data))
                                 resp))
 
                             (contains? raw-data :output)
                             (when-let [{:keys [return-path]} (@pending-responses (:id raw-data))]
-                              (ws-utils/process-update-from-ws return-path raw-data)))))
+                              (ws-calls/process-update-from-ws return-path raw-data)))))
 
 
                       (catch Exception e

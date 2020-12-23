@@ -46,14 +46,14 @@ for p,cs in pkgs.items():
     with open(f"{p}/__init__.py", "w") as init:
         init.write("""
 from anvil.util import WrappedObject, WrappedList
-from anvil.server import serializable_type
+from anvil.server import portable_class
 
 """)
 
 ## TODO: "type" key on traces
         for c in sorted(cs, key=lambda x: x.__name__):
             init.write(f"""
-@serializable_type
+@portable_class
 class {c.__name__}(WrappedObject):
     _name = "{c.__name__}"
     _module = "{c.__module__}"
@@ -75,13 +75,13 @@ deprecated_classes = [class_obj for class_name, class_obj in inspect.getmembers(
 with open(f"graph_objs/_deprecations.py", "w") as _deps:
     _deps.write("""
 from anvil.util import WrappedObject
-from anvil.server import serializable_type
+from anvil.server import portable_class
 
 """)
 
     for c in deprecated_classes:
         _deps.write(f"""
-@serializable_type
+@portable_class
 class {c.__name__}(WrappedObject):
     _name = "{c.__name__}"
     _module = "{c.__module__}"

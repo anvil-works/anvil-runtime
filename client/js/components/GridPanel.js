@@ -104,12 +104,14 @@ module.exports = function(pyModule) {
 
                 row.element.append(celt);
             },
-            () => Sk.misceval.callsimOrSuspend(pyModule["Container"].add_component, self, pyComponent, kwargs),
+            () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, pyComponent, kwargs),
             () => {
                 let rmFn = pyComponent._anvil.parent.remove;
                 pyComponent._anvil.parent.remove = () => {
-                  celt.detach();
-                  return rmFn();
+                    if (celt) {
+                        celt.detach();
+                    }
+                    return rmFn();
                 };
                 return Sk.builtin.none.none$;
             });
@@ -117,7 +119,7 @@ module.exports = function(pyModule) {
 
         $loc["clear"] = new Sk.builtin.func(function(self) {
 
-            let x = Sk.misceval.callsimOrSuspend(pyModule["Container"].clear, self);
+            let x = Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.clear, self);
 
             self._anvil.element.empty();
             self._anvil.lastRow = null;

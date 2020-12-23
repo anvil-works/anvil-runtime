@@ -1,4 +1,4 @@
-(ns anvil.runtime.ws
+(ns anvil.runtime.browser-ws
   (:use [org.httpkit.server]
         [slingshot.slingshot :only [throw+ try+]]
         [anvil.runtime.util])
@@ -10,10 +10,11 @@
             [anvil.util :as util]
             [anvil.runtime.app-log :as app-log]
             [anvil.metrics :as metrics]
-            [anvil.core.worker-pool :as worker-pool]))
+            [anvil.core.worker-pool :as worker-pool]
+            [anvil.runtime.ws-util :as ws-util]))
 
-(defn ws-handler [{:keys [app-id app-session app-branch app-version] :as request} app-yaml]
-  (util/with-opening-channel request channel on-open
+(defn ws-handler [{:keys [app-id app-session environment] :as request} app-yaml]
+  (ws-util/with-opening-channel request channel on-open
 
     (let [session-liveobject-secret (-> (swap! app-session
                                                (fn [x] (if-not (:liveobject-secret x)
@@ -53,7 +54,15 @@
                             (serialisation/processBlobHeader ds data)
 
                             (= type "CALL")
-                            (let [d (serialisation/deserialise ds data app-id app-yaml app-session :client)
+                            (let [request-template {:app           app-yaml
+                                                    :app-id        (:app-id request)
+                                                    :environment   environment
+                                                    :app-origin    (:app-origin request)
+                                                    :origin        :client
+                                                    :session-state app-session
+                                                    :use-quota?    true
+                                                    :call-stack    (list {:type :browser})}
+                                  d (serialisation/deserialise ds data request-template)
                                   responder (serial-responder (:id d))
                                   return-path {:respond!
                                                responder
@@ -75,18 +84,10 @@
                                     (responder {:error {:type    "anvil.server.SessionExpiredError"
                                                         :message "Session expired"
                                                         :trace   [["<rpc>", 0]]}})
-                                    (dispatcher/dispatch! {:app           app-yaml
-                                                           :app-id        (:app-id request)
-                                                           :app-branch    app-branch
-                                                           :app-version   app-version
-                                                           :app-origin    (:app-origin request)
-                                                           :origin        :client
-                                                           :session-state app-session
-                                                           :use-quota?    true
-                                                           :call-stack    (list {:type :browser})
-                                                           :call          (assoc (select-keys d [:args :kwargs :vt_global])
-                                                                            :func (or (:command d) (:method (:liveObjectCall d)))
-                                                                            :live-object (serialisation/loadLiveObject ds (:liveObjectCall d)))}
+                                    (dispatcher/dispatch! (assoc request-template
+                                                            :call (assoc (select-keys d [:args :kwargs :vt_global])
+                                                                    :func (or (:command d) (:method (:liveObjectCall d)))
+                                                                    :live-object (serialisation/loadLiveObject ds (:liveObjectCall d))))
                                                           return-path)))
 
                                 ;; Don't catch :anvil/server-error here, as dispatch functions should do that themselves

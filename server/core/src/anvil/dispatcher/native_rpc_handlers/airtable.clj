@@ -16,7 +16,7 @@
 
   (let [authenticated-httpkit-map (assoc-in httpkit-map [:headers "Authorization"]
                                             (str "Bearer " key))
-        resp                     @(http/request authenticated-httpkit-map nil)]
+        resp                     @(http/request (assoc authenticated-httpkit-map :keepalive -1) nil)]
 
     (when (:error resp)
       ;; TODO: Decide whether we want to return this error message to the user

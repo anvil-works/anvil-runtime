@@ -68,7 +68,7 @@ module.exports = function(pyModule) {
                     }
                     self._anvil.lpul.append(celt);
                 },
-                () => Sk.misceval.callsimOrSuspend(pyModule["Container"].add_component, self, component, kwargs),
+                () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs),
                 () => {
                     // Now that we've added it to our components array, move it to the right position.
                     if (typeof(kwargs["index"]) == "number") {
@@ -77,9 +77,12 @@ module.exports = function(pyModule) {
                     }
                     let rmFn = component._anvil.parent.remove;
                     component._anvil.parent.remove = () => {
-                        celt.detach();
+                        if (celt) {
+                            celt.detach();
+                        }
                         return rmFn();
                     };
+                    return Sk.builtin.none.none$;
                 }
             );
         });

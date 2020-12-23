@@ -23,14 +23,14 @@
 (defn- parse-address-or-reject [addr]
   (try (InternetAddress. addr) (catch AddressException _e (throw (RejectException. (str "Not a valid address: " addr))))))
 
-(defn get-app-id [recipient-address]
+(defn get-app-environment [recipient-address]
   (let [ia ^InternetAddress (parse-address-or-reject recipient-address)
         [_ domain] (re-matches #".*@(.*)" (.getAddress ia))]
     (when domain
-      (app-data/get-app-id-by-hostname domain))))
+      (app-data/get-app-environment-by-email-hostname domain))))
 
 (defn accept-mail? [from recipient]
-  (boolean (get-app-id recipient)))
+  (boolean (get-app-environment recipient)))
 
 (defonce failsafe-timeout (atom nil))
 
@@ -42,15 +42,18 @@
 (defn deliver-mail! [from recipient data-stream]
   ;; TODO handle errors correctly,
   ;; and log them to the app log
-  (let [app-id (get-app-id recipient)
-        app-info (app-data/get-app-info-insecure app-id)
-        published-revision (app-data/get-published-revision app-info)
-        app-session (atom {:app-origin (app-data/get-default-app-origin app-info)
-                           :client     {:type :email}})
-        log-ctx {:app-session app-session, :app-id (:id app-info), :app-version published-revision}
-        _ (app-log/record! log-ctx :new-session {:type "email" :from_addr from :to_addr recipient})
+  (let [{app-id :app_id, :as environment} (or (get-app-environment recipient)
+                                              (throw (RejectException. (str "No app registered for address: " recipient))))
 
-        app (app-data/get-app app-info published-revision false)
+        app-info (app-data/get-app-info-insecure app-id)
+        app (app-data/get-app app-info (app-data/get-version-spec-for-environment environment) false)
+
+        environment (assoc environment :commit-id (:version app))
+
+        app-session (atom {:app-origin (app-data/get-default-app-origin environment)
+                           :client     {:type :email}})
+        log-ctx {:app-session app-session, :app-id (:id app-info), :environment (assoc environment :commit-id (:version app))}
+        _ (app-log/record! log-ctx :new-session {:type "email" :from_addr from :to_addr recipient})
 
 
         responded? (atom false)
@@ -83,15 +86,23 @@
                          (smtp-result! {:error "Rate limit exceeded"})
 
                          error
-                         (let [msg (if (= (:type error) "DeliveryFailure")
-                                     (:message error)
-                                     "An internal error has occurred. Check the app logs for details.")
-                               error (if (and (= (:type error) "anvil.server.NoServerFunctionError")
-                                              (re-find #"email:handle_message" (:message error)))
+                         (let [cant-handle-email? (and (= (:type error) "anvil.server.NoServerFunctionError")
+                                                       (re-find #"email:handle_message" (:message error)))
+                               msg-for-smtp (cond
+                                              (#{"anvil.email.DeliveryFailure" "DeliveryFailure"} (:type error))
+                                              (:message error)
+
+                                              cant-handle-email?
+                                              "This application cannot handle incoming email"
+
+                                              :else
+                                              "An internal error has occurred. Check the app logs for details.")
+
+                               error (if cant-handle-email?
                                        (assoc error :message "No server function has been decorated @anvil.email.handle_message, so incoming email message could not be delivered")
                                        error)]
                            (app-log/record! log-ctx "err" error)
-                           (smtp-result! {:error msg}))
+                           (smtp-result! {:error msg-for-smtp}))
 
                          :else
                          (smtp-result! {:ok true})))}
@@ -164,16 +175,16 @@
                                                :args [transformed-email] :kwargs {}}
                                :app           (:content app)
                                :app-id        app-id
-                               :app-version   published-revision
                                :app-origin    (:app-origin @app-session)
                                :session-state app-session
+                               :environment   environment
                                :origin        :email
                                :thread-id     (str "email-" (:id app-info) "-" (random/hex 16))
                                :use-quota?    true}
                               return-path)
 
-        (when-let [err (:error @response-promise)]
-          (throw (RejectException. err)))
+        (when-let [error (:error @response-promise)]
+          (throw (RejectException. ^String error)))
 
 
         (catch :anvil/server-error e

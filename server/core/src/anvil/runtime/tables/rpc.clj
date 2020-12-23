@@ -4,7 +4,7 @@
         [anvil.runtime.tables.util]
         [clojure.pprint])
   (:require [clojure.java.jdbc :as jdbc]
-            [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]
+            [anvil.runtime.tables.util :as tables-util]
             [clojure.data.json :as json]
             [anvil.util :as util]
             [clojure.tools.logging :as log]
@@ -14,7 +14,9 @@
             [anvil.dispatcher.serialisation.lazy-media :as lazy-media]
             [clojure.java.io :as io]
             digest
-            [anvil.dispatcher.core :as dispatcher])
+            [anvil.dispatcher.core :as dispatcher]
+            [anvil.runtime.tables.util :as table-util]
+            [anvil.dispatcher.native-rpc-handlers.util :as nrpc-util])
   (:import (java.sql SQLException ResultSet Blob)
            (anvil.dispatcher.types Date DateTime LiveObjectProxy MediaDescriptor Media ChunkedStream BlobMedia SerialisableForRpc SerializedPythonObject)
            (java.io ByteArrayOutputStream)
@@ -31,8 +33,7 @@
     [(get-columns (db) table-id view-cols) nil]
 
     (if-let [{:keys [columns client server] table-name :name}
-             (first (jdbc/query (db) ["SELECT name,columns,client,server FROM app_storage_tables,app_storage_access WHERE id = table_id AND table_id = ? AND app_id = ?"
-                                      table-id rpc-util/*app-id*]))]
+             (tables-util/get-table-access rpc-util/*environment* table-id)]
       (let [ambient-permission (if rpc-util/*client-request?*
                                  client server)
 
@@ -75,7 +76,7 @@
   (let [media-info (first (jdbc/query (db) ["SELECT * from app_storage_media WHERE object_id = ?" oid]))]
     (lazy-media/mk-LazyMedia-with-correct-mac {:manager   "table-media", :id (str oid),
                                                :mime-type (:content_type media-info), :name (:name media-info)}
-                                              rpc-util/*app-id* rpc-util/*app* rpc-util/*session-state*)))
+                                              rpc-util/*req*)))
 
 (def reinflate-val)
 (def ^:dynamic *max-reinflation-recursion-depth* 5)
@@ -93,7 +94,7 @@
                                           (let [live-object-map (update-in live-object-map [:methods] (fn [m] (or m (when (= (:backend live-object-map "anvil.tables.Row"))
                                                                                                                       (log/warn "****** Live object without methods!" (pr-str *reinflating-los*))
                                                                                                                       ["__anvil_iter_page__" "__getitem__" "update" "get_id" "__setitem__" "delete" "set"]))))
-                                                lo (live-objects/load-LiveObjectProxy live-object-map #{"anvil.tables.Row"} nil)]
+                                                lo (live-objects/load-LiveObjectProxy live-object-map {:permitted-live-object-backends #{"anvil.tables.Row"}})]
                                             (if (and (= (:backend lo) "anvil.tables.Row")
                                                      (rpc-util/have-live-object-permission? "cascade"))
                                               (assoc lo :permissions rpc-util/*permissions*)
@@ -301,7 +302,7 @@
                                       (ensure-table-access-ok-returning-cols (db) table-id :search view-cols)
                                       (lazy-media/mk-LazyMedia-with-correct-mac {:manager   "query-csv", :id (util/write-json-str liveobject-id),
                                                                                  :mime-type "text/csv", :name "download.csv"}
-                                                                                rpc-util/*app-id* rpc-util/*app* rpc-util/*session-state*))})
+                                                                                rpc-util/*req*))})
 
 (defn- prepare-update! [c table-id current-values updates view-cols auto-create-cols?]
   (let [cols (atom (ensure-table-access-ok-returning-cols c table-id :write nil))
@@ -310,7 +311,7 @@
                            (swap! cols update-in [id] #(merge new-type (select-keys % [:name :admin_ui])))
                            (jdbc/execute! c ["UPDATE app_storage_tables SET columns=?::jsonb WHERE id = ?"
                                              @cols table-id])
-                           (update-table-view! c table-id @cols))
+                           (update-table-views! c table-id @cols))
         media-updates (atom {})]
 
     [(into current-values
@@ -745,6 +746,7 @@
                                           (get item-cache name))
                                         (throw+ (general-tables-error "This row has been deleted")))))
 
+
             ;; "set" maps to the same function
             "update"              (fn [[table-id row-id view-cols] kwargs]
                                     (let [kwargs (realise-media-in-kwargs kwargs)]
@@ -929,7 +931,7 @@
 
                                           (lazy-media/mk-LazyMedia-with-correct-mac {:manager   "query-csv", :id (util/write-json-str [table-id view-query view-cols cols]),
                                                                                      :mime-type "text/csv", :name "download.csv"}
-                                                                                    rpc-util/*app-id* rpc-util/*app* rpc-util/*session-state*)))})
+                                                                                    rpc-util/*req*)))})
 
 (defn- transform-err [^SQLException e]
   (log/debug e)
@@ -973,8 +975,7 @@
 
 (defn- get-app-tables [_kwargs]
   (into {}
-        (for [{:keys [table_id python_name]}
-              (jdbc/query (db) ["SELECT table_id, python_name FROM app_storage_access WHERE app_id = ?" rpc-util/*app-id*])]
+        (for [{:keys [table_id python_name]} (table-util/get-all-table-access-records nrpc-util/*environment*)]
           [python_name
            (types/mk-LiveObjectProxy "anvil.tables.Table" (util/write-json-str [table_id {}]) [] (keys Table))])))
 
@@ -983,8 +984,9 @@
   (prepare-update! (db) table-id {} value-map nil true))
 
 
-(defn query-csv-lazy-media [_req TSearch-liveobject-id]
-  (let [[table-id query-obj view-cols cols] (json/read-str TSearch-liveobject-id :key-fn keyword)]
+(defn query-csv-lazy-media [TSearch-liveobject-id]
+  (let [[table-id query-obj view-cols cols] (json/read-str TSearch-liveobject-id :key-fn keyword)
+        environment rpc-util/*environment*]
     (binding [rpc-util/*client-request?* false]
       (ensure-table-access-ok-returning-cols (db) table-id :search view-cols)
       (let [name (:name (first (jdbc/query (db) ["SELECT name FROM app_storage_tables WHERE id=?" table-id])))
@@ -999,10 +1001,11 @@
           (getInputStream [_this]
             ;; We have to re-do the binding here, because this is likely to be called
             ;; from another thread.
-            (binding [rpc-util/*app-id* app-id]
+            (binding [rpc-util/*app-id* app-id
+                      rpc-util/*environment* environment]
               (export-as-csv table-id query-obj cols))))))))
 
-(defn get-stored-media [_r object-id]
+(defn get-stored-media [object-id]
   (with-table-transaction
     (let [object-id (as-int object-id)
           media-info (first (jdbc/query (db) ["SELECT * from app_storage_media WHERE object_id = ?" object-id]))

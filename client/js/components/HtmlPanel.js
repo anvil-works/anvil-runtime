@@ -51,7 +51,10 @@ module.exports = function(pyModule) {
                 s.insertBefore(slotRepeat);
                 delEmptyMarkers();
 
-                return () => s.detach();
+                return () => {
+                    s.detach();
+                    return Sk.builtin.none.none$;
+                };
             }
 
             if (slotName == "default") {
@@ -123,7 +126,7 @@ module.exports = function(pyModule) {
                 var pyArgs = [];
                 for (var i = 0; i < args.length; i++) {
                     try {
-                        pyArgs[i] = PyDefUtils.unwrapOrRemapToPy(args[i]);
+                        pyArgs[i] = Sk.ffi.remapToPy(args[i]);
                     } catch (e) {
                         err("Could not convert argument " + i + " (type '" + typeof(args[i]) + "') to Python when calling '" + fn + "' from JavaScript.");
                         return;
@@ -187,13 +190,14 @@ module.exports = function(pyModule) {
 
                     removeFn = addComponentToDom(self, component, kwargs["slot"]);
                 },
-                () => Sk.misceval.callsimOrSuspend(pyModule["Container"].add_component, self, component, kwargs),
+                () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs),
                 () => {
                     let rmFn = component._anvil.parent.remove;
                     component._anvil.parent.remove = () => {
                         if (removeFn) removeFn();
                         return rmFn();
                     };
+                    return Sk.builtin.none.none$;
                 }
             );
         });
@@ -208,6 +212,7 @@ module.exports = function(pyModule) {
                     fns.push(() => Sk.misceval.callsimOrSuspend(components[i].component.tp$getattr(new Sk.builtin.str("remove_from_parent"))));
                 }
             }
+            fns.push(() => Sk.builtin.none.none$);
 
             return Sk.misceval.chain(undefined, ...fns);
         });

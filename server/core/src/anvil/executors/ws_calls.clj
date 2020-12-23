@@ -1,4 +1,4 @@
-(ns anvil.executors.ws-utils
+(ns anvil.executors.ws-calls
   (:use [slingshot.slingshot :only [throw+ try+]])
   (:require anvil.dispatcher.core
             [anvil.dispatcher.serialisation.core :as serialisation]
@@ -10,7 +10,7 @@
             [anvil.util :as util]))
 
 (defn process-call-from-ws [channel deserialiser raw-data
-                            {:keys [app-id app session-state app-version app-branch app-origin thread-id origin call-stack use-quota?] :as req-template}
+                            {:keys [app-id app session-state environment app-origin thread-id origin call-stack use-quota?] :as req-template}
                             {:keys [extra-liveobject-key prune-liveobjects? update-bypass!] :as options}]
   (let [n-responses (atom 0)
         return-path {:respond!
@@ -27,7 +27,7 @@
                          :else
                          (ws/send! channel (util/write-json-str (assoc obj :id (:id raw-data))))))}
 
-        data (serialisation/deserialise deserialiser raw-data app-id app session-state (:origin req-template))]
+        data (serialisation/deserialise deserialiser raw-data req-template)]
 
     (log/debug "Received server call:" (:command data))
     (log/trace "Raw request:" (pr-str raw-data))
@@ -43,8 +43,8 @@
                                      :vt_global   (:vt_global data)})
                             return-path))))
 
-(defn process-response-from-ws [deserialiser return-path app-id app session-state raw-data origin]
-  (let [data (serialisation/deserialise deserialiser raw-data app-id app session-state origin)]
+(defn process-response-from-ws [deserialiser request-ctx return-path raw-data]
+  (let [data (serialisation/deserialise deserialiser raw-data request-ctx)]
     (log/debug "Responding to server call")
     (log/trace "Raw response:" (pr-str raw-data))
     (log/trace "Deserialised response:" (pr-str data))

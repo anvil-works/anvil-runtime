@@ -8,13 +8,12 @@
             [clojure.tools.logging :as log]
             [ring.util.codec :as codec]
             [anvil.util :as util]
-            [anvil.dispatcher.types :as types])
+            [anvil.dispatcher.types :as types]
+            [anvil.dispatcher.core :as dispatcher])
   (:import
     (org.apache.commons.codec.binary Base64)
     (java.io InputStream ByteArrayOutputStream)
     (anvil.dispatcher.types Media BlobMedia MediaDescriptor)
-    (javax.net.ssl SNIHostName SSLParameters SSLEngine)
-    (java.net URI)
     (java.nio.charset Charset)))
 
 (defn general-http-error
@@ -36,12 +35,6 @@
   (with-open [out (ByteArrayOutputStream.)]
     (clojure.java.io/copy in out)
     (.toByteArray out)))
-
-(def customised-http-client
-  (http/make-client {:ssl-configurer (fn [^SSLEngine ssl-engine ^URI uri]
-                                       (let [^SSLParameters ssl-params (.getSSLParameters ssl-engine)]
-                                         (.setServerNames ssl-params [(SNIHostName. (.getHost uri))])
-                                         (.setSSLParameters ssl-engine ssl-params)))}))
 
 (defn request [kwargs]
   (let [url     (:url kwargs)
@@ -79,11 +72,11 @@
                   (assoc headers "content-type" c-type)
                   headers)
 
-        httpkit-map {:url     url
-                     :method  method
-                     :headers headers
-                     :body    (when (not= method :get) data)
-                     :client customised-http-client}
+        httpkit-map {:url       url
+                     :method    method
+                     :headers   headers
+                     :body      (when (not= method :get) data)
+                     :keepalive -1}
 
         {:keys [status headers body error] :as resp} @(http/request httpkit-map nil)]
 
@@ -114,8 +107,9 @@
     (catch Exception _e
       (throw+ (general-http-error "anvil.http.UrlEncodingError" "This is not a valid URL-encoded string")))))
 
-(def handlers {"anvil.private.http.echo"       (u/wrap-native-fn echo)
-               "anvil.private.http.request"    (u/wrap-native-fn request)
-               "anvil.private.http.url_encode" (u/wrap-native-fn url-encode)
-               "anvil.private.http.url_decode" (u/wrap-native-fn url-decode)})
+(swap! dispatcher/native-rpc-handlers merge
+       {"anvil.private.http.echo"       (u/wrap-native-fn echo)
+        "anvil.private.http.request"    (u/wrap-native-fn request)
+        "anvil.private.http.url_encode" (u/wrap-native-fn url-encode)
+        "anvil.private.http.url_decode" (u/wrap-native-fn url-decode)})
 

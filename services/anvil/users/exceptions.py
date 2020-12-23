@@ -20,6 +20,11 @@ class AccountIsNotEnabled(AuthenticationFailed):
     pass
 
 
+#!defClass(anvil.users,TooManyPasswordFailures)!:
+class TooManyPasswordFailures(AuthenticationFailed):
+    pass
+
+
 #!defClass(anvil.users,PasswordNotAcceptable)!:
 class PasswordNotAcceptable(anvil.server.AnvilWrappedError):
     pass
@@ -31,3 +36,4 @@ class MFARequired(AuthenticationFailed):
 #!defClass(anvil.users,PasswordResetRequested)!:
 class PasswordResetRequested(anvil.server.AnvilWrappedError):
     pass
+

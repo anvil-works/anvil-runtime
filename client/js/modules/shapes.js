@@ -57,7 +57,7 @@ module.exports = function() {
         }
 
         $loc["__init__"] = new Sk.builtin.func(function(self, x, y, width, height, stroke, fill) {
-            Sk.misceval.call(pyMod["Shape"]["__init__"], undefined, undefined, undefined, self, stroke, fill);
+            Sk.misceval.call(pyMod["Shape"].prototype["__init__"], undefined, undefined, undefined, self, stroke, fill);
 
             self.tp$setattr(new Sk.builtin.str("x"), x);
             self.tp$setattr(new Sk.builtin.str("y"), y);
@@ -103,7 +103,7 @@ module.exports = function() {
         }
 
         $loc["__init__"] = new Sk.builtin.func(function(self, x, y, radius, stroke, fill) {
-            Sk.misceval.call(pyMod["Shape"]["__init__"], undefined, undefined, undefined, self, stroke, fill);
+            Sk.misceval.call(pyMod["Shape"].prototype["__init__"], undefined, undefined, undefined, self, stroke, fill);
 
             self.tp$setattr(new Sk.builtin.str("x"), x);
             self.tp$setattr(new Sk.builtin.str("y"), y);

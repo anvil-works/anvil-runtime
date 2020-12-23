@@ -83,7 +83,7 @@ module.exports = function(pyModule) {
             defaultValue: "text",
             exampleValue: "number",
             set: function(self,e,v) {
-                if (v != 'number' && v != 'telephone' && v != 'url') {
+                if (v != 'number' && v != 'tel' && v != 'url' && v != 'email') {
                     v = "text";
                 }
                 self._anvil.inputType = v;

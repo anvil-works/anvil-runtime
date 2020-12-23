@@ -6,7 +6,8 @@
             [clojure.data.json :as json]
             [org.httpkit.client :as http]
             [crypto.random :as random]
-            [ring.util.codec])
+            [ring.util.codec]
+            [anvil.util :as util])
   (:import (java.util Date)))
 
 (defn get-login-response [req state client-id redirect-uri scope request-offline]
@@ -38,7 +39,8 @@
 
       ;; CSRF matches. Start by exchanging the auth code for an access token
       (let [body-json     (:body @(http/post "https://accounts.google.com/o/oauth2/token"
-                                             {:form-params {:code          code
+                                             {:keepalive -1
+                                              :form-params {:code          code
                                                             :client_id     client-id
                                                             :client_secret client-secret
                                                             :redirect_uri  redirect-uri
@@ -56,7 +58,8 @@
 
                 ;; Decrypt the ID token.
                 id-token-json (:body @(http/get "https://www.googleapis.com/oauth2/v1/tokeninfo"
-                                                {:query-params {:id_token (:id_token body)}}))
+                                                {:keepalive -1
+                                                 :query-params {:id_token (:id_token body)}}))
                 id-token      (json/read-str id-token-json :key-fn keyword)]
 
             (if (:error id-token)
@@ -70,7 +73,8 @@
                :id-token id-token})))))))
 
 (defn refresh-access-token [refresh-token client-id client-secret]
-  (let [params {:form-params {:refresh_token refresh-token
+  (let [params {:keepalive -1
+                :form-params {:refresh_token refresh-token
                                :client_id     client-id
                                :client_secret client-secret
                                :grant_type    "refresh_token"}}

@@ -11,7 +11,7 @@ module.exports = function() {
         throw new Sk.builtin.Exception("Cannot create Media objects from files on the client.");
     });
 
-    /*!defFunction(anvil,!,media)!2*/ "Print the given Media Object immediately in the user's browser."
+    /*!defFunction(anvil.media,!,media)!2*/ "Print the given Media Object immediately in the user's browser."
     pyMod["print_media"] = new Sk.builtin.func(media => {
 
         return Sk.misceval.chain(Sk.misceval.callsimOrSuspend(PyDefUtils.getUrlForMedia, media),

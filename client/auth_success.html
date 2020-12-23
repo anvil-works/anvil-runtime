@@ -1,0 +1,31 @@
+<html>
+<head>
+</head>
+<body>
+
+<script>
+
+    var args = {};
+
+    qsParams = window.location.search.substring(1).split("&");
+    for (var i in qsParams) {
+        var p = qsParams[i].split("=")[0];
+        var q = qsParams[i].split("=")[1];
+
+        args[p] = decodeURIComponent(q);
+    }
+
+    if (window.opener) {
+        window.opener.postMessage({ 
+            fn: "{{callback-fn}}", 
+            args: args ,
+        }, "{{canonical-url}}");
+    }
+    
+    window.callbackDone = true;
+    window.close();
+
+</script>
+
+</body>
+</html>

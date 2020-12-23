@@ -130,9 +130,10 @@ class LocalAppInfo(ThreadLocal):
     def __init__(self):
         self.__dict__['id'] = default_app.id
         self.__dict__['branch'] = default_app.branch
+        self.__dict__['environment'] = default_app.environment
 
-    def _setup(self, **kwargs):
-        self.__dict__.update(kwargs)
+    def _setup(self, environment={}, **kwargs):
+        self.__dict__.update(kwargs, environment=anvil._AppInfo._Environment(**environment))
 
 
 anvil.app = LocalAppInfo()
@@ -359,13 +360,13 @@ def do_call(args, kwargs, fn_name=None, live_object=None): # Yes, I do mean args
                 waiting_for_calls.wait()
     else:
         send_call()
-        first_time = True
+        dump_task_state = call_info.dump_task_state
         # Fake a thread switch
         for s in _stackables:
             s._push_stack()
         while call_responses[id] is None:
-            poll_for_call_responses(first_time and call_info.dump_task_state)
-            first_time = False
+            poll_for_call_responses(dump_task_state)
+            dump_task_state = False # only do it first time
         for s in _stackables:
             s._pop_stack()
 
@@ -399,6 +400,7 @@ def do_call(args, kwargs, fn_name=None, live_object=None): # Yes, I do mean args
     if 'response' in r:
         return r['response']
     if 'error' in r:
-        raise _server._deserialise_exception(r["error"])
+        error_from_server = _server._deserialise_exception(r["error"])
+        raise error_from_server
     else:
         raise Exception("Bogus response from server: " + repr(r))

@@ -1,6 +1,6 @@
 import anvil.server
 from anvil import *
-from .exceptions import UserExists, AuthenticationFailed, EmailNotConfirmed, AccountIsNotEnabled, PasswordNotAcceptable, MFARequired, PasswordResetRequested
+from .exceptions import UserExists, AuthenticationFailed, EmailNotConfirmed, AccountIsNotEnabled, PasswordNotAcceptable, MFARequired, PasswordResetRequested, TooManyPasswordFailures
 from .config import get_client_config
 
 #!suggestAttr(anvil.users,login_with_form)!0:
@@ -14,6 +14,7 @@ anvil.server._register_exception_type("anvil.users.UserExists", UserExists)
 anvil.server._register_exception_type("anvil.users.AuthenticationFailed", AuthenticationFailed)
 anvil.server._register_exception_type("anvil.users.EmailNotConfirmed", EmailNotConfirmed)
 anvil.server._register_exception_type("anvil.users.AccountIsNotEnabled", AccountIsNotEnabled)
+anvil.server._register_exception_type("anvil.users.TooManyPasswordFailures", TooManyPasswordFailures)
 anvil.server._register_exception_type("anvil.users.PasswordNotAcceptable", PasswordNotAcceptable)
 anvil.server._register_exception_type("anvil.users.MFARequired", MFARequired)
 anvil.server._register_exception_type("anvil.users.PasswordResetRequested", PasswordResetRequested)
@@ -52,7 +53,7 @@ if is_server_side():
             raise Exception("You can't use " + fname + "() on the server (do it in form code instead)")
         return f
 
-    for n in ["login_with_google", "signup_with_google", "login_with_facebook", "signup_with_facebook", "login_with_microsoft", "signup_with_microsoft", "login_with_raven", "signup_with_raven", "login_with_form", "signup_with_form"]:
+    for n in ["login_with_google", "signup_with_google", "login_with_facebook", "signup_with_facebook", "login_with_microsoft", "signup_with_microsoft", "login_with_saml", "signup_with_saml", "login_with_raven", "signup_with_raven", "login_with_form", "signup_with_form"]:
         globals()[n] = _fail(n)
 
 else:
@@ -136,6 +137,27 @@ else:
         import anvil.microsoft.auth
         if anvil.microsoft.auth.login(additional_scopes):
             return anvil.server.call("anvil.private.users.signup_with_microsoft", remember=remember)
+
+    #!defFunction(anvil.users,!,[remember=False])!2: "Log in via a SAML Identity Provider. Prompts the user to authenticate with SAML, then logs in with their email address (if that user exists). Returns None if the login was cancelled or we have no record of this user.\n\nBy default, login status is not remembered between sessions; set remember=True to remember login status." ["login_with_saml"]
+    def login_with_saml(remember=False):
+        if not get_client_config().get("use_saml"):
+            raise Exception("SAML login is not enabled")
+
+        import anvil.saml.auth
+        if anvil.saml.auth.login():
+            return anvil.server.call("anvil.private.users.login_with_saml", remember=remember)
+
+    #!defFunction(anvil.users,!,[remember=False])!2: "Sign up for a new account with the email address associated with the user's SAML account. Prompts the user to authenticate via SAML, then registers a new user with that email address. Raises anvil.users.UserExists if this email address is already registered; returns new user or None if cancelled.\n\nBy default, login status is not remembered between sessions; set remember=True to remember login status." ["signup_with_saml"]
+    def signup_with_saml(additional_scopes=None, remember=False):
+        if not get_client_config().get("use_saml"):
+            raise Exception("SAML signup is not enabled")
+
+        if not get_client_config().get("allow_signup"):
+            raise Exception("New user signup is not enabled")
+
+        import anvil.saml.auth
+        if anvil.saml.auth.login(additional_scopes):
+            return anvil.server.call("anvil.private.users.signup_with_saml", remember=remember)
 
     # Disable documentation for raven functions for now.
     #defFunction(anvil.users,!,[remember=False])!2: "Log in with a Raven account. Prompts the user to authenticate with Raven, then logs in with their Raven account (if that user exists). Returns None if the login was cancelled or we have no record of this user. By default, login status is not remembered between sessions." ["login_with_raven"]
@@ -254,6 +276,16 @@ else:
             lp.add_component(b)
             b.set_event_handler("click", microsoft_login)
 
+        if get_client_config().get("use_saml"):
+            some_method_available = True
+            def saml_login(**evt):
+                import anvil.saml.auth
+                if anvil.saml.auth.login():
+                    lp.raise_event('x-close-alert', value='saml')
+            b = Button(text="Sign up via SAML", icon="fa:lock", icon_align="left")
+            lp.add_component(b)
+            b.set_event_handler("click", saml_login)
+
         if get_client_config().get("use_raven", False):
             some_method_available = True
             import raven.auth
@@ -315,6 +347,8 @@ else:
                     user = anvil.server.call("anvil.private.users.signup_with_facebook", remember=remember)
                 elif ar == 'microsoft':
                     user = anvil.server.call("anvil.private.users.signup_with_microsoft", remember=remember)
+                elif ar == 'saml':
+                    user = anvil.server.call("anvil.private.users.signup_with_saml", remember=remember)
                 elif ar == 'raven':
                     user = anvil.server.call("anvil.private.users.signup_with_raven", remember=remember)
                 elif ar == 'sign-up' and passwd_box:
@@ -437,6 +471,17 @@ else:
             b.set_event_handler('click', microsoft_login)
             lp.add_component(b)
 
+        if get_client_config().get("use_saml"):
+            some_method_available = True
+            def saml_login(**evt):
+                import anvil.saml.auth
+                if anvil.saml.auth.login():
+                    lp.raise_event('x-close-alert', value='saml')
+                
+            b = Button(text="Log in via SAML", icon="fa:lock", icon_align="left")
+            b.set_event_handler('click', saml_login)
+            lp.add_component(b)
+
         if get_client_config().get("use_raven", False):
             some_method_available = True
             def raven_login(**evt):
@@ -496,14 +541,19 @@ else:
                     user = anvil.server.call("anvil.private.users.login_with_microsoft", remember=remember)
                     if user or allow_cancel:
                         return user
+                elif ar == 'saml':
+                    user = anvil.server.call("anvil.private.users.login_with_saml", remember=remember)
+                    if user or allow_cancel:
+                        return user
                 elif ar == 'raven':
                     user = anvil.server.call("anvil.private.users.login_with_raven", remember=remember)
                     if user or allow_cancel:
                         return user
                 elif ar == 'email_token':
-                    if _email_token_login_with_form(email_box.text if email_box else ""):
-                        send_token_login_email(email_box.text)
-                        alert("An email with a login link has been sent to you. You can now close this window.", buttons=[], dismissible=False)
+                    target_email = _email_token_login_with_form(email_box.text if email_box else "")
+                    if target_email:
+                        send_token_login_email(target_email)
+                        alert("An email with a login link has been sent to you. You can now close this window.", buttons=[], dismissible=False)                        
                 elif ar == 'reset_password':
                     reset_email_box = TextBox(placeholder="email@address.com", text=email_box.text)
                     pnl = LinearPanel()

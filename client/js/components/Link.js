@@ -73,7 +73,7 @@ module.exports = function(pyModule) {
 
         /*!componentProp(Link)!1*/
         properties.push({name: "url", type: "string",
-            defaultValue: "",
+            defaultValue: new Sk.builtin.str(""),
             pyVal: true,
             exampleValue: "https://google.com",
             description: "The target URL of the link. Can be set to a URL string or to a Media object.",
@@ -157,7 +157,7 @@ module.exports = function(pyModule) {
         for (let prop of properties || []) {
             $loc[prop.name] = Sk.misceval.callsim(pyModule['ComponentProperty'], prop.name);
         }
-    }, /*!defClass(anvil,Link,LinearPanel)!*/ 'Link', [pyModule["ColumnPanel"]]);
+    }, /*!defClass(anvil,Link,ColumnPanel)!*/ 'Link', [pyModule["ColumnPanel"]]);
 };
 
 /*

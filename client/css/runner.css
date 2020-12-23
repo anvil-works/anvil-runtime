@@ -30,6 +30,12 @@ html, body {
 
 	white-space: nowrap;
 }
+@media print {
+    #anvil-header {
+        position: static;
+        margin-top: -50px;
+    }
+}
 
 #anvil-header img {
 	max-height: 30px;

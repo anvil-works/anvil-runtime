@@ -126,7 +126,7 @@ module.exports = function(pyModule) {
 
                     self._anvil.element.find(`.holder.xypanel-${self._anvil.panelId}`).append(celt);
                 },
-                () => Sk.misceval.callsimOrSuspend(pyModule["Container"].add_component, self, component, kwargs)
+                () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs)
             );
         });
 

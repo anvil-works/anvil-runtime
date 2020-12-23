@@ -29,7 +29,7 @@ description: |
   self.plot_1.layout.title = 'Simple Example'
   self.plot_1.layout.xaxis.title = 'time'
   self.plot_1.layout.annotations = [
-      go.Annotation(
+      dict(
         text = 'Simple annotation',
         x = 0,
         xref = 'paper',
@@ -43,7 +43,7 @@ description: |
     go.Scatter(
       x = [1, 2, 3],
       y = [3, 1, 6],
-      marker = go.Marker(
+      marker = dict(
         color= 'rgb(16, 32, 77)'
       )
     ),

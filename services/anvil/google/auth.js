@@ -58,7 +58,7 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
 
             var authParams = {
                 scope: scopesToRequest,
-                s: window.anvilSessionId,
+                s: window.anvilSessionToken,
             };
 
             var authUrl = appPath + "/_/client_auth_redirect?" + $.param(authParams);
@@ -94,7 +94,7 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
             $("#googleLogInButton").off("click"); // Just in case they didn't click it last time.
             $("#googleLogInButton").one("click", doLogin);
             $("#googleCancelButton").off("click");
-            $("#googleCancelButton").one("click", () => {
+            $("#googleCancelButton").one("click", function() {
                 $("#google-login-modal").one("hidden.bs.modal.alertclear", function() {
                     loginCallbackResolve.reject("MODAL_CANCEL")
                 });
@@ -128,7 +128,7 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
             var anvil = PyDefUtils.getModule("anvil");
             var appPath = Sk.ffi.remapToJs(anvil.tp$getattr(new Sk.builtin.str("app_path")));
 
-            $.get(appPath + "/_/client_auth_id_token?s=" + window.anvilSessionId).done(function(idToken) {
+            $.get(appPath + "/_/client_auth_id_token?s=" + window.anvilSessionToken).done(function(idToken) {
                 console.debug("Got app user ID token:", idToken);
                 if (loginCallbackResolve) {
                     loginCallbackResolve.resolve(idToken);
@@ -183,7 +183,7 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
 
         var args = [new Sk.builtin.str(fnName)].concat(Array.prototype.slice.call(arguments, 2));
 
-        var call = server.tp$getattr(new Sk.builtin.str("call_$rn$"));
+        var call = server.tp$getattr(new Sk.builtin.str("call"));
         return Sk.misceval.applyOrSuspend(call, undefined, undefined, undefined, args);
     }
 

@@ -590,7 +590,7 @@ module.exports = function(pyModule) {
 
         /*!defMethod(_,media,sx,sy,s_width,s_height,dx,dy,d_width,d_height)!2*/ "Draw a subset of an image (from a Media object) onto the canvas.\n\nsx, sy, s_width and s_height specify which pixels within the source image of the source image to draw. dx and dy (and optionally d_width and d_height) specify where (and optionally what dimensions) on the canvas to draw the image."
         $loc["draw_image_part"] = new Sk.builtin.func(function(self, media, sx, sy, s_width, s_height, dx, dy, d_width, d_height) {
-            if (!media || !Sk.builtin.isinstance(media, pyModule["Media"])) {
+            if (!media || !Sk.misceval.isTrue(Sk.builtin.isinstance(media, pyModule["Media"]))) {
                 throw new Sk.builtin.Exception("Must pass a Media object to draw_image() or draw_image_part()");
             }
 

@@ -18,7 +18,7 @@ module.exports = function(pyModule) {
 
     
         $loc["__init__"] = new Sk.builtin.func(PyDefUtils.withRawKwargs(function(kwargs, self) {
-            Sk.misceval.call(pyModule["Canvas"]["__init__"], undefined, undefined, kwargs, self);
+            Sk.misceval.call(pyModule["Canvas"].prototype["__init__"], undefined, undefined, kwargs, self);
 
             // Add extra SimpleCanvas events
 

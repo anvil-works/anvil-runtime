@@ -10,6 +10,7 @@
             [anvil.dispatcher.native-rpc-handlers.raven :as native-raven]
             [anvil.dispatcher.native-rpc-handlers.facebook :as native-facebook]
             [anvil.dispatcher.native-rpc-handlers.microsoft :as native-microsoft]
+            [anvil.dispatcher.native-rpc-handlers.saml :as native-saml]
             [anvil.dispatcher.native-rpc-handlers.stripe :as native-stripe]
             [anvil.dispatcher.native-rpc-handlers.time :as native-time]
             [anvil.dispatcher.native-rpc-handlers.util :as native-util]
@@ -24,7 +25,8 @@
             [anvil.runtime.util :as runtime-util]
             [anvil.util :as util]
             [anvil.dispatcher.core :as dispatcher]
-            [anvil.runtime.app-data :as app-data]))
+            [anvil.runtime.app-data :as app-data]
+            [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]))
 
 
 (def debug-rpc-handlers
@@ -52,13 +54,12 @@
                                           (fn [kwargs mime-type func & args]
                                             (lazy-media/mk-LazyMedia-with-correct-mac {:manager   "py", :id (util/write-json-str [func args kwargs]),
                                                                                        :mime-type mime-type, :name func}
-                                                                                      native-util/*app-id* native-util/*app* native-util/*session-state*)))
+                                                                                      native-util/*req*)))
 
 
    "anvil.private.fetch_lazy_media"     (native-util/wrap-native-fn
                                           (fn [_kwargs {:keys [id manager key]}]
-                                            (lazy-media/get-lazy-media native-util/*app-id* native-util/*app* native-util/*session-state*
-                                                                       manager key id native-util/*req*)))
+                                            (lazy-media/get-lazy-media native-util/*req* manager key id)))
 
    "anvil.private.fake_session_expired" (native-util/wrap-native-fn
                                           (fn [_kwargs]
@@ -72,11 +73,14 @@
                                             (or
                                               (when (not= branch "published")
                                                 native-util/*app-origin*)
-                                              (app-data/get-default-app-origin native-util/*app-info*))))
+                                              (app-data/get-default-app-origin native-util/*environment*)
+                                              native-util/*app-origin*)))
 
    "anvil.private.get_api_origin"       (native-util/wrap-native-fn
                                           (fn [_kwargs & [branch]]
-                                            (app-data/get-default-api-origin native-util/*app-info*)))
+                                            (or (app-data/get-default-api-origin native-util/*environment*)
+                                                (when rpc-util/*app-origin*
+                                                  (str rpc-util/*app-origin* "/_/api")))))
 
    "anvil.private.get_lazy_media_url"   (native-util/wrap-native-fn
                                           (fn [_kwargs lm is-download?]
@@ -84,16 +88,20 @@
                                                   enc util/real-actual-genuine-url-encoder]
                                               (log/info "Session state: " (keys @native-util/*session-state*))
                                               (str native-util/*app-origin* "/_/lm/" (enc manager) "/" (enc key) "/" (enc id) "/" (enc (or name "")) "?s="
-                                                   (:id @native-util/*session-state*)
+                                                   (:url-token @native-util/*session-state*)
                                                    (if is-download? "" "&nodl=1")))))
 
    "anvil.private.enable_profiling"     (native-util/wrap-native-fn
                                           (fn [_kwargs]
+                                            (when native-util/*client-request?*
+                                              (throw+ {:anvil/server-error "Permission denied. Cannot profile from client code."}))
                                             (swap! native-util/*session-state* assoc :anvil/enable-profiling true)
                                             nil))
 
    "anvil.private.disable_profiling"    (native-util/wrap-native-fn
                                           (fn [_kwargs]
+                                            (when native-util/*client-request?*
+                                              (throw+ {:anvil/server-error "Permission denied. Cannot profile from client code."}))
                                             (swap! native-util/*session-state* assoc :anvil/enable-profiling false)
                                             nil))
 
@@ -156,7 +164,6 @@
 
 (swap! dispatcher/native-rpc-handlers merge
        debug-rpc-handlers
-       native-http/handlers
        native-google-drive/handlers
        native-google-sheets/handlers
        native-google-auth/handlers

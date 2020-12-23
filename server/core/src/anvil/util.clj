@@ -9,9 +9,12 @@
             [ring.util.codec :as codec]
             [clojure.string :as string]
             [anvil.metrics :as metrics]
-            [clojure.core.cache.wrapped :as cache])
-  (:import (org.httpkit.server AsyncChannel)
-           (java.sql SQLException)
+            [clojure.core.cache.wrapped :as cache]
+            [org.httpkit.client :as http]
+            [org.httpkit.sni-client :as sni]
+            [org.httpkit.sni-client :as https]
+            [compojure.core])
+  (:import (java.sql SQLException)
            (javax.crypto Mac)
            (javax.crypto.spec SecretKeySpec)
            (org.mindrot.jbcrypt BCrypt)
@@ -22,11 +25,27 @@
            (java.io File)
            (com.maxmind.geoip2.exception GeoIp2Exception)
            (com.mchange.v2.c3p0 DataSources)
-           (java.util Properties Map TimerTask)
+           (java.util Properties Map)
            (javax.sql DataSource)
            (java.time Instant ZoneOffset)
            (java.time.format DateTimeFormatter)
            (com.maxmind.geoip2.model CityResponse)))
+
+(defn get-java-version []
+  (let [s (str (System/getProperty "java.version"))
+        [_ major minor update] (re-matches #"(?:1\.)?(\d+)\.(\d+)[\._](\d+)(?:\.\d+)*" s)]
+    [(Integer/parseInt major) (Integer/parseInt minor) (Integer/parseInt update)]))
+
+(def is-sane-java-version?
+  ; Make sure we have this fix: https://bugs.openjdk.java.net/browse/JDK-8243717
+  (let [[major _minor update] (get-java-version)]
+    (or (> major 8)
+        (and (= major 8)
+             (> update 261)))))
+
+(alter-var-root #'org.httpkit.client/*default-client* (fn [_] (http/make-client {:ssl-configurer (partial https/ssl-configurer {:hostname-verification? true})})))
+(def insecure-client (http/make-client {}))
+(def make-ssl-engine (constantly nil))
 
 ;; To define hookable functions, in runtime:
 ;;     (def set-foo-hooks! (hook-setter #{foo bar baz})
@@ -148,16 +167,18 @@
                              (getConnection [_this] (.getConnection ^DataSource @datasource))))})
 
 
-(def LATEST-DB-VERSION "2019-09-23-B-denormalise-app-sessions")
+(def LATEST-DB-VERSION? #{"2020-11-11-fix-up-direct-sql" "2020-09-29-multibranch-malleable-commits"})
 
-(defn require-latest-db-version []
+(defn require-latest-db-version [continue-anyway?]
   (try
     (let [current-version (:version (first (jdbc/query db ["SELECT version FROM db_version"])))]
-      (when (not= current-version LATEST-DB-VERSION)
+      (when-not (LATEST-DB-VERSION? current-version)
+        (log/warn "This database is migrated to" current-version "; we require" LATEST-DB-VERSION?)
         (throw (Exception.))))
     (catch Exception _
       (log/warn "Anvil DB schema update required. Please run migrator then restart Anvil.")
-      #_(System/exit 1))))
+      (when-not continue-anyway?
+        (System/exit 1)))))
 
 (defmacro letd [lets & body]
   (let [new-lets (->> lets
@@ -175,27 +196,6 @@
          val# (do ~@body)]
     (log/logp ~level ~message (str "(" (- (System/currentTimeMillis) start-time#) " ms)"))
     val#))
-
-(defmacro with-opening-channel
-  "Similar to org.httpkit.server/with-channel, except body executes before
-  the WebSocket handshake is done, ensuring that the on-receive handler is
-  registered before we can possibly receive anything. On the other hand, we
-  can't call send! directly in the body."
-  [request ch-name on-open & body]
-  `(let [~ch-name (:async-channel ~request)
-         ~on-open (atom (fn []))]
-     (if (:websocket? ~request)
-       (if-let [key# (get-in ~request [:headers "sec-websocket-key"])]
-         (do ~@body
-             (.sendHandshake ~(with-meta ch-name {:tag `AsyncChannel})
-                             {"Upgrade"    "websocket"
-                              "Connection" "Upgrade"
-                              "Sec-WebSocket-Accept" (org.httpkit.server/accept key#)})
-             (@~on-open)
-             {:body ~ch-name})
-         {:status 400 :body "Bad Sec-WebSocket-Key header"})
-       (do ~@body
-           {:body ~ch-name}))))
 
 (defmacro with-db-transaction [bindings & body]
   `(loop [n# 10]
@@ -323,3 +323,10 @@
          ~@body
          (catch Exception e#
            (log/error e# "TimerTask error" ~error-context))))))
+
+(in-ns 'compojure.core)
+(let [old-context-request context-request]
+  (defn- context-request [request route]
+    (when-let [old-req (old-context-request request route)]
+      (assoc old-req :context-paths (conj (or (:context-paths request) []) (remove-suffix (:source route) ":__path-info"))))))
+(in-ns 'anvil.util)

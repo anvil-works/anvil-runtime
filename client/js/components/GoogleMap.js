@@ -279,46 +279,32 @@ module.exports = function(pyModule) {
       });
     };
     var remapToJs = function remapToJs(pyObj) {
-      var oldRemap = Sk.ffi.remapToJs;
-      Sk.ffi.remapToJs = function(pyObj) {
-        if (pyObj == Sk.builtin.none.none$)
-          return null;
-        for (var t in remapTypes || []) {
-          if (Sk.builtin.isinstance(pyObj, remapTypes[t].pyType).v) {
-            if (pyObj._toJsVal) {
-              return pyObj._toJsVal();
-            } else {
-              return pyObj._jsVal;
-            }
-          }
-        }
-        return oldRemap(pyObj);
-      }
-      try {
-        return Sk.ffi.remapToJs(pyObj);
-      } finally {
-        Sk.ffi.remapToJs = oldRemap;
-      }
-    }
+        return Sk.ffi.remapToJs(pyObj, {
+            unhandledHook: (pyObj) => {
+                for (let t in remapTypes || []) {
+                    if (pyObj instanceof remapTypes[t].pyType) {
+                        if (pyObj._toJsVal) {
+                            return pyObj._toJsVal();
+                        } else {
+                            return pyObj._jsVal;
+                        }
+                    }
+                }
+            },
+        });
+    };
 
     var remapToPy = function remapToPy(jsObj) {
-      var oldRemap = Sk.ffi.remapToPy;
-      Sk.ffi.remapToPy = function(jsObj) {
-        if (jsObj == null)
-          return Sk.builtin.none.none$;
-        for (var t in remapTypes || []) {
-          if (jsObj instanceof remapTypes[t].jsType) {
-            return jsObj._pyVal || Sk.misceval.callsim(remapTypes[t].pyType, jsObj);
-          }
-        }
-        return oldRemap(jsObj);
-      }
-      try {
-        return Sk.ffi.remapToPy(jsObj);
-      } finally {
-        Sk.ffi.remapToPy = oldRemap;
-      }
-    }
+        const proxyHook = (jsObj) => {
+            for (var t in remapTypes || []) {
+                if (jsObj instanceof remapTypes[t].jsType) {
+                    return jsObj._pyVal || Sk.misceval.callsim(remapTypes[t].pyType, jsObj);
+                }
+            }
+            return Sk.ffi.proxy(jsObj);
+        };
+        return Sk.ffi.remapToPy(jsObj, { proxyHook });
+    };
 
 
     var pyNameToJsName = function(pyName) {
@@ -2217,7 +2203,7 @@ module.exports = function(pyModule) {
               }
               if(kwargs["callback"]) {
                 var callback = function(features) {
-                  var pyFeatures = Sk.builtin.list();
+                  var pyFeatures = new Sk.builtin.list();
                   for (var i in features) {
                     Sk.misceval.callsim(pyFeatures.tp$getattr(new Sk.builtin.str("append")), Sk.misceval.callsim($Data["Feature"], features[i]));
                   }
@@ -2332,7 +2318,7 @@ module.exports = function(pyModule) {
             throw new Sk.builtin.Exception("Cannot add component. Only GoogleMap overlay components may be added to a GoogleMap instance.");
           }
 
-          Sk.misceval.callsim(pyModule["Container"].add_component, self, pyObj, kwargs);
+          Sk.misceval.callsim(pyModule["Container"].prototype.add_component, self, pyObj, kwargs);
         });
 
 
@@ -2349,7 +2335,7 @@ module.exports = function(pyModule) {
             var initFn = function init(self, pyKwargs) {
               self._anvil.pageEvents = {
                 add: function() {
-                  if (!Sk.builtin.isinstance(self._anvil.parent.pyObj, pyModule["GoogleMap"])) {
+                  if (!Sk.misceval.isTrue(Sk.builtin.isinstance(self._anvil.parent.pyObj, pyModule["GoogleMap"]))) {
                     throw new Sk.builtin.Exception("Map components can only be added to maps.");
                   }
                   self._jsVal.setMap(self._anvil.parent.pyObj._jsVal);
@@ -2785,7 +2771,7 @@ module.exports = function(pyModule) {
 
             self._anvil.pageEvents = {
               add: function() {
-                if (!Sk.builtin.isinstance(self._anvil.parent.pyObj, pyModule["GoogleMap"])) {
+                if (!Sk.misceval.isTrue(Sk.builtin.isinstance(self._anvil.parent.pyObj, pyModule["GoogleMap"]))) {
                   throw new Sk.builtin.Exception("Map components can only be added to maps.");
                 }
                 self._jsVal.setMap(self._anvil.parent.pyObj._jsVal);
@@ -2817,7 +2803,7 @@ module.exports = function(pyModule) {
     registerRemapType(google.maps.Map, pyModule["GoogleMap"]);
 
     // These class methods are documented above, so that they end up on the GoogleMap defClass.
-    pyModule["GoogleMap"]["geocode"] = PyDefUtils.staticmethod(PyDefUtils.funcWithRawKwargsDict(function(kwargs) {
+    pyModule["GoogleMap"].prototype["geocode"] = new Sk.builtin.staticmethod(PyDefUtils.funcWithRawKwargsDict(function(kwargs) {
       var geocoder = new google.maps.Geocoder();
       return PyDefUtils.suspensionPromise(function(resolve, reject) {
         if (window.googleMapsAuthFailure) {
@@ -2842,7 +2828,7 @@ module.exports = function(pyModule) {
                   Sk.ffi.remapToPy("types"),
                   remapToPy(ac.types),
                 ];
-                var pyAc = Sk.misceval.call(pyModule["GoogleMap"]["GeocoderAddressComponent"], undefined, undefined, acKws);
+                var pyAc = Sk.misceval.call(pyModule["GoogleMap"].prototype["GeocoderAddressComponent"], undefined, undefined, acKws);
                 addressComponents.push(pyAc);
               }
 
@@ -2864,7 +2850,7 @@ module.exports = function(pyModule) {
               ];
 
               kws.push(Sk.ffi.remapToPy("geometry"));
-              kws.push(Sk.misceval.call(pyModule["GoogleMap"]["GeocoderGeometry"], undefined, undefined, geomKws));
+              kws.push(Sk.misceval.call(pyModule["GoogleMap"].prototype["GeocoderGeometry"], undefined, undefined, geomKws));
 
               kws.push(Sk.ffi.remapToPy("partial_match"));
               kws.push(remapToPy(results[i].partial_match));
@@ -2878,11 +2864,11 @@ module.exports = function(pyModule) {
               kws.push(Sk.ffi.remapToPy("types"));
               kws.push(remapToPy(results[i].types));
 
-              var pyResult = Sk.misceval.call(pyModule["GoogleMap"]["GeocoderResult"], undefined, undefined, kws);
+              var pyResult = Sk.misceval.call(pyModule["GoogleMap"].prototype["GeocoderResult"], undefined, undefined, kws);
 
               pyResults.push(pyResult);
             }
-            resolve(Sk.builtin.list(pyResults));
+            resolve(new Sk.builtin.list(pyResults));
           } else {
             reject("Geocode failed: " + status);
           }
@@ -2890,11 +2876,11 @@ module.exports = function(pyModule) {
       });
     }));
 
-    pyModule["GoogleMap"]["compute_area"] = PyDefUtils.staticmethod(new Sk.builtin.func(function(path) {
+    pyModule["GoogleMap"].prototype["compute_area"] = new Sk.builtin.staticmethod(new Sk.builtin.func(function(path) {
       return remapToPy(google.maps.geometry.spherical.computeArea(remapToJs(path)));
     }));
 
-    pyModule["GoogleMap"]["compute_length"] = PyDefUtils.staticmethod(new Sk.builtin.func(function(path) {
+    pyModule["GoogleMap"].prototype["compute_length"] = new Sk.builtin.staticmethod(new Sk.builtin.func(function(path) {
       return remapToPy(google.maps.geometry.spherical.computeLength(remapToJs(path)));
     }));
 

@@ -22,9 +22,9 @@ module.exports = function(pyModule) {
         var properties = PyDefUtils.assembleGroupProperties(/*!componentProps(Label)!2*/["layout", "text", "appearance", "icon", "tooltip", "user data"], {
             text: {
                 pyVal: true,
-                defaultValue: Sk.builtin.str(""),
+                defaultValue: new Sk.builtin.str(""),
                 set: function(s,e,v) {
-                    v = Sk.builtin.str(v).v;
+                    v = new Sk.builtin.str(v).v;
                     e.toggleClass("has-text", v ? true : false);
                     e.find("span").text(v);
                 },

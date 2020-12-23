@@ -38,14 +38,16 @@
 
 (defn load-resource-migrations! []
   (doseq [[filename slurpable migration-db-type] (apply concat
-                                                    (for [type [:base :runtime :central]]
+                                                    (for [type [:base :dedicated :runtime :central]]
                                                       (map #(conj % type) (list-resource-directory-files
                                                                             (str "migrations/" (name type))))))
           :let [[_ migration-name] (re-matches #"(?:.*/)?([^/\\]+).sql" filename)
                 execute-fn (fn [db]
                              (let [sql (-> (slurp slurpable))
                                    sql (if @ANVIL-USER
-                                         (str/replace sql "$ANVIL_USER" @ANVIL-USER)
+                                         (-> sql
+                                             (str/replace "$ANVIL_USER" @ANVIL-USER)
+                                             (str/replace "$ANVIL_DATABASE" (:db (first (jdbc/query db ["SELECT current_database() AS db"])))))
                                          (.replaceAll sql "(?s)--\\[GRANTS\\]--.*--\\[/GRANTS\\]--" ""))]
                                (try
                                  (jdbc/execute! db [sql])

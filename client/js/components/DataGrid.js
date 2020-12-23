@@ -321,7 +321,7 @@ module.exports = function(pyModule) {
                         self._anvil.childPanel.append(celt);
                     }
                 },
-                () => Sk.misceval.callsimOrSuspend(pyModule["Container"].add_component, self, component, kwargs),
+                () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs),
                 () => {
                     // Now that we've added it to our components array, move it to the right position.
                     if (typeof(kwargs["index"]) == "number") {
@@ -330,7 +330,7 @@ module.exports = function(pyModule) {
                     }
                 },
                 // TODO: Repaginate on remove too. See DataRowPanel.
-                () => Sk.misceval.callsimOrSuspend(self.tp$getattr(new Sk.builtin.str("jump_to_first_page"))),
+                () => Sk.misceval.callsimOrSuspend(self.tp$getattr(new Sk.builtin.str("jump_to_first_page")))
             );
         });
 

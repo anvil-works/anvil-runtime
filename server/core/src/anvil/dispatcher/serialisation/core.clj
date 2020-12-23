@@ -15,13 +15,15 @@
   (:import (java.util LinkedList Arrays)
            (clojure.lang Counted)
            (anvil.dispatcher.types MediaDescriptor Media SerialisableForRpc ChunkedStream Date DateTime SerializedPythonObject)
-           (java.io InputStream)))
+           (java.io InputStream)
+           (java.time.format DateTimeFormatter)
+           (java.time ZoneOffset)))
 
 ;;(clj-logging-config.log4j/set-logger! :level :trace)
 
 ;; You'll need one of these per incoming websocket
 (defprotocol Deserialiser
-  (deserialise [this payload app-id app session-state origin] "Returns a deserialised version of the payload map, with LiveObjects and Media reconstructed")
+  (deserialise [this payload request] "Returns a deserialised version of the payload map, with LiveObjects and Media reconstructed")
   (processBlobHeader [this hdr] "Tells the deserialiser that the next blob is described by this header map")
   (processBlob [this blob] "A blob has arrived; deliver it to the appropriate Media object")
   (loadLiveObject [this lo-map] "Load a LiveObject (or nil) and check for validity"))
@@ -89,6 +91,14 @@
      (keyword? data)
      [(name data) '()]
 
+     (instance? java.util.Date data)
+     [nil [(-> (DateTime.
+                 (-> (DateTimeFormatter/ofPattern (str "yyyy-MM-dd HH:mm:ss.SSSSSS'Z'"))
+                     (.withZone (ZoneOffset/UTC))
+                     (.format (.toInstant ^java.util.Date data))))
+               (.serialiseForRpc extra-liveobject-key)
+               (assoc :path path))]]
+
      :else
      (throw (Exception. (str "Cannot return a " (.getClass data) " object at " (pr-str path)))))))
 
@@ -115,7 +125,7 @@
              (cons obj pruned-objects)))))
 
 
-(defn assemble-object [outstanding-media payload app-id app session-state permitted-live-object-backends session-liveobject-key origin known-liveobject-methods {:keys [type] :as obj}]
+(defn assemble-object [outstanding-media message-id {:keys [app-id app session-state origin] :as request} {:keys [permitted-live-object-backends session-liveobject-key] :as serialisation-config} known-liveobject-methods {:keys [type] :as obj}]
   (let [mk-chunk-stream (fn [request-id {:keys [id name mime-type]}]
                           (let [c (chan (infinite-buffer))
                                 have-consumed? (atom false)]
@@ -137,8 +147,8 @@
 
 
         handlers {"Primitive"  #(:value obj)
-                  "DataMedia"  #(mk-chunk-stream (:id payload) obj)
-                  "LazyMedia"  #(lazy-media/mk-LazyMedia obj app-id app session-state)
+                  "DataMedia"  #(mk-chunk-stream message-id obj)
+                  "LazyMedia"  #(lazy-media/mk-LazyMedia obj request)
                   "LiveObject" (fn [] (let [o (if (not= origin :client)
                                                 obj
                                                 (dissoc obj :itemCache :iterItems))
@@ -152,14 +162,14 @@
                                             o (-> (dissoc o :path :type)
                                                   (update-in [:itemCache]
                                                              #(reduce (fn [cache [name val]]
-                                                                        (assoc cache name (assemble-object outstanding-media payload app-id app session-state permitted-live-object-backends session-liveobject-key origin known-liveobject-methods val)))
+                                                                        (assoc cache name (assemble-object outstanding-media message-id request serialisation-config known-liveobject-methods val)))
                                                                       {} %)))
 
                                             o (if (:iterItems o)
                                                 (update-in o [:iterItems :items] (fn [items]
-                                                                                   (doall (map #(assemble-object outstanding-media payload app-id app session-state permitted-live-object-backends session-liveobject-key origin known-liveobject-methods %) items))))
+                                                                                   (doall (map #(assemble-object outstanding-media message-id request serialisation-config known-liveobject-methods %) items))))
                                                 o)]
-                                        (live-objects/load-LiveObjectProxy (dissoc o :path :type) permitted-live-object-backends session-liveobject-key)))
+                                        (live-objects/load-LiveObjectProxy (dissoc o :path :type) serialisation-config)))
                   "Capability" (fn [] (let [{:keys [scope narrow mac]} obj]
                                         (when-not (or
                                                     ;; Server code may generate non-Anvil-scoped capabilities
@@ -180,7 +190,7 @@
 
     (if-let [handler (some handlers type)]
       (let [deserialised-obj (handler)]
-        (log/trace (:origin payload))
+        (log/trace (:origin request))
         (log/trace "Deserialised\n" (with-out-str (pprint obj)))
         (log/trace "into\n" (with-out-str (pprint deserialised-obj)))
         deserialised-obj)
@@ -268,25 +278,24 @@
 ;; TODO: Expire media streams we haven't heard anything from for a while
 
 ;; permitted-live-object-backends is an atom of backends we own, so we don't need to validate the MAC on deserialisation
-(defn mk-Deserialiser [& {:keys [permitted-live-object-backends session-liveobject-key] :as _config}]
+(defn mk-Deserialiser [& {:keys [permitted-live-object-backends session-liveobject-key] :as serialisation-config}]
   ;; outstanding media is requestid -> mediaid -> channel
-  (let [permitted-live-object-backends (or permitted-live-object-backends #{})
+  (let [serialisation-config (merge {:permitted-live-object-backends #{}} serialisation-config)
         outstanding-media (atom {})
         next-blob-header (atom nil)]
 
     (reify Deserialiser
-      (deserialise [_this payload app-id app session-state origin]
-        (let [objects (:objects payload)
-              known-liveobject-methods (atom {})]
+      (deserialise [_this payload {:keys [app-id app session-state origin] :as request}]
+        (let [known-liveobject-methods (atom {})]
           (assert (:id payload) "Cannot deserialise payload without id")
           (reduce (fn [json {:keys [path] :as obj}]
                     (let [path (map #(if (string? %) (keyword %) %) path)
-                          deserialised-obj (assemble-object outstanding-media payload app-id app session-state permitted-live-object-backends session-liveobject-key origin known-liveobject-methods obj)]
+                          deserialised-obj (assemble-object outstanding-media (:id payload) request serialisation-config known-liveobject-methods obj)]
                       (if (= (:type obj) ["ValueType"])
                         (assoc-in json path (SerializedPythonObject. deserialised-obj (get-in json path)) #_(with-meta (get-in json path) {:anvil/type deserialised-obj}))
                         (assoc-in json path deserialised-obj))))
                   (dissoc payload :objects)
-                  objects)))
+                  (:objects payload))))
       (processBlobHeader [_this hdr]
         (reset! next-blob-header hdr))
       (processBlob [_this data]
@@ -302,11 +311,8 @@
                 (swap! outstanding-media dissoc requestId))))))
       (loadLiveObject [_this lo-map]
         (when lo-map
-          (live-objects/load-LiveObjectProxy lo-map permitted-live-object-backends session-liveobject-key))))))
+          (live-objects/load-LiveObjectProxy lo-map serialisation-config))))))
 
 
-(defn deserialise-from-map
-  ([json {:keys [app-id app session-state app-origin] :as _request}]
-    (deserialise-from-map json app-id app session-state app-origin))
-  ([json app-id app session-state origin]
-   (deserialise (mk-Deserialiser) (update-in json [:id] #(or % "DUMMY")) app-id app session-state origin)))
+(defn deserialise-from-map [json request]
+  (deserialise (mk-Deserialiser) (update-in json [:id] #(or % "DUMMY")) request))

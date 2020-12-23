@@ -47,6 +47,7 @@ module.exports = function(pyModule) {
 	            components: [],
 				addedToPage: function() {
 					self._anvil.onPage = true;
+					self._anvil.delayAddedToPage = false;
 					return Sk.misceval.chain(undefined,
 						self._anvil.pageEvents.add || function() { },
 						PyDefUtils.raiseEventOrSuspend.bind(null, {}, self, "show")
@@ -213,9 +214,13 @@ module.exports = function(pyModule) {
 
 	    /*!defMethod(,event_name, handler_func:callable)!2*/ "Set a function to call when the 'event_name' event happens on this component."
 	    $loc["set_event_handler"] = new Sk.builtin.func(function(self, pyEventName, pyHandler) {
-            var eventName = Sk.ffi.remapToJs(pyEventName);
+            const eventName = Sk.ffi.remapToJs(pyEventName);
             if (eventName in self._anvil.eventTypes || eventName in (self._anvil.customComponentEventTypes || {}) || eventName.match(/^x\-/)) {
-                self._anvil.eventHandlers[pyEventName.v] = pyHandler;
+				if (Sk.builtin.checkNone(pyHandler)) {
+					delete self._anvil.eventHandlers[eventName];
+				} else {
+					self._anvil.eventHandlers[eventName] = pyHandler;
+				}                
             } else {
                 throw new Sk.builtin.Exception("Cannot set event handler for unknown event '" + eventName + "' on " + self.tp$name + " component.");
             }
@@ -235,7 +240,8 @@ module.exports = function(pyModule) {
         $loc["remove_from_parent"] = new Sk.builtin.func(function(self) {
             if (self._anvil.parent) {
                 return self._anvil.parent.remove();
-            }
+			}
+			return Sk.builtin.none.none$;
         });
 
         /*!defMethod(_)!2*/ "Scroll the window to make sure this component is in view."
@@ -251,7 +257,9 @@ module.exports = function(pyModule) {
         	return new Sk.builtin.dict(v);
         });
 
-        $loc["__new_deserialized__"] = PyDefUtils.mkNewDeserializedPreservingIdentity();
+		$loc["__new_deserialized__"] = PyDefUtils.mkNewDeserializedPreservingIdentity();
+
+		$loc["__name__"] = new Sk.builtin.property(new Sk.builtin.func((self) => Sk.abstr.lookupSpecial(self.ob$type, Sk.builtin.str.$name)));
 
 	}, /*!defClass(anvil)!1*/ "Component", []);
 	// Ew. This global should be somewhere else.

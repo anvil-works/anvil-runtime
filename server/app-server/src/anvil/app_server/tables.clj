@@ -5,10 +5,23 @@
             [clojure.tools.logging :as log]
             [anvil.runtime.tables.util :as tables-util]
             [anvil.app-server.conf :as conf]
-            [anvil.runtime.tables.manager :as tables-manager]))
+            [anvil.runtime.tables.manager :as tables-manager]
+            [anvil.app-server.dispatch :as dispatch]))
+
+(defn update-indexes-and-views! [table-id]
+  (let [db (tables-util/db)
+        table-name (:python_name (first (jdbc/query (tables-util/db) ["SELECT python_name FROM app_storage_access WHERE table_id = ?" table-id])))
+        SQL-NAME (let [s (.replaceAll table-name "[^\\p{Alnum}]" "_")]
+                   (if (= s "") "_" s))]
+    (tables-util/update-col-indexes (tables-util/db) table-id)
+    (tables-util/update-table-views! (tables-util/db) table-id)
+
+    (jdbc/execute! (tables-util/db) ["CREATE SCHEMA IF NOT EXISTS app_tables"])
+    (jdbc/execute! (tables-util/db) [(str "DROP VIEW IF EXISTS app_tables." SQL-NAME)])
+    (jdbc/execute! (tables-util/db) [(str "CREATE VIEW app_tables." SQL-NAME " AS SELECT * FROM data_tables.table_" table-id)])))
 
 (defn execute-app-tables-updates! [updates]
-  (binding [tables-util/*app-for-admin-call* (conf/get-main-app-id)]
+  (binding [tables-util/*environment-for-admin-call* (dispatch/get-default-environment)]
     (tables-util/with-table-transaction
 
       (doseq [update updates]
@@ -17,7 +30,7 @@
           :CREATE_TABLES
           ; First create the required tables, keeping track of which IDs became which.
           (let [table-id-mappings (into {} (for [{:keys [id name] {:keys [python_name server client]} :access} (:tables update)
-                                                 :let [{new-id :id} (tables-manager/create-table! nil name python_name server client)]]
+                                                 :let [{new-id :id} (tables-manager/create-table! {} name python_name server client)]]
                                              [id new-id]))]
             (log/debug "Table id mappings:" table-id-mappings)
             ; Now set the columns in those new tables, rewriting linked table IDs as appropriate.
@@ -29,43 +42,46 @@
                                                             (when table_id
                                                               {:table_id (get table-id-mappings table_id)}))]) columns))]
                 (log/debug new-table-id new-cols)
-                (jdbc/execute! (tables-util/db) ["UPDATE app_storage_tables SET columns=?::jsonb WHERE id = ?" new-cols new-table-id]))))
+                (jdbc/execute! (tables-util/db) ["UPDATE app_storage_tables SET columns=?::jsonb WHERE id = ?" new-cols new-table-id])
+                (update-indexes-and-views! new-table-id))))
 
           :DELETE_TABLE
           (let [python-name (:python_name update)
                 table-id (:table_id (first (jdbc/query (tables-util/db) ["DELETE FROM app_storage_access WHERE python_name = ? RETURNING table_id" python-name])))]
             (log/debug (str "Deleting table " table-id " ('" python-name "')"))
             (tables-util/update-col-indexes nil table-id {})
-            (tables-util/delete-media-in-table table-id nil)
-            (jdbc/execute! (tables-util/db) ["DELETE FROM app_storage_data WHERE table_id = ?" table-id])
-            (jdbc/execute! (tables-util/db) ["DELETE FROM app_storage_tables WHERE id = ?" table-id]))
+            (tables-manager/delete-table-content! (tables-util/db) table-id (constantly nil)))
 
           :UPDATE_TABLE
           (let [{:keys [client_access server_access name python_name table-id]} update]
             (log/debug "Updating table " table-id)
             (jdbc/execute! (tables-util/db) ["UPDATE app_storage_tables SET name = ? WHERE id = ?" name table-id])
-            (jdbc/execute! (tables-util/db) ["UPDATE app_storage_access SET server = ?, client = ?, python_name = ? WHERE table_id = ?" server_access client_access python_name table-id]))
+            (jdbc/execute! (tables-util/db) ["UPDATE app_storage_access SET server = ?, client = ?, python_name = ? WHERE table_id = ?" server_access client_access python_name table-id])
+            (update-indexes-and-views! table-id))
 
           :ADD_COLUMN
           (let [table-id (:table_id update)
                 old-cols (tables-util/get-cols table-id)
                 new-cols (assoc old-cols (:column_id update) (:spec update))]
             (log/debug "Adding column to table" table-id)
-            (tables-util/update-cols-returning table-id new-cols old-cols))
+            (tables-util/update-cols-returning table-id new-cols old-cols)
+            (update-indexes-and-views! table-id))
 
           :DELETE_COLUMN
           (let [table-id (:table_id update)
                 old-cols (tables-util/get-cols table-id)
                 new-cols (dissoc old-cols (:column_id update))]
             (log/debug "Deleting column from table" (:table_id update))
-            (tables-util/update-cols-returning table-id new-cols old-cols))
+            (tables-util/update-cols-returning table-id new-cols old-cols)
+            (update-indexes-and-views! table-id))
 
           :RENAME_COLUMN
           (let [table-id (:table_id update)
                 old-cols (tables-util/get-cols table-id)
                 new-cols (assoc-in old-cols [(:column_id update) :name] (:new_name update))]
             (log/debug "Renaming column in table" (:table_id update))
-            (tables-util/update-cols-returning table-id new-cols old-cols)))))))
+            (tables-util/update-cols-returning table-id new-cols old-cols)
+            (update-indexes-and-views! table-id)))))))
 
 (defn validate-app-tables-schema [schema-tables main-app-id auto-migrate? ignore-invalid?]
   (if-not schema-tables
@@ -208,7 +224,9 @@
       (when (not-empty updates)
         (if (and auto-migrate?
                  (not ignore-invalid?))
-          (execute-app-tables-updates! updates)
+          (do
+            (log/info "Migrating automatically.")
+            (execute-app-tables-updates! updates))
           (do
             (log/info "Data tables schema out of date. Here is the migration that will run if you restart Anvil with the --auto-migrate command-line flag:")
             (log/info (with-out-str (pprint updates)))
@@ -216,12 +234,8 @@
               (do
                 (log/info "Ignoring invalid data tables schema."))
               (do
-                (log/info "Anvil will now exit. Run with --ignore-invalid-schema to startup anyway.")
-                (System/exit 1))))))
-
-      ;; Hack - force the ID in all app_storage_access rows
-      (jdbc/execute! util/db ["UPDATE app_storage_access SET app_id = ? WHERE python_name IN (SELECT * FROM json_array_elements_text(?))"
-                              main-app-id (vec (map :python_name schema-tables))]))))
+                (log/info "Anvil will now exit. Run with --ignore-invalid-schema to startup anyway, or --auto-migrate to apply the changes above.")
+                (System/exit 1)))))))))
 
 
-(tables-util/set-table-hooks! {:mutate-db-for-app? (fn [app-id] true)})
+(tables-util/set-table-hooks! {:mutate-db-for-mapping? (fn [mapping] true)})

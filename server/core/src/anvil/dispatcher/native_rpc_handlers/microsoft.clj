@@ -4,7 +4,8 @@
   (:require [clojure.data.json :as json]
             [org.httpkit.client :as http]
             [anvil.dispatcher.core :as dispatcher]
-            [anvil.runtime.conf :as conf])
+            [anvil.runtime.conf :as conf]
+            [anvil.util :as util])
   (:import (java.net URLEncoder)))
 
 (defn get-microsoft-service-props []
@@ -41,7 +42,8 @@
                         (and (:custom? conf/microsoft-client-config) (:tenant-id conf/microsoft-client-config)))
 
           response @(http/post "https://login.microsoftonline.com/" (URLEncoder/encode tenant-id) "/oauth2/v2.0/token"
-                               {:form-params {:refresh_token refresh-token
+                               {:keepalive -1
+                                :form-params {:refresh_token refresh-token
                                               :client_id     microsoft-application-id
                                               :client_secret microsoft-application-secret
                                               :grant_type    "refresh_token"}})

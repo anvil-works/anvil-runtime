@@ -7,8 +7,10 @@ from ._server import (register,
                       background_task, 
                       callable_as, 
                       Serializable,
+                      portable_class,
                       serializable_type,
                       Capability,
+                      unwrap_capability,
                       _register_exception_type, 
                       AnvilWrappedError, 
                       SerializationError, 
@@ -37,7 +39,8 @@ def call(fn_name, *args, **kwargs):
     try:
         return _threaded_server.do_call(args, kwargs, fn_name=fn_name)
     except _server.AnvilWrappedError as e:
-        raise _server._deserialise_exception(e.error_obj)
+        error_from_server = _server._deserialise_exception(e.error_obj)
+        raise error_from_server
 
 
 #!defFunction(anvil.server,string,[branch])!2: "Returns the root URL of the current app." ["get_app_origin"]

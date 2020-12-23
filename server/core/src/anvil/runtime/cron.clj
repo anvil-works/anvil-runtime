@@ -62,22 +62,18 @@
         (background-tasks/present-background-task info))
       (select-keys info [:next_run]))))
 
-(defn update-cron-jobs! [db app-id app-yaml]
-  (util/with-db-transaction [db db]
-    (let [q (jdbc/query db ["SELECT job_id, next_run, time_spec FROM scheduled_tasks WHERE app_id = ?" app-id])
-          known-jobs (into {} (for [job q] [(:job_id job) job]))]
-
-      (jdbc/execute! db ["DELETE FROM scheduled_tasks WHERE app_id=?" app-id])
-
-      (doseq [{:keys [job_id task_name time_spec] :as _task} (:scheduled_tasks app-yaml)]
-        ;;(println time_spec)
-        (let [{:keys [next_run last_bg_task_id] :as _cached-task} (get known-jobs job_id)
-              next-run (if (= time_spec (:time_spec _cached-task))
-                         next_run                           ; Time-spec for this task hasn't changed, don't modify next-run.
-                         (get-next-execution-time nil time_spec))]
-          (when (and task_name next-run)
-            (jdbc/execute! db ["INSERT INTO scheduled_tasks (app_id,job_id,task_name,time_spec,next_run,last_bg_task_id) VALUES (?,?,?,?,?,?)"
-                               app-id job_id task_name time_spec next-run last_bg_task_id])))))))
+;; Common code for updating jobs from DB records
+(defn get-scheduled-jobs [scheduled-tasks-yaml previous-scheduled-jobs extra-keys]
+  (let [known-jobs (into {} (for [job previous-scheduled-jobs] [(:job_id job) job]))]
+    (for [{:keys [job_id task_name time_spec] :as task} scheduled-tasks-yaml
+          :let [{:keys [next_run last_bg_task_id] :as cached-task} (get known-jobs job_id)
+                next-run (if (= time_spec (:time_spec cached-task))
+                           next_run                           ; Time-spec for this task hasn't changed, don't modify next-run.
+                           (get-next-execution-time nil time_spec))]
+          :when (and task_name next-run)]
+      (merge (select-keys task [:job_id :task_name :time_spec])
+             {:next_run next-run, :last_bg_task_id last_bg_task_id}
+             extra-keys))))
 
 (defn get-next-execution-time-logging-errors [last-execution time-spec job]
   (try
@@ -85,6 +81,15 @@
     (catch Exception e
       (log/error "Error computing execution time for job" (pr-str (:job_id job)) ", for app" (:app_id job))
       nil)))
+
+(defonce update-job!
+         (fn [db job updates]
+           (jdbc/update! db "scheduled_tasks" updates ["job_id = ?" (:job_id job)])))
+
+(defonce get-environment-for-job
+         (fn [job] (throw (UnsupportedOperationException.))))
+
+(def set-cron-hooks! (util/hook-setter #{update-job! get-environment-for-job}))
 
 (defn launch-cron-jobs! []
   (let [jobs-we-have-committed-to-launching
@@ -102,46 +107,43 @@
                     :when (and next-run
                                (not locked?))]
                 (do
-                  (jdbc/execute! db ["UPDATE scheduled_tasks SET next_run = ? WHERE app_id = ? AND job_id = ?"
-                                     next-run (:app_id job) (:job_id job)])
+                  (update-job! db job {:next_run next-run})
                   job)))))]
 
-    (doseq [{:keys [app_id job_id task_name last_bg_task_id] :as job} jobs-we-have-committed-to-launching]
-      (when-not (app-data/abuse-caution? nil app_id)
-        (let [launch! (fn []
-                        (let [published-version (app-data/get-published-revision (app-data/get-app-info-insecure app_id))]
-                          (dispatcher/dispatch!
-                            {:call              {:func   "anvil.private.background_tasks.launch"
-                                                 :args   [task_name]
-                                                 :kwargs {}}
-                             :scheduled-task-id job_id
-                             :app-id            app_id
-                             :app-branch        (if published-version "published" "master")
-                             :app-version       published-version
-                             :session-state     (atom {:app-id app_id, :debug? false})
-                             :origin            :server}
-                            ;; Return path
-                            {:update!  (constantly nil)
-                             :respond! (fn [{:keys [error response]}]
-                                         (if error
-                                           ;; TODO log this somewhere the app can see it
-                                           (log/error "Failed to launch BG task for" job_id "for app" app_id ":" error)
-                                           (jdbc/execute! util/db ["UPDATE scheduled_tasks SET last_bg_task_id = ? WHERE app_id = ? AND job_id = ?"
-                                                                   (json/read-str (:id response)) (:app_id job) (:job_id job)])))})))]
-          (if (nil? last_bg_task_id)
-            (launch!)
-            ;; We *think* that 'app' (the second argument to get-state, below) is only used by LazyMedia handlers, so it's safe to pass in nil. Probably.
-            (background-tasks/get-state app_id nil (atom {}) :server last_bg_task_id
-                                        {:update!  (constantly nil)
-                                         :respond! (fn [{:keys [error response] :as r}]
-                                                     (cond
-                                                       error
-                                                       (log/error "Failed to retrieve last BG task:" error)
+    (doseq [{:keys [job_id task_name last_bg_task_id] :as job} jobs-we-have-committed-to-launching]
+      (let [{:keys [app_id] :as environment} (get-environment-for-job job)]
+       (when-not (app-data/abuse-caution? nil app_id)
+         (let [launch! (fn []
+                         (dispatcher/dispatch!
+                           {:call              {:func   "anvil.private.background_tasks.launch"
+                                                :args   [task_name]
+                                                :kwargs {}}
+                            :scheduled-task-id job_id
+                            :app-id            app_id
+                            :environment       environment
+                            :session-state     (atom {:app-id app_id, :environment environment})
+                            :origin            :server}
+                           ;; Return path
+                           {:update!  (constantly nil)
+                            :respond! (fn [{:keys [error response]}]
+                                        (if error
+                                          ;; TODO log this somewhere the app can see it
+                                          (log/error "Failed to launch BG task for" job_id "for app" app_id ":" error)
+                                          (update-job! util/db job {:last_bg_task_id (json/read-str (:id response))})))}))]
+           (if (nil? last_bg_task_id)
+             (launch!)
+             (background-tasks/get-state (background-tasks/load-background-task-by-id util/db last_bg_task_id)
+                                         {:app-id app_id, :environment environment, :session-state (atom {}), :origin :server}
+                                         {:update!  (constantly nil)
+                                          :respond! (fn [{:keys [error response] :as r}]
+                                                      (cond
+                                                        error
+                                                        (log/error "Failed to retrieve last BG task:" error)
 
-                                                       response
-                                                       (log/info "Not running BG task " job_id "for app" app_id "because background task" last_bg_task_id "is still running")
+                                                        response
+                                                        (log/info "Not running BG task " job_id "for app" app_id "because background task" last_bg_task_id "is still running")
 
-                                                       :else
-                                                       (launch!)))}
-                                        background-tasks/is-running?)))))
+                                                        :else
+                                                        (launch!)))}
+                                         background-tasks/is-running?))))))
     (not-empty jobs-we-have-committed-to-launching)))

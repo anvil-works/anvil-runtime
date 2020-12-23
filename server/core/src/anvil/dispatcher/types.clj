@@ -1,4 +1,5 @@
 (ns anvil.dispatcher.types
+  (:use [slingshot.slingshot])
   (:require [anvil.runtime.conf :as conf]
             [crypto.random :as random]
             [anvil.util :as util]
@@ -103,19 +104,25 @@
   (getInputStream [_] input-stream))
 
 (defn ChunkedStream->Media [chunked-stream]
-  (let [baos (ByteArrayOutputStream.)
+  (let [baos (atom (ByteArrayOutputStream.))
         consumed-bytes (promise)
         add-bytes (fn [_idx last? bs]
-                    (.write baos ^bytes bs)
-                    (when last?
-                      (deliver consumed-bytes (.toByteArray baos))))]
+                    (when-let [os @baos] ;; In case it has already been dropped by a timeout.
+                      (.write os ^bytes bs)
+                      (when last?
+                        (deliver consumed-bytes (.toByteArray os)))))]
 
     (consume chunked-stream add-bytes)
 
     (worker-pool/with-expanding-threadpool-when-slow
-      (BlobMedia. (.getContentType chunked-stream)
-                  @consumed-bytes
-                  (.getName chunked-stream)))))
+      (let [bytes (deref consumed-bytes (* 5 60000) ::timeout)] ;; 5 min timeout
+        (if (= bytes ::timeout)
+          (do
+            (reset! baos nil)
+            (throw+ {:anvil/server-error "Timeout while assembling BlobMedia"}))
+          (BlobMedia. (.getContentType chunked-stream)
+                      bytes
+                      (.getName chunked-stream)))))))
 
 (defn ?->InputStream
   "Turn ChunkedStream or Media into an InputStream. Use of this function is a code smell,

@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 from select import select
-import os
+import os.path
 from pprint import pprint
 from numbers import Number
 from tempfile import NamedTemporaryFile, TemporaryDirectory
@@ -233,8 +233,13 @@ class Browser:
 
                                 ps2pdf = run_ps2pdf(self.quality, src_name, dest_name)
 
-                                with open(dest_name, "rb") as new_pdf:
-                                    pdfbytes = new_pdf.read()
+                                if os.path.getsize(dest_name) < len(pdfbytes):
+                                    with open(dest_name, "rb") as new_pdf:
+                                        pdfbytes = new_pdf.read()
+
+                                    print(f"Compressed PDF to {len(pdfbytes)} bytes")
+                                else:
+                                    print("No gain from compression")
                     finally:
                         try:
                             os.unlink(src_name)
@@ -246,7 +251,6 @@ class Browser:
                     if ps2pdf.stderr or ps2pdf.returncode != 0:
                         raise Exception(f"Error running ps2pdf: {ps2pdf.stderr.decode('utf-8')}")
 
-                    print(f"Compressed PDF to {len(pdfbytes)} bytes")
 
 
                 print("Responding...")
@@ -262,8 +266,15 @@ class Browser:
                     print(f"Chrome: {line}")
 
                 # Don't just kill the subprocess, also terminate all the processes it created.
-                os.killpg(os.getpgid(process.pid), 15) 
+                os.killpg(os.getpgid(process.pid), 15)
                 print("******* Chrome terminated *******")
+                cpid = -1
+                n_terminated = 0
+                while cpid != 0:
+                    cpid, _, _ = os.wait4(-1, os.WNOHANG)
+                    if cpid != 0:
+                        n_terminated += 1
+                print(f"{n_terminated} children reaped")
 
     def get_pdf_options(self):
         # Whitelist these options carefully; they're going into the management end of Chrome

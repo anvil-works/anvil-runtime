@@ -34,7 +34,7 @@ module.exports = function(pyModule) {
 				return Sk.misceval.call(pyModule["InvalidComponent"], undefined, undefined, [new Sk.builtin.str("text"), new Sk.builtin.str(message)]);
 			};
 
-			return Sk.misceval.callOrSuspend(pyModule["Component"]["__init__"], undefined, undefined, pyKwargs, self);
+			return Sk.misceval.callOrSuspend(pyModule["Component"].prototype["__init__"], undefined, undefined, pyKwargs, self);
 		}));
 
 		/*!defMethod(_,component)!2*/ "Add a component to this container."
@@ -95,7 +95,7 @@ module.exports = function(pyModule) {
 			for (var i=0; i<self._anvil.components.length; i++) {
 				a.push(self._anvil.components[i].component);
 			}
-			return Sk.builtin.list(a);
+			return new Sk.builtin.list(a);
 		});
 
 		/*!defMethod(_)!2*/ "Remove all components from this container"
@@ -106,6 +106,7 @@ module.exports = function(pyModule) {
 			for (var i in components) {
 				fns.push(components[i].component._anvil.parent.remove);
 			}
+			fns.push(() => Sk.builtin.none.none$);
 			return Sk.misceval.chain(undefined, ...fns);
 		});
 
@@ -133,8 +134,9 @@ module.exports = function(pyModule) {
         });
 
         $loc["__new_deserialized__"] = PyDefUtils.mkNewDeserializedPreservingIdentity(function (self, pyData) {
-            let components = pyData.mp$subscript(new Sk.builtin.str("$_components"));
-            pyData.mp$del_subscript(new Sk.builtin.str("$_components"));
+			const component_key = new Sk.builtin.str("$_components");
+            let components = pyData.mp$subscript(component_key);
+            Sk.abstr.objectDelItem(pyData, component_key);
             let addComponent = self.tp$getattr(new Sk.builtin.str("add_component"));
             return Sk.misceval.chain(
                 PyDefUtils.setAttrsFromDict(self, pyData),

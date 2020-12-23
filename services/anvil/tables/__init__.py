@@ -94,14 +94,20 @@ def in_transaction(f):
 
 	return new_f
 
+
 #!defFunction(anvil.tables,_,column_name,ascending=)!2: "Sort the results of this table search by a particular column. Default to ascending order." ["order_by"]
-@anvil.server.serializable_type
+@anvil.server.portable_class
 class order_by(object):
 	def __init__(self, column_name, ascending=True):
 		self.column_name = column_name
 		self.ascending = ascending
 
-@anvil.server.serializable_type
+@anvil.server.portable_class
 class _page_size(object):
 	def __init__(self, rows):
 		self.rows = rows
+
+
+#!defFunction(anvil.tables,%,[via_host=],[via_port=])!2: "Get a Postgres connection string for accessing this app's Data Tables via SQL.\n\nThe returned string includes temporary login credentials and sets the search path to a schema representing this app's Data Table environment.\n\nYou can override the host and port for the database connection to connect via a secure tunnel.\n\n(Available on the Dedicated Plan only.)" ["get_connection_string"]
+def get_connection_string(via_host=None, via_port=None):
+	return anvil.server.call("anvil.private.get_direct_postgres_connection_string", via_host=via_host, via_port=via_port)

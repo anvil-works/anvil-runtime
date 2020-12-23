@@ -95,10 +95,7 @@ module.exports = function() {
                             return Sk.misceval.callsimOrSuspend(Sk.abstr.gattr(pyImg, new Sk.builtin.str("get_bytes")));
                         },
                         function (c) {
-                            var bytes = new Uint8Array(c.v.length);
-                            for (var i=0; i < c.v.length; i++) {
-                                bytes[i] = c.v.charCodeAt(i);
-                            }
+                            const bytes = PyDefUtils.getUint8ArrayFromPyBytes(c);
                             return new Blob([bytes], {type: contentType.v});
                         }
                     );

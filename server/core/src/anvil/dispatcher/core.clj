@@ -228,7 +228,7 @@
 
 (defn dispatch!
   [{{:keys [live-object args kwargs func vt_global] :as call} :call
-    :keys [app app-id app-info app-version app-branch app-origin session-state call-stack origin thread-id use-quota? background? scheduled?]
+    :keys [app app-id app-info environment app-origin session-state call-stack origin thread-id use-quota? background? scheduled?]
     :as request}
    return-path]
 
@@ -255,12 +255,13 @@
     (throw+ {:anvil/server-error "Cannot call scoped server function from client code"}))
 
   (binding [*stale-uplink?* (atom false)]
-    (let [start-time (System/currentTimeMillis)
+    (let [start-time (System/nanoTime)
+          dispatch-end (atom 0)
           clock-stopped (atom 0)
           metrics-timer (atom nil)
           wrapped-respond! (fn [resp]
                              (when (and use-quota? (= 1 (swap! clock-stopped inc)))
-                               (quota/decrement! session-state app-id
+                               (quota/decrement! session-state environment
                                                  :server-time
                                                  (/ (double (- (System/currentTimeMillis) start-time)) 1000)))
 
@@ -273,24 +274,24 @@
                                                          (:anvil/enable-profiling @session-state))
                                                 {:profile (merge {:origin      "Server (Native)"
                                                                   :description (str "Server dispatch (" func ")")
-                                                                  :start-time  start-time
-                                                                  :end-time    (double (System/currentTimeMillis))}
+                                                                  :start-time  (/ start-time 1000000.0)
+                                                                  :end-time    (/ (System/nanoTime) 1000000.0)}
                                                                  (when (:profile resp)
-                                                                   {:children [(:profile resp)]}))}))))
+                                                                   {:children [{:origin "Dispatch" :description "Dispatch setup" :start-time (/ start-time 1000000.0) :end-time (/ @dispatch-end 1000000.0)} (:profile resp)]}))}))))
 
           return-path (assoc return-path :respond! wrapped-respond!)
 
           request (if app-info
                     request
-                    (assoc request :app-info (app-data/get-app-info-insecure app-id)))
+                    (assoc request :app-info (or (and session-state (:app-info @session-state))
+                                                 (app-data/get-app-info-insecure app-id))))
           app-info (:app-info request)
           request (if (or app (not app-id))
                     request
-                    (let [{:keys [content version]} (app-data/get-app app-info app-version)]
-                      (assoc request :app content :app-version version)))
-          app (:app request)
-          app-version (:app-version request)
-          backend (:backend live-object)
+                    (let [{:keys [content version]} (app-data/get-app app-info (app-data/get-version-spec-for-environment environment))]
+                      (-> request
+                          (assoc :app content)
+                          (update-in [:environment] assoc :commit-id version))))
           executor (or (util/with-meta-when {:executor :native}
                                             (if live-object
                                               (get @native-live-object-backends (:backend live-object))
@@ -332,7 +333,9 @@
 
       (try
         (if-not background?
-          (executor-fn request return-path)
+          (do
+            (reset! dispatch-end (System/nanoTime))
+            (executor-fn request return-path))
           (let [background-launch-fn (or (:bg-fn executor) (partial @default-background-wrapper executor))
                 background-id (background-launch-fn request)]
             (respond! return-path {:response (mk-BackgroundTaskLiveObject background-id)})))

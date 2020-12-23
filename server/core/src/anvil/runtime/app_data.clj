@@ -14,37 +14,36 @@
 
 ;; Hooks supplied by hosting code:
 
-(def HOOKS [:get-app-info-insecure :get-app-content :get-published-revision :get-app-id-by-hostname])
-
 (defonce get-app-info-insecure (fn [id] nil))
 
 (defonce get-app-info-with-can-depend (fn [depending-app-id app-id] (when-let [app-info (get-app-info-insecure app-id)]
                                                                       (assoc app-info :can_depend true))))
 
-(defonce get-app-content (fn [app-info version] (throw (Exception. (str "No app storage backend registered")))))
+(defonce get-app-content (fn [app-info version-spec] (throw (Exception. (str "No app storage backend registered")))))
 
-(defonce get-published-revision (fn [app-id] ""))
+(defonce get-app-environment-by-email-hostname (fn [hostname] nil))
 
-(defonce get-app-id-by-hostname (fn [hostname] nil))
+(defonce get-version-spec-for-environment (fn [req] nil))
 
-(defonce get-default-app-origin (fn [app-info] (throw (UnsupportedOperationException.))))
+(defonce get-default-app-origin (fn [environment] (throw (UnsupportedOperationException.))))
 
-(defonce get-valid-origins (fn [app-info] [(get-default-app-origin app-info)]))
+(defonce get-valid-origins (fn [environment] [(get-default-app-origin environment)]))
 
-(defonce get-default-api-origin (fn [app-info] (str (get-default-app-origin app-info) "/_/api")))
+(defonce get-default-api-origin (fn [environment] (str (get-default-app-origin environment) "/_/api")))
 
-(defonce get-default-hostnames (fn [app-info] []))
+(defonce get-default-hostnames (fn [environment] []))
 
 (defonce get-shared-cookie-key (fn [app-info] "SHARED"))
 
 (defonce abuse-caution? (fn [session-state app-id] false))
 
+(defonce get-extra-rendering-info (fn [app-id session-state flags] nil))
+
 (def set-app-storage-impl! (util/hook-setter #{get-app-info-insecure get-app-info-with-can-depend
-                                               get-app-content get-published-revision
-                                               get-valid-origins get-app-id-by-hostname
-                                               get-default-app-origin get-default-api-origin
+                                               get-app-content get-app-environment-by-email-hostname get-version-spec-for-environment
+                                               get-valid-origins  get-default-app-origin get-default-api-origin
                                                get-default-hostnames
-                                               get-shared-cookie-key abuse-caution?}))
+                                               get-shared-cookie-key abuse-caution? get-extra-rendering-info}))
 
 
 (defonce version-key-secret (random/base64 32))
@@ -72,9 +71,10 @@
                  (= (util/sha-256 (:clone_key app-info)) (util/sha-256 clone-key)))
         app-info))))
 
-(defn get-app-content-with-dependencies [app-info version]
+(defn get-app-content-with-dependencies [app-info version-spec]
   ;; Do a recursive dependency lookup on the app
-  (let [app (get-app-content app-info version)]
+  (let [app (get-app-content app-info version-spec)
+        is-dev? (fn [version-spec] (or (nil? version-spec) (:dev version-spec)))]
     (loop [loaded-deps {}
            dep-order '()
            [{:keys [depending-app app_id version]} & more-deps-to-process :as deps-to-process]
@@ -88,11 +88,7 @@
           (assoc-in [:content :dependency_order] dep-order))
 
         :else
-        (let [dep-info (get-app-info-with-can-depend depending-app app_id)
-              version-sha (if (or (nil? version) (:dev version))
-                            nil
-                            (get-published-revision dep-info))
-              branch-name (if version-sha "published" "master")]
+        (let [dep-info (get-app-info-with-can-depend depending-app app_id)]
           (cond
             ;; App doesn't exist?
             (not dep-info)
@@ -100,7 +96,7 @@
 
             ;; Already loaded a different version of this app?
             (when-let [prev (get loaded-deps app_id)]
-              (not= branch-name (:branch prev)))
+              (not= (is-dev? version) (:dev-version? prev)))
             (let [prev (get loaded-deps app_id)
                   depending (if (= depending-app (:id app-info))
                               app-info
@@ -112,8 +108,8 @@
               ;;(println "Mismatch: " version " vs " (:version prev))
               (recur (assoc loaded-deps app_id
                                         {:error (str "Dependency version mismatch: This app depends on more than one version of the same dependency."
-                                                     " (\"" (:name depending) "\" (" depending-app ") depends on the " (if version-sha "Published" "Development") " version of \"" (:name dep-info) "\" (" app_id "), but"
-                                                     " \"" (:name prev-depending) "\" (" (:depending_app prev) ") depends on the " (if (:version prev) "Published" "Development") " version)")})
+                                                     " (\"" (:name depending) "\" (" depending-app ") depends on the " (if (is-dev? version) "Development" "Published") " version of \"" (:name dep-info) "\" (" app_id "), but"
+                                                     " \"" (:name prev-depending) "\" (" (:depending_app prev) ") depends on the " (if (:dev-version? prev) "Published" "Development") " version)")})
                      dep-order more-deps-to-process))
 
             ;; Already loaded the same version of this app?
@@ -126,13 +122,14 @@
 
             ;; All good - load the app!
             :else
-            (let [full-app (get-app-content dep-info version-sha)
+            (let [full-app (get-app-content dep-info (if (is-dev? version) {:branch "master"}
+                                                                           {:branch "published", :fallback-branch "master"}))
                   dep-content (:content full-app)]
               ;;(println depending-app "(" (:name dep-info) ") -> " (:id dep-info) " (" (:name dep-info) ") version " version " / " version-sha "/" (:version full-app))
               (recur (assoc loaded-deps app_id
                                         (-> (select-keys dep-content [:forms :modules :server_modules :package_name :secrets :native_deps :runtime_options])
-                                            (assoc :version (:version full-app)
-                                                   :branch branch-name
+                                            (assoc :dev-version? (is-dev? version)
+                                                   :commit-id (:version full-app)
                                                    :depending_app depending-app
                                                    :name (:name dep-info))))
                      (cons app_id dep-order)
@@ -140,10 +137,9 @@
 
 
 (defn get-app
-  ([app-info] (get-app app-info nil))
-  ([app-info version] (get-app app-info version true))
-  ([app-info version allow-broken-deps?]
-   (let [app-content (get-app-content-with-dependencies app-info version)]
+  ([app-info version-spec] (get-app app-info version-spec true))
+  ([app-info version-spec allow-broken-deps?]
+   (let [app-content (get-app-content-with-dependencies app-info version-spec)]
      (when-not allow-broken-deps?
        (doseq [[app-id dep] (-> app-content :content :dependency_code)]
          (when-let [err (:error dep)]
@@ -161,7 +157,8 @@
 
 (defn app->style [{{runtime-version :version :or {runtime-version 0}} :runtime_options
                    {:keys [assets] :as theme}                           :theme
-                   :as                                                  _yaml}]
+                   :as                                                  _yaml}
+                  app-id session-state flags]
   (when-let [css-b64 (->> assets
                           (filter #(= (:name %) "theme.css"))
                           (first)
@@ -170,6 +167,8 @@
           css (reduce (fn [css {:keys [name color]}]
                         (.replace css (str "%color:" name "%") color))
                       css (get-in theme [:parameters :color_scheme :colors]))
+          css (.replace css "%anvil-banner-height%"
+                        (or (:banner-height (get-extra-rendering-info app-id session-state flags)) "0"))
           shims (reduce (fn [css {:keys [version description shim]}]
                           (str "/* Shim to runtime version " version ": " description " */\n"
                                shim "\n\n" css))
@@ -180,18 +179,12 @@
        :primary-color (or (:color (first (filter #(not (.startsWith (:name %) "A")) (get-in theme [:parameters :color_scheme :colors]))))
                           "#2ab1eb")})))
 
-
-;; TODO deprecate
-(defn get-app-yaml-insecure
-  ([id version] (get-app-yaml-insecure id version true))
-  ([id version allow-broken-deps?]
-   (:content (get-app (get-app-info-insecure id) version allow-broken-deps?))))
-
 (defn sanitised-app-and-style-for-client
-  ([id version] (sanitised-app-and-style-for-client id version true))
-  ([id version allow-broken-deps?]
+  ([id version-spec] (sanitised-app-and-style-for-client id version-spec nil {:allow-broken-deps? true}))
+  ([id version-spec app-session-state {:keys [allow-broken-deps?] :as flags}]
    (let [app-info (get-app-info-insecure id)
-         yaml (:content (get-app app-info version allow-broken-deps?))
+         app (get-app app-info version-spec allow-broken-deps?)
+         yaml (:content app)
          only-version (fn [runtime-options] (merge {:version 0}
                                                    (select-keys runtime-options [:version :client_version])))]
 
@@ -214,13 +207,14 @@
           (update-in [:services] (fn [svcs]
                                    (map #(select-keys % [:source :client_config]) svcs))))
 
-      (app->style yaml)
+      (app->style yaml id app-session-state flags)
       (apply str
              (reverse
                (cons
                  (get-in yaml [:native_deps :head_html])
                  (for [dep-id (:dependency_order yaml)]
-                   (get-in yaml [:dependency_code dep-id :native_deps :head_html])))))])))
+                   (get-in yaml [:dependency_code dep-id :native_deps :head_html])))))
+      (:version app)])))
 
 
 (defn service-is-uplink? [service]

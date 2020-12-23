@@ -22,7 +22,7 @@
                  [org.clojure/data.json "0.2.5"]
                  [org.clojure/data.xml "0.0.8"]
                  [org.clojure/data.zip "0.1.1"]
-                 [http-kit "2.4.0-alpha6"]
+                 [org.senatehouse/http-kit "2.5.0-httpsfix-1.1"]
                  [crypto-random "1.1.0"]
                  [clj-yaml "0.4.0"]
                  [digest "1.4.4"]
@@ -75,12 +75,13 @@
                  [net.ttddyy/datasource-proxy "1.5.1"]
                  [com.mchange/c3p0 "0.9.5.2"]
 
-                 [malabarba/lazy-map "1.3"]]
+                 [malabarba/lazy-map "1.3"]
+
+                 [com.onelogin/java-saml "2.5.0"]]
 
   :aot :all
   :auto-clean false
   :omit-source true
-  ;; :jvm-opts ["-Djavax.net.debug=all"] ; Useful for debugging SSL issues
   :profiles {:provided {:dependencies [[org.bouncycastle/bcprov-jdk15on "1.65"]]}
              :uberjar {:exclusions [org.bouncycastle/bcprov-jdk15on]}}
   )

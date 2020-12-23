@@ -22,8 +22,8 @@
            (com.webauthn4j.data.attestation.authenticator AuthenticatorData)))
 
 
-(defn valid-app-domain? [effective-domain app-info]
-  (some #(= (.toLowerCase effective-domain) (.toLowerCase (-> % (URI.) .getHost))) (app-data/get-valid-origins app-info)))
+(defn valid-app-domain? [effective-domain environment]
+  (some #(= (.toLowerCase effective-domain) (.toLowerCase (-> % (URI.) .getHost))) (app-data/get-valid-origins environment)))
 
 (defn begin-fido-attestation [_kwargs email]
   (let [email (or email
@@ -62,7 +62,7 @@
 
         effective-domain (.getHost registered-origin)]
 
-    (when-not (valid-app-domain? effective-domain util/*app-info*)
+    (when-not (valid-app-domain? effective-domain util/*environment*)
       (throw+ {:anvil/server-error (str "Invalid app origin: " effective-domain) :type "anvil.users.AuthenticationFailed"}))
 
     (let [registration-params (RegistrationParameters. (ServerProperty.
@@ -120,7 +120,7 @@
         authentication-origin (-> authentication-data .getCollectedClientData .getOrigin)
         effective-domain (.getHost authentication-origin)]
 
-    (when-not (valid-app-domain? effective-domain util/*app-info*)
+    (when-not (valid-app-domain? effective-domain util/*environment*)
       (throw+ {:anvil/server-error (str "Invalid app origin: " effective-domain) :type "anvil.users.AuthenticationFailed"}))
 
     (let [authenticator (AuthenticatorImpl. (-> attestation-object .getAuthenticatorData .getAttestedCredentialData)

@@ -8,7 +8,7 @@
             [anvil.dispatcher.types :as types])
   (:import (anvil.dispatcher.types Media SerialisableForRpc ChunkedStream)))
 
-(defn serve-lazy-media [_r media-id]
+(defn serve-lazy-media [media-id]
   (let [[func args kwargs] (json/read-str media-id)
         trigger (promise)
         return-path (-> (or (:default-return-path @nrpc-util/*session-state*)
@@ -18,7 +18,7 @@
     (log/trace "Dispatching call")
     (dispatcher/dispatch! {:call          {:func func, :args (or args []), :kwargs (or kwargs {})},
                            :app           nrpc-util/*app*, :app-id nrpc-util/*app-id*, :app-origin nrpc-util/*app-origin*
-                           :app-version nrpc-util/*app-version* :app-branch nrpc-util/*app-branch*
+                           :environment nrpc-util/*environment*
                            :session-state nrpc-util/*session-state*
                            :use-quota? true}
                           return-path)

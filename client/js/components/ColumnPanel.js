@@ -331,7 +331,7 @@ module.exports = function(pyModule) {
                     //console.debug("Appending", componentElement, "to", currentParent)
                     component._anvil.delayAddedToPage = true;
                 },
-                () => Sk.misceval.callsimOrSuspend(pyModule["Container"].add_component, self, component, kwargs),
+                () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs),
                 () => { 
                     updateSharedLayoutProps(self); 
                     if (self._anvil.onPage)

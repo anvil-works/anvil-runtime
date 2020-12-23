@@ -10,7 +10,7 @@ path_whitelist:
 client_config_properties:
   - name: allow_signup
     type: boolean
-    defaultValue: true
+    defaultValue: false
     description: Allow anyone to sign up for a new account
   - name: enable_automatically
     type: boolean

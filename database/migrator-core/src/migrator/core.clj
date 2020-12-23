@@ -36,18 +36,23 @@
                           (do
                             (println "DB connection failed for" timeout "seconds. Abandoning migration:")
                             (println (str err))
-                            (throw+ {::migration-failure :connection-failed}))))))]
+                            (throw+ {::migration-failure :connection-failed}))))))
+        all-migrations (->> (mapcat #(get @migrations/all-migrations %) db-types)
+                            (sort-by first))
+        latest-version (first (last all-migrations))]
 
     (if db-empty?
       (do
         (println "Database is uninitialised. Setting up Anvil database from scratch...")
         (doseq [db-type db-types]
           (if-let [apply-schema (get @migrations/schemas db-type)]
-            (apply-schema db-conf)
+            (do
+              (apply-schema db-conf)
+              (set-migration-version! db-conf latest-version))
             (do
               (println "No schema found for DB type" (pr-str (name db-type)))
               (throw+ {::migration-failure :no-schema}))))
-        (println "Setup complete."))
+        (println "Setup complete.\nDatabase now at" (pr-str latest-version)))
 
       (do
         (println "Found" (reduce + 0 (for [t db-types]
@@ -58,18 +63,16 @@
 
           (jdbc/with-db-transaction [db db-conf]
             (let [current-version (get-migration-version db)
-                  migrations (->> (mapcat #(get @migrations/all-migrations %) db-types)
-                                  (filter (fn [[v _fn]] (> (compare v current-version) 0)))
-                                  (sort-by first))
-                  final-version (first (last migrations))]
+                  migrations (->> all-migrations
+                                  (filter (fn [[v _fn]] (> (compare v current-version) 0))))]
               (println "Database currently at" (pr-str current-version))
               (println (count migrations) "migration(s) to perform.")
               (doseq [[v migrate!] migrations]
                 (println "Executing" (pr-str v))
                 (migrate! db))
-              (when final-version
-                (set-migration-version! db final-version)
-                (println "Database now at" (pr-str final-version)))
+              (when latest-version
+                (set-migration-version! db latest-version)
+                (println "Database now at" (pr-str latest-version)))
               (println "Migration complete.")))
           (catch SQLException e
             (println (str e))

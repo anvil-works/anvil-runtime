@@ -12,10 +12,11 @@
     [anvil.dispatcher.core :as dispatcher]
     [anvil.dispatcher.serialisation.core :as serialisation]
     [crypto.random :as random]
-    [anvil.executors.ws-utils :as ws-utils]
+    [anvil.executors.ws-calls :as ws-calls]
     [anvil.metrics :as metrics]
     [anvil.runtime.util :as runtime-util]
-    [anvil.core.worker-pool :as worker-pool])
+    [anvil.core.worker-pool :as worker-pool]
+    [anvil.runtime.ws-util :as ws-util])
   (:import (java.util.regex PatternSyntaxException)))
 
 
@@ -23,7 +24,7 @@
 
 ;; Hookable functions
 
-(defonce on-uplink-connect (fn [app-id app-branch protocol-version] nil))
+(defonce on-uplink-connect (fn [environment protocol-version] nil))
 
 (defonce set-uplink-handler! (fn [cookie func handler]
                                (throw (UnsupportedOperationException.))))
@@ -31,28 +32,30 @@
 (defonce clear-uplink-registrations! (fn [cookie specs]
                                        (throw (UnsupportedOperationException.))))
 
-(defonce get-app-info-and-privileges-for-uplink-key (fn [uplink-key] nil))
+(defonce get-app-info-environment-and-privileges-for-uplink-key (fn [uplink-key] nil))
 
-(def set-uplink-hooks! (util/hook-setter [get-app-info-and-privileges-for-uplink-key on-uplink-connect
+(def set-uplink-hooks! (util/hook-setter [get-app-info-environment-and-privileges-for-uplink-key on-uplink-connect
                                           clear-uplink-registrations! set-uplink-handler!]))
 
+(defn- request-template-from-pending-response [pending-response]
+  (select-keys pending-response [:app-id :app :environment :app-origin :session-state :call-stack]))
 
 (defn- executor [{:keys [channel pending-responses prune-live-objects]}
                  {{:keys [live-object args kwargs func vt_global] :as call} :call
-                  :keys [session-state origin call-stack app app-id app-branch app-version] :as request}
+                  :keys [session-state origin call-stack app app-id app-origin environment] :as request}
                  return-path]
 
   (let [new-id (str (if (= origin :client) "client-" "server-") (random/base64 10))
         return-path {:update! #(dispatcher/update! return-path (assoc % :id new-id))
                      :respond! #(dispatcher/respond! return-path (dissoc % :id))}]
 
-    (swap! pending-responses assoc new-id {:app-id       app-id
-                                           :app          app
-                                           :app-branch   app-branch
-                                           :app-version  app-version
-                                           :call-stack   call-stack
-                                           :return-path  return-path
-                                           :ssm-state    session-state})
+    (swap! pending-responses assoc new-id {:app-id        app-id
+                                           :app           app
+                                           :app-origin    app-origin
+                                           :environment   environment
+                                           :call-stack    call-stack
+                                           :return-path   return-path
+                                           :session-state session-state})
 
 
     (log/debug "Executing RPC function on uplink:" (str func (when live-object (str " (" (:backend live-object) ")"))))
@@ -67,7 +70,8 @@
                                                      :args             args
                                                      :kwargs           kwargs
                                                      :enable-profiling (:anvil/enable-profiling @session-state)
-                                                     :app-info         {:id app-id, :branch app-branch}
+                                                     :app-info         {:id app-id, :branch (:branch environment),
+                                                                        :environment (select-keys environment [:description :tags])}
                                                      :vt_global        vt_global}
                                                     (if live-object
                                                       {:liveObjectCall (assoc live-object :method func)}
@@ -79,11 +83,10 @@
 (defonce connected-uplink-count (atom 0))
 
 (defn handle-incoming-ws [request]
-  (util/with-opening-channel
+  (ws-util/with-opening-channel
     request channel on-open
     (let [app-id (atom nil)
-          app-branch (atom nil)
-          app-version (atom nil)
+          environment (atom nil)
           app-origin (atom nil)
           priv-level (atom nil)
           my-fn-registrations (atom #{})
@@ -92,7 +95,7 @@
           ds (delay (serialisation/mk-Deserialiser :permitted-live-object-backends #{"uplink."}
                                                    :no-live-object-pruning (<= @protocol-version 4)))
 
-          ;; id -> {:return-path return-path, :ssm-state ssm-state}
+          ;; id -> {:return-path return-path, :session-state ssm-state}
           pending-responses (atom {})
           default-session-state (atom {})
           internal-error (atom nil)
@@ -136,7 +139,7 @@
                           (let [raw-data (json/read-str json-or-binary :key-fn keyword)]
                             (cond
                               (not @app-id)
-                              (let [[app-info priv] (get-app-info-and-privileges-for-uplink-key (or (:key raw-data) ""))]
+                              (let [[app-info env priv] (get-app-info-environment-and-privileges-for-uplink-key (if (string? (:key raw-data)) (:key raw-data) ""))]
                                 (reset! protocol-version (:v raw-data))
                                 (cond
                                   (not (and (number? @protocol-version)
@@ -160,27 +163,27 @@
 
                                   :else
                                   (do
+                                    (ws-util/tag-channel! channel {:app-info app-info, :environment env, :app-session default-session-state})
                                     (reset! app-id (:id app-info))
-                                    (let [rev (when-not (= :dev (:version app-info))
-                                                (app-data/get-published-revision app-info))]
-                                      (reset! app-branch (if rev "published" "master"))
-                                      (reset! app-version rev))
+                                    (reset! environment env)
                                     (reset! app-origin (:app-origin request))
                                     (reset! priv-level priv)
                                     (reset! default-session-state
                                             {:client (runtime-util/client-info-from-request (if (= :uplink priv) :uplink :client_uplink)
                                                                                             request)
                                              :app-id (:id app-info)
-                                             :debug? (= :dev (:version app-info))})
+                                             :environment @environment})
                                     (send! channel (util/write-json-str {:auth     "OK"
-                                                                         :app-info {:branch @app-branch
-                                                                                    :id     @app-id}}))
+                                                                         :priv     priv
+                                                                         :app-info {:branch      (:branch @environment)
+                                                                                    :id          @app-id
+                                                                                    :environment (select-keys @environment [:description :tags])}}))
 
                                     (when (< @protocol-version 7)
                                       (send! channel "{\"output\": \"You are using a deprecated version of the Anvil Uplink. Upgrade for bug-fixes and new features by typing 'pip install --upgrade anvil-uplink'\"}"))
 
-                                    (log/info "Uplink connected for app" @app-id " branch " @app-branch)
-                                    (reset! connection-cookie (on-uplink-connect @app-id @app-branch @protocol-version)))))
+                                    (log/info "Uplink connected for app" @app-id " environment " @environment)
+                                    (reset! connection-cookie (on-uplink-connect @environment @protocol-version)))))
 
                               (= (:type raw-data) "REGISTER")
                               (if-not (= @priv-level :uplink)
@@ -214,22 +217,20 @@
                               (= (:type raw-data) "CALL")
                               (let [call-stack-id (:call-stack-id raw-data)
                                     pending-response (get @pending-responses call-stack-id)
-                                    session-state (or (:ssm-state pending-response)
+                                    session-state (or (:session-state pending-response)
                                                       default-session-state)
                                     app (:app pending-response)
                                     update-bypass! (when pending-response #(dispatcher/update! (:return-path pending-response) %))
-                                    this-app-branch (or (:app-branch pending-response) @app-branch)
-                                    this-app-version (or (:app-version pending-response) @app-version)
+                                    this-environment (or (:environment pending-response) @environment)
                                     change-session! (fn [new-session]
                                                       (swap! pending-responses #(if (contains? % call-stack-id)
-                                                                                  (assoc-in % [call-stack-id :ssm-state] new-session)
+                                                                                  (assoc-in % [call-stack-id :session-state] new-session)
                                                                                   %)))]
 
-                                (ws-utils/process-call-from-ws channel @ds raw-data
+                                (ws-calls/process-call-from-ws channel @ds raw-data
                                                                {:app                              app,
                                                                 :app-id                           @app-id,
-                                                                :app-branch                       this-app-branch,
-                                                                :app-version                      this-app-version,
+                                                                :environment                      this-environment,
                                                                 :app-origin                       @app-origin,
                                                                 :session-state                    session-state,
                                                                 :anvil.dispatcher/change-session! change-session!
@@ -246,15 +247,18 @@
                               ;; Response from uplink
                               (or (contains? raw-data :response) (contains? raw-data :error))
                               (when (= @priv-level :uplink) ;; Defensive belt-and-braces
-                                (when-let [p (@pending-responses (:id raw-data))]
-                                  (let [resp (ws-utils/process-response-from-ws @ds (:return-path p) (:app-id p) (:app p) (or (:ssm-state p) default-session-state) raw-data :server)]
+                                (when-let [p (-> (@pending-responses (:id raw-data))
+                                                 (update-in [:session-state] #(or % default-session-state)))]
+                                  (let [resp (ws-calls/process-response-from-ws @ds (assoc (request-template-from-pending-response p)
+                                                                                      :origin :server)
+                                                                                (:return-path p) raw-data)]
                                     (swap! pending-responses dissoc (:id raw-data))
                                     resp)))
 
                               (contains? raw-data :output)
                               (when (= @priv-level :uplink) ;; Belt and braces
                                 (when-let [p (@pending-responses (:id raw-data))]
-                                  (ws-utils/process-update-from-ws (:return-path p) raw-data))))))
+                                  (ws-calls/process-update-from-ws (:return-path p) raw-data))))))
 
                         (catch :anvil/server-error e
                           (send! channel (util/write-json-str {:error (:anvil/server-error e)}))

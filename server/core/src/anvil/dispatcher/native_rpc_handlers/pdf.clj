@@ -13,7 +13,7 @@
 (def set-pdf-impl! (util/hook-setter #{get-pdf-renderer get-pdf-render-timeout}))
 
 (swap! dispatcher/native-rpc-handlers merge
-       {"anvil.private.pdf.do_print"      {:fn (fn [req return-path]
+       {"anvil.private.pdf.do_print"      {:fn (fn [{:keys [session-state] :as req} return-path]
                                                  ;; A downlink is holding components to print in RAM.
                                                  ;; Set up a return path so that when the renderer opens the print
                                                  ;; page, it will fetch components from that same downlink,
@@ -26,35 +26,26 @@
                                                          ;; Even within a session, the client shouldn't be able to guess a print key (the PDF's contents might be secret), so
                                                          print-id (random/base32 16)
                                                          print-key (random/base32 32)
-                                                         tmp-session-id (when-not (:id @(:session-state req))
-                                                                          (random/base32 32))
-                                                         session-id (or tmp-session-id (:id @(:session-state req)))
-
+                                                         tmp-url-token (runtime-util/generate-tmp-url-token! session-state)
                                                          new-return-path {:respond! #(do
                                                                                        (swap! (:session-state req) update-in [:print-sessions] dissoc print-id)
-                                                                                       (when tmp-session-id
-                                                                                         (swap! runtime-util/app-sessions dissoc tmp-session-id))
+                                                                                       (runtime-util/clear-temporary-url-token! session-state tmp-url-token)
                                                                                        (dispatcher/respond! return-path %))
-                                                                          :update!  #(dispatcher/update! return-path %)}
-
-                                                         ]
+                                                                          :update!  #(dispatcher/update! return-path %)}]
 
                                                      (when-not same-server-executor
                                                        (throw+ {:anvil/server-error "No executor return trace available: Probably called from wrong environment"}))
 
-                                                     (when tmp-session-id
-                                                       (runtime-util/touch-session! (:session-state req))
-                                                       (swap! runtime-util/app-sessions assoc tmp-session-id (:session-state req)))
-
-                                                     (swap! (:session-state req)
-                                                            assoc-in [:print-sessions print-id] {:key print-key :executor same-server-executor, :ref (first (:args (:call req)))})
+                                                     (swap! session-state
+                                                            assoc-in [:print-sessions print-id]
+                                                            {:key print-key :executor same-server-executor, :ref (first (:args (:call req)))})
 
 
                                                      (dispatcher/report-exceptions-to-return-path new-return-path
                                                        ;; The downlink calls do_print(ref); the renderer gets do_print(url)
                                                        (let [origin (or (:app-origin req)
-                                                                        (app-data/get-default-app-origin (:app-info req)))
-                                                             url (str origin "/_/print/" print-id "/" print-key "?s=" session-id)
+                                                                        (app-data/get-default-app-origin (:environment req)))
+                                                             url (str origin "/_/print/" print-id "/" print-key "?s=" tmp-url-token)
                                                              options (second (:args (:call req)))
                                                              load-timeout (get-pdf-render-timeout (:app-id req))
                                                              req (assoc-in req [:call :args] [url options load-timeout])]

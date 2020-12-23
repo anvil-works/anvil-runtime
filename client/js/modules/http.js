@@ -112,7 +112,7 @@ module.exports = function() {
 
     pyMod["UrlEncodingError"] = Sk.misceval.buildClass(pyMod, function($gbl, $loc) {
     }, "UrlEncodingError", [Sk.builtin.Exception]);
-    Sk.misceval.callsim(servermod.tp$getattr(new Sk.builtin.str("_register_exception_type")), Sk.builtin.str("anvil.http.UrlEncodingError"), pyMod["UrlEncodingError"]);
+    Sk.misceval.callsim(servermod.tp$getattr(new Sk.builtin.str("_register_exception_type")), new Sk.builtin.str("anvil.http.UrlEncodingError"), pyMod["UrlEncodingError"]);
 
     pyMod["url_decode"] = new Sk.builtin.func(function(s) {
         Sk.builtin.pyCheckArgs("url_decode", arguments, 1, 1);
@@ -156,23 +156,33 @@ module.exports = function() {
         });
     }, "HttpError", [Sk.builtin.Exception]);
 
-    var pyGetResponse = function(xhr, json) {
-        if (json && xhr.responseJSON) {
-            return Sk.ffi.remapToPy(xhr.responseJSON);
-        //} else if (xhr.responseXML) {
-        //    return Sk.misceval.call(xmlmod.$d["XMLDocument"], undefined, undefined, undefined, xhr.responseXML);
-        } else if (xhr.responseText !== undefined) {
-            var contentType = xhr.getResponseHeader("content-type") || "";
-            return Sk.misceval.callsim(anvilmod.$d["BlobMedia"], Sk.builtin.str(contentType), Sk.ffi.remapToPy(xhr.responseText));
-        } else {
+    var pyGetResponse = function(r, xhr, json) {
+        if (!(r instanceof ArrayBuffer)) {
             return Sk.builtin.none.none$;
+        }
+        let bytes = new Sk.builtin.bytes(new Uint8Array(r));
+        if (json) {
+            const jsstr = bytes.$jsstr();
+            let json;
+            try {
+                json = JSON.parse(jsstr);
+            } catch(e) {
+                throw new Sk.builtin.ValueError("Returned data is not valid JSON");
+            }
+            return Sk.ffi.remapToPy(json);
+        } else {
+            const contentType = xhr.getResponseHeader("content-type") || "";
+            if (!Sk.__future__.python3) {
+                bytes = new Sk.builtin.str(bytes.$jsstr());
+            }
+            return Sk.misceval.callsim(anvilmod.$d["BlobMedia"], new Sk.builtin.str(contentType), bytes);
         }
     };
 
     // NOTE: `http.request` should be updated to be binary-safe and handle Media objects, like proxy_request used to (check the git history)
     var request = function(kwargs, pyUrl) {
 
-        if (pyUrl) { kwargs["url"] = Sk.ffi.remapToJs(Sk.builtin.str(pyUrl)); }
+        if (pyUrl) { kwargs["url"] = Sk.ffi.remapToJs(new Sk.builtin.str(pyUrl)); }
 
         if (kwargs["username"] && kwargs["password"]) {
             kwargs["headers"] = kwargs["headers"] || {}
@@ -195,12 +205,12 @@ module.exports = function() {
             }
         }
 
-        var params = {url: kwargs["url"], method: kwargs["method"], headers: kwargs["headers"], data: kwargs["data"]};
+        var params = {url: kwargs["url"], method: kwargs["method"], headers: kwargs["headers"], data: kwargs["data"], xhrFields: {responseType: "arraybuffer"}, beforeSend: (xhr)=>xhr.overrideMimeType("application/x-octet-stream")};
         window.setLoading(true);
         return PyDefUtils.suspensionPromise(function(resolve, reject) {
-            $.ajax(params).done(function(r, ts,xhr) {
+            $.ajax(params).done(function(r, ts, xhr) {
                 window.setLoading(false);
-                resolve(pyGetResponse(xhr, kwargs["json"]))
+                resolve(pyGetResponse(r, xhr, kwargs["json"]))
             }).fail(function(xhr, textStatus, errorThrown) {
                 window.setLoading(false);
                 reject(Sk.misceval.callsim(pyMod["HttpError"], Sk.ffi.remapToPy(xhr.status), pyGetResponse(xhr, kwargs["json"])));

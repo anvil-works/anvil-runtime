@@ -1,0 +1,20 @@
+<html>
+<head>
+</head>
+<body>
+
+<script>
+
+    if (window.opener) {
+        window.opener.postMessage({ 
+            fn: "{{callback-fn}}", 
+            args: JSON.parse('{{args-json}}'),
+        }, "{{canonical-url}}");
+    }
+
+    window.close();
+
+</script>
+
+</body>
+</html>

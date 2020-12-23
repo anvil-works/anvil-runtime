@@ -154,8 +154,16 @@ class LiveObjectProxy(anvil.LiveObject):
             return l
 
 
+# Wildcard for unwrap_capability
+class _CapAny(object):
+    def __repr__(self):
+        return "ANY"
+
+
 class Capability(object):
     def __init__(self, scope, mac=None, narrow=None):
+        if type(scope) is not list:
+            raise Exception("The scope of a Capabilty must be a list")
         self._scope = scope
         self._mac = mac
         if mac is None and (len(scope) == 0 or scope[0] == "_"):
@@ -215,6 +223,28 @@ class Capability(object):
             return self._do_get_update()
         else:
             return None if self._queued_update == {} else self._queued_update
+
+    # Sentinel value for unwrap_capability
+    ANY = _CapAny()
+
+#!defFunction(anvil.server,list,capability,scope_pattern)!2: "Checks that its first argument is a valid Capability, and that its scope matches the supplied pattern.\n\nTo match, the scope must:\n - Be at least as broad as the pattern (ie the same length or shorter)\n- Contain the same values in the same position as the pattern - unless that position in the pattern is Capability.ANY, which matches any value\n\nReturns a list of matched scope elements, of the same length as the pattern. (If the scope was broader than required, missing elements are set to None.)" ["unwrap_capability"]
+def unwrap_capability(cap, scope_pattern):
+    if type(cap) is not Capability:
+        raise Exception("Not a valid Capability: '%s'" % str(type(cap)))
+
+    scope = cap.scope
+    ret = [None] * len(scope_pattern)
+
+    if len(scope) > len(scope_pattern):
+        raise Exception("Capability is too narrow: required %s; got %s" % (scope_pattern, scope))
+
+    for i in range(len(scope)):
+        if scope_pattern[i] is Capability.ANY or cap.scope[i] == scope_pattern[i]:
+            ret[i] = cap.scope[i]
+        else:
+            raise Exception("Incorrect Capability: required %s; got %s" % (scope_pattern, cap.scope))
+
+    return ret
 
 
 # DEPRECATED: there is no longer any reason to inherit from this
@@ -276,10 +306,10 @@ class SerializeWithIdentity(object):
         return [my_id, data]
 
 
-def serializable_type(cls, name=None):
+def portable_class(cls, name=None):
     def register(cls, name):
         if not hasattr(cls, "__new__"):
-            raise TypeError("Serializable types must be new-style classes (inherit from object). %s is not a new-style class." % repr(cls))
+            raise TypeError("Portable classes must be new-style classes (inherit from object). %s is not a new-style class." % repr(cls))
         if name is None:
             name = cls.__module__ + "." + cls.__name__
         _value_types[name] = cls
@@ -291,6 +321,10 @@ def serializable_type(cls, name=None):
         return lambda cls: register(cls, name)
     else:
         return register(cls, name)
+
+
+# Old name, for apps written before portable classes were released
+serializable_type = portable_class
 
 
 class LazyMedia(anvil.Media):
@@ -741,7 +775,7 @@ def fill_out_media(json, handle_media_fn, collect_capabilities=None):
         if hasattr(_json, "SERIALIZATION_INFO"):
             type_name, tp = _json.SERIALIZATION_INFO
             if type_name not in _value_types or t_json is not tp:
-                raise SerializationError("Cannot serialize %s (must be registered with @anvil.server.serializable_type) at msg%s" % (t_json, _repr_path(path)))
+                raise SerializationError("Cannot serialize %s (must be registered with @anvil.server.portable_class) at msg%s" % (t_json, _repr_path(path)))
 
             try:
                 serialize = _json.__serialize__
@@ -812,7 +846,7 @@ def fill_out_media(json, handle_media_fn, collect_capabilities=None):
             serialised_val["path"] = list(path)
             obj_descr.append(serialised_val)
             _json = None
-        elif 'numpy' in sys.modules and isinstance(_json, sys.modules['numpy'].generic):
+        elif 'numpy' in sys.modules and hasattr(sys.modules['numpy'], 'generic') and isinstance(_json, sys.modules['numpy'].generic):
 
             import numpy
             _json = numpy.asscalar(_json)
@@ -1212,6 +1246,9 @@ def http_endpoint(path, require_credentials=False, authenticate_users=False, aut
                     d["Access-Control-Allow-Origin"] = enable_cors if isinstance(enable_cors, str) else "*"
                 elif same_app_alternate_origin:
                     d["Access-Control-Allow-Origin"] = same_app_alternate_origin
+                if enable_cors or same_app_alternate_origin and \
+                        "access-control-allow-headers" not in [h.lower() for h in d.keys()]:
+                    d["Access-Control-Allow-Headers"] = "content-type"
                 return d
 
             if method not in methods:

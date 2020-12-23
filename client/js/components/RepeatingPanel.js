@@ -276,6 +276,7 @@ module.exports = function(pyModule, componentsModule) {
                         // We know we have some row quota available, so create the next template instance and paginate it.
                         chainFns.push(() => pyItemOrSuspension, pyItem => Sk.misceval.callOrSuspend(self._anvil.formConstructor, undefined, undefined, [new Sk.builtin.str("item"), pyItem]),
                             pyComponent => {
+                                pyComponent._anvil.delayAddedToPage = true;
                                 return Sk.misceval.chain(addComponent(pyComponent),
                                     () => {
                                         if (pyComponent._anvil.paginate) {
@@ -339,8 +340,14 @@ module.exports = function(pyModule, componentsModule) {
                 },
                 r => {
                     self._anvil.element.removeClass("paginating");
-                    return r;
-                }
+                    return Sk.misceval.chain(
+                        null,
+                        () => {
+                            if (self._anvil.onPage) return self._anvil.pyHiddenContainer._anvil.addedToPage();
+                        },
+                        () => r
+                    );
+                },
             );
         }
 
@@ -365,7 +372,7 @@ module.exports = function(pyModule, componentsModule) {
             } else {
                 if (!self._anvil.lock) 
                     self._anvil.lock = Promise.resolve();
-                self._anvil.lock = self._anvil.lock.then(() => PyDefUtils.asyncToPromise(fn));
+                self._anvil.lock = self._anvil.lock.then(() => PyDefUtils.asyncToPromise(fn, true));
                 return PyDefUtils.suspensionFromPromise(self._anvil.lock);
             }
         }
@@ -409,7 +416,7 @@ module.exports = function(pyModule, componentsModule) {
                                     let dots = qualifiedFormName.split(".").slice(1);
                                     let className = dots[dots.length-1];
 
-                                    let pyFormMod = Sk.sysmodules.mp$subscript(qualifiedFormName);
+                                    let pyFormMod = Sk.sysmodules.mp$subscript(new Sk.builtin.str(qualifiedFormName));
                                     let pyFormClass = pyFormMod && pyFormMod.tp$getattr(new Sk.builtin.str(className));
 
                                     s._anvil.formConstructor = pyFormClass;

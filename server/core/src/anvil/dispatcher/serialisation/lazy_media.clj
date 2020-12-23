@@ -1,14 +1,15 @@
 (ns anvil.dispatcher.serialisation.lazy-media
   (:require [anvil.util :as util]
             [crypto.random :as random]
-            [anvil.dispatcher.types])
+            [anvil.dispatcher.types]
+            [anvil.dispatcher.native-rpc-handlers.util :as rpc-util])
   (:import (anvil.dispatcher.types SerialisableForRpc Media MediaDescriptor)))
 
 (defonce managers (atom {}))
 
 (defn generate-mac [manager id session-state]
   (let [secret (-> (swap! session-state (fn [x] (if-not (:lazy-media-secret x)
-                                                  (assoc x :lazy-media-secret (random/base64 128))
+                                                  (assoc x :lazy-media-secret (random/base64 32))
                                                   x)))
                    (:lazy-media-secret))]
 
@@ -22,15 +23,15 @@
   (let [real-val (generate-mac manager id session-state)]
     (= (util/sha-256 real-val) (util/sha-256 candidate-val))))
 
-(defn get-lazy-media [app-id app session-state manager-id media-key media-id request]
+(defn get-lazy-media [{:keys [app-id app session-state environment] :as request} manager-id media-key media-id]
   (if-not (mac-matches? media-key manager-id media-id session-state)
     (throw (Exception. "Invalid (Lazy) Media object"))
     (if-let [manager-handler (get @managers manager-id)]
-      (manager-handler request media-id session-state app-id app)
+      (manager-handler request media-id)
       (throw (Exception. (str "Invalid (Lazy) Media type " (pr-str manager-id)))))))
 
-(defn mk-LazyMedia [{:keys [manager key id mime-type length name] :as o} app-id app ssm-state]
-  (let [real-media (delay (get-lazy-media app-id app ssm-state manager key id nil))]
+(defn mk-LazyMedia [{:keys [manager key id mime-type length name] :as o} request]
+  (let [real-media (delay (get-lazy-media request manager key id))]
     (reify
       MediaDescriptor
       (getContentType [_this] (or mime-type (.getContentType @real-media)))
@@ -41,7 +42,7 @@
       SerialisableForRpc
       (serialiseForRpc [_this _lo-key] o))))
 
-(defn mk-LazyMedia-with-correct-mac [{:keys [manager id type] :as o} app-id app ssm-state]
-  (mk-LazyMedia (assoc o :key (generate-mac manager id ssm-state)
+(defn mk-LazyMedia-with-correct-mac [{:keys [manager id type] :as o} request]
+  (mk-LazyMedia (assoc o :key (generate-mac manager id (:session-state request))
                          :type (or type ["LazyMedia"]))
-                app-id app ssm-state))
+                request))

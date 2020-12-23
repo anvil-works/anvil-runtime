@@ -130,15 +130,22 @@ def _get_service_client_config(path):
 
 
 class _AppInfo:
+    class _Environment:
+        def __init__(self, description=None, tags=[], **kwargs):
+            self.__dict__.update(name=description, tags=tags, **kwargs)
+
+        def __setattr__(self, key, value):
+            raise AttributeError("This object is read-only")
+
     def __init__(self, id, branch):
-        self.__dict__['id'] = id
-        self.__dict__['branch'] = branch
+        self.__dict__.update(id=id, branch=branch, environment=_AppInfo._Environment())
 
     def __setattr__(self, key, value):
         raise AttributeError("This object is read-only")
 
-    def _setup(self, **kwargs):
+    def _setup(self, environment={}, **kwargs):
         self.__dict__.update(kwargs)
+        self.__dict__['environment'] = _AppInfo._Environment(**environment)
 
 
 app = _AppInfo(None, None)

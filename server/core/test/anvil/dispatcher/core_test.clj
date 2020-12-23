@@ -20,7 +20,7 @@
   (doseq [i (range n)]
     (dispatch! {:call          {:func (or func "anvil.private.echo"),
                                 :args (or args [(nth (cycle app-ids) i)]) :kwargs {}}
-                :app           {}, :app-id (nth (cycle app-ids) i), :app-version nil :app-origin ""
+                :app           {}, :app-id (nth (cycle app-ids) i), :app-origin ""
                 :session-state nil
                 :origin        :test
                 :thread-id     (str "test-" (random/hex 16))

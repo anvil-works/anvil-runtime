@@ -100,54 +100,59 @@ module.exports = function(pyModule) {
         },pyModule, $loc, properties,PyDefUtils.assembleGroupEvents("FlowPanel", /*!componentEvents(FlowPanel)!1*/["universal"]), pyModule["Container"]);
 
         /*!defMethod(_,component,[index=],[width=])!2*/ "Add a component to this panel. Optionally specify the position in the panel to add it, or the width to apply to components that can't self-size width-wise."
-        $loc["add_component"] = new PyDefUtils.funcWithKwargs(function(kwargs, self, component) {
-            if (!component || !component._anvil) { throw new Sk.builtin.Exception("Argument to add_component() must be a component"); }
-
-            var element = component._anvil.element;
-            var celt = element;
-
-            if (!component._anvil.metadata.invisible) {
-            	celt = $('<div>')
-                    .addClass("flow-panel-item")
-                    .addClass("anvil-always-inline-container")
-                    .addClass("hide-with-component")
-                    .append(element);
-
-              if (('visible' in component._anvil.propMap) && !component._anvil.getPropJS("visible")) {
-                  celt.addClass("visible-false");
-              }
-
-              if (!element.hasClass('anvil-inlinable')) {
-                  celt.width(kwargs['width'] || 'auto');
-	            }
-
-	            if (typeof(kwargs["index"]) == "number") {
-
-	                var elts = self._anvil.gutter.children();
-	                if (kwargs["index"] < elts.length) {
-	                    celt.insertBefore(elts[kwargs["index"]]);
-	                    return;
-	                    // else fall through and insert at the end
-	                }
-	            }
-	            self._anvil.gutter.append(celt);
+        $loc["add_component"] = new PyDefUtils.funcWithKwargs(function (kwargs, self, component) {
+            if (!component || !component._anvil) {
+                throw new Sk.builtin.Exception("Argument to add_component() must be a component");
             }
-            return Sk.misceval.chain(Sk.misceval.callsimOrSuspend(pyModule["Container"].add_component, self, component, kwargs),
-                () => {
-                    let rmFn = component._anvil.parent.remove;
-                    component._anvil.parent.remove = () => {
-                        if (celt !== element) { celt.detach(); }
-                        return rmFn();
-                    };
+            return Sk.misceval.chain(Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs), () => {
 
-                    // Now that we've added it to our components array, move it to the right position.
-                    if (typeof(kwargs["index"]) == "number") {
-                        var c = self._anvil.components.pop(); // pop off this new component (pushed on by super.add_component())
-                        self._anvil.components.splice(kwargs["index"], 0, c);
+
+                let element = component._anvil.element;
+                let celt;
+                const idx = kwargs["index"];
+
+                if (!component._anvil.metadata.invisible) {
+                    celt = $("<div>")
+                        .addClass("flow-panel-item")
+                        .addClass("anvil-always-inline-container")
+                        .addClass("hide-with-component")
+                        .append(element);
+
+                    if ("visible" in component._anvil.propMap && !component._anvil.getPropJS("visible")) {
+                        celt.addClass("visible-false");
                     }
-                    return Sk.builtin.none.none$;
+
+                    if (!element.hasClass("anvil-inlinable")) {
+                        celt.width(kwargs["width"] || "auto");
+                    }
+
+                    if (typeof idx == "number") {
+                        const elts = self._anvil.gutter.children();
+                        if (idx < elts.length) {
+                            celt.insertBefore(elts[idx]);
+                        } else {
+                            self._anvil.gutter.append(celt);
+                        }
+                    } else {
+                        self._anvil.gutter.append(celt);
+                    }
                 }
-            );
+
+                if (typeof idx == "number") {
+                    const c = self._anvil.components.pop(); // pop off this new component (pushed on by super.add_component())
+                    self._anvil.components.splice(idx, 0, c);
+                }
+
+                let rmFn = component._anvil.parent.remove;
+                component._anvil.parent.remove = () => {
+                    if (celt) {
+                        celt.detach();
+                    }
+                    return rmFn();
+                };
+
+                return Sk.builtin.none.none$;
+            });
         });
 
     }, /*!defClass(anvil,FlowPanel,Container)!*/ "FlowPanel", [pyModule["Container"]]);

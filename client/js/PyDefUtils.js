@@ -9,7 +9,7 @@ var PyDefUtils = {};
 PyDefUtils.loadModule = function(name, modvars) {
 
     var pyModule = new Sk.builtin.module();
-    Sk.sysmodules.mp$ass_subscript(name, pyModule);
+    Sk.sysmodules.mp$ass_subscript(new Sk.builtin.str(name), pyModule);
     pyModule.$js = "/* source code not available */";
     pyModule.$d = modvars;
 
@@ -24,11 +24,11 @@ PyDefUtils.loadModule = function(name, modvars) {
 
 // Get a previously-loaded module. Throws exception if not already loaded.
 PyDefUtils.getModule = function(name) {
-    return Sk.sysmodules.mp$subscript(name);
+    return Sk.sysmodules.mp$subscript(new Sk.builtin.str(name));
 }
 
 PyDefUtils.staticmethod = function(pyFunc) {
-    return Sk.misceval.callsim(Sk.builtins['staticmethod'], pyFunc);
+    return new Sk.builtin.staticmethod(pyFunc);
 }
 
 // Skulpt functions that take keyword arguments must be marked with the
@@ -317,11 +317,12 @@ PyDefUtils.callAsync = function() {
 };
 
 // This is really "suspensionToPromise."
-PyDefUtils.asyncToPromise = function(fn) {
+PyDefUtils.asyncToPromise = function(fn, noOnError=false) {
     return Sk.misceval.asyncToPromise(fn, PyDefUtils.suspensionHandlers).catch(function(e) {
 
-        // We may wish to add a parameter to callAsync indicating whether we actually want to manually onerror.
-        window.onerror(null, null, null, null, e);
+        if (!noOnError) {
+            window.onerror(null, null, null, null, e);
+        }
 
         throw e;
     });
@@ -363,10 +364,10 @@ PyDefUtils.raiseEventOrSuspend = function(eventArgs, self, eventName) {
         kwa.push("sender");
         kwa.push(self);
 
-        chainFns.push(() => (Sk.misceval.callOrSuspend(handler, undefined, undefined, kwa) || true));
+        chainFns.push(() => (Sk.misceval.callOrSuspend(handler, undefined, undefined, kwa) || Sk.builtin.bool.true$));
     }
 
-    return Sk.misceval.chain(undefined, ...chainFns);
+    return Sk.misceval.chain(Sk.builtin.none.none$, ...chainFns);
 };
 
 PyDefUtils.raiseEventAsync = function(eventArgs, self, eventName) {
@@ -431,15 +432,6 @@ PyDefUtils.mapGetter = function(name, remapFn) {
     }
 }
 
-// The Skulpt __dict__ dance - we should not need to do this!
-PyDefUtils.cleanDictForObject = function (obj) {
-    let dict = obj.tp$getattr(new Sk.builtin.str("__dict__"));
-    dict = new Sk.builtin.dict(dict);
-    try {
-        dict.mp$del_subscript(new Sk.builtin.str("__dict__"));
-    } catch(e) {}
-    return dict;
-}
 
 PyDefUtils.setAttrsFromDict = function (obj, dict) {
     let items = dict.tp$getattr(new Sk.builtin.str("items"));
@@ -499,9 +491,9 @@ PyDefUtils.mkSerializePreservingIdentity = function(serialize) {
         pyGlobals.mp$ass_subscript(pyMaxKey, new Sk.builtin.int_(pyMyId.v+1));
 
         self._anvil.$lastSerialKey = {pyId: pyMyId, pyGlobals: pyGlobals};
-
-        let val = serialize ? serialize(self) : PyDefUtils.cleanDictForObject(self);
-        return Sk.misceval.chain(val, (val) =>  Sk.builtin.list([pyMyId, val]));
+        
+        let val = serialize ? serialize(self) : Sk.abstr.lookupSpecial(self, Sk.builtin.str.$dict);
+        return Sk.misceval.chain(val, (val) =>  new Sk.builtin.list([pyMyId, val]));
     });
 };
 
@@ -582,8 +574,8 @@ var propertyGroups = {
         icon: {
             name: "icon",
             type: "icon",
-            defaultValue: Sk.builtin.str(""),
-            exampleValue: Sk.builtin.str("fa:user"),
+            defaultValue: new Sk.builtin.str(""),
+            exampleValue: new Sk.builtin.str("fa:user"),
             description: "The icon to display on this component. Either a URL, or a FontAwesome Icon, e.g. 'fa:user'.",
             pyVal: true,
             important: true,
@@ -1197,58 +1189,64 @@ PyDefUtils.assembleGroupProperties = function(groupList, overrides) {
 };
 
 PyDefUtils.setupDefaultMouseEvents = function(self) {
-    self._anvil.element.on("mouseenter", function(e) {
-        var offset = self._anvil.element.offset();
+    self._anvil.element.on("mouseenter", (e) => {
+        const offset = self._anvil.element.offset();
         PyDefUtils.raiseEventAsync({x: e.pageX - offset.left, y: e.pageY - offset.top}, self, "mouse_enter");
     });
 
-    self._anvil.element.on("mouseleave", function(e) {
-        var offset = self._anvil.element.offset();
+    self._anvil.element.on("mouseleave", (e) => {
+        const offset = self._anvil.element.offset();
         PyDefUtils.raiseEventAsync({x: e.pageX - offset.left, y: e.pageY - offset.top}, self, "mouse_leave");
     });
 
-    self._anvil.element.on("mousemove", function(e) {
-        var offset = self._anvil.element.offset();
+    self._anvil.element.on("mousemove", (e) => {
+        const offset = self._anvil.element.offset();
         PyDefUtils.raiseEventAsync({x: e.pageX - offset.left, y: e.pageY - offset.top, button: -1/*e.which is weird/broken*/}, self, "mouse_move");
     });
 
-    self._anvil.element.on("touchmove", function(e) {
-        var offset = self._anvil.element.offset();
-        var handled = PyDefUtils.raiseEventOrSuspend({x: e.originalEvent.changedTouches[0].pageX - offset.left, y: e.originalEvent.changedTouches[0].pageY - offset.top, button: -1/*e.which is weird/broken*/}, self, "mouse_move");
-        if (handled) {
-            PyDefUtils.asyncToPromise(function() { return handled; });
+    self._anvil.element.on("touchmove", (e) => {
+        const offset = self._anvil.element.offset();
+        const has_handler = self._anvil.eventHandlers["mouse_move"] !== undefined;
+        if (has_handler) {
+            const x = e.originalEvent.changedTouches[0].pageX - offset.left;
+            const y = e.originalEvent.changedTouches[0].pageY - offset.top
+            PyDefUtils.raiseEventAsync({ x, y, button: -1 /*e.which is weird/broken*/ }, self, "mouse_move");
             e.stopPropagation();
             e.preventDefault();
         }
     });
 
-    self._anvil.element.on("touchend", function(e) {
-        var offset = self._anvil.element.offset();
-        var handled = PyDefUtils.raiseEventOrSuspend({x: e.originalEvent.changedTouches[0].pageX - offset.left, y: e.originalEvent.changedTouches[0].pageY - offset.top, button: e.which}, self, "mouse_up");
-        if (handled) {
-            PyDefUtils.asyncToPromise(function() { return handled; });
+    self._anvil.element.on("touchend", (e) => {
+        const offset = self._anvil.element.offset();
+        const has_handler = self._anvil.eventHandlers["mouse_up"] !== undefined;
+        if (has_handler) {
+            const x = e.originalEvent.changedTouches[0].pageX - offset.left;
+            const y = e.originalEvent.changedTouches[0].pageY - offset.top;
+            PyDefUtils.raiseEventAsync({ x, y, button: e.which }, self, "mouse_up");
             e.stopPropagation();
             e.preventDefault();
         }
     });
 
-    self._anvil.element.on("mouseup", function(e) {
-        var offset = self._anvil.element.offset();
-        PyDefUtils.raiseEventAsync({x: e.pageX - offset.left, y: e.pageY - offset.top, button: e.which}, self, "mouse_up");
+    self._anvil.element.on("mouseup", (e) => {
+        const offset = self._anvil.element.offset();
+        PyDefUtils.raiseEventAsync({ x: e.pageX - offset.left, y: e.pageY - offset.top, button: e.which }, self, "mouse_up");
     });
 
-    self._anvil.element.on("touchstart", function(e) {
-        var offset = self._anvil.element.offset();
-        var handled = PyDefUtils.raiseEventOrSuspend({x: e.originalEvent.changedTouches[0].pageX - offset.left, y: e.originalEvent.changedTouches[0].pageY - offset.top, button: e.which}, self, "mouse_down");
-        if (handled) {
-            PyDefUtils.asyncToPromise(function() { return handled; });
+    self._anvil.element.on("touchstart", (e) => {
+        const offset = self._anvil.element.offset();
+        const has_handler = self._anvil.eventHandlers["mouse_down"] !== undefined;
+        if (has_handler) {
+            const x = e.originalEvent.changedTouches[0].pageX - offset.left;
+            const y = e.originalEvent.changedTouches[0].pageY - offset.top;
+            PyDefUtils.raiseEventAsync({x, y, button: e.which}, self, "mouse_down");
             e.stopPropagation();
             e.preventDefault();
         }
     });
 
-    self._anvil.element.on("mousedown", function(e) {
-        var offset = self._anvil.element.offset();
+    self._anvil.element.on("mousedown", (e) => {
+        const offset = self._anvil.element.offset();
         PyDefUtils.raiseEventAsync({x: e.pageX - offset.left, y: e.pageY - offset.top, button: e.which}, self, "mouse_down");
     });
 };
@@ -1394,17 +1392,27 @@ PyDefUtils.getUrlForMedia = function(pyMedia) {
                     return Sk.misceval.callsimOrSuspend(Sk.abstr.gattr(pyMedia, new Sk.builtin.str("get_bytes")));
                 },
                 function (c) {
-                    var bytes = new Uint8Array(c.v.length);
-                    for (var i=0; i < c.v.length; i++) {
-                        bytes[i] = c.v.charCodeAt(i);
-                    }
+                    const bytes = PyDefUtils.getUint8ArrayFromPyBytes(c);
                     var blob = new Blob([bytes], {type: contentType.v});
                     return wrapBlob(blob);
+
                 }
             );
         }
     });
 };
+
+PyDefUtils.getUint8ArrayFromPyBytes = function(bytesOrStr) {
+    if (Sk.__future__.python3) {
+        return new Uint8Array(bytesOrStr.v);
+    } else {
+        const bytes = new Uint8Array(bytesOrStr.v.length);
+        for (var i=0; i < bytesOrStr.v.length; i++) {
+            bytes[i] = bytesOrStr.v.charCodeAt(i);
+        }
+        return bytes;
+    }
+}
 
 PyDefUtils.logPagination = false;
 
@@ -1513,40 +1521,32 @@ PyDefUtils.repaginateChildren = (self, skip, startAfter, remainingRowQuota) => {
     
 };
 
-let WrappedPythonValue = function(v) { this.v = v; };
+class WrappedPyObj {
+    constructor(obj) {
+        this.v = obj;
+        this.$isPyWrapped = true;
+        this.unwrap = () => obj;
+    }
+};
+
+function WrappedPyCallable(obj) {
+    const wrapped =(...args) => {
+        const ret = Sk.misceval.chain(obj.tp$call(args.map((x) => Sk.ffi.toPy(x))), (res) => PyDefUtils.remapToJsOrWrap(res));
+        if (ret instanceof Sk.misceval.Suspension) {
+            return Sk.misceval.asyncToPromise(() => ret);
+        }
+        return ret;
+    };
+    wrapped.v = obj;
+    wrapped.unwrap = () => obj;
+    wrapped.$isPyWrapped = true;
+    return wrapped;
+}
 
 PyDefUtils.remapToJsOrWrap = function remapToJsOrWrap(pyObj) {
-    let oldRemap = Sk.ffi.remapToJs;
-    Sk.ffi.remapToJs = function(pyObj) {
-        let v = oldRemap(pyObj);
-        if (v === undefined) {
-            v = new WrappedPythonValue(pyObj);
-        }
-        return v;
-    }
-    try {
-        return Sk.ffi.remapToJs(pyObj);
-    } finally {
-        Sk.ffi.remapToJs = oldRemap;
-    }
+    return Sk.ffi.remapToJs(pyObj, { unhandledHook: (obj) => (obj.tp$call ? WrappedPyCallable(obj) : new WrappedPyObj(obj)) });
 }
-
-PyDefUtils.unwrapOrRemapToPy = function unwrapOrRemapToPy(jsObj) {
-    let oldRemap = Sk.ffi.remapToPy;
-    Sk.ffi.remapToPy = function(jsObj) {
-        if (jsObj instanceof WrappedPythonValue) {
-            return jsObj.v;
-        } else {
-            return oldRemap(jsObj);
-        }
-    }
-    try {
-        return Sk.ffi.remapToPy(jsObj);
-    } finally {
-        Sk.ffi.remapToPy = oldRemap;
-    }
-}
-
+PyDefUtils.unwrapOrRemapToPy = Sk.ffi.remapToPy; // keep this around even though it is just an alias
 
 PyDefUtils.callJs = (pyComponent, pyFnName, ...pyArgs) => {
     let err = function(msg) {
@@ -1580,7 +1580,7 @@ PyDefUtils.callJs = (pyComponent, pyFnName, ...pyArgs) => {
         }
     }).then(v => {
         try {
-            return PyDefUtils.unwrapOrRemapToPy(v);
+            return Sk.ffi.toPy(v);
         } catch(e) {
             err("Could not convert return value from Javascript to Python when calling " + fnName + ": " + v);
         }

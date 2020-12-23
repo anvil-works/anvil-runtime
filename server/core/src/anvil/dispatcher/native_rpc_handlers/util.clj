@@ -13,8 +13,7 @@
 (def ^:dynamic *app* nil)
 (def ^:dynamic *app-info* nil)
 (def ^:dynamic *app-id* nil)
-(def ^:dynamic *app-version* nil)
-(def ^:dynamic *app-branch* nil)
+(def ^:dynamic *environment* nil)
 (def ^:dynamic *app-origin* nil)
 (def ^:dynamic *req* nil)
 (def ^:dynamic *thread-id* nil)
@@ -47,18 +46,18 @@
   ([f time-quota-key]
    {:fn
     (fn [{{:keys [live-object args kwargs func] :as call} :call
-          :keys                                           [app app-id app-info app-origin session-state origin thread-id app-version app-branch]
+          :keys                                           [app app-id app-info app-origin session-state origin thread-id environment]
           :as                                             request}
          return-path]
       (worker-pool/run-task! {:type :native-rpc,
-                              :name (if live-object (format "%s.%s" (:backend live-object) func) func)}
+                              :name (if live-object (format "%s.%s" (:backend live-object) func) func)
+                              :tags (worker-pool/get-task-tags-for-dispatch-request request)}
         (binding [*app-id* app-id
                   *app* app
                   *app-info* app-info
+                  *environment* environment
                   *app-origin* app-origin
-                  *app-version* app-version
-                  *app-branch* app-branch
-                  *req* call
+                  *req* request
                   *thread-id* thread-id
                   *session-state* session-state
                   *rpc-print* (fn [& args]
@@ -109,7 +108,7 @@
                                                    (dissoc :anvil/server-error))}))
                 (finally
                   (when time-quota-key
-                    (quota/decrement! session-state app-id
+                    (quota/decrement! session-state environment
                                       time-quota-key
                                       (/ (- @stop-time start-time) 1000))))))
             (catch clojure.lang.ArityException e
@@ -124,12 +123,13 @@
                                      {:error {:type "anvil.server.InternalError" :message (str "Internal server error: " error-id)}})))))))}))
 
 (defn wrap-lazy-media-server [f]
-  (fn [request media-id ssm-state app-id app]
+  (fn [{:keys [app-id environment app session-state] :as request} media-id]
     (binding [*app-id* app-id
+              *environment* environment
               *app* app
-              *session-state* ssm-state
+              *session-state* session-state
               *client-request?* true]
-      (f request media-id))))
+      (f media-id))))
 
 (def ^:dynamic *permissions* [])
 
@@ -140,8 +140,8 @@
   ([obj] (wrap-live-object-backend obj nil))
   ([obj time-quota-key]
    (wrap-native-fn (fn [kwargs & args]
-                     (let [{:keys [id permissions _mac]} (:live-object *req*)
-                           method (:func *req*)
+                     (let [{:keys [id permissions _mac]} (:live-object (:call *req*))
+                           method (:func (:call *req*))
                            id-decoded (json/read-str id :key-fn keyword)]
                        (try+
                          (if-let [method-fn (get obj method)]

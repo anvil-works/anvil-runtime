@@ -13,6 +13,7 @@ from ._server import (register,
                       callable_as, 
                       Serializable,
                       serializable_type,
+                      portable_class,
                       _register_exception_type, 
                       AnvilWrappedError, 
                       SerializationError, 
@@ -33,6 +34,7 @@ from ._server import (register,
                       api_request as request, 
                       HttpResponse, 
                       Capability,
+                      unwrap_capability,
                       cookies,
                       CallContext)
 
@@ -79,7 +81,7 @@ def reconnect(closed_connection):
         # We may want to move this retry-forever loop into _get_connection, depending on whether we want
         # uplink scripts to fail immediately or not.
         while True:
-            time.sleep(1)
+            time.sleep(10 if _fatal_error else 1)
             print("Reconnecting Anvil Uplink...")
             try:
                 _get_connection()
@@ -142,9 +144,11 @@ class _Connection(WebSocketClient):
             time.sleep(10)
 
     def closed(self, code, reason=None):
-        print("Anvil websocket closed (code %s, reason=%s)" % (code, reason))
+        if not _quiet:
+            print("Anvil websocket closed (code %s, reason=%s)" % (code, reason))
         self._signal_ready()
-        reconnect(self)
+        if _key:
+            reconnect(self)
 
     def received_message(self, message):
         global _fatal_error
@@ -159,9 +163,11 @@ class _Connection(WebSocketClient):
 
             if 'auth' in data:
                 anvil.app._setup(**data.get('app-info', {}))
+                CallContext._DEFAULT_TYPE = context.type = data.get('priv', 'uplink')
 
                 if not _quiet:
-                    print("Authenticated OK")
+                    print("Connected to \"%s\" as %s" % (anvil.app.environment.name, "SERVER" if context.type == 'uplink' else "CLIENT"))
+                    _fatal_error = None
                 if _init_session is None:
                     self._signal_ready()
                 else:
@@ -253,6 +259,20 @@ def connect(key, url='wss://anvil.works/uplink', quiet=False, init_session=None,
     _init_session = init_session
     _get_extra_headers = (lambda: extra_headers) if type(extra_headers) is dict else extra_headers
     _get_connection()
+
+
+def disconnect():
+    global _key, _url, _connection
+    _key = _url = None
+    with _connection_lock:
+        c = _connection
+        _connection = None
+    if c:
+        try:
+            c.close()
+        except:
+            pass
+
 
 
 def run_forever():

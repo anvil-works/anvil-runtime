@@ -101,7 +101,7 @@ module.exports.defineSystemComponents = function defineSystemComponents(pyModule
 
         $loc["jump_to_first_page"] = new Sk.builtin.func(self => {
             if (self._anvil.repaginating) 
-                return;
+                return Sk.builtin.none.none$;
             self._anvil.repaginating = true;
             self._anvil.pagination = {
                 startAfter: null,
@@ -120,6 +120,7 @@ module.exports.defineSystemComponents = function defineSystemComponents(pyModule
                     }];
                     self._anvil.repaginating = false;
                     self._anvil.updatePaginationControls();
+                    return Sk.builtin.none.none$;
                 }
             );
         });
@@ -136,7 +137,10 @@ module.exports.defineSystemComponents = function defineSystemComponents(pyModule
                         () => { self._anvil.repaginating = true },
                     ),
                 ),
-                () => { self._anvil.repaginating = false; },
+                () => {
+                    self._anvil.repaginating = false; 
+                    return Sk.builtin.none.none$
+                },
             );
         });
         
@@ -194,14 +198,14 @@ module.exports.defineSystemComponents = function defineSystemComponents(pyModule
         $loc["get_page"] = new Sk.builtin.func(self => {
             let p = self._anvil.paginatorPages && self._anvil.paginatorPages[self._anvil.paginatorPages.length - 1];
             if (p) {
-                return p.currentPage;
+                return Sk.ffi.remapToPy(p.currentPage);
             }
         });
 
         $loc["get_first_index_on_page"] = new Sk.builtin.func(self => {
             let p = self._anvil.paginatorPages && self._anvil.paginatorPages[self._anvil.paginatorPages.length - 1];
             if (p) {
-                return p.currentIndex;
+                return Sk.ffi.remapToPy(p.currentIndex);
             }
         });
 
@@ -473,9 +477,7 @@ module.exports.newPythonComponent = function newPythonComponent(component, compo
             pyComponent = Sk.misceval.chain(
                 Sk.importModule(fullPackageName, false, true),
                 function () {
-                    // Yes, sysmodules is indexed with JS strings.
-                    // No, this makes no sense.
-                    let pyFormMod = Sk.sysmodules.mp$subscript(fullPackageName);
+                    let pyFormMod = Sk.sysmodules.mp$subscript(new Sk.builtin.str(fullPackageName));
                     let pyFormClass = pyFormMod && pyFormMod.tp$getattr(new Sk.builtin.str(className));
                     if (!pyFormMod) {
                         return mkInvalidComponent(anvilMod, "No such form: \""+(depId ? fullPackageName : formName)+"\"");

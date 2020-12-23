@@ -11,17 +11,27 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         _now: new Sk.builtin.func(function() { return Sk.ffi.remapToPy(Date.now()); }),
     };
 
-    let ByteString = Sk.__future__.python3 ? Sk.builtin.bytes : Sk.builtin.str;
-
-    let arrayBufferToStr = arrayBuffer => {
-        let binary = "";
-        var bytes = new Uint8Array(arrayBuffer);
-        var length = bytes.byteLength;
-        for (var i = 0; i < length; i++) {
-            binary += String.fromCharCode(bytes[i]);
-        }
-        return binary;
+    let ByteString, arrayBufferToBytesInternal;
+    if (Sk.__future__.python3) {
+        ByteString = Sk.builtin.bytes;
+        arrayBufferToBytesInternal = (arrayBuffer) => {
+            return new Uint8Array(arrayBuffer);
+        };
+    } else {
+        ByteString = Sk.builtin.str;
+        // since we're in python2 bytes are represented as binary strings
+        arrayBufferToBytesInternal = (arrayBuffer) => {
+            let binary = "";
+            var bytes = new Uint8Array(arrayBuffer);
+            var length = bytes.byteLength;
+            for (var i = 0; i < length; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return binary;
+        };
     }
+
+
 
     /**
     id: anvil_module
@@ -176,9 +186,9 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                 // No, this makes no sense.
                 let pyFormMod;
                 try {
-                    pyFormMod = Sk.sysmodules.mp$subscript(window.anvilAppMainPackage + "." + formName);
+                    pyFormMod = Sk.sysmodules.mp$subscript(new Sk.builtin.str(window.anvilAppMainPackage + "." + formName));
                 } catch (e) {
-                    pyFormMod = Sk.sysmodules.mp$subscript(formName);
+                    pyFormMod = Sk.sysmodules.mp$subscript(new Sk.builtin.str(formName));
                 }
 
 
@@ -319,7 +329,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                       processData: false,
                     }).then(function(r,ts,xhr) {
                         window.setLoading(false);
-                        resolve({data: r, contentType: xhr.getResponseHeader("content-type")});
+                        resolve({data: r.arrayBuffer(), contentType: xhr.getResponseHeader("content-type")});
                     }, function(xhr, textStatus, errorThrown) {
                         window.setLoading(false);
                         let help = "(HTTP "+xhr.status+")";
@@ -343,9 +353,16 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         $loc["get_bytes"] = new Sk.builtin.func(function(self) {
             return new PyDefUtils.suspensionPromise(function(resolve, reject) {
                 doFetch(self).then(function(r) {
-                    return r.data.arrayBuffer();
-                }, reject).then(function(arrayBuffer) {
-                    resolve(new ByteString(arrayBufferToStr(arrayBuffer)))
+                    return r.data;
+                }, reject).then(function(arrayBufferOrStr) {
+                    if (typeof(arrayBufferOrStr) === "string") {
+                        resolve(new ByteString(arrayBufferOrStr));
+                    } else {
+                        resolve(new ByteString(arrayBufferToBytesInternal(arrayBufferOrStr)))
+                    }
+                }).catch(e => {
+                    console.error(e);
+                    reject(e);
                 });
             });
         });
@@ -381,8 +398,10 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                 if (!Sk.builtin.checkString(contentType)) {
                     throw new Sk.builtin.TypeError("content_type must be a string, not " + Sk.abstr.typeName(contentType));
                 }
-                if (!Sk.builtin.checkBytes(content)) {
+                if (Sk.__future__.python3 && !Sk.builtin.checkBytes(content)) {
                     throw new Sk.builtin.TypeError("content must be a byte-string, not " + Sk.abstr.typeName(content));
+                } else if (!Sk.__future__.python3 && !Sk.builtin.checkString(content)) {
+                    throw new Sk.builtin.TypeError("content must be a string or byte-string, not " + Sk.abstr.typeName(content));
                 }
                 self._contentType = Sk.ffi.remapToJs(contentType);
                 self._data = Sk.ffi.remapToJs(content);
@@ -400,16 +419,24 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                 return Sk.builtin.none.none$;
             }
 
+            let jsstr;
             if (self._data instanceof Blob) {
                 return new PyDefUtils.suspensionPromise(function(resolve, reject) {
                     var fr = new FileReader();
                     fr.onloadend = function() { resolve(new Sk.builtin.str(fr.result)); };
                     fr.readAsDataURL(self._data);
                 });
+            } else if (self._data instanceof Uint8Array) {
+                jsstr = ""
+                const uint8 = self._data;
+                for (let i = 0; i < uint8.length; i++) {
+                    jsstr += String.fromCharCode(uint8[i]);
+                } 
             } else {
-                var b64 = require("../lib/b64");
-                return new Sk.builtin.str("data:" + self._contentType.replace(/;/g, "") + ";base64," + b64.base64EncStr(self._data));
+                jsstr = self._data;
             }
+            var b64 = require("../lib/b64");
+            return new Sk.builtin.str("data:" + self._contentType.replace(/;/g, "") + ";base64," + b64.base64EncStr(jsstr));
         });
 
         $loc["get_content_type"] = new Sk.builtin.func(function(self) {
@@ -427,7 +454,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                         fr.readAsBinaryString(self._data);
                     } else {
                         fr.onloadend = function() { 
-                            resolve(new ByteString(arrayBufferToStr(fr.result)));
+                            resolve(new ByteString(arrayBufferToBytesInternal(fr.result)));
                         };
                         fr.readAsArrayBuffer(self._data);
                     }
@@ -439,7 +466,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
 
         $loc["get_name"] = new Sk.builtin.func(function(self) {
             if (self._name !== undefined) {
-                return Sk.builtin.str(self._name);
+                return new Sk.builtin.str(self._name);
             } else {
                 return Sk.builtin.none.none$;
             }
@@ -480,7 +507,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
 
             var serverModule = PyDefUtils.getModule("anvil.server");
             var pyKwargs = [];
-            var args = Sk.builtin.list([Sk.ffi.remapToPy(self._spec)]);
+            var args = new Sk.builtin.list([Sk.ffi.remapToPy(self._spec)]);
 
             return Sk.misceval.chain(
                 serverModule.$d["__anvil$doRpcCall"](pyKwargs, args, "anvil.private.fetch_lazy_media"),
@@ -511,7 +538,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
             var serverModule = PyDefUtils.getModule("anvil.server");
             var appOrigin = Sk.ffi.remapToJs(serverModule.$d["app_origin"]);//.replace(/[^\/]+\/?$/, "");
             var isDownload = pyDownload ? Sk.misceval.isTrue(pyDownload) : true;
-            return new Sk.builtin.str(appOrigin + "/_/lm/" + encodeURIComponent(self._spec.manager) + "/" + encodeURIComponent(self._spec.key) + "/" + encodeURIComponent(self._spec.id) + "/" + encodeURIComponent(self._spec.name || "") + "?s=" + window.anvilSessionId + (isDownload ? "" : "&nodl=1"));
+            return new Sk.builtin.str(appOrigin + "/_/lm/" + encodeURIComponent(self._spec.manager) + "/" + encodeURIComponent(self._spec.key) + "/" + encodeURIComponent(self._spec.id) + "/" + encodeURIComponent(self._spec.name || "") + "?s=" + window.anvilSessionToken + (isDownload ? "" : "&nodl=1"));
         });
 
         $loc["get_name"] = new Sk.builtin.func(function(self) {
@@ -521,7 +548,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
 
     pyModule["create_lazy_media"] = new Sk.builtin.func(PyDefUtils.withRawKwargs(function(kwargs) {
         var serverModule = PyDefUtils.getModule("anvil.server");
-        return Sk.misceval.applyOrSuspend(serverModule.tp$getattr(new Sk.builtin.str("call_$rn$")), undefined, undefined, kwargs, [Sk.builtin.str("anvil.private.mk_LazyMedia")].concat(Array.prototype.slice.call(arguments, 1)));
+        return Sk.misceval.applyOrSuspend(serverModule.tp$getattr(new Sk.builtin.str("call")), undefined, undefined, kwargs, [new Sk.builtin.str("anvil.private.mk_LazyMedia")].concat(Array.prototype.slice.call(arguments, 1)));
     }));
 
     pyModule["LiveObjectProxy"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
@@ -538,7 +565,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
 
         $loc["__getattr__"] = new Sk.builtin.func(function(self, pyName) {
 
-            var name = Sk.ffi.remapToJs(pyName).replace("_$rw$", "").replace("_$rn$", "");
+            var name = pyName.toString();
 
             if (self._spec.methods.indexOf(name) > -1) {
                 return new Sk.builtin.func(PyDefUtils.withRawKwargs(function(pyKwargs) {
@@ -651,7 +678,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         });
 
         $loc["__hash__"] = new Sk.builtin.func(function(self) {
-            return Sk.builtin.hash(new Sk.builtin.tuple([self._spec.id, self._spec.backend]));
+            return Sk.builtin.hash(new Sk.builtin.tuple([self._spec.id, self._spec.backend].map((x) => Sk.ffi.remapToPy(x))));
         });
 
         var LiveObjectIterator = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
@@ -805,7 +832,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                     a.find(".modal-dialog").addClass("modal-" + size);
 
                     if ('title' in kwargs && kwargs['title'] && kwargs['title'] != Sk.builtin.none.none$) {
-                        a.find(".modal-title").text(Sk.builtin.str(kwargs.title).$jsstr());
+                        a.find(".modal-title").text(new Sk.builtin.str(kwargs.title).$jsstr());
                     } else {
                         a.find(".modal-header").hide();
                     }
@@ -813,7 +840,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                     a.find(".modal-body").removeClass('alert-text').text("");
 
                     if ('content' in kwargs && kwargs['content'] && kwargs['content'] != Sk.builtin.none.none$) {
-                        if (kwargs.content instanceof pyModule["Component"]) {
+                        if (Sk.misceval.isTrue(Sk.builtin.isinstance(kwargs.content, pyModule["Component"]))) {
                             pyForm = kwargs.content;
                             a.find(".modal-body").text("").append(pyForm._anvil.element);
                             Sk.misceval.callsim(pyForm.tp$getattr(new Sk.builtin.str("set_event_handler")),
@@ -823,7 +850,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                                 a.modal("hide");
                             }));
                         } else {
-                            a.find(".modal-body").addClass('alert-text').text(Sk.builtin.str(kwargs.content).$jsstr());
+                            a.find(".modal-body").addClass('alert-text').text(new Sk.builtin.str(kwargs.content).$jsstr());
                         }
                     } else {
                         a.find(".modal-body").hide();

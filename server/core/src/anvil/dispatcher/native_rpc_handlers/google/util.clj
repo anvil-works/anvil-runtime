@@ -7,7 +7,8 @@
             [org.httpkit.client :as http]
             [clojure.data.json :as json]
             [clojure.data.xml :as xml]
-            [clojure.tools.logging :as log])
+            [clojure.tools.logging :as log]
+            [anvil.util :as util])
   (:import (java.util Date)))
 
 (defn get-google-service-props []
@@ -38,7 +39,7 @@
 (defn request [httpkit-map creds]
 
   (let [authenticated-httpkit-map (add-credentials httpkit-map creds)
-        resp                     @(http/request authenticated-httpkit-map nil)]
+        resp                     @(http/request (assoc authenticated-httpkit-map :keepalive -1) nil)]
 
     (when (:error resp)
       ;; TODO: Check that we don't want to return this error message to the client.

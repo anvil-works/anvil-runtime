@@ -36,7 +36,10 @@
             [anvil.logging :as logging]
             [embedded-traefik.core :as traefik]
             [ring.middleware.json :as ring-json]
-            [anvil.runtime.app-log :as app-log])
+            [anvil.runtime.app-log :as app-log]
+            [clojure.java.jdbc :as jdbc]
+            [anvil.dispatcher.background-tasks :as background-tasks]
+            [cheshire.core :as json])
   (:gen-class)
   (:import (org.subethamail.smtp.server SMTPServer)
            (java.io File)
@@ -45,33 +48,55 @@
 
 (clj-logging-config.log4j/set-logger! :level :trace)
 
+;; Balance performance with live-editing (we'll want to tweak this):
+;; Cache apps, reloading every 10s or when idle for >500ms
+(def app-cache (atom {}))
+;; Change this revision every time we load an app and discover it's changed.
+;; This will invalidate persistent downlinks.
+(def next-app-revision (atom 0))
 
 (defn- load-app [app-id]
-  (if (re-matches #"[a-zA-Z0-9_]+" app-id)
-    (let [app-id ^String (conf/get-app-package app-id)
-          f (File. ^String (conf/get-app-path) app-id)
-          yaml (when (.isDirectory f)
-                 (read-app-storage/get-app-yaml-from-resource-directory (.toURL f) true))
+  (let [now (delay (System/currentTimeMillis))]
+    (if (re-matches #"[a-zA-Z0-9_]+" app-id)
+      (let [app-id ^String (conf/get-app-package app-id)
+            {:keys [app loaded last-touched] :as cache} (get @app-cache app-id)]
+        (if (and app (> last-touched (- @now 500)) (> loaded (- @now 10000)))
+          (do
+            (swap! app-cache assoc-in [app-id :last-touched] @now)
+            app)
 
-          ;; Cope with older apps that specify the user service by ID
-          yaml (update-in yaml [:services]
-                          (fn [services]
-                            (for [{:keys [source server_config] :as service} services]
-                              (if-let [table-name (and (= source "/runtime/services/anvil/users.yml")
-                                                       (number? (:user_table server_config))
-                                                       (some #(when (= (:id %) (:user_table server_config))
-                                                                (get-in % [:access :python_name]))
-                                                             (:db_schema yaml)))]
-                                (assoc-in service [:server_config :user_table] table-name)
-                                service))))]
-      (when yaml
-        {:id      app-id
-         :content yaml
-         :info    {:id            app-id
-                   :name          (or (:name yaml) app-id)
-                   :alias         "UNUSED"}
-         }))
-    (log/error (str "Cannot load app '" app-id "' - this is not a valid Python package name. Valid names may include only letters, numbers and underscores (_)."))))
+          (let [f (File. ^String (conf/get-app-path) app-id)]
+            (when (.isDirectory f)
+              (let [yaml (read-app-storage/get-app-yaml-from-resource-directory (.toURL f) true false)
+
+                    ;; Cope with older apps that specify the user table by ID
+                    yaml (update-in yaml [:services]
+                                    (fn [services]
+                                      (for [{:keys [source server_config] :as service} services]
+                                        (if-let [table-name (and (= source "/runtime/services/anvil/users.yml")
+                                                                 (number? (:user_table server_config))
+                                                                 (some #(when (= (:id %) (:user_table server_config))
+                                                                          (get-in % [:access :python_name]))
+                                                                       (:db_schema yaml)))]
+                                          (assoc-in service [:server_config :user_table] table-name)
+                                          service))))
+
+                    prev-app (get-in @app-cache [app-id :app])
+
+                    app {:id      app-id
+                         :content yaml
+                         :info    {:id    app-id
+                                   :name  (or (:name yaml) app-id)
+                                   :alias "UNUSED"}}
+                    app (if (= app (dissoc prev-app :version))
+                          prev-app
+                          (let [v (swap! next-app-revision inc)]
+                            (log/trace "Invalidating; new version" v)
+                            (assoc app :version v)))]
+                (swap! app-cache assoc app-id {:app app, :loaded @now :last-touched @now})
+
+                app)))))
+      (log/error (str "Cannot load app '" app-id "' - this is not a valid Python package name. Valid names may include only letters, numbers and underscores (_).")))))
 
 (defn launch-shell! [uplink-key server-host server-port]
   (doto (Thread. ^Runnable
@@ -89,6 +114,22 @@
     (.setDaemon true)
     (.start)))
 
+(defn update-cron-jobs! [app-yaml]
+  (util/with-db-transaction [db util/db]
+    (let [q (jdbc/query db ["SELECT job_id, next_run, time_spec FROM scheduled_tasks"])
+          scheduled-jobs (cron/get-scheduled-jobs (:scheduled_tasks app-yaml) q nil)]
+
+      (jdbc/execute! db ["DELETE FROM scheduled_tasks"])
+
+      (doseq [spec scheduled-jobs]
+        (jdbc/insert! db "scheduled_tasks" spec)))))
+
+
+(defn get-environment-for-job [_job]
+  (dispatch/get-default-environment))
+
+(cron/set-cron-hooks! (util/hooks #{get-environment-for-job}))
+
 
 (defn load-main-app [auto-migrate-tables? ignore-invalid-schema?]
   (let [main-app-id (conf/get-main-app-id)
@@ -97,7 +138,7 @@
               (catch Exception e
                 (log/error e "Failed to load app %s: %s" main-app-id)
                 (System/exit 1)))]
-    (cron/update-cron-jobs! util/db main-app-id (:content app))
+    (update-cron-jobs! (:content app))
     (tables/validate-app-tables-schema (-> app :content :db_schema) main-app-id auto-migrate-tables? ignore-invalid-schema?)))
 
 (defn wrap-cors [f origin]
@@ -113,14 +154,15 @@
                           :app-info (:info (load-app (conf/get-main-app-id)))
                           :app-origin app-origin
                           :path-info uri
-                          :valid-app-origins [app-origin])))))
+                          :environment (dispatch/get-default-environment))))))
 
 (app-data/set-app-storage-impl!
-  {:get-app-info-insecure  (fn [app-id] (:info (load-app (or app-id (conf/get-main-app-id)))))
-   :get-app-content        (fn [app-info _version] (load-app (:id app-info)))
-   :get-app-id-by-hostname (fn [_] (conf/get-main-app-id))
-   :get-default-app-origin (fn [_app-info] (conf/get-app-origin))
-   :get-default-hostnames  (fn [_app-info] [(conf/get-hostname)])})
+  {:get-app-info-insecure                 (fn [app-id] (:info (load-app (or app-id (conf/get-main-app-id)))))
+   :get-app-content                       (fn [app-info _version] (load-app (:id app-info)))
+   :get-app-environment-by-email-hostname (fn [_] (dispatch/get-default-environment))
+   :get-default-app-origin                (fn [_env] (conf/get-app-origin))
+   :get-default-hostnames                 (fn [_env] [(conf/get-hostname)])
+   :get-valid-origins                     (fn [_env] [(conf/get-app-origin)])})
 
 
 (app-log/set-log-impl! {:record! (fn record! [_request-ctx type data & [_trust-sess?]]
@@ -142,11 +184,8 @@
                                      ;; :else
                                      (log/info (str "[LOG " type "]") data)))})
 
-(defonce record! (fn record!
-                   ([request-ctx type data] (record! request-ctx type data true))
-                   ([{:keys [app-session app-id app-version anvil-debug]
-                      :as   _request-ctx} type data _trust-sess?]
-                    (log/info type data))))
+(background-tasks/set-background-task-hooks! {:get-environment-for-background-task (constantly {})})
+
 
 ;; AGPL compliance: Serve up our source code (or, if we are an official release package, a GitHub link)
 (def source-link (delay
@@ -424,7 +463,6 @@
       (catch ::migrator-core/migration-failure e
         (println "Database migration failed:" (name (::migrator-core/migration-failure e)))
         (System/exit 1)))
-    (util/require-latest-db-version)
 
     (load-main-app (:auto-migrate options) (:ignore-invalid-schema options))
 

@@ -16,7 +16,7 @@ var $builtinmodule = window.memoise('anvil.microsoft.auth', function() {
 
             var authParams = {
                 scopes: scopesToRequest,
-                s: window.anvilSessionId,
+                s: window.anvilSessionToken,
             };
 
             var authUrl = appPath + "/_/microsoft_auth_redirect?" + $.param(authParams);
@@ -52,7 +52,7 @@ var $builtinmodule = window.memoise('anvil.microsoft.auth', function() {
             $("#microsoftLogInButton").off("click"); // Just in case they didn't click it last time.
             $("#microsoftLogInButton").one("click", doLogin);
             $("#microsoftCancelButton").off("click");
-            $("#microsoftCancelButton").one("click", () => {
+            $("#microsoftCancelButton").one("click", function() {
                 $("#microsoft-login-modal").one("hidden.bs.modal.alertclear", function() {
                     loginCallbackResolve.reject("MODAL_CANCEL")
                 });
@@ -123,7 +123,7 @@ var $builtinmodule = window.memoise('anvil.microsoft.auth', function() {
 
         var args = [new Sk.builtin.str(fnName)].concat(Array.prototype.slice.call(arguments, 2));
 
-        var call = server.tp$getattr(new Sk.builtin.str("call_$rn$"));
+        var call = server.tp$getattr(new Sk.builtin.str("call"));
         return Sk.misceval.applyOrSuspend(call, undefined, undefined, undefined, args);
     }
 

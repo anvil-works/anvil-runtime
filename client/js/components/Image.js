@@ -150,8 +150,8 @@ module.exports = function(pyModule) {
             type: "uri",
             description: "The image source - set a string for a URL or a Media object in code",
             pyVal: true,
-            defaultValue: Sk.builtin.str(""),
-            exampleValue: Sk.builtin.str("http://mysite.com/logo.png"),
+            defaultValue: new Sk.builtin.str(""),
+            exampleValue: new Sk.builtin.str("http://mysite.com/logo.png"),
             get: function(s,e) {
                 return s._anvil.pyMedia || Sk.builtin.none.none$;
             },

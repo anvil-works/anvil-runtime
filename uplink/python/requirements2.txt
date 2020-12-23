@@ -1,5 +1,5 @@
 argparse==1.2.1
 future==0.15.2
-six==1.10.0
+six==1.15.0
 ws4py==0.3.4
 python-dateutil==2.5.3

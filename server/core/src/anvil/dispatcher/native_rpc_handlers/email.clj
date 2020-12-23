@@ -34,6 +34,7 @@
 
 (def ^:dynamic *use-quota* true)
 (def ^:dynamic *require-service-config* true)
+(defonce test-override-smtp-config (atom nil))
 
 (def default-props {:custom_smtp false
                     :test_mode false})
@@ -106,7 +107,7 @@
 
           app-info (app-data/get-app-info-insecure rpc-util/*app-id*)
 
-          default-from-domains (app-data/get-default-hostnames app-info)
+          default-from-domains (app-data/get-default-hostnames rpc-util/*environment*)
 
           default-domain (first default-from-domains)
 
@@ -139,7 +140,7 @@
 
 
           quota-available (or custom_smtp (not *use-quota*)
-                              (quota/decrement-if-possible! rpc-util/*session-state* rpc-util/*app-id* :email 1))
+                              (quota/decrement-if-possible! rpc-util/*session-state* rpc-util/*environment* :email 1))
 
           reroute-to-owner? (or (not quota-available) test_mode)
 
@@ -171,7 +172,8 @@
                                                           (catch [:type "anvil.secrets.SecretError"] _))
                                                     "")
                                     :encryption smtp_encryption}
-                                   conf/app-smtp-config)
+                                   (or @test-override-smtp-config
+                                       conf/app-smtp-config))
 
                                  {:from-address       from_address
                                   :from-name          from_name
@@ -200,7 +202,7 @@
                                   :app-id             rpc-util/*app-id*})]
           (SerializedPythonObject. "anvil.email.SendReport" {:message_id (.getMessageID msg)}))
         (catch MessagingException e
-          (throw+ (email-send-error (str (.getMessage e) (when custom_smtp (str ". You have enabled Custom SMTP for email sending - did you configure it correctly?"))))))))))
+          (throw+ (email-send-error (str (.getMessage e) " (" (.getSimpleName (.getClass e)) ")" (when custom_smtp (str ". You have enabled Custom SMTP for email sending - did you configure it correctly? You may need to provide a valid from_address."))))))))))
 
 (defn wrapped-send [allow-return?]
   (wrap-native-fn (fn [kwargs]

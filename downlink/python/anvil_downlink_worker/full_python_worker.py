@@ -27,13 +27,12 @@ def write_pipe(data, bin=None):
     with WRITE_LOCK:
         try:
             s = b'X' + marshal.dumps(data)
+            if bin is not None:
+                s += marshal.dumps(bin)
         except ValueError:
             raise _server.SerializationError("You can only pass strings, numbers, arrays, lists, LiveObjects and Media to or from server functions")
 
         PIPE_OUT.write(s)
-        #marshal.dump(data, PIPE_OUT)
-        if bin is not None:
-            marshal.dump(bin, PIPE_OUT)
         PIPE_OUT.flush()
 
 
@@ -79,6 +78,8 @@ def run():
                 json.dumps(sjson)
             except (TypeError, _server.SerializationError) as e:
                 write_pipe({'id': msg['id'], 'error': {'type': 'anvil.server.SerializationError', 'message': "Illegal value in a anvil.server.task_state. " + e.args[0]}})
+            except Exception as e:
+                write_pipe({'id': msg['id'], 'error': {'type': 'anvil.server.InternalError', 'message': "Could not get task state: " + e.args[0]}})
             else:
                 write_pipe(sjson)
 
@@ -108,7 +109,7 @@ def plotly_serialization_helper():
         
         cls.__serialize__ = serialize
         cls.__new_deserialized__ = new_deserialized
-        anvil.server.serializable_type(cls,name)
+        anvil.server.portable_class(cls,name)
 
     def all_subclasses(cls):
         return set(cls.__subclasses__()).union(

@@ -29,7 +29,7 @@
       (when value
         (log/trace "Deserialise cookie:" value)
         (let [raw-map (json/read-str (runtime-secrets/decrypt-str-with-global-key :c value) :key-fn keyword)
-              deserialised-map (serialiser/deserialise deserialiser raw-map util/*app-id* util/*app* util/*session-state* util/*app-origin*)]
+              deserialised-map (serialiser/deserialise deserialiser raw-map util/*req*)]
           (log/trace "Deserialised cookie:" (pr-str deserialised-map))
           (:c deserialised-map)))
       (catch Exception e

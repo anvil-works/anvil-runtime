@@ -7,37 +7,44 @@
 
 (defn get-props
   ([] (merge (get-props util/*app*)
-             (get-in @util/*session-state* [:users :test-config-override!])))
+             (when util/*session-state*
+               (get-in @util/*session-state* [:users :test-config-override!]))))
   ([app]
    (if-let [props (first (filter #(= (:source %) "/runtime/services/anvil/users.yml") (:services app)))]
-     (merge (:client_config props) (:server_config props))
+     (merge (:client_config props) (:server_config props)
+            (when util/*session-state*
+              (get-in @util/*session-state* [:users :test-config-override!])))
      (throw+ {:anvil/server-error "Add the Users service to your app before calling this function"
               :type               "AnvilServiceNotAdded"
               :docId              "users"
               :docLinkTitle       "You need to add the Users service to your app. Learn more"}))))
 
 (defn get-props-with-named-user-table
-  ([] (get-props-with-named-user-table (tables-util/db) util/*app-id* util/*app*))
-  ([app-id app] (get-props-with-named-user-table (tables-util/db-for-app app-id) app-id app))
-  ([db-c app-id app]
+  ([] (get-props-with-named-user-table (tables-util/db) (tables-util/table-mapping-for-environment util/*environment*) util/*app*))
+  ([mapping app] (get-props-with-named-user-table (tables-util/db-for-mapping mapping) mapping app))
+  ([db-c mapping app]
    (let [{:keys [user_table] :as props} (get-props app)]
      (if (string? user_table)
-       (assoc props :user_table (tables-util/get-table-id db-c app-id user_table))
+       (assoc props :user_table (tables-util/get-table-id-by-name db-c mapping user_table))
        props))))
 
-(defn remap-user-table [source-app-info new-app-yaml table-mappings]
+(defn remap-user-table [source-app-info source-app-version-spec new-app-yaml table-mappings]
   (let [SERVICE-URL "/runtime/services/anvil/users.yml"]
-    (update-in new-app-yaml [:services] (fn [svcs] (doall (map #(if (= SERVICE-URL (:source %))
-                                                                  (let [source-app (app-data/get-app source-app-info)
-                                                                        old-user-table-id (:user_table (get-props (:content source-app)))
-                                                                        new-user-table-id (:new-id (get table-mappings old-user-table-id))]
-                                                                    (if new-user-table-id
-                                                                      (assoc % :server_config {:user_table new-user-table-id})
-                                                                      %))
-                                                                  %) svcs))))))
+    (when (some #(= SERVICE-URL (:source %)) (:services new-app-yaml))
+      (update-in new-app-yaml [:services] (fn [svcs] (doall (map #(if (= SERVICE-URL (:source %))
+                                                                    (let [source-app (app-data/get-app source-app-info source-app-version-spec)
+                                                                          old-user-table-id (:user_table (get-props (:content source-app)))
+                                                                          new-user-table-id (:new-id (get table-mappings old-user-table-id))]
+                                                                      (assoc % :server_config {:user_table (or new-user-table-id old-user-table-id)}))
+                                                                    %) svcs)))))))
 
 (defn row-to-map [r]
-  (:itemCache r))
+  ;; this is disgusting. Item caches come out of the native table funcs with string keys, but
+  ;; off the wire with keyword keys, so we normalise them:
+  (when-let [ic (:itemCache r)]
+    (if (keyword? (first (keys ic)))
+      (into {} (for [[k v] ic] [(name k) v]))
+      ic)))
 
 (defn get-and-create-columns
   ([table-id query-map] (get-and-create-columns table-id query-map nil))

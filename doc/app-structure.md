@@ -162,8 +162,9 @@ name: My App
 
   * `version`: should always be set to 2
   * `client_version`: the version number for your [client-side Python](https://anvil.works/docs/client/python). This should be set to `'3'` for all modern apps.
+  * `server_persist`: should be set to `true` if you want to enable [Persistent Server Modules](https://anvil.works/docs/server#persistent-server-modules).
 
-(The other keys, `server_version` and `server_persist`, do not affect the standalone App Server and are used only in Anvil's hosted environment. Your server modules run in the Python environment in which you launched `anvil-app-server`.)
+(The `server_version` key does not affect the standalone App Server and is used only in Anvil's hosted environment. Your server modules run in the Python environment in which you launched `anvil-app-server`.)
 
 Here is an example entry in `anvil.yaml` for an app running Python version 3 client-side:
 
@@ -191,8 +192,6 @@ Here is an example entry in `anvil.yaml` that loads a Form:
 `startup: {type: form, module: scripts.Launch}`
 
 The `startup` option takes a dict with two keys:
-
-<!-- TODO: check this is correct -->
 
  * `type` is `form` or `module`, which determines how the module is imported.
    - A `module` is run as a script (as though you had launched it from the command line with `python -m my_module`)

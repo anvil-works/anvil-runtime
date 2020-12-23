@@ -11,10 +11,10 @@
   (= (util/sha-256 mac)
      (util/sha-256 (types/gen-live-object-mac live-object extra-liveobject-key))))
 
-(defn load-LiveObjectProxy [live-object-map permitted-originating-backends extra-liveobject-key]
+(defn load-LiveObjectProxy [live-object-map {:keys [permitted-live-object-backends session-liveobject-key] :as _config}]
   (let [live-object-proxy (types/map->LiveObjectProxy live-object-map)]
-    (if (or (some #(.startsWith (:backend live-object-map) %) permitted-originating-backends)
-            (valid-mac? live-object-map extra-liveobject-key))
+    (if (or (some #(.startsWith (:backend live-object-map) %) permitted-live-object-backends)
+            (valid-mac? live-object-map session-liveobject-key))
       live-object-proxy
 
       (do

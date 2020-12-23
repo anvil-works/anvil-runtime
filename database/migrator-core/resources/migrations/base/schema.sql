@@ -9,11 +9,9 @@ CREATE TABLE app_storage_tables (id integer primary key,
                                  columns jsonb NOT NULL DEFAULT '{}');
 
 CREATE TABLE app_storage_access (table_id integer references app_storage_tables(id), 
-                                 app_id text, --  references apps(id) on central DB
                                  python_name text NOT NULL, 
                                  server text not null, 
-                                 client text not null, 
-                                 UNIQUE(app_id,table_id));
+                                 client text not null);
 
 CREATE TABLE app_storage_data (id serial, 
                                table_id integer references app_storage_tables(id), 
@@ -42,7 +40,6 @@ END$$
   LANGUAGE plpgsql;
 
 CREATE TABLE db_version (version text not null, updated timestamp);
-INSERT INTO db_version (version, updated) VALUES ('2019-09-23-B-denormalise-app-sessions', NULL);
 
 --[GRANTS]--
 GRANT SELECT ON db_version TO $ANVIL_USER;

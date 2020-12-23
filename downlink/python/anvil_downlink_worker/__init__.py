@@ -32,6 +32,12 @@ def find_in_app(app, mod_name):
            find(app.get('modules', []), lambda m: m['name'] == mod_name)
 
 
+class ErrorLoadingUserCode(Exception):
+    def __init__(self, exc):
+        self.exc = exc
+        Exception.__init__(self, "Error loading user code: " + str(exc))
+
+
 # Our jobs:
 #
 # 1. Assemble a virtual filesystem corresponding to an app's source code
@@ -60,7 +66,10 @@ class SimpleLoader(object):
             mod.__path__ = []
 
         if 'code' in self._module:
-            do_exec(compile(self._module['code'], real_name.replace(".", "/") + '.py', 'exec'), mod.__dict__)
+            try:
+                do_exec(compile(self._module['code'], real_name.replace(".", "/") + '.py', 'exec'), mod.__dict__)
+            except Exception as e:
+                raise ErrorLoadingUserCode(e)
 
         # Belt and braces? (honestly not sure about this -M)
         sys.modules[name] = mod
@@ -160,8 +169,11 @@ def load_app(app):
 
 def load_app_modules():
     """Call from _threaded_server when the environment is ready to import all server modules in this app"""
-    for n in modules_to_import:
-        importlib.import_module(n)
+    try:
+        for n in modules_to_import:
+            importlib.import_module(n)
+    except ErrorLoadingUserCode as e:
+        raise e.exc
 
 repl_scopes = {}
 

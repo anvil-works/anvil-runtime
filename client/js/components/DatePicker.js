@@ -113,7 +113,7 @@ module.exports = function(pyModule) {
                 }
             } else if (Sk.misceval.isTrue(Sk.builtin.isinstance(v, datetime.tp$getattr(new Sk.builtin.str("datetime"))))) {
                 if (!props['pick_time'].v) {
-                    throw Sk.builtin.Exception("Cannot display a datetime object on a DatePicker without setting pick_time to True.")
+                    throw new Sk.builtin.Exception("Cannot display a datetime object on a DatePicker without setting pick_time to True.")
                 }
                 var strftime = v.tp$getattr(new Sk.builtin.str("strftime"));
                 var pyStr = Sk.misceval.callsim(strftime, Sk.ffi.remapToPy("%Y-%m-%d %H:%M:%S.%f%z"));

@@ -7,7 +7,7 @@ var $builtinmodule = window.memoise('stripe.checkout', function() {
     var loadKeys = RSVP.defer();
     var anvil = PyDefUtils.getModule("anvil");
     var appPath = Sk.ffi.remapToJs(anvil.tp$getattr(new Sk.builtin.str("app_path")));
-    $.get(appPath + "/_/get_stripe_publishable_keys?s=" + window.anvilSessionId, function(data) {
+    $.get(appPath + "/_/get_stripe_publishable_keys?s=" + window.anvilSessionToken, function(data) {
     	loadKeys.resolve(data);
     });
 
@@ -20,6 +20,7 @@ var $builtinmodule = window.memoise('stripe.checkout', function() {
     	var description = kwargs["description"] || "Powered by Anvil";
     	var zipCode = kwargs["zipcode"] || false;
     	var billingAddress = kwargs["billing_address"] || false;
+      var email = kwargs["email"] || undefined;
     	var shippingAddress = false; //kwargs["shipping_address"]; // Shipping address appears not to do anything for now. Disable it.
 
     	var config = Sk.ffi.remapToJs(Sk.misceval.callsim(stripeMod.tp$getattr(new Sk.builtin.str("get_config"))));
@@ -55,6 +56,7 @@ var $builtinmodule = window.memoise('stripe.checkout', function() {
 		      	bitcoin: false,
 		      	alipay: false,
 		      	allowRememberMe: true,
+            email: email,
 			});
 
 			handler.open();
@@ -125,7 +127,7 @@ var $builtinmodule = window.memoise('stripe.checkout', function() {
   			console.log("TOKEN:", token);
   			var pyToken = new Sk.builtin.str(token[0]);
 
-  			return Sk.misceval.callOrSuspend(rpc.tp$getattr(new Sk.builtin.str("call_$rn$")), undefined, undefined, undefined, 
+  			return Sk.misceval.callOrSuspend(rpc.tp$getattr(new Sk.builtin.str("call")), undefined, undefined, undefined, 
                                          new Sk.builtin.str("anvil.private.stripe.charge"), 
                                          pyToken, 
                                          Sk.ffi.remapToPy(kwargs["amount"]), 
@@ -150,7 +152,7 @@ var $builtinmodule = window.memoise('stripe.checkout', function() {
         var rpc = PyDefUtils.getModule("anvil.server");
         var pyToken = new Sk.builtin.str(token[0]);
 
-        return Sk.misceval.callOrSuspend(rpc.tp$getattr(new Sk.builtin.str("call_$rn$")), undefined, undefined, undefined, 
+        return Sk.misceval.callOrSuspend(rpc.tp$getattr(new Sk.builtin.str("call")), undefined, undefined, undefined, 
                                          new Sk.builtin.str("anvil.private.stripe.subscribe"), 
                                          pyToken, 
                                          token[1].email,
@@ -165,7 +167,7 @@ var $builtinmodule = window.memoise('stripe.checkout', function() {
 
     mod["is_live_mode"] = new Sk.builtin.func(function() {
     	var stripeMod = PyDefUtils.getModule("stripe");
-    	var config = Sk.ffi.remapToJs(stripeMod.tp$getattr(new Sk.builtin.str("config")));
+    	var config = Sk.ffi.remapToJs(Sk.misceval.call(stripeMod.tp$getattr(new Sk.builtin.str("get_config"))));
 
     	return config.live_mode ? Sk.builtin.bool.true$ : Sk.builtin.bool.false$;
     });
