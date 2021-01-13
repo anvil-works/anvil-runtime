@@ -167,7 +167,7 @@ __pycache__
         editor-yaml (read-yaml [".anvil_editor.yaml"])
 
         get-id (fn [item-key item-name]
-                 (or (get-in editor-yaml [:unique-ids item-key (keyword item-name)])
+                 (or (get-in editor-yaml [:unique_ids item-key (keyword item-name)])
                      (when generate-item-uids?
                        (gen-item-uid))))
 

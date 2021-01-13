@@ -163,6 +163,11 @@
       (str backend " object")
       (str "Row from '" (get-table-name c table_id) "' table"))
 
+    "liveObjectArray"
+    (if (not= backend "anvil.tables.Row")
+      (str "List of " backend " objects")
+      (str "List of rows from '" (get-table-name c table_id) "' table"))
+
     "unresolved" "Unresolved (None)"
 
     "unresolvedArray" "Unresolved (empty list)"
@@ -187,6 +192,7 @@
   (when-not (is-type? json-value col-type)
     (str "Column '" col-name "' is a " (get-type-name c col-type) " - "
          (let [val-type (get-type-from-value json-value)]
+           (log/error (str "Column type mismatch: " (pr-str col-type) " " (pr-str val-type)))
            (or (:error val-type)
                (str "cannot set it to a " (get-type-name c val-type)))))))
 
@@ -951,15 +957,6 @@
            (update-table-views! (db) table-id new-cols)
            col-records))))))
 
-
-#_(defn update-table-views-for-org! [org-id]
-  (let [db (db-for-org (first (jdbc/query util/db ["SELECT * FROM organisations WHERE id=?" org-id])))]
-    (when (= db util/db)
-      (throw (Exception. "Org does not have dedicated DB.")))
-    (let [table-ids (map :id (jdbc/query db ["SELECT id, name FROM app_storage_tables"]))]
-      (doseq [table-id table-ids]
-        (update-table-views! db table-id))
-      (println "Updated" (count table-ids) "table views."))))
 
 
 (def set-table-hooks! (util/hook-setter [table-mapping-for-environment db-for-mapping

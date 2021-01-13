@@ -342,7 +342,9 @@
                                                         {:error {:type "anvil.server.NotRunningTask" :message "No such task"}})))
         :kill!     (fn [{:keys [id] :as task} return-path]
                      (log/info "Cannot honour request to kill background task " id ": " task)
-                     (dispatcher/respond! return-path {:response nil}))})
+                     (dispatcher/respond! return-path (if (contains? @local-background-tasks id)
+                                                        {:response nil}
+                                                        {:error {:type "anvil.server.NotRunningTask" :message "No such task"}})))})
 
 (reset! dispatcher/default-background-wrapper launch-local-background-task!)
 

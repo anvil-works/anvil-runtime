@@ -29,9 +29,10 @@
         (condp = (:action update)
           :CREATE_TABLES
           ; First create the required tables, keeping track of which IDs became which.
-          (let [table-id-mappings (into {} (for [{:keys [id name] {:keys [python_name server client]} :access} (:tables update)
-                                                 :let [{new-id :id} (tables-manager/create-table! {} name python_name server client)]]
-                                             [id new-id]))]
+          (let [table-id-mappings (merge (:existing-mappings update)
+                                         (into {} (for [{:keys [id name] {:keys [python_name server client]} :access} (:tables update)
+                                                        :let [{new-id :id} (tables-manager/create-table! {} name python_name server client)]]
+                                                    [id new-id])))]
             (log/debug "Table id mappings:" table-id-mappings)
             ; Now set the columns in those new tables, rewriting linked table IDs as appropriate.
 
@@ -96,16 +97,17 @@
           _ (log/debug "Database contains tables:" (map #(:python_name (second %)) database-tables))
 
           auto-migrate? (or auto-migrate? (empty? database-tables))
-          tables-to-create (reduce (fn [tables-to-create schema-table]
-                                     ; Does this table exist in the DB?
-                                     (if (first (jdbc/query util/db ["SELECT * FROM app_storage_access WHERE python_name = ?" (:python_name schema-table)]))
-                                       tables-to-create
-                                       (conj tables-to-create schema-table))
-                                     ) [] schema-tables)
+          [tables-to-create existing-mappings] (reduce (fn [[tables-to-create existing-mappings] schema-table]
+                                                         ; Does this table exist in the DB?
+                                                         (if-let [{:keys [table_id]} (first (jdbc/query util/db ["SELECT * FROM app_storage_access WHERE python_name = ?" (:python_name schema-table)]))]
+                                                           [tables-to-create (assoc existing-mappings (:id schema-table) table_id)]
+                                                           [(conj tables-to-create schema-table) existing-mappings])
+                                                         ) [[] {}] schema-tables)
 
           updates (if (not-empty tables-to-create)
                     [{:action :CREATE_TABLES
-                      :tables tables-to-create}]
+                      :tables tables-to-create
+                      :existing-mappings existing-mappings}]
                     [])
 
           ; For all the tables that do exist in the DB, but have the wrong columns, modify them to have the right columns.

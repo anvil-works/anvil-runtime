@@ -23,6 +23,10 @@ module.exports = function(appId, appOrigin) {
     var heartbeatTimeout = null;
     var heartbeatCount = 0;
 
+    // Carry diagnostic information for the "server disconnected" issue
+    let diagnosticData = {loadTime: +new Date(), userAgent: navigator.userAgent, events: [], nSent: 0, nReceived: 0};
+    let diagnosticEvent = (type) => { diagnosticData.events.push({type: type, time: +new Date()}); }
+
     function deleteOutstandingRequest(requestId) {
         delete outstandingRequests[requestId];
         if (Object.keys(outstandingRequests).length == 0) {
@@ -255,13 +259,13 @@ module.exports = function(appId, appOrigin) {
 
             var ws = new WebSocket(appOrigin.replace(/^http/, "ws") + "/_/ws/" + (window.anvilParams.accessKey || '') + "?s=" + window.anvilSessionToken);
 
-            ws.onopen = function() { 
+            ws.onopen = function() {
+                diagnosticEvent("connected");
                 if (profile) connectProfile.end(); 
                 deferred.resolve(ws); 
             };
 
-            ws.onclose = ws.onerror = function(evt) {
-                console.log("WebSocket closed: ", arguments);
+            let onclose = function(evt) {
                 if (websocket == deferred.promise) { websocket = null; }
                 deferred.reject.apply(deferred, arguments);
 
@@ -270,6 +274,8 @@ module.exports = function(appId, appOrigin) {
                     outstandingRequests[i].onerror(evt);
                 }
             };
+            ws.onclose = function(evt) { diagnosticEvent("closed"); console.log("WebSocket closed", arguments); onclose.apply(null, arguments); }
+            ws.onerror = function(evt) { diagnosticEvent("error"); console.log("WebSocket error", arguments); onclose.apply(null, arguments); }
 
             var nextBlobLocation = null, nextBlobRequestId = null;
 
@@ -381,6 +387,8 @@ module.exports = function(appId, appOrigin) {
 
             ws.onmessage = function(e) {
 
+                diagnosticData.nReceived++;
+
                 if (e.data instanceof Blob || e.data instanceof ArrayBuffer) {
                     if (nextBlobLocation) {
                         nextBlobLocation.content.push(e.data);
@@ -464,6 +472,7 @@ module.exports = function(appId, appOrigin) {
 
                 if (profile) var p = w.append("Send JSON Data");
                 ws.send(JSON.stringify(jsonData));
+                diagnosticData.nSent++;
                 if (profile) p.end();
 
                 if (blobData) {
@@ -489,6 +498,7 @@ module.exports = function(appId, appOrigin) {
 
     var sendLog = function(logData) {
         logData.type = "LOG";
+        if (logData.error) { logData.error.wsdata = diagnosticData; }
         connect().then(function(ws) {
             ws.send(JSON.stringify(logData));
         }).catch(function() {

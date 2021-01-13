@@ -110,7 +110,8 @@ description: |
 
             self._anvil.element.find('button').on("click", PyDefUtils.funcWithPopupOK(function(e) {
                 if (self._anvil.getPropJS('enabled')) { // Search me why this is needed, but it is.
-                  PyDefUtils.raiseEventAsync({}, self, "click");
+                    e.stopPropagation();
+                    PyDefUtils.raiseEventAsync({}, self, "click");
                 }
             }));
         },

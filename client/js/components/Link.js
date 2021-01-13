@@ -130,6 +130,7 @@ module.exports = function(pyModule) {
             // The ontouchstart="" is there to make :active work on iOS safari. Sigh.
             self._anvil.element = $('<a ontouchstart="" href="javascript:void(0)" class="anvil-inlinable" rel="noopener noreferrer"><i class="anvil-component-icon fa left"></i><div class="link-text"></div><i class="anvil-component-icon fa right"></i></a>')
                 .on("click", PyDefUtils.funcWithPopupOK(function(e) {
+                    e.stopPropagation();
                     PyDefUtils.raiseEventAsync({}, self, "click");
                 }));
 

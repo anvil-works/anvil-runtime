@@ -1,6 +1,6 @@
 /**
 id: google_auth
-docs_url: /docs/integrations/google/img/authenticating-users
+docs_url: /docs/integrations/google/authenticating-users
 title: Authenticating users
 tooltip: Learn more about Google authentication
 description: |

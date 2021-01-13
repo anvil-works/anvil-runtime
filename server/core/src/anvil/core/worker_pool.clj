@@ -2,7 +2,8 @@
   (:require [anvil.metrics :as metrics]
             [clojure.tools.logging :as log]
             [anvil.util :as util]
-            [anvil.core.hrr-queue :as hrr-queue])
+            [anvil.core.hrr-queue :as hrr-queue]
+            [clojure.pprint :refer [pprint]])
   (:import (java.util.concurrent ArrayBlockingQueue TimeUnit ThreadPoolExecutor RejectedExecutionException AbstractExecutorService)
            (org.httpkit PrefixThreadFactory)
            (java.util Timer TimerTask)
@@ -192,4 +193,12 @@
    (->>
      (for [[k v] stats :when (map? v)]
        {:key k, :n-tasks (::n-tasks v), :task-time (::task-time v)})
-     (sort-by :task-time))))
+     (sort-by :task-time)
+     (reverse)
+     (take 10))))
+
+(defn get-top-level-load-at-time [t]
+  (let [inst (Instant/parse t)
+        [time stats] (first (filter (fn [[t s]] (.isAfter t inst)) (reverse @execution-status-history)))]
+    (println (str "Load at " time ":"))
+    (pprint (get-top-level-load stats))))
