@@ -126,12 +126,11 @@ def psql():
         sys.exit(1)
 
     #print("To access data tables, run: SET SEARCH_PATH=data_tables;")
-    print("psql -h localhost -p {} -U postgres postgres".format(port))
-    os.system("psql -h localhost -p {} -U postgres postgres".format(port))
+    print("pgcli -h localhost -p {} -U postgres postgres".format(port))
+    os.system("pgcli -h localhost -p {} -U postgres postgres".format(port))
 
 
-def find_or_download_app_server():
-    # Work out whether we already have the server JAR file. It could be in the package itself, or in ~/.anvil
+def find_or_download_app_server(): # Work out whether we already have the server JAR file. It could be in the package itself, or in ~/.anvil
     package_dir = os.path.dirname(__file__)
     home_dir = os.path.expanduser("~")
     server_jar_name = "anvil-app-server.SNAPSHOT.jar"

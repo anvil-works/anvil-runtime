@@ -3,7 +3,7 @@ setup(
     name="anvil-app-server",
     version="1.3",
     packages=find_packages(),
-    install_requires=["pychrome", "anvil-uplink==0.3.34", "progressbar2", "wheel", "psutil"],
+    install_requires=["pychrome", "anvil-uplink==0.3.34", "progressbar2", "wheel", "psutil", "pgcli"],
 
     # Include the App Server JAR directly in this debug build of the package. That way the release version won't be downloaded on first run.
     package_data={

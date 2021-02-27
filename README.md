@@ -253,10 +253,8 @@ The Anvil Runtime stores most of its data in a Postgres database. By default, th
 
 You can access this database directly with the command `psql-anvil-app-server <data-dir>`:
 
-> **Note:** You will need the `psql` command-line client installed. On Debian-like Linux systems, run `apt-get install postgresql-client`; on a Mac, run `brew install postgresql`.
-
 1. Run your app using the `anvil-app-server --app <directory-name>` command
-2. In a new terminal, run `psql-anvil-app-server` in the same directory as you started `anvil-app-server`. You can also specify a `data-dir`, which should match the `--data-dir` option passed to `anvil-app-server` (if applicable). For example, if you launched your app using `anvil-app-server --app MyApp --data-dir my-data-dir`, you would access the psql shell using `psql-anvil-app-server my-data-dir`.
+2. In a new terminal, run `psql-anvil-app-server` in the same directory as you started `anvil-app-server`. You can also specify a `data-dir`, which should match the `--data-dir` option passed to `anvil-app-server` (if applicable). For example, if you launched your app using `anvil-app-server --app MyApp --data-dir my-data-dir`, you would access the pgcli shell using `psql-anvil-app-server my-data-dir`.
 
 You can also access the database shell using the port and password, which you can find in the `<data-dir>` directory:
 
@@ -264,7 +262,7 @@ You can also access the database shell using the port and password, which you ca
 * Port: stored in `<data-dir>/db/postmaster.opts`
 * Password: stored in `<data-dir>/postgres.password`
 
-This means you can run `psql -h localhost -p <port> -U postgres` to access the psql shell directly, or connect other graphical tools to it.
+This means you can run `pgcli -h localhost -p <port> -U postgres` to access the psql shell directly, or connect other graphical tools to it.
 
 ### Sending email
 
