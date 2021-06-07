@@ -4,6 +4,11 @@ from anvil.server import serializable_type
 
 
 @serializable_type
+class Rangebreak(WrappedObject):
+    _name = "Rangebreak"
+    _module = "plotly.graph_objs.layout.xaxis"
+
+@serializable_type
 class Rangeselector(WrappedObject):
     _name = "Rangeselector"
     _module = "plotly.graph_objs.layout.xaxis"
@@ -30,6 +35,7 @@ class Title(WrappedObject):
 
 
 __all__ = [
+    'Rangebreak',
     'Rangeselector',
     'Rangeslider',
     'Tickfont',

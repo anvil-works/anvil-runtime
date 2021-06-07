@@ -36,100 +36,112 @@ description: |
 
 */
 
-module.exports = function(pyModule) {
-
-	pyModule["GridPanel"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-
-        var properties = PyDefUtils.assembleGroupProperties(/*!componentProps(GridPanel)!2*/["layout", "containers", "appearance", "user data", "tooltip"], {
-          row_spacing: {
-            set: function(s, e, v) {
-              e.children("div.row").css("marginBottom", v);
-            },
-          },
-        });
+module.exports = (pyModule) => {
 
 
-		$loc["__init__"] = PyDefUtils.mkInit(function init(self) {
-            self._anvil.element = $('<div/>').addClass("grid-panel anvil-container");
-            self._anvil.lastRow = null;
-            self._anvil.gridComponents = []; // component = {pyComponent: (pyObj), row: (id), lastCol: {xs: 0-12, sm: 0-12, ...}
-            self._anvil.rows = {}; // row = {element: (jq), lastCol: {xs: 0-12, sm: 0-12, ...}}
-        },pyModule, $loc, properties,PyDefUtils.assembleGroupEvents("grid panel", /*!componentEvents(GridPanel)!1*/["universal"]), pyModule["Container"]);
+    pyModule["GridPanel"] = PyDefUtils.mkComponentCls(pyModule, "GridPanel", {
+        base: pyModule["Container"],
 
-        /*!defMethod(_,component,[row=],[col_xs=],[width_xs=])!2*/ "Add a component to this GridPanel"
-        $loc["add_component"] = PyDefUtils.funcWithKwargs(function(kwargs, self, pyComponent) {
-            var celt;
-            if (!pyComponent || !pyComponent._anvil) { throw new Sk.builtin.Exception("Argument to add_component() must be a component"); }
-            return Sk.misceval.chain(undefined, () => {
-                // TODO set pyComponent._anvil.parent.remove to a closure that deletes the row if necessary
-                if (pyComponent._anvil.metadata.invisible) { return; }
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(GridPanel)!2*/ ["layout", "containers", "appearance", "user data", "tooltip"]),
 
-                var rowName = kwargs["row"];
-                var row = self._anvil.rows[rowName];
+        events: PyDefUtils.assembleGroupEvents("grid panel", /*!componentEvents(GridPanel)!1*/ ["universal"]),
 
-                if (!row) {
-                    // TODO allow a way of manually inserting into the middle rather than at the bottom?
-                    row = {element: $('<div class="row">').css("marginBottom", self._anvil.getPropJS("row_spacing")).data("anvil-gridpanel-row", rowName),
-                           lastCol: {}};
-                    self._anvil.rows[rowName] = row;
-                    self._anvil.element.append(row.element);
-                }
+        element: (props) => <PyDefUtils.OuterElement className="grid-panel anvil-container" {...props} />,
 
-                celt = $('<div>').append(pyComponent._anvil.element);
-
-                var component = {pyComponent: pyComponent, row: rowName, lastCol: {}};
-
-                var sizes = ["xs", "sm", "md", "lg"];
-                var width = 12, offset = 0; // Default to full-width, zero offset, inherit small-to-large
-                for (var i in sizes) {
-                    var size = sizes[i];
-                    var w = kwargs["width_"+size];
-                    if (w) {
-                        width = parseInt(w);
-                    }
-                    celt.addClass("col-"+size+"-"+width);
-
-                    var lastCol = (row.lastCol[size] || 0);
-
-                    var xRequest = kwargs["col_"+size];
-                    if (xRequest && parseInt(xRequest) > lastCol) {
-                        offset = parseInt(xRequest) - lastCol;
-                        celt.addClass("col-" + sizes[i] + "-offset-" + offset);
-                    }
-
-                    row.lastCol[size] = component.lastCol[size] = lastCol + width + offset;
-                }
-
-                self._anvil.gridComponents.push(component);
-
-                row.element.append(celt);
-            },
-            () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, pyComponent, kwargs),
-            () => {
-                let rmFn = pyComponent._anvil.parent.remove;
-                pyComponent._anvil.parent.remove = () => {
-                    if (celt) {
-                        celt.detach();
-                    }
-                    return rmFn();
-                };
-                return Sk.builtin.none.none$;
+        locals($loc) {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Container"], (self) => {
+                self._anvil.gridComponents = []; 
+                // component = {pyComponent: (pyObj), row: (id), lastCol: {xs: 0-12, sm: 0-12, ...}
+                self._anvil.rows = {}; 
+                // row = {element: (jq), lastCol: {xs: 0-12, sm: 0-12, ...}}
             });
-        });
 
-        $loc["clear"] = new Sk.builtin.func(function(self) {
+            const ContainerElement = ({ classList }) => <div className={classList} />;
 
-            let x = Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.clear, self);
+            /*!defMethod(_,component,[row=],[col_xs=],[width_xs=])!2*/ "Add a component to this GridPanel"
+            $loc["add_component"] = PyDefUtils.funcWithKwargs(function add_component(kwargs, self, pyComponent) {
+                pyModule["Container"]._check_no_parent(pyComponent);
 
-            self._anvil.element.empty();
-            self._anvil.lastRow = null;
-            self._anvil.gridComponents = [];
-            self._anvil.rows = {};
+                const rowName = kwargs["row"];
+                let celt;
 
-            return x;
-        });
-    }, /*!defClass(anvil,GridPanel,Container)!*/ "GridPanel", [pyModule["Container"]]);
+                return Sk.misceval.chain(
+                    null,
+                    () => {
+                        // TODO set pyComponent._anvil.parent.remove to a closure that deletes the row if necessary
+                        if (pyComponent._anvil.metadata.invisible) {
+                            return;
+                        }
+
+                        let row = self._anvil.rows[rowName];
+
+                        if (!row) {
+                            // TODO allow a way of manually inserting into the middle rather than at the bottom?
+                            row = {
+                                element: $('<div class="row">').css("marginBottom", self._anvil.getPropJS("row_spacing")).data("anvil-gridpanel-row", rowName),
+                                lastCol: {},
+                            };
+                            self._anvil.rows[rowName] = row;
+                            self._anvil.element.append(row.element);
+                        }
+
+                        const component = { pyComponent: pyComponent, row: rowName, lastCol: {} };
+
+                        let width = 12,
+                            offset = 0, // Default to full-width, zero offset, inherit small-to-large
+                            classList = [];
+                        ["xs", "sm", "md", "lg"].forEach((size) => {
+                            const w = kwargs["width_" + size];
+                            if (w) {
+                                width = parseInt(w);
+                            }
+                            classList.push("col-" + size + "-" + width);
+                            const lastCol = row.lastCol[size] || 0;
+
+                            const xRequest = kwargs["col_" + size];
+                            if (xRequest && parseInt(xRequest) > lastCol) {
+                                offset = parseInt(xRequest) - lastCol;
+                                classList.push("col-" + size + "-offset-" + offset);
+                            }
+                            row.lastCol[size] = component.lastCol[size] = lastCol + width + offset;
+                        });
+
+                        [celt] = <ContainerElement classList={classList.join(" ")} />;
+                        celt.appendChild(pyComponent._anvil.domNode);
+
+                        self._anvil.gridComponents.push(component);
+
+                        row.element.append(celt);
+                    },
+                    () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, pyComponent, kwargs),
+                    () => {
+                        const rmFn = pyComponent._anvil.parent.remove;
+                        pyComponent._anvil.parent.remove = () => {
+                            if (celt) {
+                                celt.remove();
+                            }
+                            return rmFn();
+                        };
+                        return Sk.builtin.none.none$;
+                    }
+                );
+            });
+
+            $loc["clear"] = new Sk.builtin.func(function clear(self) {
+                const ret = PyDefUtils.pyCallOrSuspend(pyModule["Container"].prototype.clear, [self]);
+
+                self._anvil.element.empty();
+                self._anvil.gridComponents = [];
+                self._anvil.rows = {};
+
+                return ret;
+            });
+        },
+    });
+
 };
+
+/*!defClass(anvil,GridPanel,Container)!*/
 
 /*
  * TO TEST:

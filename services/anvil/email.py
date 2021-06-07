@@ -16,7 +16,23 @@ class DeliveryFailure(Exception):
 
 
 
-#!defFunction(anvil.email,anvil.email.SendReport instance,[to=],[cc=],[bcc=],[from_address="no-reply"],[from_name=],[subject=],[text=],[html=],[attachments=],[inline_attachments=])!2: "Send an email" ["send"]
+#!defFunction(anvil.email,anvil.email.SendReport instance,[to=],[cc=],[bcc=],[from_address="no-reply"],[from_name=],[subject=],[text=],[html=],[attachments=],[inline_attachments=])!2:
+# {
+#   $doc: "Send an email",
+#   anvil$helpLink: "/docs/email",
+#   anvil$args: {
+#     to: "The email recipient[s] in the 'To' field. Can be a string or list of strings.\n\nEach string can be a bare address (eg 'joe@example.com') or include a display name (eg 'Joe Bloggs <joe@example.com>').",
+#     cc: "The email recipient[s] in the 'Cc' field. Can be a string or list of strings.\n\nEach string can be a bare address (eg 'joe@example.com') or include a display name (eg 'Joe Bloggs <joe@example.com>').",
+#     bcc: "The email recipient[s] in the 'Bcc' field. Can be a string or list of strings.\n\nEach string can be a bare address (eg 'joe@example.com') or include a display name (eg 'Joe Bloggs <joe@example.com>').",
+#     from_address: "The From: address from this email. Can be a bare address (eg 'joe@example.com') or include a display name (eg 'Joe Bloggs <joe@example.com>').\n\nIf no domain is specified, or the specified domain is not a legal sending domain for this app, the address will be replaced with a valid domain. So if you specify 'noreply', the email will come from 'noreply@your-app-domain.anvil.app'.",
+#     from_name: "The name associated with the From: address for this email. (Only valid if the from_address is a bare email address.)",
+#     subject: "The subject line for this email.",
+#     text: "The plain-text (no HTML) content for this email. You must specify at least one of 'text' and 'html'.",
+#     html: "The HTML content for this email. You must specify at least one of 'text' and 'html'.",
+#     attachments: "A list of Media objects to send as attachments with this email.",
+#     inline_attachments: "Inline that can be used in this email's HTML, for example in <img> tags. Must be a dictionary whose keys are IDs and values are Media objects. IDs can then be used in a message's HTML with 'cid:xxx' URIs.",
+#   }
+# } ["send"]
 def send(**kw):
     return anvil.server.call("anvil.private.email.send.v2", **kw)
 
@@ -32,6 +48,7 @@ def handle_message(fn=None, require_dkim=False):
     return wrapper(fn) if fn is not None else wrapper
 
 
+@anvil.server.portable_class
 class Address(object):
 
     #!defAttr()!1: {name:"address",type:"string",description:"The email address this object represents."}
@@ -45,10 +62,12 @@ class Address(object):
     #!defClass(anvil.email,#Address)!:
 
 
+@anvil.server.portable_class
 class Message(object):
     #!defAttr()!1: {name:"from_address",type:"string",description:"The email address from which this message was sent, according to the SMTP envelope."}
     #!defAttr()!1: {name:"recipient",type:"string",description:"The email address that received this message.\n\nNote that this email address may not appear in any of the headers (eg if the email has been BCCed or blind forwarded)."}
-    class Envelope:
+    @anvil.server.portable_class
+    class Envelope(object):
         def __init__(self, envelope):
             self.from_address = envelope['from']
             self.recipient = envelope['recipient']
@@ -56,7 +75,8 @@ class Message(object):
 
     #!defAttr()!1: {name:"valid_from_sender",type:"boolean",description:"Was this message signed by the domain in its envelope \"from\" address?"}
     #!defAttr()!1: {name:"domains",type:"list(string)",description:"A list of the DKIM domains that signed this message."}
-    class DKIM:
+    @anvil.server.portable_class
+    class DKIM(object):
         def __init__(self, dkim):
             self.valid_from_sender = dkim['valid_from_sender']
             self.domains = dkim['domains']
@@ -66,7 +86,8 @@ class Message(object):
     #!defAttr()!1: {name:"to_addresses",pyType:"list(anvil.email.Address instance)",description:"The addresses this message was sent to."}
     #!defAttr()!1: {name:"from_address",pyType:"anvil.email.Address instance",description:"The address this message was sent from."}
     #!defAttr()!1: {name:"cc_addresses",pyType:"list(anvil.email.Address instance)",description:"The addresses this message was copied to."}
-    class Addressees:
+    @anvil.server.portable_class
+    class Addressees(object):
         def __init__(self, addressees):
             self.to_addresses = [Address(a) for a in addressees.get('to',[])]
             self.from_address = Address(addressees['from'][0]) if 'from' in addressees else None

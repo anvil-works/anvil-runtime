@@ -38,6 +38,11 @@ class Tickfont(WrappedObject):
     _name = "Tickfont"
     _module = "plotly.graph_objs.parcoords"
 
+@serializable_type
+class Transform(WrappedObject):
+    _name = "Transform"
+    _module = "plotly.graph_objs.parcoords"
+
 
 __all__ = [
     'Dimension',
@@ -47,6 +52,7 @@ __all__ = [
     'Rangefont',
     'Stream',
     'Tickfont',
+    'Transform',
     'line',
 ]
 

@@ -1,5 +1,5 @@
 
-from anvil.util import WrappedObject
+from anvil.util import WrappedObject, WrappedList
 from anvil.server import serializable_type
 
 

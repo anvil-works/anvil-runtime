@@ -23,118 +23,119 @@ description: |
 
 */
 
-module.exports = function(pyModule) {
+module.exports = (pyModule) => {
 
     let panelId = 0;
 
-    pyModule["XYPanel"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
+    pyModule["XYPanel"] = PyDefUtils.mkComponentCls(pyModule, "XYPanel", {
+        base: pyModule["Container"],
 
-        var properties = PyDefUtils.assembleGroupProperties(/*!componentProps(XYPanel)!1*/["layout", "height", "appearance", "align", "tooltip", "user data"], {
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(XYPanel)!1*/ ["layout", "height", "appearance", "align", "tooltip", "user data"], {
             height: {
-                set: function(s,e,v) {
-                    v = +v;
-                    e.find(`.holder.xypanel-${s._anvil.panelId}`).css("height", v);
-                }
+                set(s, e, v) {
+                    s._anvil.elements.holder.style.height = PyDefUtils.cssLength(v.toString());
+                },
             },
             align: {
-                set: function(s,e,v) {
-                    e.css("text-align", v);
+                set(s, e, v) {
+                    v = v.toString();
+                    s._anvil.elements.outer.style.textAlign = v;
                     s._anvil.updateHatching();
-                }
-            }
-        });
+                },
+            },
+            width: /*!componentProp(XYPanel):1*/ {
+                group: null,
+                deprecated: false,
+                name: "width",
+                type: "number",
+                nullable: true,
+                description: "Custom column widths in this panel",
+                defaultValue: Sk.builtin.none.none$,
+                pyVal: true,
+                important: false,
+                priority: 0,
+                set(s, e, v) {
+                    // todo - should support all units like jquery does
+                    s._anvil.elements.holder.style.width = Sk.builtin.checkNone(v) ? "100%" : PyDefUtils.cssLength(v.toString());
+                    s._anvil.updateHatching(v);
+                },
+            },
+        }),
 
-        /*!componentProp(XYPanel):1*/
-        properties.push({
-            name: "width",
-            type: "number",
-            nullable: true,
-            description: "Custom column widths in this panel",
-            defaultValue: null,
-            important: false,
-            priority: 0,
-            set: function(s,e,v) {
-                e.find(`.holder.xypanel-${s._anvil.panelId}`).css("width", (v === null) ? "100%" : v);
-                s._anvil.updateHatching(v);
-            }
-        });
+        events: PyDefUtils.assembleGroupEvents("X-Y panel", /*!componentEvents(XYPanel)!1*/ ["universal", "align"]),
 
-        var events = PyDefUtils.assembleGroupEvents("X-Y panel", /*!componentEvents(XYPanel)!1*/["universal", "align"]);
-
-        $loc["__init__"] = PyDefUtils.mkInit(function init(self) {
-            self._anvil.updateHatching = () => {};
-            self._anvil.panelId = panelId++;
-            self._anvil.element = $(`<div><div class="holder xypanel-${self._anvil.panelId}"></div></div>`).addClass("xy-panel anvil-container");
-            self._anvil.element.find(`.holder.xypanel-${self._anvil.panelId}`)
-                .css({display: "inline-block", position: "relative"});
-
-            self._anvil.layoutPropTypes = [{
+        layouts: [
+            {
                 name: "x",
                 type: "number",
                 description: "The X coordinate, in pixels, where this component will be placed",
                 defaultValue: 0,
                 priority: 1,
-            }, {
+            },
+            {
                 name: "y",
                 type: "number",
                 description: "The Y coordinate, in pixels, where this component will be placed",
                 defaultValue: 0,
                 priority: 1,
-            }, {
+            },
+            {
                 name: "width",
                 type: "number",
                 description: "The width allocated to this component, in pixels",
                 defaultValue: 0,
                 priority: 0,
-            }];
+            },
+        ],
 
-            self._anvil.setLayoutProperties = function(pyChild, layoutProperties) {
-                var elt = pyChild._anvil.element;
-                var lp = {};
-                if ("x" in layoutProperties) {
-                    elt.css({left: layoutProperties.x});
-                    lp.x = layoutProperties.x;
-                }
-                if ("y" in layoutProperties) {
-                    elt.css({top: layoutProperties.y});
-                    lp.y = layoutProperties.y;
-                }
-                if ("width" in layoutProperties) {
-                    elt.css({width: layoutProperties.width});
-                    lp.y = layoutProperties.y;
-                }
-
-                var ps = {};
-                ps [pyChild._anvil.componentSpec.name] = lp;
-                return ps;
-            };
-        }, pyModule, $loc, properties, events, pyModule["Container"]);
-
-        /*!defMethod(_,component,[x=0],[y=0],[width=None])!2*/ "Add a component to this XYPanel, at the specified coordinates. If the component's width is not specified, uses the component's default width."
-        $loc["add_component"] = PyDefUtils.funcWithKwargs(function(kwargs, self, component) {
-            if (!component || !component._anvil) { throw new Sk.builtin.Exception("Argument to add_component() must be a component"); }
-            return Sk.misceval.chain(undefined,
-                () => {
-                    if (component._anvil.metadata.invisible) { return; }
-
-                    var x = kwargs["x"] || 0;
-                    var y = kwargs["y"] || 0;
-                    var w = kwargs["width"] || "";
-                    var celt = component._anvil.element;
-
-                    celt.css({position: "absolute", left: x, top: y, width: w});
-
-                    self._anvil.element.find(`.holder.xypanel-${self._anvil.panelId}`).append(celt);
-                },
-                () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs)
+        element({ width, height, ...props }) {
+            // todo - should support all units like jquery does
+            width = Sk.builtin.checkNone(width) ? " width: 100%;" : " width: " + PyDefUtils.cssLength(width.toString()) + ";";
+            height = "height: " + PyDefUtils.cssLength(height.toString()) + ";"
+            return (
+                <PyDefUtils.OuterElement className="xy-panel anvil-container" {...props}>
+                    <div refName="holder" className={"holder xypanel-" + panelId} style={"display: inline-block; position: relative;" + width + height}></div>
+                </PyDefUtils.OuterElement>
             );
-        });
+        },
 
-        /*!defMethod(number)!2*/ "Get the width of this XYPanel, in pixels."
-        $loc["get_width"] = new Sk.builtin.func(self => Sk.ffi.remapToPy(self._anvil.element.outerWidth()));
+        locals($loc) {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Container"], (self) => {
+                // updateHatching is designer only;
+                self._anvil.updateHatching = () => {};
+                self._anvil.panelId = panelId++;
+            });
 
-    }, /*!defClass(anvil,XYPanel,Container)!*/ "XYPanel", [pyModule["Container"]]);
+            /*!defMethod(_,component,[x=0],[y=0],[width=None])!2*/ "Add a component to this XYPanel, at the specified coordinates. If the component's width is not specified, uses the component's default width."
+            $loc["add_component"] = PyDefUtils.funcWithKwargs(function (kwargs, self, component) {
+                pyModule["Container"]._check_no_parent(component);
+                return Sk.misceval.chain(
+                    null,
+                    () => {
+                        if (component._anvil.metadata.invisible) {
+                            return;
+                        }
+
+                        const { x, y, width } = kwargs;
+                        const celt = component._anvil.element;
+                        celt.css({ position: "absolute", left: x || 0, top: y || 0, width: width || "" });
+                        self._anvil.elements.holder.appendChild(celt[0]);
+                    },
+                    () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs)
+                );
+            });
+
+            /*!defMethod(number)!2*/ "Get the width of this XYPanel, in pixels."
+            $loc["get_width"] = new Sk.builtin.func((self) => Sk.ffi.remapToPy(self._anvil.element.outerWidth()));
+        },
+    });
+
+
+
+
 };
+
+/*!defClass(anvil,XYPanel,Container)!*/
 
 /*
  * TO TEST:

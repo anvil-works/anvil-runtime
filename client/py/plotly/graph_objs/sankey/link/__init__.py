@@ -4,8 +4,8 @@ from anvil.server import serializable_type
 
 
 @serializable_type
-class Colorscale(WrappedObject):
-    _name = "Colorscale"
+class Concentrationscales(WrappedObject):
+    _name = "Concentrationscales"
     _module = "plotly.graph_objs.sankey.link"
 
 @serializable_type
@@ -20,7 +20,7 @@ class Line(WrappedObject):
 
 
 __all__ = [
-    'Colorscale',
+    'Concentrationscales',
     'Hoverlabel',
     'Line',
     'hoverlabel',

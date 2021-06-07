@@ -43,12 +43,12 @@ def call(fn_name, *args, **kwargs):
         raise error_from_server
 
 
-#!defFunction(anvil.server,string,[branch])!2: "Returns the root URL of the current app." ["get_app_origin"]
+#!defFunction(anvil.server,string,[environment])!2: {anvil$args: {environment: "Pass 'published' to get the published URL"}, anvil$helpLink: "/docs/http-apis/creating-http-endpoints#getting-the-url-for-your-api", $doc: "Returns the root URL for the current app.\n\nBy default, this function returns the URL for the current environment, which might be private or temporary (for example, if you are running your app in the Anvil Editor). If you want the URL for the published branch, pass 'published' as an argument."} ["get_app_origin"]
 def get_app_origin(branch=None):
     return call("anvil.private.get_app_origin", branch)
 
 
-#!defFunction(anvil.server,string,[branch]# )!2: "Returns the root URL of the API for the current app." ["get_api_origin"]
+#!defFunction(anvil.server,string,[environment])!2: {anvil$args: {environment: "Pass 'published' to get the published URL"}, anvil$helpLink: "/docs/http-apis/creating-http-endpoints#getting-the-url-for-your-api", $doc: "Returns the root URL of the API for the current app.\n\nBy default, this function returns the URL for the current environment, which might be private or temporary (for example, if you are running your app in the Anvil Editor). If you want the URL for the published branch, pass 'published' as an argument."} ["get_api_origin"]
 def get_api_origin(branch=None):
     return call("anvil.private.get_api_origin", branch)
 
@@ -114,3 +114,10 @@ task_state = _server.NotABackgroundTaskState()
 #!defClass(anvil.server,#CallContext.Location)!0:
 
 #!defModuleAttr(anvil.server)!1: {name: "context", pyType: "anvil.server.CallContext instance", description: "Contains information about what triggered the currently running code."}
+
+#!defFunction(anvil.server [uplink],#,key,[init_session=None],[quiet=False])!2: {$doc: "Connect your uplink script to your anvil app.", anvil$args: {keys: "The key is a unique string and should be kept private. You can generate a new key from inside your anvil app.", init_session: "If you pass a function to the init_session keyword parameter, it will be called after the uplink connection is established, but before any other interaction", quiet: "Set quiet to True to surpress connection output. Errors will still be displayed."}, anvil$helpLink: "/docs/uplink"} ["connect"]
+
+#!defFunction(anvil.server [uplink],#,)!2: {$doc: "Disconnect your uplink script from your anvil app. Your script is then free to call `anvil.server.connect()` with the same uplink key or a new uplink key."} ["disconnect"]
+
+#!defFunction(anvil.server [uplink],#,)!2: {$doc: "A useful shortcut to keep your Python script running. This allows your app to `anvil.server.call` functions inside your Python script. You can use any other way to keep the process alive in place of this function.", anvil$helpLink: "/docs/uplink/setting_up#connecting"} ["wait_forever"]
+

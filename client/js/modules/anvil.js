@@ -122,8 +122,12 @@ module.exports = function(appOrigin, uncaughtExceptions) {
             throw new Sk.builtin.AttributeError(pyAttrName);
         });
         $loc["__setattr__"] = new Sk.builtin.func(function() {
-            throw new Sk.builtin.Exception("This object is read-only");
+            throw new Sk.builtin.AttributeError("This object is read-only");
         });
+        /*!defAttr()!1*/ ({name: "theme_colors", type: "mapping", description: "Theme colors for this app as a readonly dict."});
+        $loc["theme_colors"] = new Sk.builtin.property(new Sk.builtin.func(function(self) {
+            return PyDefUtils.pyCallOrSuspend(Sk.builtin.mappingproxy, [Sk.ffi.toPy(window.anvilThemeColors || {})]);
+        }));
         [/*!defAttr()!1*/ {
             name: "id",
             type: "string",
@@ -141,7 +145,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         pyType: "anvil..AppInfo instance",
         description: "Information about the current app",
     }];
-    pyModule["app"] = Sk.misceval.callsim(appInfoClass);
+    pyModule["app"] = PyDefUtils.pyCall(appInfoClass);
 
     var pyCurrentForm = null;
 
@@ -152,7 +156,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
             // TODO: Check we actually have a form instance.
             // i.e. is pyForm an instance of pyModule.Form?
 
-            $('#appGoesHere > *').detach();
+            $("#appGoesHere > *").detach();
 
             var fns = [];
             if (pyCurrentForm) {
@@ -161,7 +165,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
             }
 
             fns.push(() => {
-                $("#appGoesHere").append(pyForm._anvil.element);
+                document.querySelector("#appGoesHere")?.appendChild(pyForm._anvil.domNode);
                 pyCurrentForm = pyForm;
             })
             fns.push(pyForm._anvil.addedToPage);
@@ -195,7 +199,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                 var formConstructor = pyFormMod.$d[leafName];
 
                 if (!formConstructor) {
-                    throw new Sk.builtin.Exception('"' + formName + '" module does not contain a class called "' + leafName + '"');
+                    throw new Sk.builtin.AttributeError('"' + formName + '" module does not contain a class called "' + leafName + '"');
                 }
 
                 if (rawKwargs) {
@@ -228,47 +232,26 @@ module.exports = function(appOrigin, uncaughtExceptions) {
 
     pyModule["Media"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
 
-        // This is a hack, because of the horrible way that Skulpt handles
-        // class attribute lookup, which causes names like "name" to instead pull out
-        // bits of Javascript internals. Eww.
-        $loc["__getattribute__"] = new Sk.builtin.func(function(self, pyName) {
+        for (let prop of ["url", "content_type", "length", "name"]) {
+            const str_get_prop = new Sk.builtin.str("get_"+prop)
+            const getter = new Sk.builtin.func((self) => PyDefUtils.pyCallOrSuspend(self.tp$getattr(str_get_prop)));
+            const setter = new Sk.builtin.func(() => {
+                throw new Sk.builtin.AttributeError(`Cannot change the ${prop} of a Media object; create a new Media object instead`);
+            })
+            $loc[prop] = new Sk.builtin.property(getter, setter);
+        }
 
-            var name = Sk.ffi.remapToJs(pyName).replace("_$rn$", "");
+        // The following should be implemented by the child class
+        $loc["get_content_type"] = new Sk.builtin.func((self) => Sk.builtin.none.none$);
+        $loc["get_name"] = new Sk.builtin.func((self) => Sk.builtin.none.none$);
+        $loc["get_bytes"] = new Sk.builtin.func((self) => Sk.builtin.none.none$);
+        $loc["get_url"] = new Sk.builtin.func((self) => Sk.builtin.none.none$);
 
-            if (name == "url" || name == "content_type" || name == "length" || name == "name") {
-
-                var pyGetter = Sk.abstr.gattr(self, new Sk.builtin.str("get_"+name));
-
-                return Sk.misceval.callsimOrSuspend(pyGetter);
-            } else {
-                return Sk.builtin.object.prototype.tp$getattr.call(self, pyName, true);
-            }
-        });
-
-        $loc["__setattr__"] = new Sk.builtin.func(function(self, pyName, pyVal) {
-            var name = Sk.ffi.remapToJs(pyName);
-            if (name == "url" || name == "content_type" || name == "length" || name == "name") {
-                throw new Sk.builtin.AttributeError("Cannot change the URL, content type, length or name of a Media object; create a new Media object instead");
-            } else {
-                return Sk.builtin.object.prototype.tp$setattr.call(self, pyName, pyVal);
-            }
-        });
-
-        $loc["get_url"] = new Sk.builtin.func(function(self) {
-            return Sk.builtin.none.none$;
-        });
-
-        $loc["get_name"] = new Sk.builtin.func(function(self) {
-            return Sk.builtin.none.none$;
-        });
-
-        $loc["get_length"] = new Sk.builtin.func(function(self) {
-            // By default, it's a hack!
-            return Sk.misceval.chain(
-                Sk.misceval.callsimOrSuspend(Sk.abstr.gattr(self, new Sk.builtin.str("get_bytes"))), // TODO: This should return the length in bytes instead of characters
-                Sk.builtin.len
-            );
-        });
+        const str_get_bytes = new Sk.builtin.str("get_bytes");
+        // By default, it's a hack!
+        $loc["get_length"] = new Sk.builtin.func((self) =>
+            Sk.misceval.chain(PyDefUtils.pyCallOrSuspend(self.tp$getattr(str_get_bytes)), Sk.builtin.len)
+        );
 
         [/*!defAttr()!1*/ {
             name: "content_type",
@@ -336,7 +319,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                         if (xhr.status === 0) {
                             help = "(probably due to a cross-origin URL)";
                         }
-                        reject(new Sk.builtin.Exception("Failed to load media "+help+": "+self._url));
+                        reject(new Sk.builtin.RuntimeError("Failed to load media "+help+": "+self._url));
                     });
 
                 }
@@ -388,6 +371,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
             content = content || kwargs['content'];
 
             // Secret Javascript-only calling interface, takes a single Blob param
+            // this is used by anvil.js.to_media
             if (contentType instanceof Blob) {
                 self._data = contentType;
                 self._contentType = self._data.type;
@@ -446,17 +430,14 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         $loc["get_bytes"] = PyDefUtils.funcWithKwargs(function(kwargs, self) {
             if (self._data instanceof Blob) {
                 return new PyDefUtils.suspensionPromise(function(resolve, reject) {
-                    var fr = new FileReader();
-                    if (fr.readAsBinaryString) {
-                        fr.onloadend = function() { 
-                            resolve(new ByteString(fr.result));
-                        };
-                        fr.readAsBinaryString(self._data);
-                    } else {
-                        fr.onloadend = function() { 
-                            resolve(new ByteString(arrayBufferToBytesInternal(fr.result)));
-                        };
+                    const fr = new FileReader();
+                    fr.onerror = () => reject(fr.error);
+                    if (fr.readAsArrayBuffer) {
+                        fr.onload = () => resolve(new ByteString(arrayBufferToBytesInternal(fr.result)));
                         fr.readAsArrayBuffer(self._data);
+                    } else {
+                        fr.onload = () => resolve(new ByteString(fr.result));
+                        fr.readAsBinaryString(self._data);
                     }
                 });
             } else {
@@ -478,7 +459,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
     pyModule["FileMedia"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
         $loc["__init__"] = new Sk.builtin.func(function(self, fileObj) {
             if (!fileObj instanceof File) {
-                throw new Sk.builtin.Exception("You cannot construct a anvil.FileMedia yourself; it can only come from a File component");
+                throw new Sk.builtin.TypeError("You cannot construct a anvil.FileMedia yourself; it can only come from a File component");
             }
 
             self._data = fileObj;
@@ -496,7 +477,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
             } else if (lmSpec && lmSpec.id && lmSpec.key && lmSpec.manager) {
                 self._spec = lmSpec;
             } else {
-                throw new Sk.builtin.Exception("You cannot construct a anvil.LazyMedia from Python. Use anvil.BlobMedia instead.")
+                throw new Sk.builtin.TypeError("You cannot construct a anvil.LazyMedia from Python. Use anvil.BlobMedia instead.")
             }
         });
 
@@ -607,7 +588,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                     var step = Sk.ffi.remapToJs(pyName.step);
 
                     if (start < 0 || stop < 0 || step < 0) {
-                        throw new Sk.builtin.Exception("list slice indices and step cannot be negative");
+                        throw new Sk.builtin.ValueError("list slice indices and step cannot be negative");
                     }
 
                     return Sk.misceval.callsim(LiveObjectIterator, self, start, stop, step);
@@ -627,7 +608,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
             if (self._spec.methods.indexOf("__getitem__") != -1) {
                 return doRpcMethodCall(self, "__getitem__", [], [pyName]);
             } else {
-                throw new Sk.builtin.Exception("Indexing with [] is not supported on this "+self._spec.backend);
+                throw new Sk.builtin.TypeError("Indexing with [] is not supported on this "+self._spec.backend);
             }
         });
 
@@ -648,7 +629,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                         return r;
                     });
             } else {
-                throw new Sk.builtin.Exception("Indexing with [] is not supported on this "+self._spec.backend);
+                throw new Sk.builtin.TypeError("Indexing with [] is not supported on this "+self._spec.backend);
             }
         });
 
@@ -730,7 +711,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         $loc["__iter__"] = new Sk.builtin.func(function(self) {
             // Is this actually iterable?
             if (self._spec.methods.indexOf("__anvil_iter_page__") < 0) {
-                throw new Sk.builtin.Exception("This " + self._spec.backend + " object is not iterable");
+                throw new Sk.builtin.TypeError("This " + self._spec.backend + " object is not iterable");
             }
 
             return Sk.misceval.callsim(LiveObjectIterator, self);
@@ -746,7 +727,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         if (lo && lo._anvil_is_LiveObjectProxy) {
             return new Sk.builtin.str(lo._spec.id);
         } else {
-            throw new Sk.builtin.Exception("Argument is not a LiveObject");
+            throw new Sk.builtin.TypeError("Argument is not a LiveObject");
         }
     });
 
@@ -755,7 +736,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
             lo._spec.itemCache = {};
             lo._spec.iterItems = {};
         } else {
-            throw new Sk.builtin.Exception("Argument is not a LiveObject");
+            throw new Sk.builtin.TypeError("Argument is not a LiveObject");
         }
     });
 
@@ -1077,7 +1058,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
     pyModule["Notification"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
         var _show = function(self) {
             if (self._anvil.notification) {
-                throw new Sk.builtin.Exception("Notification already visible")
+                throw new Sk.builtin.RuntimeError("Notification already visible")
             }
 
             self._anvil.notification = $.notify({

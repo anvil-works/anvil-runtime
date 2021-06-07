@@ -18,11 +18,17 @@ class Stream(WrappedObject):
     _name = "Stream"
     _module = "plotly.graph_objs.heatmapgl"
 
+@serializable_type
+class Transform(WrappedObject):
+    _name = "Transform"
+    _module = "plotly.graph_objs.heatmapgl"
+
 
 __all__ = [
     'ColorBar',
     'Hoverlabel',
     'Stream',
+    'Transform',
     'colorbar',
     'hoverlabel',
 ]

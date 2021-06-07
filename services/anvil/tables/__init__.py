@@ -23,10 +23,18 @@ class AppTables:
 		raise Exception("app_tables is read-only")
 
 
+#!defModuleAttr(anvil.tables)!1: 
+# {
+# 	name: "app_tables",
+#	type: "any",
+# 	anvil$helpLink: "/docs/data-tables/data-tables-in-code",
+# 	$doc: "Access Table objects from the datatables services. You can access a Table object with dot notation e.g. `app_tables.my_table`. To access a table with strings use `getattr(app_tables, 'my_table')`. If no table is present an AttributeError will be thrown."
+# }
+#
 app_tables = AppTables()
 
 
-#!defClass(anvil.tables,TableError)!:
+#!defClass(anvil.tables,TableError,__builtins__..Exception)!:
 class TableError(anvil.server.AnvilWrappedError):
 	pass
 
@@ -36,7 +44,7 @@ class TransactionConflict(TableError):
 	pass
 
 
-#X NOT AUTOCOMPLETED defClass(anvil.tables,QuotaExceededError,anvil.tables.TableError)!:
+#!defClass(anvil.tables,#QuotaExceededError,anvil.tables.TableError)!:
 class QuotaExceededError(TableError):
 	pass
 
@@ -62,9 +70,14 @@ class Transaction:
 	#!defMethod(_)!2: "Abort this transaction. When it ends, all write operations performed during it will be cancelled" ["abort"]
 	def abort(self):
 		self._aborting = True
-#!defClass(anvil.tables,Transaction)!:
+#!defClass(anvil.tables,%Transaction)!:
 
 
+#!defFunction(anvil.tables,%,function,server_function)!2: 
+# {
+#	$doc: "When applied to a function (as a decorator), the whole function will run in a data tables transaction. If it conflicts with another transaction, it will retry up to five times.",
+# anvil$helpLink: "/docs/data-tables/transactions"
+#  } ["in_transaction"]
 def in_transaction(f):
 	def new_f(*args, **kwargs):
 		n = 0
@@ -74,10 +87,11 @@ def in_transaction(f):
 					return f(*args, **kwargs)
 			except TransactionConflict:
 				n += 1
-				if n == 8:
+				if n == 18:
 					raise
-				# Max total sleep time is a little under 12.8 seconds (avg 6.4)
-				sleep_amt = random.random() * (2**n) * 0.05
+				#print(f"RETRYING TXN {n}")
+				# Max total sleep time is a little under 150 seconds (avg 75), so server calls will timeout before this finishes usually.
+				sleep_amt = random.random() * (1.5**n) * 0.05
 				try:
 					time.sleep(sleep_amt)
 				except:
@@ -111,3 +125,28 @@ class _page_size(object):
 #!defFunction(anvil.tables,%,[via_host=],[via_port=])!2: "Get a Postgres connection string for accessing this app's Data Tables via SQL.\n\nThe returned string includes temporary login credentials and sets the search path to a schema representing this app's Data Table environment.\n\nYou can override the host and port for the database connection to connect via a secure tunnel.\n\n(Available on the Dedicated Plan only.)" ["get_connection_string"]
 def get_connection_string(via_host=None, via_port=None):
 	return anvil.server.call("anvil.private.get_direct_postgres_connection_string", via_host=via_host, via_port=via_port)
+
+
+
+
+#!defMethod(table row, **column_values)!2: "Add a row to the data table. Use keyword arguments to specify column values." ["add_row"]
+#!defMethod(client readable view)!2: "Return a view on the table that can be read by client code. Use keyword arguments to specify view restrictions" ["client_readable"]
+#!defMethod(client writable view)!2: "Return a view on the table that can be written by client code. Use keyword arguments to specify view restrictions. This does not give the client write access to other tables referred to by the table." ["client_writable"]
+#!defMethod(client writable view)!2: "Return a view on this table that can be written by client code. Use keyword arguments to specify view restrictions." ["client_writable_cascade"]
+#!defMethod(_)!2: "Delete all the rows from the data table" ["delete_all_rows"]
+#!defMethod(_)!2: "Get a single matching row from the data table whose columns match the keyword arguments. Returns None if no matching row exists, and raises an exception if more than one row matches.\n\nEg: app_tables.table_1.get(name='John Smith')" ["get"]
+#!defMethod(row,id)!2: "Get the matching row from this data table, by its unique ID" ["get_by_id"]
+#!defMethod(bool,row)!2: "Returns true if the table (or view) contains the provided row." ["has_row"]
+#!defMethod(list of dicts)!2: "Get the spec for the table as a list of dicts. Each dict contains the name and type of a column." ["list_columns"]
+#!defMethod(Row or None)!2: "Get rows from a data table. If you specify keyword arguments, you will retrieve only rows whose columns match those values.\n\nEg: app_tables.table_1.search(name='John Smith')" ["search"]
+#!defMethod(Media object)!2: "Get the table in CSV format. Returns a downloadable Media object; use its url property." ["to_csv"]
+#!defClassNoConstructor(anvil.tables,#Table)!1: "A table returned from app_tables"
+
+#!defMethod(Media object)!2: "Get the results of the SearchIterator in CSV format. Returns a downloadable Media object; use its url property." ["to_csv"]
+#!defClassNoConstructor(anvil.tables,#SearchIterator)!1: "An iterator of table rows returned from a search()";
+
+
+#!defMethod(_)!2: "Delete the row from its data table" ["delete"]
+#!defMethod(id)!2: "Get the unique ID of the table row" ["get_id"]
+#!defMethod(_,**column_values)!2: "update the data for multiple columns" ["update"]
+#!defClassNoConstructor(anvil.tables,#Row)!1: "A table row";

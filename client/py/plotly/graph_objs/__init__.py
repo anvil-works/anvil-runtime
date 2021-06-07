@@ -3,422 +3,8 @@ from anvil.util import WrappedObject, WrappedList
 from anvil.server import serializable_type
 
 
-@serializable_type
-class Area(WrappedObject):
-    _name = "Area"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='area', **kwargs)
-
-@serializable_type
-class Bar(WrappedObject):
-    _name = "Bar"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='bar', **kwargs)
-
-@serializable_type
-class Barpolar(WrappedObject):
-    _name = "Barpolar"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='barpolar', **kwargs)
-
-@serializable_type
-class Box(WrappedObject):
-    _name = "Box"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='box', **kwargs)
-
-@serializable_type
-class Candlestick(WrappedObject):
-    _name = "Candlestick"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='candlestick', **kwargs)
-
-@serializable_type
-class Carpet(WrappedObject):
-    _name = "Carpet"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='carpet', **kwargs)
-
-@serializable_type
-class Choropleth(WrappedObject):
-    _name = "Choropleth"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='choropleth', **kwargs)
-
-@serializable_type
-class Choroplethmapbox(WrappedObject):
-    _name = "Choroplethmapbox"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='choroplethmapbox', **kwargs)
-
-@serializable_type
-class Cone(WrappedObject):
-    _name = "Cone"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='cone', **kwargs)
-
-@serializable_type
-class Contour(WrappedObject):
-    _name = "Contour"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='contour', **kwargs)
-
-@serializable_type
-class Contourcarpet(WrappedObject):
-    _name = "Contourcarpet"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='contourcarpet', **kwargs)
-
-@serializable_type
-class Densitymapbox(WrappedObject):
-    _name = "Densitymapbox"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='densitymapbox', **kwargs)
-
-@serializable_type
-class Frame(WrappedObject):
-    _name = "Frame"
-    _module = "plotly.graph_objs"
-
-@serializable_type
-class Funnel(WrappedObject):
-    _name = "Funnel"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='funnel', **kwargs)
-
-@serializable_type
-class Funnelarea(WrappedObject):
-    _name = "Funnelarea"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='funnelarea', **kwargs)
-
-@serializable_type
-class Heatmap(WrappedObject):
-    _name = "Heatmap"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='heatmap', **kwargs)
-
-@serializable_type
-class Heatmapgl(WrappedObject):
-    _name = "Heatmapgl"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='heatmapgl', **kwargs)
-
-@serializable_type
-class Histogram(WrappedObject):
-    _name = "Histogram"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='histogram', **kwargs)
-
-@serializable_type
-class Histogram2d(WrappedObject):
-    _name = "Histogram2d"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='histogram2d', **kwargs)
-
-@serializable_type
-class Histogram2dContour(WrappedObject):
-    _name = "Histogram2dContour"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='histogram2dcontour', **kwargs)
-
-@serializable_type
-class Image(WrappedObject):
-    _name = "Image"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='image', **kwargs)
-
-@serializable_type
-class Indicator(WrappedObject):
-    _name = "Indicator"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='indicator', **kwargs)
-
-@serializable_type
-class Isosurface(WrappedObject):
-    _name = "Isosurface"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='isosurface', **kwargs)
-
-@serializable_type
-class Layout(WrappedObject):
-    _name = "Layout"
-    _module = "plotly.graph_objs"
-
-@serializable_type
-class Mesh3d(WrappedObject):
-    _name = "Mesh3d"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='mesh3d', **kwargs)
-
-@serializable_type
-class Ohlc(WrappedObject):
-    _name = "Ohlc"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='ohlc', **kwargs)
-
-@serializable_type
-class Parcats(WrappedObject):
-    _name = "Parcats"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='parcats', **kwargs)
-
-@serializable_type
-class Parcoords(WrappedObject):
-    _name = "Parcoords"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='parcoords', **kwargs)
-
-@serializable_type
-class Pie(WrappedObject):
-    _name = "Pie"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='pie', **kwargs)
-
-@serializable_type
-class Pointcloud(WrappedObject):
-    _name = "Pointcloud"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='pointcloud', **kwargs)
-
-@serializable_type
-class Sankey(WrappedObject):
-    _name = "Sankey"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='sankey', **kwargs)
-
-@serializable_type
-class Scatter(WrappedObject):
-    _name = "Scatter"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='scatter', **kwargs)
-
-@serializable_type
-class Scatter3d(WrappedObject):
-    _name = "Scatter3d"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='scatter3d', **kwargs)
-
-@serializable_type
-class Scattercarpet(WrappedObject):
-    _name = "Scattercarpet"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='scattercarpet', **kwargs)
-
-@serializable_type
-class Scattergeo(WrappedObject):
-    _name = "Scattergeo"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='scattergeo', **kwargs)
-
-@serializable_type
-class Scattergl(WrappedObject):
-    _name = "Scattergl"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='scattergl', **kwargs)
-
-@serializable_type
-class Scattermapbox(WrappedObject):
-    _name = "Scattermapbox"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='scattermapbox', **kwargs)
-
-@serializable_type
-class Scatterpolar(WrappedObject):
-    _name = "Scatterpolar"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='scatterpolar', **kwargs)
-
-@serializable_type
-class Scatterpolargl(WrappedObject):
-    _name = "Scatterpolargl"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='scatterpolargl', **kwargs)
-
-@serializable_type
-class Scatterternary(WrappedObject):
-    _name = "Scatterternary"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='scatterternary', **kwargs)
-
-@serializable_type
-class Splom(WrappedObject):
-    _name = "Splom"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='splom', **kwargs)
-
-@serializable_type
-class Streamtube(WrappedObject):
-    _name = "Streamtube"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='streamtube', **kwargs)
-
-@serializable_type
-class Sunburst(WrappedObject):
-    _name = "Sunburst"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='sunburst', **kwargs)
-
-@serializable_type
-class Surface(WrappedObject):
-    _name = "Surface"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='surface', **kwargs)
-
-@serializable_type
-class Table(WrappedObject):
-    _name = "Table"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='table', **kwargs)
-
-@serializable_type
-class Treemap(WrappedObject):
-    _name = "Treemap"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='treemap', **kwargs)
-
-@serializable_type
-class Violin(WrappedObject):
-    _name = "Violin"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='violin', **kwargs)
-
-@serializable_type
-class Volume(WrappedObject):
-    _name = "Volume"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='volume', **kwargs)
-
-@serializable_type
-class Waterfall(WrappedObject):
-    _name = "Waterfall"
-    _module = "plotly.graph_objs"
-
-    def __init__(self, d=None, **kwargs):
-        WrappedObject.__init__(self, d, type='waterfall', **kwargs)
-
-
-from ._deprecations import AngularAxis
-from ._deprecations import Annotation
-from ._deprecations import Annotations
-from ._deprecations import ColorBar
-from ._deprecations import Contours
-from ._deprecations import Data
-from ._deprecations import ErrorX
-from ._deprecations import ErrorY
-from ._deprecations import ErrorZ
-from ._deprecations import Font
-from ._deprecations import Frames
-from ._deprecations import Histogram2dcontour
-from ._deprecations import Legend
-from ._deprecations import Line
-from ._deprecations import Margin
-from ._deprecations import Marker
-from ._deprecations import RadialAxis
-from ._deprecations import Scene
-from ._deprecations import Stream
-from ._deprecations import Trace
-from ._deprecations import XAxis
-from ._deprecations import XBins
-from ._deprecations import YAxis
-from ._deprecations import YBins
-from ._deprecations import ZAxis
-
 
 __all__ = [
-    'Area',
     'Bar',
     'Barpolar',
     'Box',
@@ -430,7 +16,7 @@ __all__ = [
     'Contour',
     'Contourcarpet',
     'Densitymapbox',
-    'Frame',
+    'Figure',
     'Funnel',
     'Funnelarea',
     'Heatmap',
@@ -467,8 +53,6 @@ __all__ = [
     'Violin',
     'Volume',
     'Waterfall',
-    '_figure',
-    'area',
     'bar',
     'barpolar',
     'box',
@@ -518,8 +102,81 @@ __all__ = [
     'waterfall',
 ]
 
-from plotly.graph_objs import _figure
-from plotly.graph_objs import area
+from plotly.graph_objs._deprecations import AngularAxis
+from plotly.graph_objs._deprecations import Annotation
+from plotly.graph_objs._deprecations import Annotations
+from plotly.graph_objs._deprecations import ColorBar
+from plotly.graph_objs._deprecations import Contours
+from plotly.graph_objs._deprecations import Data
+from plotly.graph_objs._deprecations import ErrorX
+from plotly.graph_objs._deprecations import ErrorY
+from plotly.graph_objs._deprecations import ErrorZ
+from plotly.graph_objs._deprecations import Font
+from plotly.graph_objs._deprecations import Frames
+from plotly.graph_objs._deprecations import Histogram2dcontour
+from plotly.graph_objs._deprecations import Legend
+from plotly.graph_objs._deprecations import Line
+from plotly.graph_objs._deprecations import Margin
+from plotly.graph_objs._deprecations import Marker
+from plotly.graph_objs._deprecations import RadialAxis
+from plotly.graph_objs._deprecations import Scene
+from plotly.graph_objs._deprecations import Stream
+from plotly.graph_objs._deprecations import Trace
+from plotly.graph_objs._deprecations import XAxis
+from plotly.graph_objs._deprecations import XBins
+from plotly.graph_objs._deprecations import YAxis
+from plotly.graph_objs._deprecations import YBins
+from plotly.graph_objs._deprecations import ZAxis
+from plotly.graph_objs._bar import Bar
+from plotly.graph_objs._barpolar import Barpolar
+from plotly.graph_objs._box import Box
+from plotly.graph_objs._candlestick import Candlestick
+from plotly.graph_objs._carpet import Carpet
+from plotly.graph_objs._choropleth import Choropleth
+from plotly.graph_objs._choroplethmapbox import Choroplethmapbox
+from plotly.graph_objs._cone import Cone
+from plotly.graph_objs._contour import Contour
+from plotly.graph_objs._contourcarpet import Contourcarpet
+from plotly.graph_objs._densitymapbox import Densitymapbox
+from plotly.graph_objs._figure import Figure
+from plotly.graph_objs._funnel import Funnel
+from plotly.graph_objs._funnelarea import Funnelarea
+from plotly.graph_objs._heatmap import Heatmap
+from plotly.graph_objs._heatmapgl import Heatmapgl
+from plotly.graph_objs._histogram import Histogram
+from plotly.graph_objs._histogram2d import Histogram2d
+from plotly.graph_objs._histogram2dcontour import Histogram2dContour
+from plotly.graph_objs._image import Image
+from plotly.graph_objs._indicator import Indicator
+from plotly.graph_objs._isosurface import Isosurface
+from plotly.graph_objs._layout import Layout
+from plotly.graph_objs._mesh3d import Mesh3d
+from plotly.graph_objs._ohlc import Ohlc
+from plotly.graph_objs._parcats import Parcats
+from plotly.graph_objs._parcoords import Parcoords
+from plotly.graph_objs._pie import Pie
+from plotly.graph_objs._pointcloud import Pointcloud
+from plotly.graph_objs._sankey import Sankey
+from plotly.graph_objs._scatter import Scatter
+from plotly.graph_objs._scatter3d import Scatter3d
+from plotly.graph_objs._scattercarpet import Scattercarpet
+from plotly.graph_objs._scattergeo import Scattergeo
+from plotly.graph_objs._scattergl import Scattergl
+from plotly.graph_objs._scattermapbox import Scattermapbox
+from plotly.graph_objs._scatterpolar import Scatterpolar
+from plotly.graph_objs._scatterpolargl import Scatterpolargl
+from plotly.graph_objs._scatterternary import Scatterternary
+from plotly.graph_objs._splom import Splom
+from plotly.graph_objs._streamtube import Streamtube
+from plotly.graph_objs._sunburst import Sunburst
+from plotly.graph_objs._surface import Surface
+from plotly.graph_objs._table import Table
+from plotly.graph_objs._treemap import Treemap
+from plotly.graph_objs._violin import Violin
+from plotly.graph_objs._volume import Volume
+from plotly.graph_objs._waterfall import Waterfall
+
+
 from plotly.graph_objs import bar
 from plotly.graph_objs import barpolar
 from plotly.graph_objs import box

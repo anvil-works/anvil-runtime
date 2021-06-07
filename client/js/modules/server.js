@@ -24,8 +24,18 @@ module.exports = function(appId, appOrigin) {
     var heartbeatCount = 0;
 
     // Carry diagnostic information for the "server disconnected" issue
-    let diagnosticData = {loadTime: +new Date(), userAgent: navigator.userAgent, events: [], nSent: 0, nReceived: 0};
-    let diagnosticEvent = (type) => { diagnosticData.events.push({type: type, time: +new Date()}); }
+    let diagnosticData = {loadTime: +new Date(), userAgent: navigator.userAgent, events: [], requests: [], nSent: 0, nReceived: 0};
+    let diagnosticRequest = (req) => {
+        if (diagnosticData.requests.length > 100) {
+            diagnosticData.requests = diagnosticData.requests.slice(diagnosticData.requests.length - 50);
+        }
+        diagnosticData.requests.push({time: +new Date(), ...req}); 
+    };
+    let diagnosticEvent = (type) => { 
+        let evt = {type: type, time: +new Date(), nSent: diagnosticData.nSent, nReceived: diagnosticData.nReceived};
+        diagnosticData.events.push(evt); 
+        diagnosticRequest(evt);
+    }
 
     function deleteOutstandingRequest(requestId) {
         delete outstandingRequests[requestId];
@@ -45,7 +55,7 @@ module.exports = function(appId, appOrigin) {
         for (var i=0; i < str.length; i++) {
             let c = str.charCodeAt(i)
             if (c > 255) {
-                throw new Sk.builtin.Exception("Cannot encode unicode character for transfer to server")
+                throw new Sk.builtin.ValueError("Cannot encode unicode character for transfer to server")
             }
             bufView[i] = c;
         }
@@ -157,7 +167,7 @@ module.exports = function(appId, appOrigin) {
         }
 
         if (!reconstructed) {
-            throw new Sk.builtin.Exception("Cannot return object of type '" + (obj.type && obj.type[0]) + "' from server call");
+            throw new Sk.builtin.TypeError("Cannot return object of type '" + (obj.type && obj.type[0]) + "' from server call");
         }
         
         return reconstructed;        
@@ -258,14 +268,32 @@ module.exports = function(appId, appOrigin) {
             websocket = deferred.promise;
 
             var ws = new WebSocket(appOrigin.replace(/^http/, "ws") + "/_/ws/" + (window.anvilParams.accessKey || '') + "?s=" + window.anvilSessionToken);
+            var heartbeatInterval = null;
 
             ws.onopen = function() {
                 diagnosticEvent("connected");
-                if (profile) connectProfile.end(); 
+                if (profile) connectProfile.end();
+
+                // Start keepalive heartbeat
+                clearInterval(heartbeatInterval);
+                heartbeatInterval = setInterval(() => {
+                    try {
+                        ws.send(JSON.stringify({
+                            type: "CALL",
+                            id: "client-keepalive-" + (heartbeatCount++),
+                            command: "anvil.private.echo",
+                            args: ["keep-alive"],
+                            kwargs: {},                            
+                        }));
+                    } catch (e) { console.error("Failed to send client keepalive.", e); }
+                }, 5000);
+
                 deferred.resolve(ws); 
             };
 
             let onclose = function(evt) {
+                // Stop keepalive heartbeat
+                clearInterval(heartbeatInterval);
                 if (websocket == deferred.promise) { websocket = null; }
                 deferred.reject.apply(deferred, arguments);
 
@@ -294,6 +322,7 @@ module.exports = function(appId, appOrigin) {
 
             var maybeHandleResponse = async function(id) {
                 var req = outstandingRequests[id];
+                diagnosticRequest({id: id, response: !!req.response});
                 if (!req) {
                     console.error("maybeHandleResponse() called for unknown request ID " + d.id);
                     return;
@@ -380,7 +409,7 @@ module.exports = function(appId, appOrigin) {
                     req.profile.print();
                     req.promise.reject(assembleException(req.response));
                 } else {
-                    req.promise.reject(new Sk.builtin.Exception("Invalid RPC response"));
+                    req.promise.reject(new Sk.builtin.RuntimeError("Invalid RPC response"));
                     console.error("Response came back without 'response' or 'error' keys: ", d);
                 }
             }
@@ -502,7 +531,7 @@ module.exports = function(appId, appOrigin) {
         connect().then(function(ws) {
             ws.send(JSON.stringify(logData));
         }).catch(function() {
-            console.log("Websocket failed; TODO resend via HTTP")
+            console.log("SendLog failed; Should resend via HTTP", logData)
         });
     }
 
@@ -544,7 +573,7 @@ module.exports = function(appId, appOrigin) {
             for (var iter = obj.tp$iter(), k = iter.tp$iternext(); k !== undefined; k = iter.tp$iternext()) {
 
                 if (!(k instanceof Sk.builtin.str)) {
-                    throw new Sk.builtin.Exception("Cannot use '" + k.tp$name + "' objects as the key in a dict when sending to a server-side module; only string keys are allowed (arguments"+pythonifyPath(keySeq)+")");
+                    throw new Sk.builtin.TypeError("Cannot use '" + k.tp$name + "' objects as the key in a dict when sending to a server-side module; only string keys are allowed (arguments"+pythonifyPath(keySeq)+")");
                 }
                 var jsk = Sk.ffi.remapToJs(k);
                 keySeq.push(jsk);
@@ -708,8 +737,10 @@ module.exports = function(appId, appOrigin) {
         } else if(commandOrMethod) {
             call.command = commandOrMethod;
         } else {
-            throw new Sk.builtin.Exception("anvil.server.call() requires at least one parameter");
+            throw new Sk.builtin.TypeError("anvil.server.call() requires at least one parameter");
         }
+
+        diagnosticRequest({id: requestId, call: (call.command || (call.liveObjectCall.backend + ":" + call.liveObjectCall.method))});
 
         var blobContent = []; // array of arrays: [[{json: chunk header, data: DataView}...]]
         var knownLiveObjectMethods = {};
@@ -884,7 +915,7 @@ module.exports = function(appId, appOrigin) {
                     });
                 } else {
                     // We can even tell the user where the bad object was!
-                    var e = new Sk.builtin.Exception("Cannot pass " + (mapping.value ? mapping.value.tp$name : "unexpected") + " object to a server function: arguments" + pythonifyPath(mapping.path.slice(1)));
+                    var e = new Sk.builtin.TypeError("Cannot pass " + (mapping.value ? mapping.value.tp$name : "unexpected") + " object to a server function: arguments" + pythonifyPath(mapping.path.slice(1)));
                     e._anvil = {
                         errorObj: {
                             type: "AnvilSerializationError",
@@ -958,7 +989,13 @@ module.exports = function(appId, appOrigin) {
                         window.setLoading(false);
                     deleteOutstandingRequest(requestId)
                     console.error("Websocket connection failed", evt);
-                    reject(new Sk.builtin.Exception("Connection to server failed (" + (evt && (evt.message || evt.type) || "FAIL") + ")"));
+                    reject(
+                        new Sk.builtin.RuntimeError(
+                            "Connection to server failed (" +
+                                ((evt && (evt.code || evt.message || evt.type)) || "FAIL") +
+                                ")"
+                        )
+                    );
                 }, profile: profile};
 
                 var sendProfile = profile.append("Send call");
@@ -1037,7 +1074,7 @@ module.exports = function(appId, appOrigin) {
     }));
 
     pyMod["launch_background_task"] = new Sk.builtin.func(PyDefUtils.withRawKwargs((pyKwargs, pyCmd, ...args) => {
-        throw new Sk.builtin.Exception("Cannot launch Background Tasks from client code.");
+        throw new Sk.builtin.RuntimeError("Cannot launch Background Tasks from client code.");
     }));
 
     pyMod["__anvil$doRpcCall"] = doRpcCall; // Ew.
@@ -1076,8 +1113,8 @@ module.exports = function(appId, appOrigin) {
             self._mac = pyMac && Sk.ffi.remapToJs(pyMac);
             self._narrow = (pyNarrow && Sk.ffi.remapToJs(pyNarrow)) || [];
 
-            if (!self._mac || typeof(self._mac) != "string") {
-                throw new Sk.builtin.Exception("Cannot create new Capability objects in Form code");
+            if (!self._mac || typeof(self._mac) !== "string") {
+                throw new Sk.builtin.RuntimeError("Cannot create new Capability objects in Form code");
             }
 
             self._applyUpdate = (pyUpdate) => {
@@ -1104,7 +1141,7 @@ module.exports = function(appId, appOrigin) {
         });
 
         // TODO support "local_tag" attribute as the only writable attr (default None)
-        $loc["__setattr__"] = new Sk.builtin.func(() => { throw new Sk.builtin.Exception("Capability objects are read-only"); });
+        $loc["__setattr__"] = new Sk.builtin.func(() => { throw new Sk.builtin.AttributeError("Capability objects are read-only"); });
 
         /*!defMethod(anvil.server.Capability instance,additional_scope)!2*/ "Return a new capability that is narrower than this one, by appending additional scope element(s) to it."
         $loc["narrow"] = new Sk.builtin.func((self, pyAdditionalScope) => {
@@ -1133,7 +1170,7 @@ module.exports = function(appId, appOrigin) {
 
     pyMod["_register_exception_type"] = new Sk.builtin.func(function(pyName, pyClass) {
         if (!pyName || !(pyName instanceof Sk.builtin.str) || !pyClass) {
-            throw new Sk.builtin.Exception("Invalid call to _register_exception_type");
+            throw new Sk.builtin.TypeError("Invalid call to _register_exception_type");
         }
         pyNamedExceptions[pyName.v] = pyClass;
         return Sk.builtin.none.none$;

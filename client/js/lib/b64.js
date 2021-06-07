@@ -200,4 +200,6 @@ function strToUTF8Arr (sDOMStr) {
 
 }
 
-module.exports = {base64EncStr: base64EncStr, base64DecToStr: base64DecToStr};
+if (typeof module !== "undefined") {
+    module.exports = { base64EncStr, base64DecToStr };
+}

@@ -369,689 +369,911 @@ module.exports = function(pyModule) {
       }
     }
 
+
+    const {isTrue} = Sk.misceval;
+    const inDesigner = window.anvilInDesigner;
+
+
 // COMPONENT
 
-
-    pyModule["GoogleMap"] = Sk.misceval.buildClass(pyModule, function($gbl, $Map) {
-
-        var properties = PyDefUtils.assembleGroupProperties(/*!componentProps(GoogleMap)!1*/["layout", "height", "visibility", "user data"], {});
-
-        var events = PyDefUtils.assembleGroupEvents(/*!componentEvents()!2*/"GoogleMap", ["universal"]);
-
-
-// MAP EVENTS
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "bounds_changed", description: "when the viewport bounds have changed.",
-           parameters: [], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "center_changed", description: "when the map center property changes.",
-           parameters: [], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "click", description: "when the user clicks on the map.",
-           parameters: [{
-              name: "lat_lng",
-              description: "The position that was clicked.",
-              important: true,
-              pyVal: true,
-          },{
-              name: "pixel",
-              description: "The position that was clicked.",
-              important: true,
-              pyVal: true,
-          }], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "dbl_click", description: "when the user double-clicks on the map.",
-           parameters: [{
-              name: "lat_lng",
-              description: "The position that was double-clicked.",
-              important: true,
-              pyVal: true,
-          },{
-              name: "pixel",
-              description: "The position that was double-clicked.",
-              important: true,
-              pyVal: true,
-          }], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "drag", description: "This event is repeatedly fired while the user drags the map.",
-           parameters: [], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "dragend", description: "when the user stops dragging the map.",
-           parameters: [], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "dragstart", description: "when the user starts dragging the map.",
-           parameters: [], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "heading_changed", description: "when the map heading property changes.",
-           parameters: [], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "idle", description: "when the map becomes idle after panning or zooming.",
-           parameters: [], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "maptypeid_changed", description: "when the mapTypeId property changes.",
-           parameters: [], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "mousemove", description: "whenever the user's mouse moves over the map container.",
-           parameters: [{
-              name: "lat_lng",
-              description: "The position of the cursor.",
-              important: true,
-              pyVal: true,
-          },{
-              name: "pixel",
-              description: "The position of the cursor.",
-              important: true,
-              pyVal: true,
-          }], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "mouseout", description: "when the user's mouse exits the map container.",
-           parameters: [{
-              name: "lat_lng",
-              description: "The position of the cursor.",
-              important: true,
-              pyVal: true,
-          },{
-              name: "pixel",
-              description: "The position of the cursor.",
-              important: true,
-              pyVal: true,
-          }], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "mouseover", description: "when the user's mouse enters the map container.",
-           parameters: [{
-              name: "lat_lng",
-              description: "The position of the cursor.",
-              important: true,
-              pyVal: true,
-          },{
-              name: "pixel",
-              description: "The position of the cursor.",
-              important: true,
-              pyVal: true,
-          }], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "projection_changed", description: "when the projection has changed.",
-           parameters: [], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "rightclick", description: "when the user right-clicks on the map container.",
-           parameters: [{
-              name: "lat_lng",
-              description: "The position that was right-clicked.",
-              important: true,
-              pyVal: true,
-          },{
-              name: "pixel",
-              description: "The position that was right-clicked.",
-              important: true,
-              pyVal: true,
-          }], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "tilesloaded", description: "when the visible tiles have finished loading.",
-           parameters: [], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "tilt_changed", description: "when the map tilt property changes.",
-           parameters: [], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "zoom_changed", description: "when the map zoom property changes.",
-           parameters: [], important: true, defaultEvent: true});
-
-// DATA EVENTS
-
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "data_addfeature", description: "when the viewport bounds have changed.",
-           parameters: [{
-              name: "feature",
-              description: "The feature that was added.",
-              important: true,
-              pyVal: true,
-          }], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "data_click", description: "for a click on the geometry.",
-           parameters: [{
-              name: "feature",
-              description: "The feature that was clicked.",
-              important: true,
-              pyVal: true,
-          },{
-              name: "lat_lng",
-              description: "The position that was clicked.",
-              important: true,
-              pyVal: true,
-          }], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "data_dbl_click", description: "for a double click on the geometry.",
-           parameters: [{
-              name: "feature",
-              description: "The feature that was double-clicked.",
-              important: true,
-              pyVal: true,
-          },{
-              name: "lat_lng",
-              description: "The position that was double-clicked.",
-              important: true,
-              pyVal: true,
-          }], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "data_mousedown", description: "for a mousedown on the geometry.",
-           parameters: [{
-              name: "feature",
-              description: "The feature the mouse is over.",
-              important: true,
-              pyVal: true,
-          },{
-              name: "lat_lng",
-              description: "The position of the cursor.",
-              important: true,
-              pyVal: true,
-          }], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "data_mouseout", description: "when the mouse leaves the area of the geometry.",
-           parameters: [{
-              name: "feature",
-              description: "The feature the mouse left.",
-              important: true,
-              pyVal: true,
-          },{
-              name: "lat_lng",
-              description: "The position of the cursor.",
-              important: true,
-              pyVal: true,
-          }], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "data_mouseover", description: "when the mouse enters the area of the geometry.",
-           parameters: [{
-              name: "feature",
-              description: "The feature the mouse is over.",
-              important: true,
-              pyVal: true,
-          },{
-              name: "lat_lng",
-              description: "The position of the cursor.",
-              important: true,
-              pyVal: true,
-          }], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "data_mouseup", description: "for a mouseup on the geometry.",
-           parameters: [{
-              name: "feature",
-              description: "The feature the mouse is over.",
-              important: true,
-              pyVal: true,
-          },{
-              name: "lat_lng",
-              description: "The position of the cursor.",
-              important: true,
-              pyVal: true,
-          }], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "data_removefeature", description: "when a feature is removed from the collection.",
-           parameters: [{
-              name: "feature",
-              description: "The feature that was removed.",
-              important: true,
-              pyVal: true,
-          }], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "data_removeproperty", description: "when a feature's property is removed.",
-           parameters: [{
-              name: "feature",
-              description: "The feature whose property was removed.",
-              important: true,
-              pyVal: true,
-          },{
-              name: "name",
-              description: "The name of the property that was removed.",
-              important: true,
-              pyVal: true,
-          },{
-              name: "old_value",
-              description: "The old value of the property that was removed.",
-              important: true,
-              pyVal: true,
-          }], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "data_rightclick", description: "for a right-click on the geometry.",
-           parameters: [{
-              name: "feature",
-              description: "The feature that was right-clicked.",
-              important: true,
-              pyVal: true,
-          },{
-              name: "lat_lng",
-              description: "The position that was right-clicked.",
-              important: true,
-              pyVal: true,
-          }], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "data_setgeometry", description: "when a feature's geometry is set.",
-           parameters: [{
-              name: "feature",
-              description: "The feature that was removed.",
-              important: true,
-              pyVal: true,
-          },{
-              name: "new_geometry",
-              description: "The geometry that was set.",
-              important: true,
-              pyVal: true,
-          },{
-              name: "old_geometry",
-              description: "The geometry that was replaced.",
-              important: true,
-              pyVal: true,
-          }], important: true, defaultEvent: true});
-        events.push(/*!componentEvent(GoogleMap)!1*/
-          {name: "data_setproperty", description: "when a feature's property is set.",
-           parameters: [{
-              name: "feature",
-              description: "The feature whose property was set.",
-              important: true,
-              pyVal: true,
-          },{
-              name: "name",
-              description: "The name of the property that was set.",
-              important: true,
-              pyVal: true,
-          },{
-              name: "new_value",
-              description: "The new value of the property that was set.",
-              important: true,
-              pyVal: true,
-          },{
-              name: "old_value",
-              description: "The old value of the property that was set.",
-              important: true,
-              pyVal: true,
-          }], important: true, defaultEvent: true});
-
-// MAP PROPERTIES
-
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({name: "map_data", pyVal: true, type: "object",
-           pyType: "anvil.GoogleMap.Data instance",
-           description: "Map data",
-           hideFromDesigner: true,
-           set: function(s,e,v) { s._jsVal.data = remapToJs(v); },
-           get: function(s,e) { return s._jsVal ? remapToPy(s._jsVal.data) : Sk.builtin.none.none$; }});
-        
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "background_color",
-          description: "Color used for the background of the Map div. This color will be visible when tiles have not yet loaded as the user pans.",
-          type: "string",
-          defaultValue: "",
-          set: PyDefUtils.mapSetter("backgroundColor")
-        });
-        
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "center",
-          description: "The Map center.",
-          hideFromDesigner: true,
-          type: "object",
-          pyType: "anvil.GoogleMap.LatLng instance",
-          pyVal: true,
-          set: PyDefUtils.mapSetter("center", remapToJs),
-          get: PyDefUtils.mapGetter("getCenter", remapToPy)
-        });
-        
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "clickable_icons",
-          description: "When false, map icons are not clickable. A map icon represents a point of interest",
-          type: "boolean",
-          defaultValue: true,
-          set: PyDefUtils.mapSetter("clickableIcons"),
-        });
-        
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "disable_default_ui",
-          description: "Enables/disables all default UI.",
-          type: "boolean",
-          defaultValue: false,
-          set: PyDefUtils.mapSetter("disableDefaultUI"),
-        });
-        
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "disable_double_click_zoom",
-          description: "Enables/disables zoom and center on double click.",
-          type: "boolean",
-          defaultValue: false,
-          set: PyDefUtils.mapSetter("disableDoubelClickZoom"),
-        });
-        
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "draggable",
-          description: "If false, prevents the map from being dragged.",
-          type: "boolean",
-          defaultValue: true,
-          set: PyDefUtils.mapSetter("draggable"),
-        });
-        
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "draggable_cursor",
-          description: "The name or url of the cursor to display when mousing over a draggable map.",
-          type: "string",
-          defaultValue: "auto",
-          set: PyDefUtils.mapSetter("draggableCursor"),
-        });
-        
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "dragging_cursor",
-          description: "The name or url of the cursor to display when the map is being dragged.",
-          type: "string",
-          defaultValue: "auto",
-          set: PyDefUtils.mapSetter("draggingCursor"),
-        });
-        
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "fullscreen_control",
-          description: "The enabled/disabled state of the Fullscreen control.",
-          type: "boolean",
-          defaultValue: true,
-          set: PyDefUtils.mapSetter("fullscreenControl"),
-        });
-
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "fullscreen_control_options",
-          description: "The display options for the Fullscreen control.",
-          hideFromDesigner: true,
-          type: "object",
-          pyType: "anvil.GoogleMap.FullscreenControlOptions instance",
-          pyVal: true,
-          set: PyDefUtils.mapSetter("fullscreenControlOptions", remapToJs),
-        });
-
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "gesture_handling",
-          description: "This setting controls how gestures on the map are handled.",
-          type: "string",
-          defaultValue: "auto",
-          set: PyDefUtils.mapSetter("gestureHandling"),
-        });
-        
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "heading",
-          description: "The heading for aerial imagery in degrees measured clockwise from cardinal direction North. ",
-          type: "number",
-          defaultValue: 0,
-          set: PyDefUtils.mapSetter("heading", v => v ? v : 0),
-          get: (self, e) => self._inDesigner ? self._anvil.props["heading"] : PyDefUtils.mapGetter("getHeading")(self,e),
-        });
-        
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "keyboard_shortcuts",
-          description: "If false, prevents the map from being controlled by the keyboard.",
-          type: "boolean",
-          defaultValue: true,
-          set: PyDefUtils.mapSetter("keyboardShortcuts"),
-        });
-
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "map_type_control",
-          description: "The enabled/disabled state of the Map type control.",
-          type: "boolean",
-          defaultValue: true,
-          set: PyDefUtils.mapSetter("mapTypeControl"),
-        });
-
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "map_type_control_options",
-          description: "The display options for the Map type control.",
-          hideFromDesigner: true,
-          type: "object",
-          pyType: "anvil.GoogleMap.MapTypeControlOptions instance",
-          pyVal: true,
-          set: PyDefUtils.mapSetter("mapTypeControlOptions", remapToJs),
-        });
-
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "map_type_id",
-          description: "The map type ID. Defaults to MapTypeId.ROADMAP",
-          hideFromDesigner: true,
-          type: "object",
-          pyType: "anvil.GoogleMap.MapTypeId",
-          pyVal: true,
-          set: PyDefUtils.mapSetter("mapTypeId", remapToJs),
-        });
-        
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "max_zoom",
-          description: "The maximum zoom level which will be displayed on the map.",
-          type: "number",
-          defaultValue: 18,
-          set: PyDefUtils.mapSetter("maxZoom"),
-        });
-        
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "min_zoom",
-          description: "The minimum zoom level which will be displayed on the map.",
-          type: "number",
-          defaultValue: 0,
-          set: PyDefUtils.mapSetter("minZoom"),
-        });
-
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "rotate_control",
-          description: "The enabled/disabled state of the rotate control.",
-          type: "boolean",
-          defaultValue: true,
-          set: PyDefUtils.mapSetter("rotateControl"),
-        });
-
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "rotate_control_options",
-          description: "The display options for the rotate control.",
-          hideFromDesigner: true,
-          type: "object",
-          pyType: "anvil.GoogleMap.RotateControlOptions instance",
-          pyVal: true,
-          set: PyDefUtils.mapSetter("rotateControlOptions", remapToJs),
-        });
-
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "scale_control",
-          description: "The enabled/disabled state of the scale control.",
-          type: "boolean",
-          defaultValue: true,
-          set: PyDefUtils.mapSetter("scaleControl"),
-        });
-
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "scale_control_options",
-          description: "The display options for the scale control.",
-          hideFromDesigner: true,
-          type: "object",
-          pyType: "anvil.GoogleMap.ScaleControlOptions instance",
-          pyVal: true,
-          set: PyDefUtils.mapSetter("scaleControlOptions", remapToJs),
-        });
-
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "scroll_wheel",
-          description: "If false, disables scrollwheel zooming on the map.",
-          type: "boolean",
-          defaultValue: true,
-          set: PyDefUtils.mapSetter("scaleControl"),
-        });
-
-        // TODO: Add StreetView props
-
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "street_view_control",
-          description: "The enabled/disabled state of the street view control.",
-          type: "boolean",
-          defaultValue: true,
-          set: PyDefUtils.mapSetter("streetViewControl"),
-        });
-
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "street_view_control_options",
-          description: "The display options for the street view control.",
-          hideFromDesigner: true,
-          type: "object",
-          pyType: "anvil.GoogleMap.StreetViewControlOptions instance",
-          pyVal: true,
-          set: PyDefUtils.mapSetter("streetViewControlOptions", remapToJs),
-        });
-
-        // TODO: Add styles
-        
-        /*componentProp(GoogleMap)!1*/
-        // TILT CAUSES THE MAP TO EXPLODE WITH A STACK OVERFLOW. NO IDEA WHY.
-        // properties.push({
-        //   name: "tilt",
-        //   description: "Controls the automatic switching behavior for the angle of incidence of the map. The only allowed values are 0 and 45.",
-        //   type: "number",
-        //   defaultValue: 45,
-        //   set: PyDefUtils.mapSetter("minZoom"),
-        // });
-
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "zoom",
-          description: "The map zoom level.",
-          type: "number",
-          defaultValue: 2,
-          set: PyDefUtils.mapSetter("zoom", v => v ? v : 2),
-          get: (self, e) => self._inDesigner ? self._anvil.props["zoom"] : PyDefUtils.mapGetter("getZoom")(self,e),
-        });
-
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "zoom_control",
-          description: "The enabled/disabled state of the zoom control.",
-          type: "boolean",
-          defaultValue: true,
-          set: PyDefUtils.mapSetter("zoomControl"),
-        });
-
-        /*!componentProp(GoogleMap)!1*/
-        properties.push({
-          name: "zoom_control_options",
-          description: "The display options for the zoom control.",
-          hideFromDesigner: true,
-          type: "object",
-          pyType: "anvil.GoogleMap.ZoomControlOptions instance",
-          pyVal: true,
-          set: PyDefUtils.mapSetter("zoomControlOptions", remapToJs),
-        });
-
-// MAP INIT
-
-        $Map["__init__"] = PyDefUtils.mkInit(function init(self, kwargs) {
-            self._anvil.element = $("<div/>").css({
-                minHeight: 40,
-            }).addClass("anvil-google-map");
-
-            var triggerResize = function() {
-                setTimeout(function() {
-                  var oldCenter = self._jsVal.getCenter();
-                  if (oldCenter) {
-                    google.maps.event.trigger(self._jsVal, 'resize');
-                    self._jsVal.setCenter(oldCenter);
-                  }
-                });
+    // similar to the logic in Component __new__ but jsVal doesn't exist in component new so we set these props in GoogleMap.__new__
+    function setMapProps(self) {
+        const fns = [null];
+        const prop$map = self.prop$map;
+        Object.keys(prop$map).forEach((propName) => {
+            if (!prop$map[propName].mapProp) {
+                return;
             }
+            const current_val = self._anvil.props[propName];
+            if (current_val !== undefined) {
+                fns.push(() => self._anvil.setProp(propName, current_val));
+            }
+        });
 
-            self._anvil.pageEvents = {
-              add: triggerResize,
-              show: triggerResize,
+        return Sk.misceval.chain(...fns);
+    }
+
+    pyModule["GoogleMap"] = PyDefUtils.mkComponentCls(pyModule, "GoogleMap", {
+        base: pyModule["Container"],
+
+        element: (props) => <PyDefUtils.OuterElement className="anvil-google-map" style="min-height:40px;" {...props} />,
+
+        locals: GoogleMapLocals,
+
+        // MAP PROPERTIES
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(GoogleMap)!1*/ ["layout", "height", "visibility", "user data"], {
+            /*!componentProp(GoogleMap)!1*/
+            map_data: {
+                name: "map_data",
+                pyVal: true,
+                type: "object",
+                pyType: "anvil.GoogleMap.Data instance",
+                description: "Map data",
+                hideFromDesigner: true,
+                mapProp: true,
+                set(s, e, v) {
+                    s._jsVal.data = remapToJs(v);
+                },
+                get(s, e) {
+                    return s._jsVal ? remapToPy(s._jsVal.data) : Sk.builtin.none.none$;
+                },
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            background_color: {
+                name: "background_color",
+                description: "Color used for the background of the Map div. This color will be visible when tiles have not yet loaded as the user pans.",
+                type: "string",
+                defaultValue: Sk.builtin.str.$empty,
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("backgroundColor", String),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            center: {
+                name: "center",
+                description: "The Map center.",
+                hideFromDesigner: true,
+                type: "object",
+                pyType: "anvil.GoogleMap.LatLng instance",
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("center", remapToJs),
+                get: PyDefUtils.mapGetter("getCenter", remapToPy),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            clickable_icons: {
+                name: "clickable_icons",
+                description: "When false, map icons are not clickable. A map icon represents a point of interest",
+                type: "boolean",
+                defaultValue: Sk.builtin.bool.true$,
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("clickableIcons", isTrue),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            disable_default_ui: {
+                name: "disable_default_ui",
+                description: "Enables/disables all default UI.",
+                type: "boolean",
+                defaultValue: Sk.builtin.bool.false$,
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("disableDefaultUI", isTrue),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            disable_double_click_zoom: {
+                name: "disable_double_click_zoom",
+                description: "Enables/disables zoom and center on double click.",
+                type: "boolean",
+                defaultValue: Sk.builtin.bool.false$,
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("disableDoubelClickZoom", isTrue),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            draggable: {
+                name: "draggable",
+                description: "If false, prevents the map from being dragged.",
+                type: "boolean",
+                defaultValue: Sk.builtin.bool.true$,
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("draggable", isTrue),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            draggable_cursor: {
+                name: "draggable_cursor",
+                description: "The name or url of the cursor to display when mousing over a draggable map.",
+                type: "string",
+                defaultValue: new Sk.builtin.str("auto"),
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("draggableCursor", String),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            dragging_cursor: {
+                name: "dragging_cursor",
+                description: "The name or url of the cursor to display when the map is being dragged.",
+                type: "string",
+                defaultValue: new Sk.builtin.str("auto"),
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("draggingCursor", String),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            fullscreen_control: {
+                name: "fullscreen_control",
+                description: "The enabled/disabled state of the Fullscreen control.",
+                type: "boolean",
+                defaultValue: Sk.builtin.bool.true$,
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("fullscreenControl", isTrue),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            fullscreen_control_options: {
+                name: "fullscreen_control_options",
+                description: "The display options for the Fullscreen control.",
+                hideFromDesigner: true,
+                type: "object",
+                pyType: "anvil.GoogleMap.FullscreenControlOptions instance",
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("fullscreenControlOptions", remapToJs),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            gesture_handling: {
+                name: "gesture_handling",
+                description: "This setting controls how gestures on the map are handled.",
+                type: "string",
+                defaultValue: new Sk.builtin.str("auto"),
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("gestureHandling", String),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            heading: {
+                name: "heading",
+                description: "The heading for aerial imagery in degrees measured clockwise from cardinal direction North. ",
+                type: "number",
+                defaultValue: new Sk.builtin.int_(0),
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("heading", (v) => (isTrue(v) ? v : 0)),
+                get: (self, e) => (self._inDesigner ? self._anvil.props["heading"] : PyDefUtils.mapGetter("getHeading", remapToPy)(self, e)),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            keyboard_shortcuts: {
+                name: "keyboard_shortcuts",
+                description: "If false, prevents the map from being controlled by the keyboard.",
+                type: "boolean",
+                defaultValue: Sk.builtin.bool.true$,
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("keyboardShortcuts", isTrue),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            map_type_control: {
+                name: "map_type_control",
+                description: "The enabled/disabled state of the Map type control.",
+                type: "boolean",
+                defaultValue: Sk.builtin.bool.true$,
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("mapTypeControl", isTrue),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            map_type_control_options: {
+                name: "map_type_control_options",
+                description: "The display options for the Map type control.",
+                hideFromDesigner: true,
+                type: "object",
+                pyType: "anvil.GoogleMap.MapTypeControlOptions instance",
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("mapTypeControlOptions", remapToJs),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            map_type_id: {
+                name: "map_type_id",
+                description: "The map type ID. Defaults to MapTypeId.ROADMAP",
+                hideFromDesigner: true,
+                type: "object",
+                pyType: "anvil.GoogleMap.MapTypeId",
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("mapTypeId", remapToJs),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            max_zoom: {
+                name: "max_zoom",
+                description: "The maximum zoom level which will be displayed on the map.",
+                type: "number",
+                defaultValue: new Sk.builtin.int_(18),
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("maxZoom", remapToJs),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            min_zoom: {
+                name: "min_zoom",
+                description: "The minimum zoom level which will be displayed on the map.",
+                type: "number",
+                defaultValue: new Sk.builtin.int_(0),
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("minZoom", remapToJs),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            rotate_control: {
+                name: "rotate_control",
+                description: "The enabled/disabled state of the rotate control.",
+                type: "boolean",
+                defaultValue: Sk.builtin.bool.true$,
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("rotateControl", isTrue),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            rotate_control_options: {
+                name: "rotate_control_options",
+                description: "The display options for the rotate control.",
+                hideFromDesigner: true,
+                type: "object",
+                pyType: "anvil.GoogleMap.RotateControlOptions instance",
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("rotateControlOptions", remapToJs),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            scale_control: {
+                name: "scale_control",
+                description: "The enabled/disabled state of the scale control.",
+                type: "boolean",
+                defaultValue: Sk.builtin.bool.true$,
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("scaleControl", isTrue),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            scale_control_options: {
+                name: "scale_control_options",
+                description: "The display options for the scale control.",
+                hideFromDesigner: true,
+                type: "object",
+                pyType: "anvil.GoogleMap.ScaleControlOptions instance",
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("scaleControlOptions", remapToJs),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            scroll_wheel: {
+                name: "scroll_wheel",
+                description: "If false, disables scrollwheel zooming on the map.",
+                type: "boolean",
+                defaultValue: Sk.builtin.bool.true$,
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("scaleControl", isTrue),
+            },
+
+            // TODO: Add StreetView props
+
+            /*!componentProp(GoogleMap)!1*/
+            street_view_control: {
+                name: "street_view_control",
+                description: "The enabled/disabled state of the street view control.",
+                type: "boolean",
+                defaultValue: Sk.builtin.bool.true$,
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("streetViewControl", isTrue),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            street_view_control_options: {
+                name: "street_view_control_options",
+                description: "The display options for the street view control.",
+                hideFromDesigner: true,
+                type: "object",
+                pyType: "anvil.GoogleMap.StreetViewControlOptions instance",
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("streetViewControlOptions", remapToJs),
+            },
+
+            // TODO: Add styles
+
+            /*componentProp(GoogleMap)!1*/
+            // TILT CAUSES THE MAP TO EXPLODE WITH A STACK OVERFLOW. NO IDEA WHY.
+            // tilt: {
+            //   name: "tilt",
+            //   description: "Controls the automatic switching behavior for the angle of incidence of the map. The only allowed values are 0 and 45.",
+            //   type: "number",
+            //   defaultValue: 45,
+            //   set: PyDefUtils.mapSetter("minZoom"),
+            // }
+
+            /*!componentProp(GoogleMap)!1*/
+            zoom: {
+                name: "zoom",
+                description: "The map zoom level.",
+                type: "number",
+                defaultValue: new Sk.builtin.int_(2),
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("zoom", (v) => (isTrue(v) ? remapToJs(v) : 2)),
+                get: (self, e) => (inDesigner ? self._anvil.props["zoom"] : PyDefUtils.mapGetter("getZoom", remapToPy)(self, e)),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            zoom_control: {
+                name: "zoom_control",
+                description: "The enabled/disabled state of the zoom control.",
+                type: "boolean",
+                defaultValue: Sk.builtin.bool.true$,
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("zoomControl", isTrue),
+            },
+
+            /*!componentProp(GoogleMap)!1*/
+            zoom_control_options: {
+                name: "zoom_control_options",
+                description: "The display options for the zoom control.",
+                hideFromDesigner: true,
+                type: "object",
+                pyType: "anvil.GoogleMap.ZoomControlOptions instance",
+                pyVal: true,
+                mapProp: true,
+                set: PyDefUtils.mapSetter("zoomControlOptions", remapToJs),
+            },
+        }),
+
+        // MAP EVENTS
+        events: PyDefUtils.assembleGroupEvents(/*!componentEvents()!2*/ "GoogleMap", ["universal"], {
+            /*!componentEvent(GoogleMap)!1*/
+            bounds_changed: { name: "bounds_changed", description: "when the viewport bounds have changed.", parameters: [], important: true, defaultEvent: true },
+            /*!componentEvent(GoogleMap)!1*/
+            center_changed: { name: "center_changed", description: "when the map center property changes.", parameters: [], important: true, defaultEvent: true },
+            /*!componentEvent(GoogleMap)!1*/
+            click: {
+                name: "click",
+                description: "when the user clicks on the map.",
+                parameters: [
+                    {
+                        name: "lat_lng",
+                        description: "The position that was clicked.",
+                        important: true,
+                        pyVal: true,
+                    },
+                    {
+                        name: "pixel",
+                        description: "The position that was clicked.",
+                        important: true,
+                        pyVal: true,
+                    },
+                ],
+                important: true,
+                defaultEvent: true,
+            },
+            /*!componentEvent(GoogleMap)!1*/
+            dbl_click: {
+                name: "dbl_click",
+                description: "when the user double-clicks on the map.",
+                parameters: [
+                    {
+                        name: "lat_lng",
+                        description: "The position that was double-clicked.",
+                        important: true,
+                        pyVal: true,
+                    },
+                    {
+                        name: "pixel",
+                        description: "The position that was double-clicked.",
+                        important: true,
+                        pyVal: true,
+                    },
+                ],
+                important: true,
+                defaultEvent: true,
+            },
+            /*!componentEvent(GoogleMap)!1*/
+            drag: { name: "drag", description: "This event is repeatedly fired while the user drags the map.", parameters: [], important: true, defaultEvent: true },
+            /*!componentEvent(GoogleMap)!1*/
+            dragend: { name: "dragend", description: "when the user stops dragging the map.", parameters: [], important: true, defaultEvent: true },
+            /*!componentEvent(GoogleMap)!1*/
+            dragstart: { name: "dragstart", description: "when the user starts dragging the map.", parameters: [], important: true, defaultEvent: true },
+            /*!componentEvent(GoogleMap)!1*/
+            heading_changed: { name: "heading_changed", description: "when the map heading property changes.", parameters: [], important: true, defaultEvent: true },
+            /*!componentEvent(GoogleMap)!1*/
+            idle: { name: "idle", description: "when the map becomes idle after panning or zooming.", parameters: [], important: true, defaultEvent: true },
+            /*!componentEvent(GoogleMap)!1*/
+            maptypeid_changed: { name: "maptypeid_changed", description: "when the mapTypeId property changes.", parameters: [], important: true, defaultEvent: true },
+            /*!componentEvent(GoogleMap)!1*/
+            mousemove: {
+                name: "mousemove",
+                description: "whenever the user's mouse moves over the map container.",
+                parameters: [
+                    {
+                        name: "lat_lng",
+                        description: "The position of the cursor.",
+                        important: true,
+                        pyVal: true,
+                    },
+                    {
+                        name: "pixel",
+                        description: "The position of the cursor.",
+                        important: true,
+                        pyVal: true,
+                    },
+                ],
+                important: true,
+                defaultEvent: true,
+            },
+            /*!componentEvent(GoogleMap)!1*/
+            mouseout: {
+                name: "mouseout",
+                description: "when the user's mouse exits the map container.",
+                parameters: [
+                    {
+                        name: "lat_lng",
+                        description: "The position of the cursor.",
+                        important: true,
+                        pyVal: true,
+                    },
+                    {
+                        name: "pixel",
+                        description: "The position of the cursor.",
+                        important: true,
+                        pyVal: true,
+                    },
+                ],
+                important: true,
+                defaultEvent: true,
+            },
+            /*!componentEvent(GoogleMap)!1*/
+            mouseover: {
+                name: "mouseover",
+                description: "when the user's mouse enters the map container.",
+                parameters: [
+                    {
+                        name: "lat_lng",
+                        description: "The position of the cursor.",
+                        important: true,
+                        pyVal: true,
+                    },
+                    {
+                        name: "pixel",
+                        description: "The position of the cursor.",
+                        important: true,
+                        pyVal: true,
+                    },
+                ],
+                important: true,
+                defaultEvent: true,
+            },
+            /*!componentEvent(GoogleMap)!1*/
+            projection_changed: { name: "projection_changed", description: "when the projection has changed.", parameters: [], important: true, defaultEvent: true },
+            /*!componentEvent(GoogleMap)!1*/
+            rightclick: {
+                name: "rightclick",
+                description: "when the user right-clicks on the map container.",
+                parameters: [
+                    {
+                        name: "lat_lng",
+                        description: "The position that was right-clicked.",
+                        important: true,
+                        pyVal: true,
+                    },
+                    {
+                        name: "pixel",
+                        description: "The position that was right-clicked.",
+                        important: true,
+                        pyVal: true,
+                    },
+                ],
+                important: true,
+                defaultEvent: true,
+            },
+            /*!componentEvent(GoogleMap)!1*/
+            tilesloaded: { name: "tilesloaded", description: "when the visible tiles have finished loading.", parameters: [], important: true, defaultEvent: true },
+            /*!componentEvent(GoogleMap)!1*/
+            tilt_changed: { name: "tilt_changed", description: "when the map tilt property changes.", parameters: [], important: true, defaultEvent: true },
+            /*!componentEvent(GoogleMap)!1*/
+            zoom_changed: { name: "zoom_changed", description: "when the map zoom property changes.", parameters: [], important: true, defaultEvent: true },
+
+            // DATA EVENTS
+
+            /*!componentEvent(GoogleMap)!1*/
+            data_addfeature: {
+                name: "data_addfeature",
+                description: "when the viewport bounds have changed.",
+                parameters: [
+                    {
+                        name: "feature",
+                        description: "The feature that was added.",
+                        important: true,
+                        pyVal: true,
+                    },
+                ],
+                important: true,
+                defaultEvent: true,
+            },
+            /*!componentEvent(GoogleMap)!1*/
+            data_click: {
+                name: "data_click",
+                description: "for a click on the geometry.",
+                parameters: [
+                    {
+                        name: "feature",
+                        description: "The feature that was clicked.",
+                        important: true,
+                        pyVal: true,
+                    },
+                    {
+                        name: "lat_lng",
+                        description: "The position that was clicked.",
+                        important: true,
+                        pyVal: true,
+                    },
+                ],
+                important: true,
+                defaultEvent: true,
+            },
+            /*!componentEvent(GoogleMap)!1*/
+            data_dbl_click: {
+                name: "data_dbl_click",
+                description: "for a double click on the geometry.",
+                parameters: [
+                    {
+                        name: "feature",
+                        description: "The feature that was double-clicked.",
+                        important: true,
+                        pyVal: true,
+                    },
+                    {
+                        name: "lat_lng",
+                        description: "The position that was double-clicked.",
+                        important: true,
+                        pyVal: true,
+                    },
+                ],
+                important: true,
+                defaultEvent: true,
+            },
+            /*!componentEvent(GoogleMap)!1*/
+            data_mousedown: {
+                name: "data_mousedown",
+                description: "for a mousedown on the geometry.",
+                parameters: [
+                    {
+                        name: "feature",
+                        description: "The feature the mouse is over.",
+                        important: true,
+                        pyVal: true,
+                    },
+                    {
+                        name: "lat_lng",
+                        description: "The position of the cursor.",
+                        important: true,
+                        pyVal: true,
+                    },
+                ],
+                important: true,
+                defaultEvent: true,
+            },
+            /*!componentEvent(GoogleMap)!1*/
+            data_mouseout: {
+                name: "data_mouseout",
+                description: "when the mouse leaves the area of the geometry.",
+                parameters: [
+                    {
+                        name: "feature",
+                        description: "The feature the mouse left.",
+                        important: true,
+                        pyVal: true,
+                    },
+                    {
+                        name: "lat_lng",
+                        description: "The position of the cursor.",
+                        important: true,
+                        pyVal: true,
+                    },
+                ],
+                important: true,
+                defaultEvent: true,
+            },
+            /*!componentEvent(GoogleMap)!1*/
+            data_mouseover: {
+                name: "data_mouseover",
+                description: "when the mouse enters the area of the geometry.",
+                parameters: [
+                    {
+                        name: "feature",
+                        description: "The feature the mouse is over.",
+                        important: true,
+                        pyVal: true,
+                    },
+                    {
+                        name: "lat_lng",
+                        description: "The position of the cursor.",
+                        important: true,
+                        pyVal: true,
+                    },
+                ],
+                important: true,
+                defaultEvent: true,
+            },
+            /*!componentEvent(GoogleMap)!1*/
+            data_mouseup: {
+                name: "data_mouseup",
+                description: "for a mouseup on the geometry.",
+                parameters: [
+                    {
+                        name: "feature",
+                        description: "The feature the mouse is over.",
+                        important: true,
+                        pyVal: true,
+                    },
+                    {
+                        name: "lat_lng",
+                        description: "The position of the cursor.",
+                        important: true,
+                        pyVal: true,
+                    },
+                ],
+                important: true,
+                defaultEvent: true,
+            },
+            /*!componentEvent(GoogleMap)!1*/
+            data_removefeature: {
+                name: "data_removefeature",
+                description: "when a feature is removed from the collection.",
+                parameters: [
+                    {
+                        name: "feature",
+                        description: "The feature that was removed.",
+                        important: true,
+                        pyVal: true,
+                    },
+                ],
+                important: true,
+                defaultEvent: true,
+            },
+            /*!componentEvent(GoogleMap)!1*/
+            data_removeproperty: {
+                name: "data_removeproperty",
+                description: "when a feature's property is removed.",
+                parameters: [
+                    {
+                        name: "feature",
+                        description: "The feature whose property was removed.",
+                        important: true,
+                        pyVal: true,
+                    },
+                    {
+                        name: "name",
+                        description: "The name of the property that was removed.",
+                        important: true,
+                        pyVal: true,
+                    },
+                    {
+                        name: "old_value",
+                        description: "The old value of the property that was removed.",
+                        important: true,
+                        pyVal: true,
+                    },
+                ],
+                important: true,
+                defaultEvent: true,
+            },
+            /*!componentEvent(GoogleMap)!1*/
+            data_rightclick: {
+                name: "data_rightclick",
+                description: "for a right-click on the geometry.",
+                parameters: [
+                    {
+                        name: "feature",
+                        description: "The feature that was right-clicked.",
+                        important: true,
+                        pyVal: true,
+                    },
+                    {
+                        name: "lat_lng",
+                        description: "The position that was right-clicked.",
+                        important: true,
+                        pyVal: true,
+                    },
+                ],
+                important: true,
+                defaultEvent: true,
+            },
+            /*!componentEvent(GoogleMap)!1*/
+            data_setgeometry: {
+                name: "data_setgeometry",
+                description: "when a feature's geometry is set.",
+                parameters: [
+                    {
+                        name: "feature",
+                        description: "The feature that was removed.",
+                        important: true,
+                        pyVal: true,
+                    },
+                    {
+                        name: "new_geometry",
+                        description: "The geometry that was set.",
+                        important: true,
+                        pyVal: true,
+                    },
+                    {
+                        name: "old_geometry",
+                        description: "The geometry that was replaced.",
+                        important: true,
+                        pyVal: true,
+                    },
+                ],
+                important: true,
+                defaultEvent: true,
+            },
+            /*!componentEvent(GoogleMap)!1*/
+            data_setproperty: {
+                name: "data_setproperty",
+                description: "when a feature's property is set.",
+                parameters: [
+                    {
+                        name: "feature",
+                        description: "The feature whose property was set.",
+                        important: true,
+                        pyVal: true,
+                    },
+                    {
+                        name: "name",
+                        description: "The name of the property that was set.",
+                        important: true,
+                        pyVal: true,
+                    },
+                    {
+                        name: "new_value",
+                        description: "The new value of the property that was set.",
+                        important: true,
+                        pyVal: true,
+                    },
+                    {
+                        name: "old_value",
+                        description: "The old value of the property that was set.",
+                        important: true,
+                        pyVal: true,
+                    },
+                ],
+                important: true,
+                defaultEvent: true,
+            },
+        }),
+
+
+    });
+    
+    
+    function GoogleMapLocals($Map) {
+
+        $Map["__new__"] = PyDefUtils.mkNew(pyModule["Container"], (self) => {
+            const triggerResize = () => {
+                setTimeout(() => {
+                    const oldCenter = self._jsVal.getCenter();
+                    if (oldCenter) {
+                        google.maps.event.trigger(self._jsVal, "resize");
+                        self._jsVal.setCenter(oldCenter);
+                    }
+                });
             };
 
-            if (self._inDesigner) {
-              self._jsVal = {
-                setOptions: () => {},
-                getCenter: () => {},
-              };
-            } else { // This is set in DesignGoogleMap.js before calling this constructor.
-              self._jsVal = new google.maps.Map(self._anvil.element[0], {
-                center: {lat: 50, lng: -45},
-              });
-              self._jsVal.addListener("bounds_changed", function() {
-                PyDefUtils.raiseEventAsync({}, self, "bounds_changed");
-              });
-              self._jsVal.addListener("center_changed", function() {
-                PyDefUtils.raiseEventAsync({}, self, "center_changed");
-              });
-              self._jsVal.addListener("click", function(e) {
-                PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng), pixel: remapToPy(e.pixel) }, self, "click");
-              });
-              self._jsVal.addListener("dbl_click", function(e) {
-                PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng), pixel: remapToPy(e.pixel) }, self, "dbl_click");
-              });
-              self._jsVal.addListener("drag", function() {
-                PyDefUtils.raiseEventAsync({}, self, "drag");
-              });
-              self._jsVal.addListener("dragend", function() {
-                PyDefUtils.raiseEventAsync({}, self, "dragend");
-              });
-              self._jsVal.addListener("dragstart", function() {
-                PyDefUtils.raiseEventAsync({}, self, "dragstart");
-              });
-              self._jsVal.addListener("heading_changed", function() {
-                PyDefUtils.raiseEventAsync({}, self, "heading_changed");
-              });
-              self._jsVal.addListener("idle", function() {
-                PyDefUtils.raiseEventAsync({}, self, "idle");
-              });
-              self._jsVal.addListener("maptypeid_changed", function() {
-                PyDefUtils.raiseEventAsync({}, self, "maptypeid_changed");
-              });
-              self._jsVal.addListener("mousemove", function(e) {
-                PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng), pixel: remapToPy(e.pixel) }, self, "mousemove");
-              });
-              self._jsVal.addListener("mouseout", function(e) {
-                PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng), pixel: remapToPy(e.pixel) }, self, "mouseout");
-              });
-              self._jsVal.addListener("mouseover", function(e) {
-                PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng), pixel: remapToPy(e.pixel) }, self, "mouseover");
-              });
-              self._jsVal.addListener("projection_changed", function() {
-                PyDefUtils.raiseEventAsync({}, self, "projection_changed");
-              });
-              self._jsVal.addListener("rightclick", function(e) {
-                PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng), pixel: remapToPy(e.pixel) }, self, "rightclick");
-              });
-              self._jsVal.addListener("tilesloaded", function() {
-                PyDefUtils.raiseEventAsync({}, self, "tilesloaded");
-              });
-              self._jsVal.addListener("tilt_changed", function() {
-                PyDefUtils.raiseEventAsync({}, self, "tilt_changed");
-              });
-              self._jsVal.addListener("zoom_changed", function() {
-                PyDefUtils.raiseEventAsync({}, self, "zoom_changed");
-              });
-              self._jsVal._pyVal = self;
-              self._anvil.mapData = Sk.misceval.callsim($Map["Data"], self._jsVal.data);
+            self._anvil.pageEvents = {
+                add: triggerResize,
+                show: triggerResize,
+            };
+
+            if (inDesigner) {
+                self._jsVal = {
+                    setOptions: () => {},
+                    getCenter: () => {},
+                };
+            } else {
+                // This is set in DesignGoogleMap.js before calling this constructor.
+                self._jsVal = new google.maps.Map(self._anvil.domNode, {
+                    center: { lat: 50, lng: -45 },
+                });
+                self._jsVal.addListener("bounds_changed", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "bounds_changed");
+                });
+                self._jsVal.addListener("center_changed", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "center_changed");
+                });
+                self._jsVal.addListener("click", function (e) {
+                    PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng), pixel: remapToPy(e.pixel) }, self, "click");
+                });
+                self._jsVal.addListener("dbl_click", function (e) {
+                    PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng), pixel: remapToPy(e.pixel) }, self, "dbl_click");
+                });
+                self._jsVal.addListener("drag", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "drag");
+                });
+                self._jsVal.addListener("dragend", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "dragend");
+                });
+                self._jsVal.addListener("dragstart", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "dragstart");
+                });
+                self._jsVal.addListener("heading_changed", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "heading_changed");
+                });
+                self._jsVal.addListener("idle", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "idle");
+                });
+                self._jsVal.addListener("maptypeid_changed", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "maptypeid_changed");
+                });
+                self._jsVal.addListener("mousemove", function (e) {
+                    PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng), pixel: remapToPy(e.pixel) }, self, "mousemove");
+                });
+                self._jsVal.addListener("mouseout", function (e) {
+                    PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng), pixel: remapToPy(e.pixel) }, self, "mouseout");
+                });
+                self._jsVal.addListener("mouseover", function (e) {
+                    PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng), pixel: remapToPy(e.pixel) }, self, "mouseover");
+                });
+                self._jsVal.addListener("projection_changed", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "projection_changed");
+                });
+                self._jsVal.addListener("rightclick", function (e) {
+                    PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng), pixel: remapToPy(e.pixel) }, self, "rightclick");
+                });
+                self._jsVal.addListener("tilesloaded", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "tilesloaded");
+                });
+                self._jsVal.addListener("tilt_changed", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "tilt_changed");
+                });
+                self._jsVal.addListener("zoom_changed", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "zoom_changed");
+                });
+                self._jsVal._pyVal = self;
+                self._anvil.mapData = Sk.misceval.callsim($Map["Data"], self._jsVal.data);
             }
-        }, pyModule, $Map, properties, events, pyModule["Container"]);
+
+            // we do this now because self._jsVal only exists here
+
+            return setMapProps(self);
+
+
+        });
 
 // OBJECT SPECS
 
-        var objectSpec = function() { }
+        function objectSpec() { }
 
         $Map["ObjectSpec"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
 
@@ -2315,574 +2537,621 @@ module.exports = function(pyModule) {
         $Map["add_component"] = PyDefUtils.funcWithKwargs(function(kwargs, self, pyObj) {
           if (!pyObj || !Sk.builtin.isinstance(pyObj, $Map["AbstractOverlay"]).v) {
             // For now, until we have the arbitrary overlay layer.
-            throw new Sk.builtin.Exception("Cannot add component. Only GoogleMap overlay components may be added to a GoogleMap instance.");
+            throw new Sk.builtin.TypeError("Cannot add component. Only GoogleMap overlay components may be added to a GoogleMap instance.");
           }
 
-          Sk.misceval.callsim(pyModule["Container"].prototype.add_component, self, pyObj, kwargs);
+          return Sk.misceval.callsim(pyModule["Container"].prototype.add_component, self, pyObj, kwargs);
         });
 
 
-        /*!defClass(anvil,GoogleMap,Container)!*/
 
 // OVERLAYS
-        $Map["AbstractOverlay"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
 
-            var properties = PyDefUtils.assembleGroupProperties(/*!componentProps(anvil.GoogleMap.AbstractOverlay)!2*/
-              ["mapOverlays"]);
-
-            var events = PyDefUtils.assembleGroupEvents("GoogleMap.AbstractOverlay", /*!componentEvents(anvil.googleMap.AbstractOverlay)!1*/["universal","mapOverlays"]);
-
-            var initFn = function init(self, pyKwargs) {
-              self._anvil.pageEvents = {
-                add: function() {
-                  if (!Sk.misceval.isTrue(Sk.builtin.isinstance(self._anvil.parent.pyObj, pyModule["GoogleMap"]))) {
-                    throw new Sk.builtin.Exception("Map components can only be added to maps.");
-                  }
-                  self._jsVal.setMap(self._anvil.parent.pyObj._jsVal);
+        const mkOverlayClass = (name, superClass, google_map_type, properties, events, new_callback, loc_callback) => {
+            const klass = PyDefUtils.mkComponentCls(pyModule, name, {
+                properties,
+                events,
+                base: superClass,
+                locals($loc) {
+                    if (new_callback) {
+                        $loc["__new__"] = PyDefUtils.mkNew(superClass, new_callback);
+                    }
+                    if (loc_callback) {
+                        loc_callback($loc);
+                    }
                 },
+            });
+            if (google_map_type) {
+                Object.defineProperty(klass.prototype, "$google_map_type", {
+                    value: google_map_type,
+                    writable: true,
+                });
+                registerRemapType(google_map_type, klass);
+            }
 
-                remove: function() {
-                  self._jsVal.setMap(null);
+            return klass;
+        };
+
+
+        $Map["AbstractOverlay"] = mkOverlayClass(
+            /*!defClass(anvil.GoogleMap,AbstractOverlay,anvil.Component)!*/ "GoogleMap.AbstractOverlay",
+            pyModule["Component"],
+            null,
+            PyDefUtils.assembleGroupProperties(/*!componentProps(anvil.GoogleMap.AbstractOverlay)!2*/ ["mapOverlays"]),
+            PyDefUtils.assembleGroupEvents(
+                "GoogleMap.AbstractOverlay",
+                /*!componentEvents(anvil.googleMap.AbstractOverlay)!1*/ ["universal", "mapOverlays"]
+            ),
+            (self) => {
+                if (self.$google_map_type) {
+                    self._jsVal = new self.$google_map_type();
+                    self._jsVal.addListener("click", function (e) {
+                        PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "click");
+                    });
+                    self._jsVal.addListener("dblclick", function (e) {
+                        PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "dblclick");
+                    });
+                    self._jsVal.addListener("drag", function (e) {
+                        PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "drag");
+                    });
+                    self._jsVal.addListener("dragend", function (e) {
+                        PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "dragend");
+                    });
+                    self._jsVal.addListener("dragstart", function (e) {
+                        PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "dragstart");
+                    });
+                    self._jsVal.addListener("mousedown", function (e) {
+                        PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "mousedown");
+                    });
+                    self._jsVal.addListener("mouseout", function (e) {
+                        PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "mouseout");
+                    });
+                    self._jsVal.addListener("mouseover", function (e) {
+                        PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "mouseover");
+                    });
+                    self._jsVal.addListener("mouseup", function (e) {
+                        PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "mouseup");
+                    });
+                    self._jsVal.addListener("rightclick", function (e) {
+                        PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "rightclick");
+                    });
                 }
-              };
+                self._anvil.pageEvents = {
+                    add() {
+                        if (!Sk.misceval.isTrue(Sk.builtin.isinstance(self._anvil.parent.pyObj, pyModule["GoogleMap"]))) {
+                            throw new Sk.builtin.TypeError("Map components can only be added to maps.");
+                        }
+                        self._jsVal.setMap(self._anvil.parent.pyObj._jsVal);
+                    },
 
-              self._jsVal.addListener("click", function(e) {
-                PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "click");
-              });
-              self._jsVal.addListener("dblclick", function(e) {
-                PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "dblclick");
-              });
-              self._jsVal.addListener("drag", function(e) {
-                PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "drag");
-              });
-              self._jsVal.addListener("dragend", function(e) {
-                PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "dragend");
-              });
-              self._jsVal.addListener("dragstart", function(e) {
-                PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "dragstart");
-              });
-              self._jsVal.addListener("mousedown", function(e) {
-                PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "mousedown");
-              });
-              self._jsVal.addListener("mouseout", function(e) {
-                PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "mouseout");
-              });
-              self._jsVal.addListener("mouseover", function(e) {
-                PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "mouseover");
-              });
-              self._jsVal.addListener("mouseup", function(e) {
-                PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "mouseup");
-              });
-              self._jsVal.addListener("rightclick", function(e) {
-                PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "rightclick");
-              });
-            };
-            initFn.py_kwargs = true;
+                    remove() {
+                        self._jsVal.setMap(null);
+                    },
+                };
 
-            $loc["__init__"] = PyDefUtils.mkInit(initFn, pyModule, $loc, properties, events, pyModule["Component"]);
 
-        }, /*!defClass(anvil.GoogleMap,AbstractOverlay,anvil.Component)!*/ 'GoogleMap.AbstractOverlay', [pyModule["Component"]]);
+                return setMapProps(self);
+            },
+        );
 
-        $Map["Marker"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
 
-            var properties = PyDefUtils.assembleGroupProperties(/*!componentProps(anvil.GoogleMap.Marker)!2*/
-              [], {
+        $Map["Marker"] = mkOverlayClass(
+            /*!defClass(anvil.GoogleMap,Marker,anvil.GoogleMap.AbstractOverlay)!*/ "GoogleMap.Marker",
+            $Map["AbstractOverlay"],
+            google.maps.Marker,
+            PyDefUtils.assembleGroupProperties(/*!componentProps(anvil.GoogleMap.Marker)!2*/ [], {
                 /*!componentProp(anvil.GoogleMap.Marker)!1*/
                 animation: {
-                  name: "animation",
-                  type: "anvil.GoogleMap.Animation",
-                  important: true,
-                  description: "The animation of this Marker.",
-                  pyVal: true,
-                  set: PyDefUtils.mapSetter("animation", remapToJs),
-                  get: PyDefUtils.mapGetter("getAnimation", remapToPy),
+                    name: "animation",
+                    type: "anvil.GoogleMap.Animation",
+                    important: true,
+                    description: "The animation of this Marker.",
+                    pyVal: true,
+                    mapProp: true,
+                    set: PyDefUtils.mapSetter("animation", remapToJs),
+                    get: PyDefUtils.mapGetter("getAnimation", remapToPy),
                 },
                 /*!componentProp(anvil.GoogleMap.Marker)!1*/
                 position: {
-                  name: "position",
-                  pyType: "anvil.GoogleMap.LatLng instance",
-                  important: true,
-                  description: "The LatLng position of this Marker",
-                  pyVal: true,
-                  set: PyDefUtils.mapSetter("position", remapToJs),
-                  get: PyDefUtils.mapGetter("getPosition", remapToPy),
+                    name: "position",
+                    pyType: "anvil.GoogleMap.LatLng instance",
+                    important: true,
+                    description: "The LatLng position of this Marker",
+                    pyVal: true,
+                    mapProp: true,
+                    set: PyDefUtils.mapSetter("position", remapToJs),
+                    get: PyDefUtils.mapGetter("getPosition", remapToPy),
                 },
                 /*!componentProp(anvil.GoogleMap.Marker)!1*/
                 icon: {
-                  name: "icon",
-                  pyType: "anvil.GoogleMap.Symbol instance", // TODO: This is actually a union type string|Icon|Symbol
-                  description: "The icon to display at the position of this Marker.",
-                  pyVal: true,
-                  set: PyDefUtils.mapSetter("icon", remapToJs),
-                  get: PyDefUtils.mapGetter("getIcon", remapToPy),
+                    name: "icon",
+                    pyType: "anvil.GoogleMap.Symbol instance", // TODO: This is actually a union type string|Icon|Symbol
+                    description: "The icon to display at the position of this Marker.",
+                    pyVal: true,
+                    mapProp: true,
+                    set: PyDefUtils.mapSetter("icon", remapToJs),
+                    get: PyDefUtils.mapGetter("getIcon", remapToPy),
                 },
                 /*!componentProp(anvil.GoogleMap.Marker)!1*/
                 label: {
-                  name: "label",
-                  pyType: "anvil.GoogleMap.MarkerLabel instance",
-                  description: "The label to display on this Marker.",
-                  pyVal: true,
-                  set: PyDefUtils.mapSetter("label", remapToJs),
-                  get: PyDefUtils.mapGetter("getLabel", remapToPy),
+                    name: "label",
+                    pyType: "anvil.GoogleMap.MarkerLabel instance",
+                    description: "The label to display on this Marker.",
+                    pyVal: true,
+                    mapProp: true,
+                    set: PyDefUtils.mapSetter("label", remapToJs),
+                    get: PyDefUtils.mapGetter("getLabel", remapToPy),
                 },
                 /*!componentProp(anvil.GoogleMap.Marker)!1*/
                 title: {
-                  name: "title",
-                  description: "The tooltip text for this Marker.",
-                  type: "string",
-                  set: PyDefUtils.mapSetter("title"),
-                  get: PyDefUtils.mapGetter("getTitle", remapToPy),
+                    name: "title",
+                    description: "The tooltip text for this Marker.",
+                    type: "string",
+                    mapProp: true,
+                    set: PyDefUtils.mapSetter("title"),
+                    get: PyDefUtils.mapGetter("getTitle", remapToPy),
                 },
                 /*!componentProp(anvil.GoogleMap.Marker)!1*/
                 cursor: {
-                  name: "cursor",
-                  description: "The cursor to display over this Marker.",
-                  type: "string",
-                  set: PyDefUtils.mapSetter("cursor"),
-                  get: PyDefUtils.mapGetter("getCursor", remapToPy),
+                    name: "cursor",
+                    description: "The cursor to display over this Marker.",
+                    type: "string",
+                    mapProp: true,
+                    set: PyDefUtils.mapSetter("cursor"),
+                    get: PyDefUtils.mapGetter("getCursor", remapToPy),
                 },
                 /*!componentProp(anvil.GoogleMap.Marker)!1*/
                 opacity: {
-                  name: "opacity",
-                  description: "The opacity of this Marker.",
-                  type: "number",
-                  set: PyDefUtils.mapSetter("opacity"),
-                  get: PyDefUtils.mapGetter("getOpacity", remapToPy),
+                    name: "opacity",
+                    description: "The opacity of this Marker.",
+                    type: "number",
+                    mapProp: true,
+                    set: PyDefUtils.mapSetter("opacity"),
+                    get: PyDefUtils.mapGetter("getOpacity", remapToPy),
                 },
-              });
-
-            var events = PyDefUtils.assembleGroupEvents("GoogleMap.Marker", /*!componentEvents(anvil.GoogleMap.Marker)!1*/[]);
-
-            events.push(/*!componentEvent(anvil.GoogleMap.Marker)!1*/ {
-                name: "animation_changed", description: "When the animation of this Marker changes.",
-                parameters: [],
-            });
-            events.push(/*!componentEvent(anvil.GoogleMap.Marker)!1*/ {
-                name: "clickable_changed", description: "When the 'clickable' property of this Marker changes.",
-                parameters: [],
-            });
-            events.push(/*!componentEvent(anvil.GoogleMap.Marker)!1*/ {
-                name: "cursor_changed", description: "When the 'cursor' property of this Marker changes.",
-                parameters: [],
-            });
-            events.push(/*!componentEvent(anvil.GoogleMap.Marker)!1*/ {
-                name: "draggable_changed", description: "When the 'draggable' property of this Marker changes.",
-                parameters: [],
-            });
-            events.push(/*!componentEvent(anvil.GoogleMap.Marker)!1*/ {
-                name: "icon_changed", description: "When the 'icon' property of this Marker changes.",
-                parameters: [],
-            });
-            events.push(/*!componentEvent(anvil.GoogleMap.Marker)!1*/ {
-                name: "position_changed", description: "When the position of this Marker changes, i.e. when it is moved.",
-                parameters: [],
-            });
-            events.push(/*!componentEvent(anvil.GoogleMap.Marker)!1*/ {
-                name: "shape_changed", description: "When the 'shape' property of this Marker changes, i.e. when it is moved.",
-                parameters: [],
-            });
-            events.push(/*!componentEvent(anvil.GoogleMap.Marker)!1*/ {
-                name: "title_changed", description: "When the 'title' property of this Marker changes, i.e. when it is moved.",
-                parameters: [],
-            });
-            events.push(/*!componentEvent(anvil.GoogleMap.Marker)!1*/ {
-                name: "visible_changed", description: "When the 'visible' property of this Marker changes, i.e. when it is moved.",
-                parameters: [],
-            });
-            events.push(/*!componentEvent(anvil.GoogleMap.Marker)!1*/ {
-                name: "z_index_changed", description: "When the 'z_index' property of this Marker changes, i.e. when it is moved.",
-                parameters: [],
-            });
-
-            var initFn = function init(self, pyKwargs) {
-              self._jsVal = new google.maps.Marker();
-              self._jsVal.addListener("animation_changed", function() {
-                PyDefUtils.raiseEventAsync({}, self, "animation_changed");
-              });
-              self._jsVal.addListener("clickable_changed", function() {
-                PyDefUtils.raiseEventAsync({}, self, "clickable_changed");
-              });
-              self._jsVal.addListener("cursor_changed", function() {
-                PyDefUtils.raiseEventAsync({}, self, "cursor_changed");
-              });
-              self._jsVal.addListener("draggable_changed", function() {
-                PyDefUtils.raiseEventAsync({}, self, "draggable_changed");
-              });
-              self._jsVal.addListener("icon_changed", function() {
-                PyDefUtils.raiseEventAsync({}, self, "icon_changed");
-              });
-              self._jsVal.addListener("position_changed", function() {
-                PyDefUtils.raiseEventAsync({}, self, "position_changed");
-              });
-              self._jsVal.addListener("shape_changed", function() {
-                PyDefUtils.raiseEventAsync({}, self, "shape_changed");
-              });
-              self._jsVal.addListener("title_changed", function() {
-                PyDefUtils.raiseEventAsync({}, self, "title_changed");
-              });
-              self._jsVal.addListener("visible_changed", function() {
-                PyDefUtils.raiseEventAsync({}, self, "visible_changed");
-              });
-              self._jsVal.addListener("zindex_changed", function() {
-                PyDefUtils.raiseEventAsync({}, self, "z_index_changed");
-              });
-            };
-            initFn.py_kwargs = true;
-
-            $loc["__init__"] = PyDefUtils.mkInit(initFn, pyModule, $loc, properties, events, $Map["AbstractOverlay"]);
-
-        }, /*!defClass(anvil.GoogleMap,Marker,anvil.GoogleMap.AbstractOverlay)!*/ 'GoogleMap.Marker', [$Map["AbstractOverlay"]]);
-        registerRemapType(google.maps.Marker, $Map["Marker"]);
-
-        $Map["Polyline"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-
-            var properties = PyDefUtils.assembleGroupProperties(/*!componentProps(anvil.GoogleMap.Polyline)!2*/
-              ["mapPolyOverlays"], {
+            }),
+            PyDefUtils.assembleGroupEvents("GoogleMap.Marker", /*!componentEvents(anvil.GoogleMap.Marker)!1*/ []).concat(
+                /*!componentEvent(anvil.GoogleMap.Marker)!1*/ {
+                    name: "animation_changed",
+                    description: "When the animation of this Marker changes.",
+                    parameters: [],
+                },
+                /*!componentEvent(anvil.GoogleMap.Marker)!1*/ {
+                    name: "clickable_changed",
+                    description: "When the 'clickable' property of this Marker changes.",
+                    parameters: [],
+                },
+                /*!componentEvent(anvil.GoogleMap.Marker)!1*/ {
+                    name: "cursor_changed",
+                    description: "When the 'cursor' property of this Marker changes.",
+                    parameters: [],
+                },
+                /*!componentEvent(anvil.GoogleMap.Marker)!1*/ {
+                    name: "draggable_changed",
+                    description: "When the 'draggable' property of this Marker changes.",
+                    parameters: [],
+                },
+                /*!componentEvent(anvil.GoogleMap.Marker)!1*/ {
+                    name: "icon_changed",
+                    description: "When the 'icon' property of this Marker changes.",
+                    parameters: [],
+                },
+                /*!componentEvent(anvil.GoogleMap.Marker)!1*/ {
+                    name: "position_changed",
+                    description: "When the position of this Marker changes, i.e. when it is moved.",
+                    parameters: [],
+                },
+                /*!componentEvent(anvil.GoogleMap.Marker)!1*/ {
+                    name: "shape_changed",
+                    description: "When the 'shape' property of this Marker changes, i.e. when it is moved.",
+                    parameters: [],
+                },
+                /*!componentEvent(anvil.GoogleMap.Marker)!1*/ {
+                    name: "title_changed",
+                    description: "When the 'title' property of this Marker changes, i.e. when it is moved.",
+                    parameters: [],
+                },
+                /*!componentEvent(anvil.GoogleMap.Marker)!1*/ {
+                    name: "visible_changed",
+                    description: "When the 'visible' property of this Marker changes, i.e. when it is moved.",
+                    parameters: [],
+                },
+                /*!componentEvent(anvil.GoogleMap.Marker)!1*/ {
+                    name: "z_index_changed",
+                    description: "When the 'z_index' property of this Marker changes, i.e. when it is moved.",
+                    parameters: [],
+                }
+            ),
+            (self) => {
+                self._jsVal.addListener("animation_changed", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "animation_changed");
+                });
+                self._jsVal.addListener("clickable_changed", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "clickable_changed");
+                });
+                self._jsVal.addListener("cursor_changed", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "cursor_changed");
+                });
+                self._jsVal.addListener("draggable_changed", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "draggable_changed");
+                });
+                self._jsVal.addListener("icon_changed", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "icon_changed");
+                });
+                self._jsVal.addListener("position_changed", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "position_changed");
+                });
+                self._jsVal.addListener("shape_changed", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "shape_changed");
+                });
+                self._jsVal.addListener("title_changed", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "title_changed");
+                });
+                self._jsVal.addListener("visible_changed", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "visible_changed");
+                });
+                self._jsVal.addListener("zindex_changed", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "z_index_changed");
+                });
+            }
+        );
+        
+        
+        $Map["Polyline"] = mkOverlayClass(
+            /*!defClass(anvil.GoogleMap,Polyline,anvil.GoogleMap.AbstractOverlay)!*/ "GoogleMap.Polyline",
+            $Map["AbstractOverlay"],
+            google.maps.Polyline,
+            PyDefUtils.assembleGroupProperties(/*!componentProps(anvil.GoogleMap.Polyline)!2*/ ["mapPolyOverlays"], {
                 /*!componentProp(anvil.GoogleMap.Polyline)!1*/
                 icons: {
-                  name: "icons",
-                  important: true,
-                  description: "The icons to be rendered along the polyline.",
-                  pyVal: true,
-                  set: PyDefUtils.mapSetter("icons", remapToJs),
+                    name: "icons",
+                    important: true,
+                    description: "The icons to be rendered along the polyline.",
+                    pyVal: true,
+                    mapProp: true,
+                    set: PyDefUtils.mapSetter("icons", remapToJs),
                 },
                 /*!componentProp(anvil.GoogleMap.Polyline)!1*/
                 path: {
-                  name: "path",
-                  pyType: "list(anvil.GoogleMap.LatLng instance)",
-                  important: true,
-                  description: "The ordered sequence of LatLng coordinates of the Polyline.",
-                  pyVal: true,
-                  set: PyDefUtils.mapSetter("path", remapToJs),
+                    name: "path",
+                    pyType: "list(anvil.GoogleMap.LatLng instance)",
+                    important: true,
+                    description: "The ordered sequence of LatLng coordinates of the Polyline.",
+                    pyVal: true,
+                    mapProp: true,
+                    set: PyDefUtils.mapSetter("path", remapToJs),
                 },
                 /*!componentProp(anvil.GoogleMap.Polyline)!1*/
                 geodesic: {
-                  name: "geodesic",
-                  description: "When true, edges of the polygon are interpreted as geodesic and will follow the curvature of the Earth.",
-                  type: "boolean",
-                  defaultValue: false,
-                  set: PyDefUtils.mapSetter("geodesic"),
-                }
-              });
+                    name: "geodesic",
+                    description: "When true, edges of the polygon are interpreted as geodesic and will follow the curvature of the Earth.",
+                    type: "boolean",
+                    defaultValue: false,
+                    mapProp: true,
+                    pyVal: true,
+                    set: PyDefUtils.mapSetter("geodesic", isTrue),
+                },
+            }),
+            PyDefUtils.assembleGroupEvents("GoogleMap.Polyline", /*!componentEvents(anvil.GoogleMap.Polyline)!1*/ []),
+        );
 
-            var events = PyDefUtils.assembleGroupEvents("GoogleMap.Polyline", /*!componentEvents(anvil.GoogleMap.Polyline)!1*/[]);
 
-            var initFn = function init(self, pyKwargs) {
-              self._jsVal = new google.maps.Polyline();
-            };
-            initFn.py_kwargs = true;
-
-            $loc["__init__"] = PyDefUtils.mkInit(initFn, pyModule, $loc, properties, events, $Map["AbstractOverlay"]);
-
-        }, /*!defClass(anvil.GoogleMap,Polyline,anvil.GoogleMap.AbstractOverlay)!*/ 'GoogleMap.Polyline', [$Map["AbstractOverlay"]]);
-        registerRemapType(google.maps.Polyline, $Map["Polyline"]);
-
-        $Map["Polygon"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-
-            var properties = PyDefUtils.assembleGroupProperties(/*!componentProps(anvil.GoogleMap.Polygon)!2*/
-              ["mapPolyOverlays", "mapAreaOverlays"], {
+        $Map["Polygon"] = mkOverlayClass(
+            /*!defClass(anvil.GoogleMap,Polygon,anvil.GoogleMap.AbstractOverlay)!*/ "GoogleMap.Polygon",
+            $Map["AbstractOverlay"],
+            google.maps.Polygon,
+            PyDefUtils.assembleGroupProperties(/*!componentProps(anvil.GoogleMap.Polygon)!2*/ ["mapPolyOverlays", "mapAreaOverlays"], {
                 /*!componentProp(anvil.GoogleMap.Polygon)!1*/
                 path: {
-                  name: "path",
-                  pyType: "list(anvil.GoogleMap.LatLng instance)",
-                  important: true,
-                  description: "The ordered sequence of LatLng coordinates of the Polygon.",
-                  pyVal: true,
-                  set: PyDefUtils.mapSetter("path", remapToJs),
+                    name: "path",
+                    pyType: "list(anvil.GoogleMap.LatLng instance)",
+                    important: true,
+                    description: "The ordered sequence of LatLng coordinates of the Polygon.",
+                    pyVal: true,
+                    mapProp: true,
+                    set: PyDefUtils.mapSetter("path", remapToJs),
                 },
                 /*!componentProp(anvil.GoogleMap.Polygon)!1*/
                 geodesic: {
-                  name: "geodesic",
-                  description: "When true, edges of the polygon are interpreted as geodesic and will follow the curvature of the Earth.",
-                  type: "boolean",
-                  defaultValue: false,
-                  set: PyDefUtils.mapSetter("geodesic"),
-                }
-              });
+                    name: "geodesic",
+                    description: "When true, edges of the polygon are interpreted as geodesic and will follow the curvature of the Earth.",
+                    type: "boolean",
+                    defaultValue: Sk.builtin.bool.false$,
+                    pyVal: true,
+                    mapProp: true,
+                    set: PyDefUtils.mapSetter("geodesic", isTrue),
+                },
+            }),
+            PyDefUtils.assembleGroupEvents("GoogleMap.Polygon", /*!componentEvents(anvil.GoogleMap.Polygon)!1*/ []),
+        );
 
-            var events = PyDefUtils.assembleGroupEvents("GoogleMap.Polygon", /*!componentEvents(anvil.GoogleMap.Polygon)!1*/[]);
 
-            var initFn = function init(self, pyKwargs) {
-              self._jsVal = new google.maps.Polygon();
-            };
-            initFn.py_kwargs = true;
-
-            $loc["__init__"] = PyDefUtils.mkInit(initFn, pyModule, $loc, properties, events, $Map["AbstractOverlay"]);
-
-        }, /*!defClass(anvil.GoogleMap,Polygon,anvil.GoogleMap.AbstractOverlay)!*/ 'GoogleMap.Polygon', [$Map["AbstractOverlay"]]);
-        registerRemapType(google.maps.Polygon, $Map["Polygon"]);
-
-        $Map["Rectangle"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-
-            var properties = PyDefUtils.assembleGroupProperties(/*!componentProps(anvil.GoogleMap.Rectangle)!2*/
-              ["mapPolyOverlays", "mapAreaOverlays"], {
+        $Map["Rectangle"] = mkOverlayClass(
+            /*!defClass(anvil.GoogleMap,Rectangle,anvil.GoogleMap.AbstractOverlay)!*/ "GoogleMap.Rectangle",
+            $Map["AbstractOverlay"],
+            google.maps.Rectangle,
+            PyDefUtils.assembleGroupProperties(/*!componentProps(anvil.GoogleMap.Rectangle)!2*/ ["mapPolyOverlays", "mapAreaOverlays"], {
                 /*!componentProp(anvil.GoogleMap.Rectangle)!1*/
                 bounds: {
-                  name: "bounds",
-                  pyType: "anvil.GoogleMap.LatLngBounds instance",
-                  important: true,
-                  description: "The bounds of the Rectangle.",
-                  pyVal: true,
-                  set: PyDefUtils.mapSetter("bounds", remapToJs),
-                  get: PyDefUtils.mapGetter("getBounds", remapToPy),
+                    name: "bounds",
+                    pyType: "anvil.GoogleMap.LatLngBounds instance",
+                    important: true,
+                    description: "The bounds of the Rectangle.",
+                    pyVal: true,
+                    mapProp: true,
+                    set: PyDefUtils.mapSetter("bounds", remapToJs),
+                    get: PyDefUtils.mapGetter("getBounds", remapToPy),
+                },
+            }),
+            PyDefUtils.assembleGroupEvents("GoogleMap.Rectangle", /*!componentEvents(anvil.GoogleMap.Rectangle)!1*/ []).concat(
+                /*!componentEvent(anvil.GoogleMap.Rectangle)!1*/ {
+                    name: "bounds_changed",
+                    description: "When the bounds of this rectangle change, i.e. when it is moved or resized.",
+                    parameters: [],
                 }
-              });
+            ),
+            (self) => {
+                self._jsVal.addListener("center_changed", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "center_changed");
+                });
+                self._jsVal.addListener("radius_changed", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "radius_changed");
+                });
+            }
+        );
 
-            var events = PyDefUtils.assembleGroupEvents("GoogleMap.Rectangle", /*!componentEvents(anvil.GoogleMap.Rectangle)!1*/[]);
 
-            events.push(/*!componentEvent(anvil.GoogleMap.Rectangle)!1*/ {
-                name: "bounds_changed", description: "When the bounds of this rectangle change, i.e. when it is moved or resized.",
-                parameters: [],
-            });
-
-            var initFn = function init(self, pyKwargs) {
-              self._jsVal = new google.maps.Rectangle();
-              self._jsVal.addListener("bounds_changed", function() {
-                PyDefUtils.raiseEventAsync({}, self, "bounds_changed");
-              });
-            };
-            initFn.py_kwargs = true;
-
-            $loc["__init__"] = PyDefUtils.mkInit(initFn, pyModule, $loc, properties, events, $Map["AbstractOverlay"]);
-
-        }, /*!defClass(anvil.GoogleMap,Rectangle,anvil.GoogleMap.AbstractOverlay)!*/ 'GoogleMap.Rectangle', [$Map["AbstractOverlay"]]);
-        registerRemapType(google.maps.Rectangle, $Map["Rectangle"]);
-
-        $Map["Circle"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-
-            var properties = PyDefUtils.assembleGroupProperties(/*!componentProps(anvil.GoogleMap.Circle)!2*/
-              ["mapPolyOverlays", "mapAreaOverlays"], {
+        $Map["Circle"] = mkOverlayClass(
+            /*!defClass(anvil.GoogleMap,Circle,anvil.GoogleMap.AbstractOverlay)!*/ "GoogleMap.Circle",
+            $Map["AbstractOverlay"],
+            google.maps.Circle,
+            PyDefUtils.assembleGroupProperties(/*!componentProps(anvil.GoogleMap.Circle)!2*/ ["mapPolyOverlays", "mapAreaOverlays"], {
                 /*!componentProp(anvil.GoogleMap.Circle)!1*/
                 center: {
-                  name: "center",
-                  pyType: "anvil.GoogleMap.LatLng instance",
-                  important: true,
-                  description: "The center of the Circle.",
-                  pyVal: true,
-                  set: PyDefUtils.mapSetter("center", remapToJs),
-                  get: PyDefUtils.mapGetter("getCenter", remapToPy),
+                    name: "center",
+                    pyType: "anvil.GoogleMap.LatLng instance",
+                    important: true,
+                    description: "The center of the Circle.",
+                    pyVal: true,
+                    mapProp: true,
+                    set: PyDefUtils.mapSetter("center", remapToJs),
+                    get: PyDefUtils.mapGetter("getCenter", remapToPy),
                 },
                 /*!componentProp(anvil.GoogleMap.Circle)!1*/
                 radius: {
-                  name: "radius",
-                  type: "number",
-                  important: true,
-                  description: "The radius of the Circle.",
-                  set: PyDefUtils.mapSetter("radius"),
-                  get: PyDefUtils.mapGetter("getRadius", remapToPy),
+                    name: "radius",
+                    type: "number",
+                    important: true,
+                    description: "The radius of the Circle.",
+                    mapProp: true,
+                    set: PyDefUtils.mapSetter("radius"),
+                    get: PyDefUtils.mapGetter("getRadius", remapToPy),
+                },
+            }),
+            PyDefUtils.assembleGroupEvents("GoogleMap.Circle", /*!componentEvents(anvil.GoogleMap.Circle)!1*/ []).concat(
+                /*!componentEvent(anvil.GoogleMap.Circle)!1*/ {
+                    name: "center_changed",
+                    description: "When the center position of this circle changes, i.e. when it is moved.",
+                    parameters: [],
+                },
+                /*!componentEvent(anvil.GoogleMap.Circle)!1*/ {
+                    name: "radius_changed",
+                    description: "When the radius of this circle changes, i.e. when it is resized.",
+                    parameters: [],
                 }
-              });
-
-            var events = PyDefUtils.assembleGroupEvents("GoogleMap.Circle", /*!componentEvents(anvil.GoogleMap.Circle)!1*/[]);
-
-            events.push(/*!componentEvent(anvil.GoogleMap.Circle)!1*/ {
-                name: "center_changed", description: "When the center position of this circle changes, i.e. when it is moved.",
-                parameters: [],
-            });
-
-            events.push(/*!componentEvent(anvil.GoogleMap.Circle)!1*/ {
-                name: "radius_changed", description: "When the radius of this circle changes, i.e. when it is resized.",
-                parameters: [],
-            });
-
-            var initFn = function init(self, pyKwargs) {
-              self._jsVal = new google.maps.Circle();
-              self._jsVal.addListener("center_changed", function() {
-                PyDefUtils.raiseEventAsync({}, self, "center_changed");
-              });
-              self._jsVal.addListener("radius_changed", function() {
-                PyDefUtils.raiseEventAsync({}, self, "radius_changed");
-              });
-
-            };
-            initFn.py_kwargs = true;
-
-            $loc["__init__"] = PyDefUtils.mkInit(initFn, pyModule, $loc, properties, events, $Map["AbstractOverlay"]);
-
-        }, /*!defClass(anvil.GoogleMap,Circle,anvil.GoogleMap.AbstractOverlay)!*/ 'GoogleMap.Circle', [$Map["AbstractOverlay"]]);
-        registerRemapType(google.maps.Circle, $Map["Circle"]);
+            ),
+            (self) => {
+                self._jsVal.addListener("center_changed", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "center_changed");
+                });
+                self._jsVal.addListener("radius_changed", function () {
+                    PyDefUtils.raiseEventAsync({}, self, "radius_changed");
+                });
+            }
+        );
 
 
+        $Map["InfoWindow"] = mkOverlayClass(
+            /*!defClass(anvil.GoogleMap,InfoWindow,anvil.Component)!*/ "GoogleMap.InfoWindow",
+            pyModule["Component"],
+            google.maps.InfoWindow,
+            PyDefUtils.assembleGroupProperties(/*!componentProps(anvil.GoogleMap.InfoWindow)!2*/ [], {
+                /*!componentProp(anvil.GoogleMap.InfoWindow)!1*/
+                content: {
+                    name: "content",
+                    pyType: "anvil.Component instance",
+                    pyVal: true,
+                    important: true,
+                    description: "Content to display in the InfoWindow.",
+                    mapProp: true,
+                    set(s, e, v) {
+                        s._jsVal.setOptions({
+                            content: v._anvil.domNode,
+                        });
+                    },
+                    get(s, e) {
+                        return $(s._jsVal.getContent()).data("anvil-py-component") || Sk.builtin.none.none$;
+                    },
+                },
+                /*!componentProp(anvil.GoogleMap.InfoWindow)!1*/
+                disable_auto_pan: {
+                    name: "disable_auto_pan",
+                    description: "Disable auto-pan on open.",
+                    type: "boolean",
+                    defaultValue: Sk.builtin.bool.false$,
+                    pyVal: true,
+                    mapProp: true,
+                    set: PyDefUtils.mapSetter("disableAutoPan", isTrue),
+                },
+                /*!componentProp(anvil.GoogleMap.InfoWindow)!1*/
+                max_width: {
+                    name: "max_width",
+                    description: "Maximum width of the infowindow, regardless of content's width.",
+                    type: "number",
+                    mapProp: true,
+                    set: PyDefUtils.mapSetter("maxWidth"),
+                },
+                /*!componentProp(anvil.GoogleMap.InfoWindow)!1*/
+                pixel_offset: {
+                    name: "pixel_offset",
+                    description:
+                        "The offset, in pixels, of the tip of the info window from the point on the map at whose geographical coordinates the info window is anchored.",
+                    pyType: "anvil.GoogleMap.Size instance",
+                    pyVal: true,
+                    mapProp: true,
+                    set: PyDefUtils.mapSetter("pixelOffset", remapToJs),
+                },
+                /*!componentProp(anvil.GoogleMap.InfoWindow)!1*/
+                position: {
+                    name: "position",
+                    description: "The LatLng at which to display this InfoWindow.",
+                    pyType: "anvil.GoogleMap.LatLng instance",
+                    pyVal: true,
+                    mapProp: true,
+                    set: PyDefUtils.mapSetter("position", remapToJs),
+                },
+                /*!componentProp(anvil.GoogleMap.InfoWindow)!1*/
+                z_index: {
+                    name: "z_index",
+                    description:
+                        "All InfoWindows are displayed on the map in order of their zIndex, with higher values displaying in front of InfoWindows with lower values.",
+                    type: "number",
+                    mapProp: true,
+                    set: PyDefUtils.mapSetter("zIndex"),
+                },
+            }),
+            PyDefUtils.assembleGroupEvents("GoogleMap.InfoWindow", /*!componentEvents(anvil.GoogleMap.InfoWindow)!1*/ ["universal"]),
+            (self) => {
+                self._jsVal = new google.maps.InfoWindow();
 
-        $Map["InfoWindow"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-          var properties = PyDefUtils.assembleGroupProperties(/*!componentProps(anvil.GoogleMap.InfoWindow)!2*/
-            [], {
-              /*!componentProp(anvil.GoogleMap.InfoWindow)!1*/
-              content: {
-                name: "content",
-                pyType: "anvil.Component instance",
-                pyVal: true,
-                important: true,
-                description: "Content to display in the InfoWindow.",
-                set: function(s,e,v) {
-                  s._jsVal.setOptions({
-                    content: v._anvil.element[0]
+                self._anvil.pageEvents = {
+                    add() {
+                        if (!Sk.misceval.isTrue(Sk.builtin.isinstance(self._anvil.parent.pyObj, pyModule["GoogleMap"]))) {
+                            throw new Sk.builtin.TypeError("Map components can only be added to maps.");
+                        }
+                        self._jsVal.setMap(self._anvil.parent.pyObj._jsVal);
+                    },
+
+                    remove() {
+                        self._jsVal.setMap(null);
+                    },
+                };
+
+                self._jsVal.addListener("rightclick", (e) => {
+                    PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "rightclick");
+                });
+
+                return setMapProps(self);
+            },
+            ($loc) => {
+                /*!defMethod(None,map,[anchor])!2*/ "Opens this InfoWindow on the given map. Optionally, an InfoWindow can be associated with an anchor."[
+                    "open"
+                ];
+                /*!defMethod(None,)!2*/ "Closes this InfoWindow."["close"];
+                registerMethods($loc, {
+                    open: {},
+                    close: {},
+                });
+            }
+        );
+
+
+      // These class methods are documented above, so that they end up on the GoogleMap defClass.
+      $Map["geocode"] = new Sk.builtin.staticmethod(
+          PyDefUtils.funcWithRawKwargsDict(function (kwargs) {
+              var geocoder = new google.maps.Geocoder();
+              return PyDefUtils.suspensionPromise(function (resolve, reject) {
+                  if (window.googleMapsAuthFailure) {
+                      reject("Google Maps authorization failed - is the API key invalid?");
+                      return;
+                  }
+                  geocoder.geocode(unwrapKwargs(kwargs), function (results, status) {
+                      if (status == "OK") {
+                          // This is a completely manual remapToPy of a GeocodeResult array. There *must* be a better way.
+                          var pyResults = [];
+                          for (var i in results) {
+                              var kws = [];
+                              var addressComponents = [];
+      
+                              for (var j in results[i].address_components) {
+                                  var ac = results[i].address_components[j];
+                                  var acKws = [
+                                      Sk.ffi.remapToPy("long_name"),
+                                      remapToPy(ac.long_name),
+                                      Sk.ffi.remapToPy("short_name"),
+                                      remapToPy(ac.short_name),
+                                      Sk.ffi.remapToPy("types"),
+                                      remapToPy(ac.types),
+                                  ];
+                                  var pyAc = Sk.misceval.call(pyModule["GoogleMap"].prototype["GeocoderAddressComponent"], undefined, undefined, acKws);
+                                  addressComponents.push(pyAc);
+                              }
+      
+                              kws.push(Sk.ffi.remapToPy("address_components"));
+                              kws.push(new Sk.builtin.list(addressComponents));
+      
+                              kws.push(Sk.ffi.remapToPy("formatted_address"));
+                              kws.push(remapToPy(results[i].formatted_address));
+      
+                              var geomKws = [
+                                  Sk.ffi.remapToPy("bounds"),
+                                  remapToPy(results[i].geometry.bounds),
+                                  Sk.ffi.remapToPy("location"),
+                                  remapToPy(results[i].geometry.location),
+                                  Sk.ffi.remapToPy("location_type"),
+                                  remapToPy(results[i].geometry.location_type),
+                                  Sk.ffi.remapToPy("viewport"),
+                                  remapToPy(results[i].geometry.viewport),
+                              ];
+      
+                              kws.push(Sk.ffi.remapToPy("geometry"));
+                              kws.push(Sk.misceval.call(pyModule["GoogleMap"].prototype["GeocoderGeometry"], undefined, undefined, geomKws));
+      
+                              kws.push(Sk.ffi.remapToPy("partial_match"));
+                              kws.push(remapToPy(results[i].partial_match));
+      
+                              kws.push(Sk.ffi.remapToPy("place_id"));
+                              kws.push(remapToPy(results[i].place_id));
+      
+                              kws.push(Sk.ffi.remapToPy("postcode_localities"));
+                              kws.push(remapToPy(results[i].postcode_localities));
+      
+                              kws.push(Sk.ffi.remapToPy("types"));
+                              kws.push(remapToPy(results[i].types));
+      
+                              var pyResult = Sk.misceval.call(pyModule["GoogleMap"].prototype["GeocoderResult"], undefined, undefined, kws);
+      
+                              pyResults.push(pyResult);
+                          }
+                          resolve(new Sk.builtin.list(pyResults));
+                      } else {
+                          reject("Geocode failed: " + status);
+                      }
                   });
-                },
-                get: function(s,e) {
-                  return $(s._jsVal.getContent()).data("anvil-py-component") || Sk.builtin.none.none$;
-                },
-              },
-              /*!componentProp(anvil.GoogleMap.InfoWindow)!1*/
-              disable_auto_pan: {
-                name: "disable_auto_pan",
-                description: "Disable auto-pan on open.",
-                type: "boolean",
-                defaultValue: false,
-                set: PyDefUtils.mapSetter("disableAutoPan"),
-              },
-              /*!componentProp(anvil.GoogleMap.InfoWindow)!1*/
-              max_width: {
-                name: "max_width",
-                description: "Maximum width of the infowindow, regardless of content's width.",
-                type: "number",
-                set: PyDefUtils.mapSetter("maxWidth"),
-              },
-              /*!componentProp(anvil.GoogleMap.InfoWindow)!1*/
-              pixel_offset: {
-                name: "pixel_offset",
-                description: "The offset, in pixels, of the tip of the info window from the point on the map at whose geographical coordinates the info window is anchored.",
-                pyType: "anvil.GoogleMap.Size instance",
-                pyVal: true,
-                set: PyDefUtils.mapSetter("pixelOffset", remapToJs),
-              },
-              /*!componentProp(anvil.GoogleMap.InfoWindow)!1*/
-              position: {
-                name: "position",
-                description: "The LatLng at which to display this InfoWindow.",
-                pyType: "anvil.GoogleMap.LatLng instance",
-                pyVal: true,
-                set: PyDefUtils.mapSetter("position", remapToJs),
-              },
-              /*!componentProp(anvil.GoogleMap.InfoWindow)!1*/
-              z_index: {
-                name: "z_index",
-                description: "All InfoWindows are displayed on the map in order of their zIndex, with higher values displaying in front of InfoWindows with lower values.",
-                type: "number",
-                set: PyDefUtils.mapSetter("zIndex"),
-              },
-            });
-
-          // TODO: Add events
-          var events = PyDefUtils.assembleGroupEvents("GoogleMap.InfoWindow", /*!componentEvents(anvil.GoogleMap.InfoWindow)!1*/["universal"]);
-
-          var initFn = function init(self, pyKwargs) {
-            self._jsVal = new google.maps.InfoWindow();
-
-            self._anvil.pageEvents = {
-              add: function() {
-                if (!Sk.misceval.isTrue(Sk.builtin.isinstance(self._anvil.parent.pyObj, pyModule["GoogleMap"]))) {
-                  throw new Sk.builtin.Exception("Map components can only be added to maps.");
-                }
-                self._jsVal.setMap(self._anvil.parent.pyObj._jsVal);
-              },
-
-              remove: function() {
-                self._jsVal.setMap(null);
-              }
-            };
-
-            self._jsVal.addListener("rightclick", function(e) {
-              PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "rightclick");
-            });
-          };
-          initFn.py_kwargs = true;
-
-          $loc["__init__"] = PyDefUtils.mkInit(initFn, pyModule, $loc, properties, events, pyModule["Component"]);
-
-          /*!defMethod(None,map,[anchor])!2*/ "Opens this InfoWindow on the given map. Optionally, an InfoWindow can be associated with an anchor." ["open"];
-          /*!defMethod(None,)!2*/ "Closes this InfoWindow." ["close"];
-          registerMethods($loc, {
-            open: { },
-            close: { },
+              });
           })
+      );
+      
+        $Map["compute_area"] = new Sk.builtin.staticmethod(
+            new Sk.builtin.func(function (path) {
+                return remapToPy(google.maps.geometry.spherical.computeArea(remapToJs(path)));
+            })
+        );
 
-        }, /*!defClass(anvil.GoogleMap,InfoWindow,anvil.Component)!*/ 'GoogleMap.InfoWindow', [pyModule["Component"]]);
+        $Map["compute_length"] = new Sk.builtin.staticmethod(
+            new Sk.builtin.func(function (path) {
+                return remapToPy(google.maps.geometry.spherical.computeLength(remapToJs(path)));
+            })
+        );
 
-    }, 'GoogleMap', [pyModule["Container"]]);
+    };
+
+    /*!defClass(anvil,GoogleMap,Container)!*/
     registerRemapType(google.maps.Map, pyModule["GoogleMap"]);
 
-    // These class methods are documented above, so that they end up on the GoogleMap defClass.
-    pyModule["GoogleMap"].prototype["geocode"] = new Sk.builtin.staticmethod(PyDefUtils.funcWithRawKwargsDict(function(kwargs) {
-      var geocoder = new google.maps.Geocoder();
-      return PyDefUtils.suspensionPromise(function(resolve, reject) {
-        if (window.googleMapsAuthFailure) {
-          reject("Google Maps authorization failed - is the API key invalid?");
-          return;
-        }
-        geocoder.geocode(unwrapKwargs(kwargs), function(results, status) {
-          if (status == "OK") {
-            // This is a completely manual remapToPy of a GeocodeResult array. There *must* be a better way.
-            var pyResults = [];
-            for(var i in results) {
-              var kws = [];
-              var addressComponents = [];
 
-              for (var j in results[i].address_components) {
-                var ac = results[i].address_components[j];
-                var acKws = [
-                  Sk.ffi.remapToPy("long_name"),
-                  remapToPy(ac.long_name),
-                  Sk.ffi.remapToPy("short_name"),
-                  remapToPy(ac.short_name),
-                  Sk.ffi.remapToPy("types"),
-                  remapToPy(ac.types),
-                ];
-                var pyAc = Sk.misceval.call(pyModule["GoogleMap"].prototype["GeocoderAddressComponent"], undefined, undefined, acKws);
-                addressComponents.push(pyAc);
-              }
 
-              kws.push(Sk.ffi.remapToPy("address_components"));
-              kws.push(new Sk.builtin.list(addressComponents));
 
-              kws.push(Sk.ffi.remapToPy("formatted_address"));
-              kws.push(remapToPy(results[i].formatted_address));
-
-              var geomKws = [
-                Sk.ffi.remapToPy("bounds"),
-                remapToPy(results[i].geometry.bounds),
-                Sk.ffi.remapToPy("location"),
-                remapToPy(results[i].geometry.location),
-                Sk.ffi.remapToPy("location_type"),
-                remapToPy(results[i].geometry.location_type),
-                Sk.ffi.remapToPy("viewport"),
-                remapToPy(results[i].geometry.viewport),
-              ];
-
-              kws.push(Sk.ffi.remapToPy("geometry"));
-              kws.push(Sk.misceval.call(pyModule["GoogleMap"].prototype["GeocoderGeometry"], undefined, undefined, geomKws));
-
-              kws.push(Sk.ffi.remapToPy("partial_match"));
-              kws.push(remapToPy(results[i].partial_match));
-
-              kws.push(Sk.ffi.remapToPy("place_id"));
-              kws.push(remapToPy(results[i].place_id));
-
-              kws.push(Sk.ffi.remapToPy("postcode_localities"));
-              kws.push(remapToPy(results[i].postcode_localities));
-
-              kws.push(Sk.ffi.remapToPy("types"));
-              kws.push(remapToPy(results[i].types));
-
-              var pyResult = Sk.misceval.call(pyModule["GoogleMap"].prototype["GeocoderResult"], undefined, undefined, kws);
-
-              pyResults.push(pyResult);
-            }
-            resolve(new Sk.builtin.list(pyResults));
-          } else {
-            reject("Geocode failed: " + status);
-          }
-        });
-      });
-    }));
-
-    pyModule["GoogleMap"].prototype["compute_area"] = new Sk.builtin.staticmethod(new Sk.builtin.func(function(path) {
-      return remapToPy(google.maps.geometry.spherical.computeArea(remapToJs(path)));
-    }));
-
-    pyModule["GoogleMap"].prototype["compute_length"] = new Sk.builtin.staticmethod(new Sk.builtin.func(function(path) {
-      return remapToPy(google.maps.geometry.spherical.computeLength(remapToJs(path)));
-    }));
 
 };
 

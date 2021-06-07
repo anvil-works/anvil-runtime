@@ -63,13 +63,25 @@ PyDefUtils.funcWithRawKwargsDict = function(f) {
     var rf = function(pyKwarray, more_function_args) {
         var kwargs = {}
         for(var i = 0; i < pyKwarray.length - 1; i+=2)
-            kwargs[pyKwarray[i].v] = pyKwarray[i+1];
+            kwargs[pyKwarray[i].toString()] = pyKwarray[i+1];
 
         return f.apply(this, [kwargs].concat(Array.prototype.slice.call(arguments, 1)));
     };
     rf.co_kwargs = true;
     return new Sk.builtin.func(rf);
 }
+
+
+PyDefUtils.funcFastCall = (f) => {
+    f.co_fastcall = 1;
+    return new Sk.builtin.func(f);
+}
+
+/**currently this is faster than what skulpt does (it should be what skulpt does!) */
+PyDefUtils.pyCall = (func, args, kwargs) => Sk.misceval.retryOptionalSuspensionOrThrow(Sk.misceval.callsimOrSuspendArray(func, args, kwargs));
+
+PyDefUtils.pyCallOrSuspend = Sk.misceval.callsimOrSuspendArray;
+
 
 // Remap Python to JS, with special handlers for certain types
 var pythonifyPath = function(path) {
@@ -92,7 +104,7 @@ var remapToJSWithWrapper = function(obj, keySeq, unknownTypeWrapper, firstLookWr
         for (var iter = obj.tp$iter(), k = iter.tp$iternext(); k !== undefined; k = iter.tp$iternext()) {
 
             if (!(k instanceof Sk.builtin.str)) {
-                throw new Sk.builtin.Exception("Cannot use '" + k.tp$name + "' objects as the key in a dict when sending to a server-side module; only string keys are allowed (arguments"+pythonifyPath(keySeq)+")");
+                throw new Sk.builtin.TypeError("Cannot use '" + k.tp$name + "' objects as the key in a dict when sending to a server-side module; only string keys are allowed (arguments"+pythonifyPath(keySeq)+")");
             }
             var jsk = Sk.ffi.remapToJs(k);
             keySeq.push(jsk);
@@ -148,124 +160,219 @@ PyDefUtils.remapToJs = function(pyObj, unknownTypeWrapper, firstLookWrapper) {
     return remapToJSWithWrapper(pyObj, [], unknownTypeWrapper, firstLookWrapper);
 }
 
-PyDefUtils.addProperties = function(self, properties, events, layoutProperties) {
 
-    if (!self._anvil)
-        self._anvil = {};
-
-    var a = self._anvil;
-
-    if (!a.propMap)
-        a.propMap = {};
-    if (!a.propTypes)
-        a.propTypes = [];
-
-    for (var k in properties) {
-        var entry = properties[k];
-        a.propMap[entry.name] = $.extend({},entry);
-
-        var propType = {
-            name: entry.name,
-            type: entry.type,
-            description: entry.description,
-            group: entry.group,
-        };
-
-        if (entry.enum)
-            propType.enum = entry.enum;
-
-        if (entry.nullable)
-            propType.nullable = entry.nullable;
-
-        if (entry.multiline)
-            propType.multiline = entry.multiline;
-
-        if (entry.important)
-            propType.important = entry.important;
-
-        if (entry.priority)
-            propType.priority = entry.priority;
-
-        if (entry.hidden)
-            propType.hidden = entry.hidden;
-
-        if (entry.deprecated)
-            propType.deprecated = entry.deprecated;
-
-        if (entry.pyVal)
-            propType.pyVal = entry.pyVal;
-
-        if (entry.hideFromDesigner)
-            propType.hideFromDesigner = entry.hideFromDesigner;
-
-        if (entry.allowBindingWriteback)
-            propType.allowBindingWriteback = entry.allowBindingWriteback;
-
-        if (entry.showInDesignerWhen)
-            propType.showInDesignerWhen = entry.showInDesignerWhen;
-
-        // Copy over other parameters as necessary here
-
-        // Remove any duplicate we are overwriting
-        for (var i in a.propTypes) {
-            if (a.propTypes[i].name == entry.name) {
-                a.propTypes.splice(i, 1);
-                break;
-            }
-        }
-        a.propTypes.push(propType);
+PyDefUtils.mkComponentCls = function mkComponentCls(anvilModule, name, { base, properties, events, layouts, element, locals }) {
+    let bases;
+    base = base || anvilModule["Component"];
+    if (Array.isArray(base)) {
+        bases = base;
+    } else {
+        bases = [base];
     }
 
-    if (events) {
-        if (!self._anvil.eventTypes)
-            self._anvil.eventTypes = {}
-        for (var i in events) {
-            self._anvil.eventTypes[events[i].name] = events[i];
-        }
-    }   
+    events = events || [];
+    properties = properties || [];
 
-    if (layoutProperties) {
-        if (!a.layoutPropTypes) { a.layoutPropTypes = []; }
-        for (var i in layoutProperties) {
-            a.layoutPropTypes.push(layoutProperties[i]);
-        }
-    }
+    locals = locals || (() => {});
+
+    const ComponentCls = Sk.misceval.buildClass(
+        anvilModule,
+        ($gbl, $loc) => {
+            locals($loc);
+            PyDefUtils.mkGettersSetters($loc, properties, anvilModule);
+        },
+        name,
+        bases
+    );
+
+    PyDefUtils.initComponentClassPrototype(ComponentCls, properties, events, element, layouts);
+
+    return ComponentCls;
+};
+
+
+PyDefUtils.mkNew = (superClass, callback) => {
+
+    superClass = superClass;
+    const superNew = Sk.abstr.typeLookup(superClass, Sk.builtin.str.$new);
+
+    return PyDefUtils.funcFastCall(function __new__(args, kwargs) {
+        let self = PyDefUtils.pyCallOrSuspend(superNew, args, kwargs);
+        return Sk.misceval.chain(
+            self,
+            (s) => {
+                self = s;
+                return callback ? callback(self) : null;
+            },
+            () => self
+        );
+    });
+};
+
+PyDefUtils.mkGettersSetters = function mkGettersSetters($loc, properties, anvilModule) {
+    (properties || []).forEach((prop) => {
+        $loc[prop.name] = PyDefUtils.pyCall(anvilModule["ComponentProperty"], [prop.name]);
+    });
 }
 
+PyDefUtils.initComponentClassPrototype = function (ComponentClass, properties, events, Element, layoutProperties) {
+    const inheritedDefaults = ComponentClass.prototype.prop$defaults || {};
+    const inheritedPropMap = ComponentClass.prototype.prop$map || {};
+    const inheritedPropTypes = ComponentClass.prototype.prop$types || [];
+    const inheritedEvents = ComponentClass.prototype.event$types || {};
+    const inheritedLayouts = ComponentClass.prototype.layout$props || [];
+    let propToBind = ComponentClass.prototype.prop$dataBinding;
 
+    const propMap = {};
+    Object.entries(inheritedPropMap).forEach(([name, entry]) => {
+        propMap[name] = {...entry};
+    })
+    const propTypes = [...inheritedPropTypes];
 
-PyDefUtils.mkInit = function mkInit(initFn, anvilModule, $loc, properties, events, superclass) {
+    properties.forEach((entry) => {
+        const { name, type, description, group, dataBindingProp } = entry;
+        propMap[name] = { ...entry };
+        const propType = { name, type, description, group };
+        [
+            "enum",
+            "nullable",
+            "multiline",
+            "important",
+            "priority",
+            "hidden",
+            "deprecated",
+            "pyVal",
+            "hideFromDesigner",
+            "allowBindingWriteback",
+            "showInDesignerWhen",
+        ].forEach((prop) => {
+            if (entry[prop]) {
+                propType[prop] = entry[prop];
+            }
+        });
+        const i = propTypes.findIndex((item) => item.name === name);
+        if (i === -1) {
+            propTypes.push(propType);
+        } else {
+            propTypes[i] = propType;
+        }
+        if (dataBindingProp) {
+            propToBind = name;
+        }
+    });
 
-    for (let prop of properties || []) {
-        $loc[prop.name] = Sk.misceval.callsim(anvilModule['ComponentProperty'], prop.name);
+    const propsToInit = Object.keys(propMap).filter((key) => propMap[key].initialize);
+
+    let eventTypes;
+    if (events) {
+        eventTypes = { ...inheritedEvents };
+        events.forEach((event) => {
+            eventTypes[event.name] = event;
+        });
+    }
+    let layoutPropTypes ;
+    if (layoutProperties) {
+        layoutPropTypes = [...inheritedLayouts];
+        layoutPropTypes.push(...layoutProperties);
     }
 
-    return new Sk.builtin.func(PyDefUtils.withRawKwargs(function(pyKwargs, self) {
-        if (arguments.length != 2) {
-            throw new Sk.builtin.Exception("Component constructors take only keyword arguments (eg Label(text=\"Hello\"))");
+    const propDefaults = Object.assign({},
+        inheritedDefaults,
+        Object.fromEntries(properties.filter((prop) => !prop.readOnly).map((prop) => [prop.name, prop.defaultValue]))
+    );
+
+    Object.defineProperties(ComponentClass.prototype, {
+        prop$defaults: {
+            value: propDefaults,
+            writable: true,
+        },
+        prop$map: {
+            value: propMap,
+            writable: true,
+        },
+        prop$types: {
+            value: propTypes,
+            writable: true,
+        },
+        props$toInitialize: {
+            value: propsToInit,
+            writable: true,
         }
+    });
+    if (events) {
+        Object.defineProperty(ComponentClass.prototype, "event$types", {
+            value: eventTypes,
+            writable: true,
+        });
+    }
+    if (Element) {
+        Object.defineProperty(ComponentClass.prototype, "create$element", {
+            value: (props) => <Element {...props} />,
+            writable: true,
+        });
+    }
+    if (layoutProperties) {
+        Object.defineProperty(ComponentClass.prototype, "layout$props", {
+            value: layoutPropTypes,
+            writable: true,
+        });
+    }
+    if (propToBind) {
+        Object.defineProperty(ComponentClass.prototype, "prop$dataBinding", {
+            value: propToBind,
+            writable: true,
+        });
+    }
+};    
 
-        PyDefUtils.addProperties(self, properties, events);
 
-        let f = () => null;
-        if (initFn) {
-            if (initFn.co_kwargs) {
-                f = () => initFn(pyKwargs, self);
-            } else {
-                var kwargs = {};
-                for (var i = 0; i < pyKwargs.length; i+=2) {
-                    kwargs[pyKwargs[i].v] = initFn.py_kwargs ? pyKwargs[i+1] : Sk.ffi.remapToJs(pyKwargs[i+1]);
-                }
-                f = () => initFn(self, kwargs);
-            }
-        }
-
-        return Sk.misceval.chain(undefined,
-            f,
-            () => Sk.misceval.callOrSuspend(superclass.tp$getattr(new Sk.builtin.str("__init__")), undefined, undefined, pyKwargs, self)
-        );
-    }));
+const appendChild = (parent, child, def) => {
+    if (Array.isArray(child)) {
+        child.forEach((nestedChild) => appendChild(parent, nestedChild, def));
+    } else if (typeof child === "string") {
+        child = document.createTextNode(child);
+        parent.appendChild(child);
+    } else {
+        const [childEl, childDef] = child;
+        parent.appendChild(childEl);
+        Object.assign(def, childDef);
+    }
 };
+
+PyDefUtils.createElement = function createElement (tag, _props, ...children) {
+    if (typeof tag === "function") {
+        return tag(_props, ...children);
+    }
+    const {refName, _children, style, className, ...props} = _props || {};
+    const element = document.createElement(tag);
+    const def = { [refName]: element };
+    children = _children || children;
+
+    if (style) {
+        element.style.cssText = style;
+    }
+    if (className) {
+        element.className = className;
+    }
+
+    Object.keys(props).forEach((propName) => {
+        const propValue = props[propName];
+        element.setAttribute(propName, propValue == null ? propValue : propValue.toString() );
+    });
+
+    children.forEach((child) => {
+        if (typeof child === "string") {
+            element.appendChild(document.createTextNode(child));
+        } else {
+            const [childEl, childDef] = child;
+            element.appendChild(childEl);
+            Object.assign(def, childDef);
+        }
+    });
+
+    return [element, def];
+};
+
 
 PyDefUtils.suspensionFromPromise = function(p) {
     var newSuspension = new Sk.misceval.Suspension();
@@ -304,29 +411,18 @@ PyDefUtils.callAsyncWithoutDefaultError = function() {
     return Sk.misceval.callAsync.apply(null, args);
 };
 
-PyDefUtils.callAsync = function() {
-    var args = Array.prototype.slice.call(arguments);
-    args.unshift(PyDefUtils.suspensionHandlers);
-    return Sk.misceval.callAsync.apply(null, args).catch(function(e) {
-
-        // We may wish to add a parameter to callAsync indicating whether we actually want to manually onerror.
-        window.onerror(null, null, null, null, e);
-
+PyDefUtils.callAsync = (...args) =>
+    Sk.misceval.callAsync(PyDefUtils.suspensionHandle, ...args).catch((e) => {
+        // unhandled errors are caught by window.onunhandledrejection
         throw e;
     });
-};
 
 // This is really "suspensionToPromise."
-PyDefUtils.asyncToPromise = function(fn, noOnError=false) {
-    return Sk.misceval.asyncToPromise(fn, PyDefUtils.suspensionHandlers).catch(function(e) {
-
-        if (!noOnError) {
-            window.onerror(null, null, null, null, e);
-        }
-
+PyDefUtils.asyncToPromise = (fn) =>
+    Sk.misceval.asyncToPromise(fn, PyDefUtils.suspensionHandlers).catch((e) => {
+        // unhandled errors are caught by window.onunhandledrejection
         throw e;
     });
-};
 
 // Raise the named event with the specified arguments
 // (expects a Javascript object as first parameter, keys are JS, vals are Python if pyVal is true, otherwise JS.
@@ -440,8 +536,7 @@ PyDefUtils.setAttrsFromDict = function (obj, dict) {
 }
 
 PyDefUtils.mkNewDeserializedPreservingIdentity = function(deserialize, newFn) {
-    return Sk.misceval.callsim(Sk.builtins['classmethod'],
-        new Sk.builtin.func((cls, pyData, pyGlobals) => {
+    return new Sk.builtin.classmethod(new Sk.builtin.func((cls, pyData, pyGlobals) => {
             let pyClsname = new Sk.builtin.str(cls.anvil$serializableName);
             // JS object in a Python dict - the outside world should never see it
             let jsCache;
@@ -497,76 +592,275 @@ PyDefUtils.mkSerializePreservingIdentity = function(serialize) {
     });
 };
 
+const { isTrue } = Sk.misceval;
+
+PyDefUtils.getOuterClass = function getOuterClass({
+    align,
+    icon,
+    icon_align,
+    role,
+    spacing_above,
+    spacing_below,
+    text,
+    visible,
+}) {
+    const classList = [];
+    const spacing = ["none", "small", "medium", "large"];
+
+    if (isTrue(align) && ["center", "right", "left"].includes(align.toString())) {
+        classList.push("align-" + align.toString());
+    }
+    if (isTrue(spacing_above) && spacing.includes(spacing_above.toString())) {
+        classList.push("anvil-spacing-above-" + spacing_above.toString());
+    }
+    if (isTrue(spacing_below) && spacing.includes(spacing_below.toString())) {
+        classList.push("anvil-spacing-below-" + spacing_below.toString());
+    }
+    if (isTrue(icon)) {
+        classList.push("anvil-component-icon-present");
+    }
+    if (isTrue(icon_align)) {
+        classList.push(icon_align + "-icon");
+    }
+    if (visible !== undefined && !isTrue(visible)) {
+        classList.push("visible-false");
+    }
+    if (isTrue(role)) {
+        role = Sk.ffi.remapToJs(role);
+        if (typeof role === "string") {
+            classList.push("anvil-role-" + role.replace(/[^A-Za-z0-9_\-]/g, ""))
+        } else if (Array.isArray(role)) {
+            role.forEach((r) => {
+                if (typeof r !== "string") {
+                    throw new Sk.builtin.TypeError("role must be None, a string, or a list of strings");
+                }
+               classList.push("anvil-role-" + r.replace(/[^A-Za-z0-9_\-]/g, ""));
+            });
+        } else {
+            throw new Sk.builtin.TypeError("role must be None, a string, or a list of strings"); 
+        }
+    }
+    if (isTrue(text)) {
+        classList.push("has-text");
+    }
+    return classList.join(" ");
+}
+
+const hasUnits = /[a-zA-Z%]/g
+PyDefUtils.cssLength = (len) => (len === "default" || !len ? "" : ("" + len).match(hasUnits) ? len : len + "px");
+
+PyDefUtils.getColor = (v) => {
+    v = Sk.builtin.checkNone(v) ? "" : v.toString();
+    const m = v.match(/^theme:(.*)$/);
+    if (m) {
+        v = window.anvilThemeColors[m[1]] || "";
+    }
+    return v;
+}
+
+PyDefUtils.getOuterStyle = function getOuterStyle({ align, font_size, font, bold, italic, underline, background, foreground, border, height, width }) {
+    const style = {};
+    if (isTrue(align)) {
+        style["text-align"] = align.toString();
+    }
+    font_size = Sk.ffi.remapToJs(font_size); // skulpt behaviour only accepts number types for font_size
+    if (typeof font_size === "number") {
+        style["font-size"] = font_size + "px";
+    }
+    if (isTrue(font)) {
+        style["font-family"] = font.toString();
+    }
+    if (isTrue(bold)) {
+        style["font-weight"] = "bold";
+    }
+    if (isTrue(italic)) {
+        style["font-style"] = "italic";
+    }
+    if (isTrue(underline)) {
+        style["text-decoration"] = "underline";
+    }
+    if (isTrue(background)) {
+        style["background-color"] = PyDefUtils.getColor(background);
+    }
+    if (isTrue(foreground)) {
+        style["color"] = PyDefUtils.getColor(foreground);
+    }
+    if (isTrue(border)) {
+        style["border"] = border.toString();
+    }
+    if (isTrue(height)) {
+        style["height"] = PyDefUtils.cssLength(height.toString()); 
+    }
+    if (isTrue(width)) {
+        style["width"] = PyDefUtils.cssLength(width.toString());
+    }
+
+    const ret = Object.keys(style)
+        .map((key) => key + ": " + style[key])
+        .join("; ");
+    return ret ? ret + ";" : ret;
+
+}
+
+const role_regex = /[^A-Za-z0-9_\-]/g;
+PyDefUtils.getOuterAttrs = function getOuterAttrs ({tooltip, source, role, enabled}) {
+    const attrs = {};
+    if (isTrue(tooltip)) {
+        attrs["title"] = tooltip.toString();
+    }
+    if (isTrue(source)) {
+        attrs["src"] = source.toString();
+    }
+    if (isTrue(role)) {
+        const roles = [];
+        role = Sk.ffi.remapToJs(role);
+        if (typeof role === "string") {
+            roles.push(role.replace(role_regex, ""))
+        } else if (Array.isArray(role)) {
+            role.forEach((r) => {
+                if (typeof r !== "string") {
+                    throw new Sk.builtin.TypeError("role must be None, a string, or a list of strings");
+                }
+               roles.push(r.replace(role_regex, ""));
+            });
+        }
+        attrs["anvil-role"] = roles.join(" ");
+    }
+    if (enabled !== undefined && !isTrue(enabled)) {
+        attrs["disabled"] = ""; // we currently add this to the outer div so do it here too
+    }
+    return attrs;
+}
+
+
+PyDefUtils.IconComponent = ({side, icon, icon_align}) => {
+    side = side ? side.toString() : "";
+    let iconClass = "";
+    let img = false;
+    if (isTrue(icon)) {
+        icon = icon.toString();
+        const faclass = icon.split(":");
+        if (faclass.length === 2 && faclass[0].startsWith("fa")) {
+            iconClass = " " + faclass[0] + " fa-" + faclass[1];
+        } 
+        else {
+            img = true;
+        }
+    } 
+    const refName = "icon" + side[0].toUpperCase() + side.slice(1);
+    side = side && " " + side;
+    icon_align = isTrue(icon_align) ? " " + icon_align.toString() + "-icon" : "";
+    if (img) {
+        return (
+            <i refName={refName} className={"anvil-component-icon" + side + icon_align}>
+                <img src={icon} style="height: 1em; vertical-align: text-bottom;" />
+            </i>
+        );
+    }
+    return <i refName={refName} className={"anvil-component-icon" + side + iconClass + icon_align}/>
+}
+
+PyDefUtils.OuterElement = ({refName, style, className, ...props}, ...children) => {
+    const outerClass = PyDefUtils.getOuterClass(props) + (className ? " " + className : "");
+    const outerStyle = PyDefUtils.getOuterStyle(props) + (style ? " " + style : "");
+    const outerAttrs = PyDefUtils.getOuterAttrs(props);
+    return (
+        <div refName={refName || "outer"} className={outerClass} style={outerStyle} {...outerAttrs} _children={children}/>
+    );
+
+}
+
+
 /*!propGroups()!1*/
 var propertyGroups = {
-
     text: {
-
         text: {
             name: "text",
             type: "string",
             description: "The text displayed on this component",
-            defaultValue: "",
+            defaultValue: Sk.builtin.str.$empty,
             exampleValue: "Hello",
             important: true,
+            pyVal: true,
             priority: 10,
-            set: function(s,e,v) { e.text(v); }
+            set(s, e, v) {
+                v = Sk.builtin.checkNone(v) ? "" : v.toString();
+                const {outer, text} = s._anvil.elements;
+                outer.classList.toggle("has-text", !!v);
+                text.textContent = v;
+            },
         },
         align: {
             name: "align",
             type: "string",
             enum: ["left", "center", "right"],
             description: "Align this component's text",
-            defaultValue: "left",
-            set: function(s,e,v) {
+            defaultValue: new Sk.builtin.str("left"),
+            pyVal: true,
+            set(s, e, v) {
+                v = v.toString();
                 e.css("text-align", v).removeClass("align-left align-center align-right");
-                if (["left","center","right"].indexOf(v) > -1) {
-                    e.addClass("align-"+v);
+                if (["left", "center", "right"].indexOf(v) > -1) {
+                    e.addClass("align-" + v);
                 }
-            }
+            },
         },
         font_size: {
             name: "font_size",
             type: "number",
             nullable: true,
             description: "The height of text displayed on this component in pixels",
-            defaultValue: null,
+            defaultValue: Sk.builtin.none.none$,
+            pyVal: true,
             exampleValue: 16,
-            set: function(s,e,v) { e.css("font-size", (typeof(v) == "number") ? (""+v+"px") : ""); }
+            set(s, e, v) {
+                v = Sk.ffi.remapToJs(v);
+                e.css("font-size", typeof v === "number" ? v + "px" : "");
+            },
         },
         font: {
             name: "font",
             type: "string",
             description: "The font to use for this component.",
-            defaultValue: "",
+            defaultValue: Sk.builtin.str.$empty,
+            pyVal: true,
             exampleValue: "Arial",
-            set: function(s,e,v) { e.css("font-family", v); }
+            set(s, e, v) {
+                e.css("font-family", v.toString());
+            },
         },
         bold: {
             name: "bold",
             type: "boolean",
             description: "Display this component's text in bold",
-            defaultValue: false,
+            defaultValue: Sk.builtin.bool.false$,
+            pyVal: true,
             exampleValue: true,
-            set: function(s,e,v) { e.css("font-weight", v ? "bold" : ""); }
+            set(s, e, v) {
+                e.css("font-weight", isTrue(v) ? "bold" : "");
+            },
         },
         italic: {
             name: "italic",
             type: "boolean",
             description: "Display this component's text in italics",
-            defaultValue: false,
+            defaultValue: Sk.builtin.bool.false$,
+            pyVal: true,
             exampleValue: true,
-            set: function(s,e,v) { e.css("font-style", v ? "italic" : ""); }
+            set(s, e, v) {
+                e.css("font-style", isTrue(v) ? "italic" : "");
+            },
         },
         underline: {
             name: "underline",
             type: "boolean",
             description: "Display this component's text underlined",
-            defaultValue: false,
+            defaultValue: Sk.builtin.bool.false$,
+            pyVal: true,
             exampleValue: true,
-            set: function(s,e,v) {
-                e.add(e.children("span, div")).css("text-decoration", v ? "underline" : "");
-            }
+            set(s, e, v) {
+                e.add(e.children("span, div")).css("text-decoration", isTrue(v) ? "underline" : "");
+            },
         },
     },
 
@@ -574,55 +868,62 @@ var propertyGroups = {
         icon: {
             name: "icon",
             type: "icon",
-            defaultValue: new Sk.builtin.str(""),
-            exampleValue: new Sk.builtin.str("fa:user"),
+            defaultValue: Sk.builtin.str.$empty,
+            exampleValue: "fa:user",
             description: "The icon to display on this component. Either a URL, or a FontAwesome Icon, e.g. 'fa:user'.",
             pyVal: true,
             important: true,
-            set: function(s,e,v) { 
-                e.removeClass("anvil-component-icon-present")
-                var i = e.find(".anvil-component-icon").filter(function() {
-                    let parentComponent = $(this).closest(".anvil-component");
-                    return parentComponent.length == 0 || parentComponent[0] == e[0];
-                });
-                i.removeClass(function(i,c) {
-                    var m = /fa\-\S*/.exec(c);
-                    return m ? m[0] : "";
-                });
-                i.empty();
-
-                if(v instanceof Sk.builtin.str) {
-                    v = Sk.ffi.remapToJs(v);
-                    if (v != "") {
-                        if (v.startsWith("fa:")) {
-                            i.addClass(v.replace(":", "-"));
+            set(s, e, v) {
+                e.removeClass("anvil-component-icon-present");
+                const elements = s._anvil.elements;
+                let addIcon = () => {};
+                if (v instanceof Sk.builtin.str) {
+                    v = v.toString();
+                    if (v) {
+                        const faclass = v.split(":");
+                        if (faclass.length === 2 && faclass[0].startsWith("fa")) {
+                            addIcon = (i) => {
+                                i.classList.add(faclass[0]); // IE doesn't support classList.add(...args)
+                                i.classList.add("fa-" + faclass[1])
+                            };
                         } else {
-                            i.append($("<img/>").attr("src", v).css({height: "1em", "vertical-align": "text-bottom"}));
+                            addIcon = (i) => {
+                                const img = document.createElement("img");
+                                img.src = v;
+                                img.style.cssText = "height: 1em; vertical-align: text-bottom;";
+                                i.appendChild(img);
+                            };
                         }
                         e.addClass("anvil-component-icon-present");
                     }
                 } else {
                     console.log(v);
                 }
+
+                const iconKeys = Object.keys(elements).filter((key) => key.startsWith("icon"));
+
+                iconKeys.forEach((key) => {
+                    const i = elements[key];
+                    i.className = i.className.split(" ").filter((x) => !x.startsWith("fa")).join(" ");
+                    while (i.firstChild) {
+                        i.removeChild(i.firstChild); // equiv of i.empty;
+                    }
+                    addIcon(i);
+                });
             },
         },
         icon_align: {
             name: "icon_align",
             description: "The alignment of the icon on this component. Set to 'top' for a centred icon on a component with no text.",
             type: "string",
-            defaultValue: "left",
+            defaultValue: new Sk.builtin.str("left"),
+            pyVal: true,
             enum: ["left_edge", "left", "top", "right", "right_edge"],
-            set: function(s,e,v) {
-                var remove = [
-                    "right_edge-icon",
-                    "left_edge-icon",
-                    "top-icon",
-                    "right-icon",
-                    "left-icon"
-                ].join(" ");
+            set(s, e, v) {
+                var remove = ["right_edge-icon", "left_edge-icon", "top-icon", "right-icon", "left-icon"].join(" ");
 
                 e.removeClass(remove);
-                let iconElements = e.find(".anvil-component-icon").filter(function() {
+                let iconElements = e.find(".anvil-component-icon").filter(function () {
                     let parentComponent = $(this).closest(".anvil-component");
                     return parentComponent.length == 0 || parentComponent[0] == e[0];
                 });
@@ -631,19 +932,21 @@ var propertyGroups = {
                 e.addClass(v + "-icon");
                 iconElements.addClass(v + "-icon");
             },
-        }
+        },
     },
 
     align: {
-        align : {
+        align: {
             name: "align",
             type: "string",
             enum: ["left", "center", "right"],
             description: "Align this component's content",
-            defaultValue: "center",
-            set: function(s,e,v) { e.css("text-align", v); },
+            defaultValue: new Sk.builtin.str("center"),
+            set(s, e, v) {
+                e.css("text-align", v.toString());
+            },
             important: true,
-        }
+        },
     },
 
     appearance: {
@@ -651,51 +954,47 @@ var propertyGroups = {
             name: "background",
             type: "color",
             description: "The background colour of this component.",
-            defaultValue: "",
+            defaultValue: Sk.builtin.str.$empty,
+            pyVal: true,
             exampleValue: "#ff0000",
-            set: function(s,e,v) {
-                let m = (""+v).match(/^theme:(.*)$/);
-                if (m) {
-                    v = s._anvil.themeColors[m[1]] || '';
-                }
-                e.css("background", v);
-            }
+            set(s, e, v) {
+                s._anvil.domNode.style.backgroundColor = PyDefUtils.getColor(v);
+            },
         },
         foreground: {
             name: "foreground",
             type: "color",
             description: "The foreground colour of this component.",
-            defaultValue: "",
+            defaultValue: Sk.builtin.str.$empty,
+            pyVal: true,
             exampleValue: "#ff0000",
-            set: function(s,e,v) {
-                let m = (""+v).match(/^theme:(.*)$/);
-                if (m) {
-                    v = s._anvil.themeColors[m[1]] || '';
-                }
-                e.css("color", v);
-            }
+            set(s, e, v) {
+                s._anvil.domNode.style.color = PyDefUtils.getColor(v);
+            },
         },
         border: {
             name: "border",
             type: "string",
             description: "The border of this component. Can take any valid CSS border value.",
-            defaultValue: "",
+            defaultValue: Sk.builtin.str.$empty,
+            pyVal: true,
             exampleValue: "1px solid #888888",
-            set: function(s,e,v) {
-                e.css("border", v);
-            }
+            set(s, e, v) {
+                e.css("border", isTrue(v) ? v.toString() : "");
+            },
         },
         visible: {
             name: "visible",
             important: true,
             type: "boolean",
             description: "Should this component be displayed?",
-            defaultValue: true,
+            defaultValue: Sk.builtin.bool.true$,
+            pyVal: true,
             exampleValue: false,
-            set: function(s,e,v) {
+            set(s, e, v) {
                 // Don't just set "display" property - this needs to behave differently in
                 // designer and runner.
-                if (v) {
+                if (isTrue(v)) {
                     e.removeClass("visible-false");
                     e.parent(".hide-with-component").removeClass("visible-false");
                     // Trigger events for components that need to update themselves when visible
@@ -705,16 +1004,17 @@ var propertyGroups = {
                     e.addClass("visible-false");
                     e.parent(".hide-with-component").addClass("visible-false");
                 }
-            }
+            },
         },
         role: {
             name: "role",
             important: false,
             type: "themeRole",
             description: "Choose how this component can appear, based on your app's visual theme.",
-            defaultValue: null,
+            defaultValue: Sk.builtin.none.none$,
+            pyVal: true,
             exampleValue: "title",
-            set: function(s,e,v) {
+            set(s, e, v) {
                 var classes = e.attr("class").split(/\s+/);
                 for (let cls of classes) {
                     if (/^anvil-role-/.test(cls)) {
@@ -722,41 +1022,44 @@ var propertyGroups = {
                     }
                 }
                 let role = null;
-                if(v) {
-                    if (typeof(v) === "string") {
+                if (isTrue(v)) {
+                    v = Sk.ffi.remapToJs(v);
+                    if (typeof v === "string") {
                         v = [v];
                     }
-                    if (!(v instanceof Array)) {
-                        throw new Sk.builtin.Exception("role must be None, a string, or a list of strings");
+                    if (!(Array.isArray(v))) {
+                        throw new Sk.builtin.TypeError("role must be None, a string, or a list of strings");
                     }
 
-                    for (let i=0; i < v.length; i++) {
+                    for (let i = 0; i < v.length; i++) {
                         let r = v[i];
-                        if (typeof(r) !== "string") {
-                            throw new Sk.builtin.Exception("role must be a list of strings");
+                        if (typeof r !== "string") {
+                            throw new Sk.builtin.TypeError("role must be a list of strings");
                         }
-                        r = (""+r).replace(/[^A-Za-z0-9_\-]/g, "");
-                        role = role ? (role + " " + r) : r;
-                        e.addClass("anvil-role-"+r);
+                        r = ("" + r).replace(/[^A-Za-z0-9_\-]/g, "");
+                        role = role ? role + " " + r : r;
+                        e.addClass("anvil-role-" + r);
                     }
                 }
 
                 e.attr("anvil-role", role);
-            }
+            },
         },
     },
 
-    visibility : {
+    visibility: {
         visible: {
             name: "visible",
             important: true,
             type: "boolean",
             description: "Should this component be displayed?",
-            defaultValue: true,
+            defaultValue: Sk.builtin.bool.true$,
+            pyVal: true,
             exampleValue: false,
-            set: function(s,e,v) {
+            set(s, e, v) {
                 // Don't just set "display" property - this needs to behave differently in
                 // designer and runner.
+                v = isTrue(v);
                 if (v) {
                     e.removeClass("visible-false");
                     e.parent(".hide-with-component").removeClass("visible-false");
@@ -767,7 +1070,7 @@ var propertyGroups = {
                     e.addClass("visible-false");
                     e.parent(".hide-with-component").addClass("visible-false");
                 }
-            }
+            },
         },
     },
 
@@ -777,11 +1080,23 @@ var propertyGroups = {
             important: true,
             type: "boolean",
             description: "True if this component should allow user interaction.",
-            defaultValue: true,
+            defaultValue: Sk.builtin.bool.true$,
+            pyVal: true,
             exampleValue: false,
-            set: function(s,e,v) {
-                e.prop("disabled", !v);
-                e.find(".to-disable").prop("disabled", !v);
+            set(s, e, v) {
+                const domNode = s._anvil.domNode;
+                const toDisable = domNode.querySelector(".to-disable");
+                if (!isTrue(v)) {
+                    domNode.setAttribute("disabled", "");
+                    if (toDisable !== null) {
+                       toDisable.setAttribute("disabled", ""); 
+                    }
+                } else {
+                    domNode.removeAttribute("disabled");
+                    if (toDisable !== null) {
+                        toDisable.removeAttribute("disabled"); 
+                    } 
+                }
             },
         },
     },
@@ -790,12 +1105,13 @@ var propertyGroups = {
         height: {
             name: "height",
             type: "string",
-            defaultValue: "",
-            exampleValue: 100,
+            defaultValue: Sk.builtin.str.$empty,
+            exampleValue: new Sk.builtin.str("100"),
             description: "The height of this component.",
-            set: function(s,e,v) {
-                e.css("height", v);
-            }
+            pyVal: true,
+            set(s, e, v) {
+                e.css("height", Sk.ffi.remapToJs(v));
+            },
         },
     },
 
@@ -803,45 +1119,59 @@ var propertyGroups = {
         width: {
             name: "width",
             type: "string",
-            defaultValue: "default",
-            description: "The width of this {{component}}, or \"default\" to have the width set by the container.",
+            defaultValue: new Sk.builtin.str("default"),
+            pyVal: true,
+            description: 'The width of this {{component}}, or "default" to have the width set by the container.',
             deprecated: true,
-            set: function(s,e,v) {
-                if (v == "default") {
+            set(s, e, v) {
+                v = Sk.ffi.remapToJs(v);
+                if (v === "default") {
                     e.css("width", s._anvil.defaultWidth);
                 } else {
                     e.css("width", v);
                 }
-            }
+            },
         },
 
         spacing_above: {
             name: "spacing_above",
             type: "string",
             enum: ["none", "small", "medium", "large"],
-            defaultValue: "small",
+            defaultValue: new Sk.builtin.str("small"),
+            pyVal: true,
             description: "The vertical space above this component.",
-            set: function(s,e,v) {
-                var vals = ['none', 'small', 'medium', 'large'];
-                for (var i=0; i<vals.length; i++) {
-                    var cls="anvil-spacing-above-"+vals[i];
-                    if (v==vals[i]) { e.addClass(cls); } else { e.removeClass(cls); }
+            set(s, e, v) {
+                v = v.toString();
+                var vals = ["none", "small", "medium", "large"];
+                for (var i = 0; i < vals.length; i++) {
+                    var cls = "anvil-spacing-above-" + vals[i];
+                    if (v == vals[i]) {
+                        e.addClass(cls);
+                    } else {
+                        e.removeClass(cls);
+                    }
                 }
-            }
+            },
         },
         spacing_below: {
             name: "spacing_below",
             type: "string",
             enum: ["none", "small", "medium", "large"],
-            defaultValue: "small",
+            defaultValue: new Sk.builtin.str("small"),
+            pyVal: true,
             description: "The vertical space below this component.",
-            set: function(s,e,v) {
-                var vals = ['none', 'small', 'medium', 'large'];
-                for (var i=0; i<vals.length; i++) {
-                    var cls="anvil-spacing-below-"+vals[i];
-                    if (v==vals[i]) { e.addClass(cls); } else { e.removeClass(cls); }
+            set(s, e, v) {
+                v = v.toString();
+                var vals = ["none", "small", "medium", "large"];
+                for (var i = 0; i < vals.length; i++) {
+                    var cls = "anvil-spacing-below-" + vals[i];
+                    if (v == vals[i]) {
+                        e.addClass(cls);
+                    } else {
+                        e.removeClass(cls);
+                    }
                 }
-            }
+            },
         },
     },
 
@@ -853,17 +1183,19 @@ var propertyGroups = {
             priority: 9,
             type: "number",
             description: "The spacing between rows of components in this container, in pixels.",
-            defaultValue: 10,
+            defaultValue: new Sk.builtin.int_(10),
+            pyVal: true,
         },
     },
 
     "user data": {
         tag: {
             name: "tag",
+            defaultValue: null,
             important: false,
             type: "object",
             description: "Use this property to store any extra information about this component",
-        }
+        },
     },
 
     tooltip: {
@@ -871,12 +1203,13 @@ var propertyGroups = {
             name: "tooltip",
             important: false,
             type: "string",
-            defaultValue: "",
+            defaultValue: Sk.builtin.str.$empty,
+            pyVal: true,
             description: "Text to display when you hover the mouse over this component",
-            set: function(s,e,v) {
-                e.attr("title", v ? v : null);
+            set(s, e, v) {
+                e.attr("title", isTrue(v) ? v.toString() : null);
             },
-        }
+        },
     },
 
     mapOverlays: {
@@ -885,36 +1218,43 @@ var propertyGroups = {
             important: true,
             type: "boolean",
             description: "True if this overlay raises mouse events.",
-            defaultValue: true,
-            set: PyDefUtils.mapSetter("clickable"),
-            get: PyDefUtils.mapGetter("clickable"),
-        },    
+            defaultValue: Sk.builtin.bool.true$,
+            pyVal: true,
+            mapProp: true,
+            set: PyDefUtils.mapSetter("clickable", isTrue),
+            get: PyDefUtils.mapGetter("clickable", Sk.builtin.bool),
+        },
         draggable: {
             name: "draggable",
             type: "boolean",
             important: true,
             description: "True if this overlay can be dragged.",
-            defaultValue: false,
-            set: PyDefUtils.mapSetter("draggable"),
-            get: PyDefUtils.mapGetter("draggable"),
-        },    
+            defaultValue: Sk.builtin.bool.false$,
+            pyVal: true,
+            mapProp: true,
+            set: PyDefUtils.mapSetter("draggable", isTrue),
+            get: PyDefUtils.mapGetter("draggable", Sk.builtin.bool),
+        },
         visible: {
             name: "visible",
             type: "boolean",
             important: true,
             description: "True if this overlay should be displayed.",
-            defaultValue: true,
-            set: PyDefUtils.mapSetter("visible"),
-            get: PyDefUtils.mapGetter("visible"),
-        },   
+            defaultValue: Sk.builtin.bool.true$,
+            pyVal: true,
+            mapProp: true,
+            set: PyDefUtils.mapSetter("visible", isTrue),
+            get: PyDefUtils.mapGetter("visible", Sk.builtin.bool),
+        },
         z_index: {
             name: "z_index",
             type: "number",
             important: true,
             description: "The z-index compared to other overlays.",
+            mapProp: true,
             set: PyDefUtils.mapSetter("zIndex"),
             get: PyDefUtils.mapGetter("zIndex"),
-        },    
+        },
     },
 
     mapPolyOverlays: {
@@ -923,28 +1263,33 @@ var propertyGroups = {
             type: "boolean",
             important: true,
             description: "True if this overlay can be edited by the user.",
-            defaultValue: false,
-            set: PyDefUtils.mapSetter("editable"),
-        },   
+            defaultValue: Sk.builtin.bool.false$,
+            pyVal: true,
+            mapProp: true,
+            set: PyDefUtils.mapSetter("editable", isTrue),
+        },
         stroke_color: {
             name: "stroke_color",
             type: "string",
             important: true,
             description: "The color to draw the overlay outline.",
+            mapProp: true,
             set: PyDefUtils.mapSetter("strokeColor"),
-        },    
+        },
         stroke_opacity: {
             name: "stroke_opacity",
             type: "number",
             important: true,
             description: "The opacity of the overlay outline.",
+            mapProp: true,
             set: PyDefUtils.mapSetter("strokeOpacity"),
-        },    
+        },
         stroke_weight: {
             name: "stroke_weight",
             type: "number",
             important: true,
             description: "The weight of the overlay outline",
+            mapProp: true,
             set: PyDefUtils.mapSetter("strokeWeight"),
         },
     },
@@ -955,6 +1300,7 @@ var propertyGroups = {
             pyType: "anvil.GoogleMap.StrokePosition",
             important: true,
             description: "The stroke position. Defaults to CENTER.",
+            mapProp: true,
             set: PyDefUtils.mapSetter("strokePosition"),
         },
         fill_color: {
@@ -962,17 +1308,18 @@ var propertyGroups = {
             type: "string",
             important: true,
             description: "The color to draw the overlay outline.",
+            mapProp: true,
             set: PyDefUtils.mapSetter("fillColor"),
-        },    
+        },
         fill_opacity: {
             name: "fill_opacity",
             type: "number",
             important: true,
             description: "The opacity of the overlay outline.",
+            mapProp: true,
             set: PyDefUtils.mapSetter("fillOpacity"),
-        }
-        
-    }
+        },
+    },
 };
 
 /*!eventGroups()!1*/
@@ -1045,6 +1392,12 @@ var eventGroups = {
                 name: "button",
                 description: "The button that was pressed (1 = left, 2 = middle, 3 = right)",
                 important: true,
+            }, {
+                name: "keys",
+                description:
+                    "A dictionary of keys including 'shift', 'alt', 'ctrl', 'meta'. " +
+                    "Each key's value is a boolean indicating if it was pressed during the click event. " +
+                    "The meta key on a mac is the Command key",
             }],
             important: true,
         }, {
@@ -1062,6 +1415,12 @@ var eventGroups = {
                 name: "button",
                 description: "The button that was released (1 = left, 2 = middle, 3 = right)",
                 important: true,
+            }, {
+                name: "keys",
+                description:
+                    "A dictionary of keys including 'shift', 'alt', 'ctrl', 'meta'. " +
+                    "Each key's value is a boolean indicating if it was pressed during the click event. " +
+                    "The meta key on a mac is the Command key",
             }],
             important: true,
         }
@@ -1141,44 +1500,40 @@ var eventGroups = {
 };
 
 
-PyDefUtils.assembleGroups = function(groups, componentName, groupList, overrides) {
+const component_regex = /\{\{component\}\}/g;
+
+PyDefUtils.assembleGroups = function assembleGroups(groups, componentName, groupList, overrides) {
     overrides = overrides || {};
 
-    var props = [], seenProps = {};
-    for (var i in groupList) {
-        var groupProps = groups[groupList[i]];
+    const props = [],
+        seenProps = {};
 
-        for (var j in groupProps) {
-            var prop = $.extend({},groupProps[j]);
-
-            var override = overrides[prop.name] || {};
-
-            for (var k in override) {
-                prop[k] = override[k];
-            }
-
-            prop.group = groupList[i];
-
+    groupList.forEach((groupName) => {
+        const groupProps = groups[groupName];
+        for (let i in groupProps) {
+            let prop = groupProps[i];
+            prop.group = groupName;
+            const override = overrides[prop.name] || {};
+            prop = { ...prop, ...override };
             if (prop.description) {
-                prop.description = prop.description.replace(/\{\{component\}\}/g, componentName);
+                prop.description = prop.description.replace(component_regex, componentName);
             }
-
             if (!override.omit) {
                 props.push(prop);
             }
-
             seenProps[prop.name] = true;
         }
-    }
+    });
 
-    for (var i in overrides) {
-        if (!seenProps[i]) {
-            props.push(overrides[i]);
+    Object.keys(overrides).forEach((propName) => {
+        if (!seenProps[propName]) {
+            overrides[propName].name = propName;
+            props.push(overrides[propName]);
         }
-    }
+    });
 
     return props;
-}
+};
 
 PyDefUtils.assembleGroupEvents = function(componentName, groupList, overrides) {
     return PyDefUtils.assembleGroups(eventGroups, componentName, groupList, overrides);
@@ -1222,7 +1577,16 @@ PyDefUtils.setupDefaultMouseEvents = function(self) {
         if (has_handler) {
             const x = e.originalEvent.changedTouches[0].pageX - offset.left;
             const y = e.originalEvent.changedTouches[0].pageY - offset.top;
-            PyDefUtils.raiseEventAsync({ x, y, button: e.which }, self, "mouse_up");
+            PyDefUtils.raiseEventAsync(
+                {
+                    x,
+                    y,
+                    button: e.which,
+                    keys: { meta: false, shift: false, ctrl: false, alt: false },
+                },
+                self,
+                "mouse_up"
+            );
             e.stopPropagation();
             e.preventDefault();
         }
@@ -1230,7 +1594,16 @@ PyDefUtils.setupDefaultMouseEvents = function(self) {
 
     self._anvil.element.on("mouseup", (e) => {
         const offset = self._anvil.element.offset();
-        PyDefUtils.raiseEventAsync({ x: e.pageX - offset.left, y: e.pageY - offset.top, button: e.which }, self, "mouse_up");
+        PyDefUtils.raiseEventAsync(
+            {
+                x: e.pageX - offset.left,
+                y: e.pageY - offset.top,
+                button: e.which,
+                keys: { meta: e.metaKey, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey },
+            },
+            self,
+            "mouse_up"
+        );
     });
 
     self._anvil.element.on("touchstart", (e) => {
@@ -1239,7 +1612,16 @@ PyDefUtils.setupDefaultMouseEvents = function(self) {
         if (has_handler) {
             const x = e.originalEvent.changedTouches[0].pageX - offset.left;
             const y = e.originalEvent.changedTouches[0].pageY - offset.top;
-            PyDefUtils.raiseEventAsync({x, y, button: e.which}, self, "mouse_down");
+            PyDefUtils.raiseEventAsync(
+                {
+                    x,
+                    y,
+                    button: e.which,
+                    keys: { meta: false, shift: false, ctrl: false, alt: false },
+                },
+                self,
+                "mouse_down"
+            );
             e.stopPropagation();
             e.preventDefault();
         }
@@ -1247,7 +1629,16 @@ PyDefUtils.setupDefaultMouseEvents = function(self) {
 
     self._anvil.element.on("mousedown", (e) => {
         const offset = self._anvil.element.offset();
-        PyDefUtils.raiseEventAsync({x: e.pageX - offset.left, y: e.pageY - offset.top, button: e.which}, self, "mouse_down");
+        PyDefUtils.raiseEventAsync(
+            {
+                x: e.pageX - offset.left,
+                y: e.pageY - offset.top,
+                button: e.which,
+                keys: { meta: e.metaKey, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey },
+            },
+            self,
+            "mouse_down"
+        );
     });
 };
 
@@ -1427,12 +1818,12 @@ PyDefUtils.repaginateChildren = (self, skip, startAfter, remainingRowQuota) => {
     }
 
     let passedResumePoint = (startAfter == null);
-    let pyComponents = new Sk.builtin.list(self._anvil.components);
-    self._anvil.lastChildPagination = self._anvil.lastChildPagination || new Array(self._anvil.components.length);
+    let pyComponents = [...self._anvil.components];
+    self._anvil.lastChildPagination = self._anvil.lastChildPagination || new Array(pyComponents.length);
 
     // Iterate through my components, asking them to paginate in turn until we run out of rows.
     return Sk.misceval.chain(undefined,
-        () => Sk.misceval.iterFor(Sk.abstr.iter(pyComponents), ({component, layoutProperties}, idx) => {
+        () => Sk.misceval.iterArray(pyComponents, ({component, layoutProperties}, idx) => {
             if (layoutProperties.pinned && component._anvil.paginate) {
                 component._anvil.pagination = {
                     startAfter: null,
@@ -1448,7 +1839,7 @@ PyDefUtils.repaginateChildren = (self, skip, startAfter, remainingRowQuota) => {
             }
             return idx + 1;
         }, /* idx = */ 0),
-        () => Sk.misceval.iterFor(Sk.abstr.iter(pyComponents), ({component, layoutProperties}, idx) => {
+        () => Sk.misceval.iterArray(pyComponents, ({component, layoutProperties}, idx) => {
 
             // We only care about this component if it has a paginate function.
             if (!layoutProperties.pinned && component._anvil.paginate) {
@@ -1505,9 +1896,9 @@ PyDefUtils.repaginateChildren = (self, skip, startAfter, remainingRowQuota) => {
             // We're done if all children are done
             let done = true;
             for (let child of self._anvil.lastChildPagination) {
-                if (child && child[2] == false) {
+                if (child && child[2] === false) {
                     done = false;
-                } else if (child && child[2] == "INVALID") {
+                } else if (child && child[2] === "INVALID") {
                     done = "INVALID";
                     break;
                 }
@@ -1569,7 +1960,7 @@ PyDefUtils.callJs = (pyComponent, pyFnName, ...pyArgs) => {
 
             return fn.apply(pyComponent && pyComponent._anvil.element, args);
         } catch (e) {
-            if (e instanceof ReferenceError && e.message.indexOf(fnName) == 0) {
+            if (e instanceof ReferenceError && e.message.indexOf(fnName) !== -1) {
                 let msg = `Could not find global JS function '${fnName}'.`;
                 if (pyComponent && !pyComponent._anvil.onPage) {
                     msg += " This form is not currently visible - to call functions defined in its HTML on load, use call_js in the form 'show' event handler."

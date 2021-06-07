@@ -44,77 +44,137 @@ description: |
 */
 
 
-module.exports = function(pyModule) {
+module.exports = (pyModule) => {
+    const {isTrue} = Sk.misceval;
 
-	pyModule["RadioButton"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-
-        var properties = PyDefUtils.assembleGroupProperties(/*!componentProps(RadioButton)!2*/["text", "layout", "interaction", "appearance", "tooltip", "user data"], {
-          text: {
-            set: function(s,e,v) {
-              if (v.length > 0) {
-                e.find("span").text(v);
-              } else {
-                e.find("span").html("&nbsp;");
-              }
+    pyModule["RadioButton"] = PyDefUtils.mkComponentCls(pyModule, "RadioButton", {
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(RadioButton)!2*/ ["text", "layout", "interaction", "appearance", "tooltip", "user data"], {
+            text: {
+                set(s, e, v) {
+                    v = Sk.builtin.checkNone(v) ? "" : v.toString();
+                    if (v) {
+                        s._anvil.elements.text.textContent = v;
+                    } else {
+                        s._anvil.elements.text.innerHTML = "&nbsp;";
+                    }
+                },
             },
-          },
-          bold: {
-            set: function(s,e,v) {
-                e.find("span").css("font-weight", v ? "bold" : "");
+            bold: {
+                set(s, e, v) {
+                    s._anvil.elements.text.style.fontWeight = isTrue(v) ? "bold" : "";
+                },
+            },
+            underline: {
+                set(s, e, v) {
+                    s._anvil.elements.text.style.textDecoration = isTrue(v) ? "underline" : "none";
+                },
+            },
+            selected: /*!componentProp(RadioButton)!1*/ {
+                name: "selected",
+                type: "boolean",
+                suggested: true,
+                pyVal: true,
+                defaultValue: Sk.builtin.bool.false$,
+                description: "The status of the radio button",
+                set(s, e, v) {
+                    s._anvil.elements.input.checked = isTrue(v);
+                },
+                get(s, e) {
+                    return new Sk.builtin.bool(s._anvil.elements.input.checked);
+                },
+            },
+            value: /*!componentProp(RadioButton)!1*/ {
+                name: "value",
+                type: "string",
+                pyVal: true,
+                defaultValue: Sk.builtin.str.$empty,
+                description: "The value of the group when this radio button is selected",
+                set(s, e, v) {
+                    v = Sk.builtin.checkNone(v) ? null : v.toString();
+                    s._anvil.elements.input.value = v;
+                },
+                get(s, e) {
+                    // could be a str or None but nothing else
+                    return Sk.ffi.toPy(s._anvil.elements.input.value);
+                },
+            },
+            group_name: /*!componentProp(RadioButton)!1*/ {
+                name: "group_name",
+                type: "string",
+                pyVal: true,
+                defaultValue: new Sk.builtin.str("radioGroup1"),
+                description: "The name of the group this radio button belongs to.",
+                set(s, e, v) {
+                    v = Sk.builtin.checkNone(v) ? null : v.toString();
+                    s._anvil.elements.input.name = v;
+                },
+                get(s, e) {
+                    return Sk.ffi.toPy(s._anvil.elements.input.name);
+                },
+            },
+        }),
+
+        events: PyDefUtils.assembleGroupEvents("radio button", /*!componentEvents(RadioButton)!1*/ ["universal"], {
+            /*!componentEvent(RadioButton)!1*/ clicked: {
+                name: "clicked",
+                description: "When this radio button is selected",
+                parameters: [],
+                important: true,
+                defaultEvent: true,
+            },
+
+            change: { name: "change", description: "When this radio button is selected (but not deselected)", parameters: [], important: true, deprecated: true },
+        }),
+
+        element({ bold, underline, selected, value, group_name, ...props }) {
+            const style = PyDefUtils.getOuterStyle({ bold, underline });
+            const inputAttrs = {};
+            if (isTrue(selected)) {
+                inputAttrs.checked = "";
             }
-          },
-          underline: {
-            set: function(s,e,v) {
-                e.find("span").css("text-decoration", v ? "underline" : "none");
+            if (!isTrue(props.enabled)) {
+                inputAttrs.disabled = "";
             }
-          },
-        });
-        /*!componentProp(RadioButton)!1*/
-        properties.push({name: "selected", type: "boolean",
-             suggested: true,
-             description: "The status of the radio button",
-             set: function(s,e,v) { e.find("input").prop("checked", v); },
-             get: function(s,e) { return e.find("input").prop("checked"); }});
-        /*!componentProp(RadioButton)!1*/
-        properties.push({name: "value", type: "string",
-             description: "The value of the group when this radio button is selected",
-             set: function(s,e,v) { e.find("input").val(v); },
-             get: function(s,e) { return e.find("input").val(); }});
-        /*!componentProp(RadioButton)!1*/
-        properties.push({name: "group_name", type: "string",
-             description: "The name of the group this radio button belongs to.",
-             set: function(s,e,v) { e.find("input").attr("name", v); },
-             get: function(s,e) { return e.find("input").attr("name"); }});
+            return (
+                <PyDefUtils.OuterElement refName="outer" className="radio anvil-inlinable" {...props}>
+                    <label refName="label" style="padding: 7px 7px 7px 20px">
+                        <input
+                            refName="input"
+                            className="to-disable"
+                            type="radio"
+                            name={group_name.toString()}
+                            value={Sk.builtin.checkNone(value) ? "" : value.toString()}
+                            {...inputAttrs}
+                        />
+                        <span refName="text" style={style}>
+                            {Sk.builtin.checkNone(props.text) ? "" : props.text.toString()}
+                        </span>
+                    </label>
+                </PyDefUtils.OuterElement>
+            );
+        },
 
-        var events = PyDefUtils.assembleGroupEvents("radio button", /*!componentEvents(RadioButton)!1*/ ["universal"]);
-
-        /*!componentEvent(RadioButton)!1*/
-        events.push({name: "clicked", description: "When this radio button is selected",
-                     parameters: [], important: true, defaultEvent: true});
-
-        events.push({name: "change", description: "When this radio button is selected (but not deselected)",
-                     parameters: [], important: true, deprecated: true});
-
-		$loc["__init__"] = PyDefUtils.mkInit(function init(self) {
-            self._anvil.element = $('<div class="radio anvil-inlinable"><label style="padding: 7px 7px 7px 20px"><input class="to-disable" type="radio" name="radioGroup1" value=""/><span></span></label></div>')
-                .on("change", function(e) {
-                    PyDefUtils.asyncToPromise(function() {
-                        return Sk.misceval.chain(undefined,
-                          PyDefUtils.raiseEventOrSuspend.bind(null, {}, self, "clicked"),
-                          PyDefUtils.raiseEventOrSuspend.bind(null, {}, self, "change")
-                        );
-                    })
+        locals($loc) {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Component"], (self) => {
+                const clicked = PyDefUtils.raiseEventOrSuspend.bind(null, {}, self, "clicked");
+                const change = PyDefUtils.raiseEventOrSuspend.bind(null, {}, self, "change");
+                self._anvil.element.on("change", (e) => {
+                    PyDefUtils.asyncToPromise(() => Sk.misceval.chain(clicked(), change));
                 });
+            });
 
-        }, pyModule, $loc, properties, events, pyModule["Component"]);
+            $loc["get_group_value"] = new Sk.builtin.func(function get_group_value(self) {
+                const name = self._anvil.props["group_name"].toString();
+                // @todo bug when radio buttons are not on the screen
+                const v = $('input[name="' + name + '"]:checked').val();
+                return v != null ? new Sk.builtin.str(v) : Sk.builtin.none.none$;
+            });
+        },
+    });
 
-        $loc["get_group_value"] = new Sk.builtin.func(function(self) {
-            var v = $("input[name=\"" + self._anvil.element.find("input").attr("name") + "\"]:checked").val();
-            return v != null ? Sk.ffi.remapToPy(v) : Sk.builtin.none.none$;
-        })
-
-    }, /*!defClass(anvil,RadioButton,Component)!*/ 'RadioButton', [pyModule["Component"]]);
 };
+
+/*!defClass(anvil,RadioButton,Component)!*/
 
 /*
  * TO TEST:

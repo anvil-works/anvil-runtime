@@ -25,7 +25,7 @@ description: |
   name of each property or event for more information.)
 
 lineBetweenIncludes: true
-includes: [button, label, link, checkbox, radiobutton, dropdown, datepicker, textbox, textarea, timer, spacer, image, fileloader, googlemap, plot, youtubevideo, canvas, repeatingpanel]
+includes: [button, label, richtext, link, checkbox, radiobutton, dropdown, datepicker, textbox, textarea, timer, spacer, image, fileloader, googlemap, plot, youtubevideo, canvas, repeatingpanel]
 */
 
 
@@ -40,7 +40,7 @@ module.exports.defineSystemComponents = function defineSystemComponents(pyModule
         });
 
         $loc["__get__"] = new Sk.builtin.func( (self, obj, type) => {
-            return obj == Sk.builtin.none.none$ ? self :obj._anvil.getProp(self._anvil.propName);
+            return obj === Sk.builtin.none.none$ ? self :obj._anvil.getProp(self._anvil.propName);
         });
 
         $loc["__set__"] = new Sk.builtin.func( (self, obj, pyVal) => {
@@ -71,204 +71,10 @@ module.exports.defineSystemComponents = function defineSystemComponents(pyModule
             }
             obj._anvil.customProps = obj._anvil.customProps || {};
             obj._anvil.customProps[self._anvil.propName] = pyVal;
+            return Sk.builtin.none.none$;
         });
 
     }, "CustomComponentProperty", []);
-
-    pyModule["Paginator"] = Sk.misceval.buildClass(pyModule, ($gbl, $loc) => {
-        // TODO: Add .anvil-paginator to component element here rather than in each component.
-
-        let getRowQuota = self => {
-            let rows = self._anvil && self._anvil.getPropJS && self._anvil.getPropJS("rows_per_page");
-            if (rows && rows > 0) {
-                return rows;
-            } else {
-                return Infinity;
-            }
-        };
-
-        $loc["__init__"] = new Sk.builtin.func(self => {
-            self._anvil.pagination = {
-                startAfter: null,
-                rowQuota: getRowQuota(self),
-            }
-
-            self._anvil.updatePaginationControls = () => {
-                self._anvil.element.find(".previous-page,.first-page").toggleClass("disabled", !self._anvil.paginatorPages || self._anvil.paginatorPages.length < 2);
-                self._anvil.element.find(".next-page,.last-page").toggleClass("disabled", self._anvil.pagination.done == true);
-            }
-        })
-
-        $loc["jump_to_first_page"] = new Sk.builtin.func(self => {
-            if (self._anvil.repaginating) 
-                return Sk.builtin.none.none$;
-            self._anvil.repaginating = true;
-            self._anvil.pagination = {
-                startAfter: null,
-                rowQuota: getRowQuota(self)
-            }
-            delete self._anvil.lastChildPagination;
-            return Sk.misceval.chain(self._anvil.paginate(),
-                ([rows, stoppedAt, done]) => {
-                    self._anvil.paginatorPages = [{
-                        startedAfter: null,
-                        stoppedAt: stoppedAt,
-                        done: done,
-                        rowsDisplayed: rows,
-                        currentPage: 0,
-                        currentIndex: 0,
-                    }];
-                    self._anvil.repaginating = false;
-                    self._anvil.updatePaginationControls();
-                    return Sk.builtin.none.none$;
-                }
-            );
-        });
-
-        $loc["jump_to_last_page"] = new Sk.builtin.func(self => {
-            if (self._anvil.repaginating) 
-                return;
-            self._anvil.repaginating = true;
-            return Sk.misceval.chain(PyDefUtils.whileOrSuspend(
-                    () => !(self._anvil.paginatorPages && self._anvil.paginatorPages.length > 0 && self._anvil.paginatorPages[self._anvil.paginatorPages.length-1].done), 
-                    () => Sk.misceval.chain(undefined,
-                        () => { self._anvil.repaginating = false },
-                        () => Sk.misceval.callsimOrSuspend(self.tp$getattr(new Sk.builtin.str("next_page"))),
-                        () => { self._anvil.repaginating = true },
-                    ),
-                ),
-                () => {
-                    self._anvil.repaginating = false; 
-                    return Sk.builtin.none.none$
-                },
-            );
-        });
-        
-        $loc["next_page"] = new Sk.builtin.func(self => {
-            if (self._anvil.repaginating) 
-                return;
-
-            let p = self._anvil.paginatorPages && self._anvil.paginatorPages[self._anvil.paginatorPages.length - 1];
-            if (p && !p.done) {
-                self._anvil.repaginating = true
-                self._anvil.pagination = {
-                    startAfter: p.stoppedAt,
-                    rowQuota: getRowQuota(self),
-                }
-                let newPage = {};
-                self._anvil.paginatorPages.push(newPage);
-                return Sk.misceval.chain(self._anvil.paginate(),
-                    ([rows, stoppedAt, done]) => {
-
-                        newPage.startedAfter = p.stoppedAt;
-                        newPage.rowsDisplayed = rows;
-                        newPage.stoppedAt = stoppedAt;
-                        newPage.done = done;
-                        newPage.currentPage = p.currentPage + 1;
-                        newPage.currentIndex = p.currentIndex + rows;
-
-                        self._anvil.repaginating = false;
-                        self._anvil.updatePaginationControls();
-                    }
-                );
-            }
-        });
-
-        $loc["previous_page"] = new Sk.builtin.func(self => {
-            if (self._anvil.repaginating) 
-                return;
-
-            let p = self._anvil.paginatorPages && self._anvil.paginatorPages[self._anvil.paginatorPages.length - 2];
-            if (p && !p.done) {
-                self._anvil.repaginating = true
-                self._anvil.pagination = {
-                    startAfter: p.startedAfter,
-                    rowQuota: getRowQuota(self),
-                }
-                self._anvil.paginatorPages.pop();
-                return Sk.misceval.chain(self._anvil.paginate(),
-                    ([rows, stoppedAt, done]) => {
-                        self._anvil.repaginating = false;
-                        self._anvil.updatePaginationControls();
-                    }
-                );
-            }
-        });
-
-        $loc["get_page"] = new Sk.builtin.func(self => {
-            let p = self._anvil.paginatorPages && self._anvil.paginatorPages[self._anvil.paginatorPages.length - 1];
-            if (p) {
-                return Sk.ffi.remapToPy(p.currentPage);
-            }
-        });
-
-        $loc["get_first_index_on_page"] = new Sk.builtin.func(self => {
-            let p = self._anvil.paginatorPages && self._anvil.paginatorPages[self._anvil.paginatorPages.length - 1];
-            if (p) {
-                return Sk.ffi.remapToPy(p.currentIndex);
-            }
-        });
-
-        $loc["set_page"] = new Sk.builtin.func((self, page) => {
-            page = parseInt(Sk.ffi.remapToJs(page));
-
-            let closestPageBefore = self._anvil.paginatorPages && self._anvil.paginatorPages[Math.min(page, self._anvil.paginatorPages.length-1)];
-            let fns = [];
-            let startPage = 0;
-            if (closestPageBefore) {
-                startPage = closestPageBefore.currentPage;
-                self._anvil.paginatorPages = self._anvil.paginatorPages.slice(0,startPage+1);
-
-                fns.push(() => {
-                    self._anvil.pagination = {
-                        startAfter: closestPageBefore.startedAfter,
-                        rowQuota: getRowQuota(self),
-                    }
-                    return self._anvil.paginate()
-                });
-            }
-
-            for (let p = startPage; p < page; p++) {
-                fns.push(() => Sk.misceval.callsimOrSuspend(self.tp$getattr(new Sk.builtin.str("next_page"))))
-            }
-
-            return Sk.misceval.chain(...fns);
-        });
-
-        $loc["repaginate"] = new Sk.builtin.func(self => {
-            if (self._anvil.paginatorPages && self._anvil.paginatorPages.length > 1) {
-                if (self._anvil.repaginating) 
-                    return;
-                let p = self._anvil.paginatorPages && self._anvil.paginatorPages[self._anvil.paginatorPages.length - 1];
-                if (p && !p.done) {
-                    self._anvil.repaginating = true
-                    self._anvil.pagination = {
-                        startAfter: p.startedAfter,
-                        rowQuota: getRowQuota(self),
-                    }
-                    return Sk.misceval.chain(self._anvil.paginate(),
-                        ([rows, stoppedAt, done]) => {
-                            self._anvil.paginatorPages.splice(self._anvil.paginatorPages.length - 1, 1, {
-                                startedAfter: p.startedAfter,
-                                rowsDisplayed: rows,
-                                stoppedAt: stoppedAt,
-                                done: done,
-                                currentPage: p.currentPage,
-                                currentIndex: p.currentIndex,
-                            });
-                            self._anvil.repaginating = false;
-                            self._anvil.updatePaginationControls();
-                        }
-                    );
-                }
-
-            } else {
-                return Sk.misceval.callsimOrSuspend(self.tp$getattr(new Sk.builtin.str("jump_to_first_page")));
-            }
-        });
-
-
-    }, "Paginator", []);
 
 
     require("./components/Component")(pyModule);
@@ -305,6 +111,8 @@ module.exports.defineSystemComponents = function defineSystemComponents(pyModule
 
     require("./components/Container")(pyModule);
 
+    require("./components/RichText")(pyModule);
+
     if (window['google']) {
         require("./components/GoogleMap")(pyModule);
     } else {
@@ -316,6 +124,8 @@ module.exports.defineSystemComponents = function defineSystemComponents(pyModule
     require("./components/LinearPanel")(pyModule);
 
     require("./components/RepeatingPanel")(pyModule, module.exports);
+
+    require("./components/Paginator")(pyModule);
 
     require("./components/DataGrid")(pyModule, module.exports);
 
@@ -508,7 +318,7 @@ module.exports.newPythonComponent = function newPythonComponent(component, compo
             pyComponent = mkInvalidComponent(anvilMod, "No such component: \"" + component.type + "\"");
         } else {
             // Prepend a magic kwarg that tells this component to ignore property exceptions - these all came from the YAML (designer), so are not the user's fault.
-            kwa = [new Sk.builtin.str("__ignore_property_exceptions"), true].concat(kwa);
+            kwa = ["__ignore_property_exceptions", true].concat(kwa);
             pyComponent = Sk.misceval.chain(
                 Sk.misceval.callOrSuspend(cls, undefined, undefined, kwa),
                 function (pyComponent) {
@@ -554,12 +364,12 @@ module.exports.newPythonComponent = function newPythonComponent(component, compo
             pyComponent._anvil.element.addClass("anvil-component");
             pyComponent._anvil.element.data("anvil-py-component", pyComponent);
             
-            if (Sk.builtin.isinstance(pyComponent, anvilMod["RepeatingPanel"]).v && pyComponent._inDesigner) {
+            if (Sk.builtin.isinstance(pyComponent, anvilMod["RepeatingPanel"]).v && window.anvilInDesigner) {
                 pyComponent._anvil.dependencies = dependencies;
                 pyComponent._anvil.forms = otherFormsSpec;
                 pyComponent._anvil.formInstanceIndex = formInstanceIndex;
                 pyComponent._anvil.parentForm = newPythonComponent.formTrace;
-                pyComponent._inDesigner.refreshForm(repeatingPanelInstanceIndex)
+                Sk.misceval.callsim(pyComponent.tp$getattr(new Sk.builtin.str("_refresh_form")), repeatingPanelInstanceIndex);
             };
 
             if (pyComponent._anvil.updateDesignName) {

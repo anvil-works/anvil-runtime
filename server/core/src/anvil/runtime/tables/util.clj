@@ -47,6 +47,10 @@
          (fn [_mapping]
            (jdbc/query util/db ["SELECT table_id, python_name FROM app_storage_access"])))
 
+(defonce update-table-access-record!
+         (fn [_mapping table-id update]
+           (jdbc/update! util/db "app_storage_access" update ["table_id = ?" table-id])))
+
 (defonce delete-table-access-record!
          (fn [db-c _mapping table-id]
            (-> (jdbc/query db-c ["DELETE FROM app_storage_access WHERE table_id = ? RETURNING 1" table-id])
@@ -60,6 +64,19 @@
     :type               error-type
     :docId              "data_tables"
     :docLinkTitle       "Learn more about Data tables"}))
+
+(defn transform-err [^SQLException e]
+  (log/debug e)
+  (if (= "40001" (.getSQLState e))
+    (general-tables-error "Another transaction has changed this data; aborting"
+                          "anvil.tables.TransactionConflict")
+    e))
+
+(defmacro with-transform-err [& body]
+  `(try
+     (do ~@body)
+     (catch SQLException e#
+       (throw+ (transform-err e#)))))
 
 (def ^:dynamic *environment-for-admin-call* nil)
 
@@ -431,6 +448,8 @@
 (defmacro require-app-transaction [& body]
   `(with-app-transaction* true (fn [] ~@body)))
 
+(def total-open-txns (atom 0))
+
 (defn open-app-transaction! [_kwargs]
   (if-let [thread-id rpc-util/*thread-id*]
     (let [_ (when-not (and thread-id (not rpc-util/*client-request?*))
@@ -461,6 +480,9 @@
                   (try (.close conn) (catch Exception _))
                   (throw+ (general-tables-error "Internal error: Duplicate racing transactions on the same thread")))
                 {:open 0, :db-map db-map, :last-touched (System/currentTimeMillis)}))
+
+      (swap! total-open-txns inc)
+
       nil)
     (throw+ (general-tables-error "Cannot open a transaction in an unidentified thread"))))
 
@@ -710,7 +732,7 @@
 
           ;; TODO: Check for clashing col-names. Currently blows up silently, but then so does everything else.
 
-          create-view-sql [(str "CREATE VIEW " VIEW-NAME " AS"
+          create-view-sql [(str "CREATE VIEW " VIEW-NAME " WITH (security_barrier) AS"
                                 " SELECT "
                                 " id as _id"
                                 (->> (for [col view-cols
@@ -736,6 +758,9 @@
                                            "liveObject"
                                            (str ", (trim('\"' from data->'" ID "'->>'id')::jsonb->>1)::int")
 
+                                           "media"
+                                           (str ", (data->>'" ID "')::oid")
+
                                            ;"string" or anything else
                                            (str ", data->>'" ID "'"))
 
@@ -759,7 +784,8 @@
 
                 "
                                          (->> (for [col view-cols
-                                                    :let [COL-NAME (:VIEW-NAME col)
+                                                    :let [ID (:ID col)
+                                                          COL-NAME (:VIEW-NAME col)
                                                           ERR (get {"liveObject"      "Cannot update links to other rows using SQL. Please use the Python Data Tables API."
 
                                                                     "liveObjectArray" "Cannot update links to other rows using SQL. Please use the Python Data Tables API."
@@ -767,7 +793,13 @@
                                                                     "media"           "Cannot update Media objects in Data Tables using SQL. Please use the Python Data Tables API."}
                                                                    (:type col))]
                                                     :when ERR]
-                                                (str "IF (NEW." COL-NAME " != OLD." COL-NAME ") OR (NEW." COL-NAME " IS NULL AND OLD." COL-NAME " IS NOT NULL) OR (NEW." COL-NAME " IS NOT NULL AND OLD." COL-NAME " IS NULL) THEN RAISE EXCEPTION '" ERR "'; END IF;"))
+                                                (str "IF NEW." COL-NAME " IS NOT NULL AND (NEW." COL-NAME " != OLD." COL-NAME " OR OLD." COL-NAME " IS NULL) THEN RAISE EXCEPTION '" ERR "'; END IF;"
+                                                     (when (= (:type col) "media")
+
+                                                       (str "\nIF NEW." COL-NAME " IS NULL AND OLD." COL-NAME " IS NOT NULL THEN \n"
+                                                            "  DELETE FROM public.app_storage_media WHERE table_id = " table-id " AND row_id = OLD._id AND column_id = '" ID "' RETURNING object_id INTO deleted_oid;\n"
+                                                            "  PERFORM lo_unlink(deleted_oid);\n"
+                                                            "END IF;"))))
                                               (interpose "\n")
                                               (apply str))
                                          "
@@ -797,9 +829,15 @@
 
                                                     (str "NEW." (:VIEW-NAME col)))))
                                               (interpose ",")
+                                              (apply str)) ")"
+                                         (->> (for [col view-cols
+                                                    :let [COL-NAME (:VIEW-NAME col)
+                                                          ID (:ID col)]
+                                                    :when (#{"liveObject" "liveObjectArray" "media"} (:type col))]
+                                                (str " || CASE WHEN NEW." COL-NAME " IS NULL THEN '{\"" ID "\":null}'::jsonb ELSE '{}'::jsonb END"))
                                               (apply str))
 
-                                         ") WHERE table_id = " table-id " AND id = NEW._id;
+                                         " WHERE table_id = " table-id " AND id = NEW._id;
                 RETURN NEW;
               ELSIF TG_OP = 'INSERT' THEN
                 INSERT INTO public.app_storage_data (table_id, data) VALUES (" table-id ", jsonb_build_object("
@@ -824,6 +862,10 @@
                                                     "simpleObject"
                                                     (str "NEW." (:VIEW-NAME col) "::jsonb")
 
+                                                    "liveObject" "NULL"
+                                                    "liveObjectArray" "NULL"
+                                                    "media" "NULL"
+
                                                     ;; else
                                                     (str "NEW." (:VIEW-NAME col)))))
                                               (interpose ",")
@@ -844,7 +886,9 @@
                 RETURN OLD;
               END IF;
             END;
-            $$ LANGUAGE plpgsql;")]
+            $$ LANGUAGE plpgsql SECURITY DEFINER;")]
+
+          setup-function-permissions-sql [(str "REVOKE ALL ON FUNCTION " VIEW-NAME "_update FROM public;")]
 
           create-update-trigger-sql [(str "
           CREATE TRIGGER update_trigger
@@ -852,6 +896,7 @@
             FOR EACH ROW EXECUTE PROCEDURE " VIEW-NAME "_update();")]]
       (util/with-metric-query "CREATE VIEW" (jdbc/execute! db create-view-sql))
       (util/with-metric-query "CREATE/UPDATE TRIGGER FUNCTION" (jdbc/execute! db create-update-trigger-fn))
+      (util/with-metric-query "CONFIGURE TRIGGER FUNCTION" (jdbc/execute! db setup-function-permissions-sql))
       (util/with-metric-query "CREATE/UPDATE TRIGGER SQL" (jdbc/execute! db create-update-trigger-sql)))))
 
 (defonce update-table-views! (fn ([db table-id] (update-table-view! db table-id (get-cols db table-id)))
@@ -963,4 +1008,4 @@
                                          db-for-mapping-transaction mutate-db-for-mapping?
                                          get-table-access get-table-id-by-name
                                          get-all-table-access-records delete-table-access-record!
-                                         update-table-views!]))
+                                         update-table-access-record! update-table-views!]))

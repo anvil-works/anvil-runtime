@@ -173,7 +173,8 @@
                                                     "")
                                     :encryption smtp_encryption}
                                    (or @test-override-smtp-config
-                                       conf/app-smtp-config))
+                                       (get conf/app-smtp-config from-domain)
+                                       (:default conf/app-smtp-config)))
 
                                  {:from-address       from_address
                                   :from-name          from_name

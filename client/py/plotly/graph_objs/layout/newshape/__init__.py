@@ -4,11 +4,11 @@ from anvil.server import serializable_type
 
 
 @serializable_type
-class Data(WrappedObject):
-    _name = "Data"
-    _module = "plotly.graph_objs.layout.template"
+class Line(WrappedObject):
+    _name = "Line"
+    _module = "plotly.graph_objs.layout.newshape"
 
 
 __all__ = [
-    'Data',
+    'Line',
 ]

@@ -21,7 +21,7 @@ var $builtinmodule = window.memoise('stripe.checkout', function() {
     	var zipCode = kwargs["zipcode"] || false;
     	var billingAddress = kwargs["billing_address"] || false;
       var email = kwargs["email"] || undefined;
-    	var shippingAddress = false; //kwargs["shipping_address"]; // Shipping address appears not to do anything for now. Disable it.
+    	var shippingAddress = kwargs["shipping_address"];
 
     	var config = Sk.ffi.remapToJs(Sk.misceval.callsim(stripeMod.tp$getattr(new Sk.builtin.str("get_config"))));
     	checkoutCallbackDefer = RSVP.defer();
@@ -114,7 +114,21 @@ var $builtinmodule = window.memoise('stripe.checkout', function() {
     /*!defFunction(stripe.checkout,_,amount=,currency=,[title=],[description=],[icon_url=],[billing_address=],[zipcode=],[raw=])!2*/ "Show the Stripe checkout form, and return a raw (token, user_details) tuple.\n\nThe token can be used to place charges from server modules. The user_details are a dictionary of user-supplied data (eg 'email').\n\n'amount' is a number, in least units of currency (eg cents or pennies).\n'currency' is a three-letter currency code (eg 'USD').\n'title' and 'description' configure the checkout dialog.\nSetting 'zipcode' to True requires the user to enter their postal code.\nSetting 'billing_address' to True requires the user to entier a billing address.\n\nSetting 'raw' to True returns a token for your own API key, which is only useful if you are using the Stripe API directly. If you do this, you cannot use this token with the Anvil Stripe APIs."
     mod["get_token"] = PyDefUtils.funcWithKwargs(pyGetToken);
 
-    /*!defFunction(stripe.checkout,_,amount=,currency=,[title=],[description=],[icon_url=],[billing_address=],[zipcode=])!2*/ "Charge the user for a one-off payment, by showing a Stripe checkout form. Returns a dictionary of information about the transaction on success.\n\n'amount' is a number, in least units of currency (eg cents or pennies).\n'currency' is a three-letter currency code (eg 'USD').\n'title' and 'description' configure the checkout dialog.\nSetting 'zipcode' to True requires the user to enter their postal code.\nSetting 'billing_address' to True requires the user to entier a billing address."
+  	/*!defFunction(stripe.checkout,_,amount=,currency=,[title=],[description=],[icon_url=],[billing_address=],[shipping_address=],[zipcode=])!2*/
+  	/*{
+  		$doc: "Charge the user for a one-off payment, by showing a Stripe checkout form. Returns a dictionary of information about the transaction on success.",
+  		anvil$helpLink: "/docs/integrations/stripe",
+  		anvil$args: {
+  			amount: "a number, in least units of currency (eg cents or pennies)",
+  			currency: "a three-letter currency code (eg 'USD')",
+  			title: "configures the checkout dialog",
+  			description: "configures the checkout dialog",
+  			icon_url: "path to an image to be used on the checkout form (eg anvil.server.get_app_origin + '/_/theme/icon.png')",
+  			billing_address: "(boolean) setting to True requires the user to enter a billing address",
+  			shipping_address: "(boolean) setting to True requires the user to enter a shipping and billing address",
+  			zipcode: "(boolean) setting to True requires the user to enter their zipcode/postal code "
+  		}
+  	}*/
     mod["charge"] = PyDefUtils.funcWithKwargs(function(kwargs) {
       if (!("amount" in kwargs))
        throw new Sk.builtin.Exception("Missing argument: amount");

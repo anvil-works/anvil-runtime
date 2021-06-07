@@ -31,10 +31,12 @@
            (java.time.format DateTimeFormatter)
            (com.maxmind.geoip2.model CityResponse)))
 
+;; This needs to work on lots of different formats.
+;; E.g. "16" - TODO: Add tests
 (defn get-java-version []
   (let [s (str (System/getProperty "java.version"))
-        [_ major minor update] (re-matches #"(?:1\.)?(\d+)\.(\d+)[\._](\d+)(?:\.\d+)*" s)]
-    [(Integer/parseInt major) (Integer/parseInt minor) (Integer/parseInt update)]))
+        [_ major _ minor _ update] (re-matches #"(?:1\.)?(\d+)(\.(\d+)([\._](\d+))?)?(?:\.\d+)*" s)]
+    [(Integer/parseInt major) (Integer/parseInt (or minor "0")) (Integer/parseInt (or update "0"))]))
 
 (def is-sane-java-version?
   ; Make sure we have this fix: https://bugs.openjdk.java.net/browse/JDK-8243717
@@ -197,19 +199,35 @@
     (log/logp ~level ~message (str "(" (- (System/currentTimeMillis) start-time#) " ms)"))
     val#))
 
-(defmacro with-db-transaction [bindings & body]
-  `(loop [n# 10]
-     (let [[recur?# r#]
-           (try+
-             (jdbc/with-db-transaction [~@bindings {:isolation :serializable}]
-               [false (do ~@body)])
-             (catch SQLException e#
-               (if (and (= "40001" (.getSQLState e#)) (> n# 0))
-                 (do (log/trace "Conflict in with-db-transaction") [true nil])
-                 (throw e#))))]
-       (if recur?#
-         (recur (dec n#))
-         r#))))
+(def TXN-RETRIES 26)                                        ; Max time ~30s. Probably.
+
+(def total-txn-retries (atom 0))
+
+(defn -with-db-transaction [db-spec f]
+  (loop [n TXN-RETRIES]
+    (let [[recur? r]
+          (try+
+            (jdbc/with-db-transaction [db-c db-spec {:isolation :serializable}]
+              [false (f db-c)])
+            (catch #(or (and (instance? SQLException %) (= "40001" (.getSQLState %)))
+                        (and (:anvil/server-error %) (= (:type %) "anvil.tables.TransactionConflict")))
+                   e
+              (if (and (> n 0) (not (:level db-spec)))
+                (do
+                  (log/trace "Conflict in with-db-transaction")
+                  (Thread/sleep (long (* (Math/random) (Math/pow 2 (* 0.5 (- TXN-RETRIES n))))))
+                  [true nil])
+                (throw+ e))))]
+      (if recur?
+        (do
+          (swap! total-txn-retries inc)
+          (recur (dec n)))
+        r))))
+
+(defmacro with-db-transaction [[conn-sym spec] & body]
+  `(-with-db-transaction ~spec (fn [db#]
+                                 (let [~conn-sym db#]
+                                   ~@body))))
 
 (defn- double-escape [^String x]
   (.replace (.replace x "\\" "\\\\") "$" "\\$"))

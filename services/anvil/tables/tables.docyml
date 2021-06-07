@@ -491,7 +491,7 @@ description: |
 
     <!--\* If you want to get a `dict` with all the column values in your row (for example, to print out when debugging), you can just call `dict(row)`.-->
 
-    \* You can list all the columns in a Data Table by calling `list_columns()` on the table object. This returns a list of strings.
+    \* You can list all the columns in a Data Table by calling `list_columns()` on the table object. This returns a list of dicts displaying the column name and column type for each column.
 
 
 ---

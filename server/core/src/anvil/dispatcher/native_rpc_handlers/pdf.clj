@@ -4,7 +4,10 @@
             [crypto.random :as random]
             [anvil.util :as util]
             [anvil.runtime.util :as runtime-util]
-            [anvil.runtime.app-data :as app-data]))
+            [anvil.runtime.app-data :as app-data]
+            [clojure.tools.logging :as log]))
+
+;;(clj-logging-config.log4j/set-logger! :level :info)
 
 (defonce get-pdf-renderer (constantly nil))
 
@@ -56,9 +59,10 @@
         "anvil.private.pdf.get_component" {:fn (fn [{:keys                        [session-state]
                                                      {[print-id print-key] :args} :call
                                                      :as                          req} return-path]
-                                                 (dispatcher/report-exceptions-to-return-path
+                                                 (dispatcher/report-exceptions-to-return-path return-path
                                                    ;; We're being called from the renderer's browser, and we want to steer this
                                                    ;; request back to the downlink that's triggering this render.
+                                                   (log/trace "Retrieving print session from" (get @session-state :print-sessions) "for session id" (:id @session-state))
                                                    (if-let [[executor ref] (when-let [{:keys [key executor ref]} (get-in @session-state [:print-sessions print-id])]
                                                                              (when (= (util/sha-256 key) (util/sha-256 print-key))
                                                                                [executor ref]))]

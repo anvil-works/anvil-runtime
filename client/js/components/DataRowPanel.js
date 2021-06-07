@@ -15,12 +15,163 @@ description: |
 
   For more information, see the [documentation for the `DataGrid` component](#datagrid), or our [`DataGrid` Tutorials](/blog/data-grids)
 */
-let i = 0;
 module.exports = function(pyModule) {
+
+    const { isTrue } = Sk.misceval;
+    const str_add_component = new Sk.builtin.str("add_component");
+    const str_remove_from_parent = new Sk.builtin.str("remove_from_parent");
+    const inDesigner = window.anvilInDesigner;
+
+    pyModule["DataRowPanel"] = PyDefUtils.mkComponentCls(pyModule, "DataRowPanel", {
+        base: pyModule["Container"],
+
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(DataRowPanel)!2*/ ["text", "layout", "containers", "appearance", "tooltip", "user data"], {
+            visible: {
+                set(s, e, v) {
+                    return updateVisible(s);
+                },
+            },
+            bold: {
+                important: true,
+                priority: 10,
+            },
+            spacing_above: {
+                defaultValue: new Sk.builtin.str("none"),
+            },
+            spacing_below: {
+                defaultValue: new Sk.builtin.str("none"),
+            },
+            text: {
+                omit: true,
+            },
+            item: /*!componentProp(DataRowPanel)!1*/ {
+                name: "item",
+                type: "object",
+                defaultValue: Sk.builtin.none.none$,
+                pyVal: true,
+                exampleValue: "",
+                description: "The data to display in this row by default.",
+                set(self, e, v) {
+                    return self._anvil.updateColumns(true);
+                },
+            },
+            auto_display_data: /*!componentProp(DataRowPanel)!1*/ {
+                name: "auto_display_data",
+                type: "boolean",
+                defaultValue: Sk.builtin.bool.true$,
+                pyVal: true,
+                exampleValue: true,
+                description: "Whether to automatically display data in this row.",
+                set(s, e, v) {
+                    return s._anvil.updateColumns(true);
+                },
+            },
+        }),
+
+        events: PyDefUtils.assembleGroupEvents("data row panel", /*!componentEvents(DataRowPanel)!1*/ ["universal"]),
+
+        layouts: [
+            {
+                name: "column",
+                type: "string",
+                description: "The id of the column where this component will be placed",
+                defaultValue: "",
+                important: true,
+                priority: 0,
+            },
+        ],
+
+        element: (props) => <PyDefUtils.OuterElement className="anvil-container anvil-data-row-panel" {...props} />,
+
+        locals($loc) {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Container"], (self) => {
+                self._anvil.pageEvents = {
+                    add() {
+                        // TODO: Cope with not finding a parent data grid.
+                        if (self._anvil.updateDataGridId === true) {
+                            self._anvil.updateDataGridId = false;
+                            return self._anvil.updateColumns(true);
+                        }
+                    },
+                    remove() {
+                        if (self._anvil.parent === null) {
+                            self._anvil.dataGrid = undefined;
+                            self._anvil.updateDataGridId = true;
+                        }
+                    },
+                    show() {},
+                };
+                self._anvil.updateColData = updateColData.bind(self, self);
+                self._anvil.updateColumns = updateColumns.bind(self, self);
+                self._anvil.getColumn = getColumn.bind(self, self);
+
+                self._anvil.dataGrid = undefined;
+                self._anvil.updateDataGridId = true;
+                self._anvil.cols = {};
+                self._anvil.paginate = paginate.bind(self, self);
+                self._anvil.hideOnThisPage = false;
+                self._anvil.cachedPagination = {}; // previous argument to pagination, previous response
+
+                self._anvil.onRefreshDataBindings = () => {
+                    return self._anvil.updateColumns(true);
+                };
+                return self._anvil.updateColumns();
+            });
+
+            // TODO: Add properties for orientation. Vertical for now.
+
+            /*!defMethod(_,component,[column=None])!2*/ "Add a component to the specified column of this DataRowPanel. TODO: If 'column' is not specified, adds the component full-width."
+            $loc["add_component"] = new PyDefUtils.funcWithKwargs(function (kwargs, self, component) {
+                pyModule["Container"]._check_no_parent(component);
+
+                const colId = kwargs.column;
+                return Sk.misceval.chain(
+                    undefined,
+                    () => {
+                        const { colEl, autoRow } = self._anvil.getColumn(colId);
+                        if (autoRow !== null && autoRow !== component) {
+                            PyDefUtils.pyCall(autoRow.tp$getattr(str_remove_from_parent));
+                        }
+                        colEl.appendChild(component._anvil.domNode);
+                        if (self._anvil.dataGrid !== undefined) {
+                            component._anvil.dataGrid = self._anvil.dataGrid;
+                        }
+                    },
+                    () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs),
+                    () => {
+                        let oldRemove = component._anvil.parent.remove;
+                        component._anvil.parent.remove = () => {
+                            let r = oldRemove();
+                            return Sk.misceval.chain(
+                                component._anvil.isAutoRow || self._anvil.updateColumns(),
+                                // TODO: Repaginate.
+                                () => r
+                            );
+                        };
+                    },
+                    () => {
+                        if (component._anvil.paginate) {
+                            // We only need to repaginate ourselves if the component we just added understands pagination.
+                            // if we have a child that can paginate we can't cache the pagination result!
+                            Object.defineProperty(self._anvil, "cachedPagination", {
+                                get() {
+                                    return {};
+                                },
+                                set() {}
+                            });
+                            self._anvil.paginate(component);
+                        }
+                        return Sk.builtin.none.none$;
+                    }
+                );
+            });
+        },
+    });
+
 
     let updateVisible = self => {
         let e = self._anvil.element;
-        let v = self._anvil.getPropJS("visible") && !self._anvil.hideOnThisPage;
+        let v = isTrue(self._anvil.getProp("visible")) && !self._anvil.hideOnThisPage;
         if (v) {
             e.removeClass("visible-false");
             e.parent(".hide-with-component").removeClass("visible-false");
@@ -33,97 +184,160 @@ module.exports = function(pyModule) {
         }
     };
 
-    let updateColData = (self, colSpec, colElement) => {
+    let updateColData = (self, colSpec, column) => {
 
-        let existingAutoComponent = colElement.find(">.auto-row-value")
-        if (existingAutoComponent.length > 0) {
-            let pyC = existingAutoComponent.data("anvilPyComponent");
-            Sk.misceval.callsim(pyC.tp$getattr(new Sk.builtin.str("remove_from_parent")));
+        const existingAutoComponent = column.autoRow;
+        if (existingAutoComponent) {
+            PyDefUtils.pyCall(existingAutoComponent.tp$getattr(str_remove_from_parent));
+            column.autoRow = null;
         }
 
         let data = self._anvil.getProp("item");
-        let displayData = self._anvil.getPropJS("auto_display_data");
+        let displayData = isTrue(self._anvil.getProp("auto_display_data"));
 
-        if (!displayData || !data || data == Sk.builtin.none.none$ || !colSpec || (colSpec.data_key == "" && colElement.closest(".auto-grid-header").length == 0) || colElement.find(":not(.auto-row-value)").length > 0) {
+        if (
+            !displayData ||
+            data === Sk.builtin.none.none$ ||
+            !colSpec ||
+            column.colEl.children.length !== 0
+        ) {
             return;
         }
 
-        let dataKey = self._anvil.element.hasClass("auto-grid-header") ? colSpec.id : (colSpec.data_key || colSpec.id);
+        let dataKey = self._anvil.autoGridHeader ? String(colSpec.id) : colSpec.data_key || colSpec.id;
 
         return Sk.misceval.chain(
             Sk.misceval.tryCatch(
                 () => Sk.abstr.objectGetItem(data, Sk.ffi.remapToPy(dataKey), true),
                 () => undefined
             ),
-            val => {
+            (val) => {
                 if (val !== undefined) {
-                    let valComponent = Sk.misceval.call(pyModule["Label"], undefined, undefined, [Sk.ffi.remapToPy("text"), val]);
-                    valComponent._anvil.element.addClass("auto-row-value");
-                    return Sk.misceval.call(self.tp$getattr(new Sk.builtin.str("add_component")), undefined, undefined, [Sk.ffi.remapToPy("column"), Sk.ffi.remapToPy(colSpec.id)], valComponent);
+                    const valComponent = PyDefUtils.pyCall(pyModule["Label"], [], ["text", val]);
+                    valComponent._anvil.domNode.classList.add("auto-row-value");
+                    valComponent._anvil.isAutoRow = true;
+                    column.autoRow = valComponent;
+                    PyDefUtils.pyCall(
+                        self.tp$getattr(str_add_component),
+                        [valComponent],
+                        ["column", Sk.ffi.remapToPy(colSpec.id)]
+                    );
                 }
-            }
+            },
         );
+    };
+
+    const getDataGridId = (self) => {
+        const dataGrid =  getDataGrid(self);
+        return dataGrid && dataGrid._anvil.dataGridId;
     }
 
-    let getColElement = (self, colId) => {
-        let col = self._anvil.element.find(`>.data-row-col[data-grid-col-id='${colId}']`)
-        if (col.length == 0) {
-            col = $("<div/>").addClass("data-row-col").attr("data-grid-col-id", colId);
-            self._anvil.element.append(col);
-        }
-        if (self._anvil.dataGrid) {
-            col.attr("data-grid-id", self._anvil.dataGrid._anvil.dataGridId)
+    const getDataGrid = (self) => {
+        let dataGrid = self._anvil.dataGrid;
+        if (dataGrid === undefined) {
+            const parent = self._anvil.parent;
+            dataGrid =
+                (parent && parent.pyObj._anvil.dataGrid) ||
+                ((inDesigner || parent) &&
+                    self._anvil.element.closest(".anvil-data-grid").data("anvilPyComponent"));
+            if (dataGrid) {
+                self._anvil.dataGrid = dataGrid;
+            } else {
+                dataGrid = undefined;
+            }
+        } 
+        return dataGrid;
+    }
+
+    const DataRowCol = ({ dataGridId, colId }) => {
+        dataGridId = dataGridId === undefined ? "" : dataGridId;
+        return <div className="data-row-col" data-grid-col-id={colId} data-grid-id={dataGridId} />;
+    };
+
+    const getColumn = (self, colId) => {
+        let col = self._anvil.cols[colId];
+        if (col === undefined) {
+            const dataGridId = getDataGridId(self);
+            const [colEl] = <DataRowCol colId={colId} dataGridId={dataGridId} />;
+            self._anvil.domNode.appendChild(colEl);
+            if (dataGridId === undefined) {
+                self._anvil.updateDataGridId = true;
+            }
+            col =  { colEl, autoRow: null , dataGridId};
+            self._anvil.cols[colId] = col;
+        } else if (col.dataGridId === undefined) {
+            const dataGridId = getDataGridId(self);
+            col.dataGridId = dataGridId;
+            col.colEl.setAttribute("data-grid-id", dataGridId);
         }
         return col;
-    }
+    };
 
-    let updateColumns = self => {
-        if (!self._anvil.dataGrid) {
-            self._anvil.dataGrid = self._anvil.element.closest(".anvil-data-grid").data("anvilPyComponent");
-        }
 
-        if (!self._anvil.dataGrid) {
+    const updateColumns = (self, updateData) => {
+        let dataGrid = getDataGrid(self);
+        if (dataGrid === undefined) {
             return;
         }
 
-        let cols = self._anvil.dataGrid._anvil.getPropJS("columns");
+        const dataGridCols = dataGrid._anvil.getPropJS("columns");
 
-        if (!cols) {
+        if (!dataGridCols) {
             return;
         }
 
-        self._anvil.element.find(">.data-row-col").addClass("extra-column");
+        if (updateData) {
+            self._anvil.cachedPagination = {};
+        }
 
-        let fns = [];
 
-        let validIds = [];
-        // Create/reorder columns.
-        for(let i = 0; i < cols.length; i++) {
-            let c = self._anvil.element.find(">.data-row-col").eq(i);
-            if (c.attr("data-grid-col-id") != cols[i].id) {
-                // This column is in the wrong place. Swap in the right one.
-                // Find or create the required element.
-                let el = getColElement(self, cols[i].id);
-                if (el.index() != i) {
-                    el.insertBefore(c);
+        const fns = [];
+
+        const validIds = new Set();
+        const dataRowCols = self._anvil.cols;
+        const dataRowEl = self._anvil.domNode;
+        const extraCols = {...dataRowCols};
+
+        // columns ordered as they currently appear in the DOM
+        const children = dataRowEl.children;
+        
+        dataGridCols.forEach((col, i) => {
+            const id = col.id;
+            validIds.add(String(id));
+            const currentEl = children[i];
+            const column = self._anvil.getColumn(id); // find or create a new column with this id
+            const colEl = column.colEl;
+            const updateEl = currentEl !== colEl;
+            if (updateEl) {
+                // This column is in the wrong place. Swap in the right one
+                dataRowEl.insertBefore(colEl, currentEl);
+            } 
+            if (inDesigner || updateData || updateEl) {
+                if (column.extraCol) {
+                    column.extraCol = false;
+                    colEl.classList.remove("extra-column");
                 }
-                c = el;
-            } else if (self._anvil.dataGrid) {
-                c.attr("data-grid-id", self._anvil.dataGrid._anvil.dataGridId)
+                fns.push(() => self._anvil.updateColData(col, column));
             }
-            c.removeClass("extra-column");
-            fns.push(() => self._anvil.updateColData(cols[i], c));
-            validIds.push(cols[i].id);
-        }
+        });
 
         fns.push(() => {
-            let fns = [];
-            self._anvil.element.find(".extra-column").each((_,e) => {
-                e = $(e);
-                if (e.attr("data-grid-col-id") && e.find(">:not(.auto-row-value,.col-value-preview)").length == 0 && !validIds.includes(e.attr("data-grid-col-id"))) {
-                    e.remove();
+            const fns = [];
+            Object.keys(extraCols).forEach((id) => {
+                if (validIds.has(id)) {
+                    return;
+                }
+                const column = extraCols[id];
+                if (id !== "null" && column.autoRow !== null) {
+                    column.colEl.remove();
+                    delete dataRowCols[id];
                 } else {
-                    fns.push(() => self._anvil.updateColData(null, e));
+                    column.extraCol = true;
+                    column.colEl.classList.add("extra-column");
+                    if (column.dataGridId === undefined) {
+                        self._anvil.getColumn("null");
+                    }
+                    fns.push(() => self._anvil.updateColData(null, column));
                 }
             });
             return Sk.misceval.chain(undefined, ...fns);
@@ -133,32 +347,56 @@ module.exports = function(pyModule) {
 
     }
 
-    let paginate = (self, updatedChild=null) => {
+    let paginate = (self, updatedChild = null) => {
         let MARKER = "SHOWN_SELF_ONLY";
-
-        return Sk.misceval.chain(undefined, () => self._anvil.updateColumns(),
+        return Sk.misceval.chain(
+            undefined,
             () => {
-
+                if (self._anvil.updateDataGridId === true && getDataGrid(self) !== undefined) {
+                    self._anvil.updateDataGridId = false;
+                    return self._anvil.updateColumns(true);
+                }
+            },
+            () => {
                 // If this element is the auto-header, it doesn't use up any quota.
-                if (self._anvil.element.hasClass("auto-grid-header")) {
+                if (self._anvil.autoGridHeader) {
                     return [0, MARKER, true];
                 }
-
                 // If this element isn't visible, it doesn't use up any quota.
                 if (!self._anvil.getPropJS("visible")) {
-                    
                     return [0, MARKER, true];
                 }
-
                 if (self._anvil.pagination) {
-                    if (PyDefUtils.logPagination) console.group("Repaginate DataRowPanel from", self._anvil.pagination.startAfter, ", displaying up to", self._anvil.pagination.rowQuota, "rows.", self._anvil.element[0]);
-
-                    if (self._anvil.pagination.rowQuota > 0) {
-                        self._anvil.hideOnThisPage = false;
+                    const quota = [self._anvil.pagination.startAfter, self._anvil.pagination.rowQuota];
+                    const cached = self._anvil.cachedPagination[quota.toString()];
+                    if (cached) {
+                        return cached;
                     } else {
-                        self._anvil.hideOnThisPage = true;
+                        self._anvil.cachedPagination = {}; // reset the cache now;
                     }
-                    updateVisible(self);
+                }
+            },
+            (cached) => {
+                if (cached !== undefined) {
+                    return cached;
+                }
+                if (self._anvil.pagination) {
+                    if (PyDefUtils.logPagination) {
+                        console.group(
+                            "Repaginate DataRowPanel from",
+                            self._anvil.pagination.startAfter,
+                            ", displaying up to",
+                            self._anvil.pagination.rowQuota,
+                            "rows.",
+                            self._anvil.domNode
+                        );
+                    }
+
+                    const toHide = self._anvil.pagination.rowQuota <= 0;
+                    if (toHide !== self._anvil.hideOnThisPage) {
+                        self._anvil.hideOnThisPage = toHide;
+                        updateVisible(self);
+                    }
 
                     // Work out whether we need any row quota to display ourselves. We only need some if we're auto-displaying data or if we have any children that aren't DataRowPanels.
                     let rowsRequiredForSelf = 0;
@@ -166,7 +404,7 @@ module.exports = function(pyModule) {
                         rowsRequiredForSelf = 1;
                     } else {
                         for (let c of self._anvil.components || []) {
-                            if (!(Sk.builtin.isinstance(c.component, pyModule["DataRowPanel"]).v)) {
+                            if (!Sk.builtin.isinstance(c.component, pyModule["DataRowPanel"]).v) {
                                 rowsRequiredForSelf = 1;
                                 break;
                             }
@@ -176,12 +414,19 @@ module.exports = function(pyModule) {
                     let childIdx = -1;
                     let rowQuotaForChildren = self._anvil.pagination.rowQuota - rowsRequiredForSelf;
                     if (updatedChild && updatedChild._anvil.pagination) {
-                        childIdx = self._anvil.components.findIndex(c => c.component == updatedChild);
-                        rowQuotaForChildren = self._anvil.lastChildPagination.reduce((remaining, child, idx) => (child && idx < childIdx) ? remaining - child[0] : remaining, rowQuotaForChildren);
+                        childIdx = self._anvil.components.findIndex((c) => c.component === updatedChild);
+                        rowQuotaForChildren = self._anvil.lastChildPagination.reduce(
+                            (remaining, child, idx) => (child && idx < childIdx ? remaining - child[0] : remaining),
+                            rowQuotaForChildren
+                        );
                         rowQuotaForChildren -= updatedChild._anvil.pagination.rowsDisplayed;
 
                         let oldChildRowCount = self._anvil.lastChildPagination[childIdx] && self._anvil.lastChildPagination[childIdx][0];
-                        self._anvil.lastChildPagination[childIdx] = [updatedChild._anvil.pagination.rowsDisplayed, updatedChild._anvil.pagination.stoppedAt, updatedChild._anvil.pagination.done];
+                        self._anvil.lastChildPagination[childIdx] = [
+                            updatedChild._anvil.pagination.rowsDisplayed,
+                            updatedChild._anvil.pagination.stoppedAt,
+                            updatedChild._anvil.pagination.done,
+                        ];
 
                         if (self._anvil.pagination.startAfter && self._anvil.pagination.startAfter[0] == childIdx) {
                             // We currently start after this component. Update our idea of where *it* starts.
@@ -189,31 +434,33 @@ module.exports = function(pyModule) {
                         }
                     }
 
-                    return Sk.misceval.chain(PyDefUtils.repaginateChildren(self, childIdx+1, (self._anvil.pagination.startAfter == MARKER) ? null : self._anvil.pagination.startAfter, rowQuotaForChildren),
+                    return Sk.misceval.chain(
+                        PyDefUtils.repaginateChildren(
+                            self,
+                            childIdx + 1,
+                            self._anvil.pagination.startAfter == MARKER ? null : self._anvil.pagination.startAfter,
+                            rowQuotaForChildren
+                        ),
                         ([rows, stoppedAt, done]) => {
-
                             self._anvil.pagination.stoppedAt = stoppedAt;
                             self._anvil.pagination.done = done;
 
                             if (rows > 0) {
-                                if (PyDefUtils.logPagination) console.log("DataRowPanel displayed", rows, "rows.", done ? "Done" : "Interrupted", "at", stoppedAt);
-                                if (PyDefUtils.logPagination) console.groupEnd();
+                                if (PyDefUtils.logPagination) {console.log("DataRowPanel displayed", rows, "rows.", done ? "Done" : "Interrupted", "at", stoppedAt);console.groupEnd();}
 
                                 // We displayed some children, and ourselves.
                                 // We're done if our children are done.
                                 self._anvil.pagination.rowsDisplayed = rows + rowsRequiredForSelf;
                             } else if (self._anvil.pagination.rowQuota > 0) {
-                                if (PyDefUtils.logPagination) console.log("DataRowPanel displayed only itself.", done ? "Done." : "Interrupted.");
-                                if (PyDefUtils.logPagination) console.groupEnd();
-                                
+                                if (PyDefUtils.logPagination) {console.log("DataRowPanel displayed only itself.", done ? "Done." : "Interrupted.");console.groupEnd();}
+
                                 // We didn't display any children, but we did have enough quota to display ourselves.
                                 // We're done if our children are done.
                                 self._anvil.pagination.rowsDisplayed = rowsRequiredForSelf;
                                 self._anvil.pagination.stoppedAt = MARKER;
                             } else {
-                                if (PyDefUtils.logPagination) console.log("DataRowPanel hidden - no quota available");
-                                if (PyDefUtils.logPagination) console.groupEnd();
-                                
+                                if (PyDefUtils.logPagination) {console.log("DataRowPanel hidden - no quota available");console.groupEnd();}
+
                                 // We didn't display any children, and had no quota available anyway.
                                 self._anvil.pagination.rowsDisplayed = 0;
                                 self._anvil.pagination.stoppedAt = null;
@@ -221,19 +468,21 @@ module.exports = function(pyModule) {
                             }
 
                             let parent = self._anvil.parent && self._anvil.parent.pyObj;
+                            const quota = [self._anvil.pagination.startAfter, self._anvil.pagination.rowQuota];
+
                             if (updatedChild && updatedChild._anvil.pagination && parent && parent._anvil.paginate) {
-
-
-                                return Sk.misceval.chain(parent._anvil.paginate(self),
-                                    () => [self._anvil.pagination.rowsDisplayed, self._anvil.pagination.stoppedAt, self._anvil.pagination.done]
-                                );
+                                return Sk.misceval.chain(parent._anvil.paginate(self), () => {
+                                    const ret = [self._anvil.pagination.rowsDisplayed, self._anvil.pagination.stoppedAt, self._anvil.pagination.done];
+                                    self._anvil.cachedPagination[quota.toString()] = ret;
+                                    return ret;
+                                });
                             } else {
-                                return [self._anvil.pagination.rowsDisplayed, self._anvil.pagination.stoppedAt, self._anvil.pagination.done];
+                                const ret = [self._anvil.pagination.rowsDisplayed, self._anvil.pagination.stoppedAt, self._anvil.pagination.done];
+                                self._anvil.cachedPagination[quota.toString()] = ret;
+                                return ret;
                             }
-
                         }
                     );
-
                 } else {
                     // We don't have any pagination state yet
                     // TODO: Work out whether to draw everything or nothing, and whether to remember and do something on addedToPage. Or not.
@@ -241,135 +490,12 @@ module.exports = function(pyModule) {
                 }
             }
         );
-
-    }
-
-    pyModule["DataRowPanel"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-
-        var properties = PyDefUtils.assembleGroupProperties(/*!componentProps(DataRowPanel)!1*/["text", "layout", "containers", "appearance", "tooltip", "user data"], {
-            visible: {
-                set: (s,e,v) => {
-                    return updateVisible(s);
-                }
-            }
-        });
-
-        properties = properties.filter(x => x.name != "text");
-        Object.assign(properties.filter(x => x.name == "bold")[0], {
-            important: true, 
-            priority: 10
-        });
-        Object.assign(properties.filter(x => x.name == "spacing_above")[0], {
-            defaultValue: "none", 
-        });
-        Object.assign(properties.filter(x => x.name == "spacing_below")[0], {
-            defaultValue: "none", 
-        });
+    };
 
 
-        /*!componentProp(DataRowPanel)!1*/
-        properties.push({name: "item", type: "object",
-            defaultValue: Sk.builtin.none.none$,
-            pyVal: true,
-            exampleValue: "",
-            description: "The data to display in this row by default.",
-            set: function(self,e,v) {
-                return self._anvil.updateColumns();
-            }
-        });
-
-        /*!componentProp(DataGrid)!1*/
-        properties.push({name: "auto_display_data", type: "boolean",
-            defaultValue: true,
-            exampleValue: true,
-            description: "Whether to automatically display data in this row.",
-            set: (s,e,v) => updateColumns(s,e),
-        });
-
-
-        for (let prop of properties || []) {
-            $loc[prop.name] = Sk.misceval.callsim(pyModule['ComponentProperty'], prop.name);
-        }
-
-        $loc["__new__"] = new Sk.builtin.func(PyDefUtils.withRawKwargs((pyKwargs, cls) => {
-            return Sk.misceval.chain(Sk.misceval.callOrSuspend(Sk.builtin.object.prototype["__new__"], undefined, undefined, undefined, cls),
-                c => {
-                    PyDefUtils.addProperties(c, properties);
-                    return c;
-                }
-            );
-        }));
-
-        $loc["__init__"] = PyDefUtils.mkInit(function init(self) {
-            self._anvil.element = self._anvil.element || $("<div>");
-            self._anvil.element.addClass("anvil-container anvil-data-row-panel");
-
-            self._anvil.layoutPropTypes = [{
-                name: "column",
-                type: "string",
-                description: "The id of the column where this component will be placed",
-                defaultValue: "",
-                important: true,
-                priority: 0,
-            }];
-
-            self._anvil.pageEvents = {
-                add: () => {
-                    // TODO: Cope with not finding a parent data grid.
-                    return self._anvil.updateColumns();
-                },
-                remove: () => { },
-                show: () => { },
-            };
-
-            self._anvil.updateColData = updateColData.bind(self, self);
-            self._anvil.updateColumns = updateColumns.bind(self, self);
-            self._anvil.getColElement = getColElement.bind(self, self);
-
-            self._anvil.paginate = paginate.bind(self, self);
-
-            self._anvil.onRefreshDataBindings = () => self._anvil.updateColumns();
-
-        },pyModule, $loc, [], PyDefUtils.assembleGroupEvents("data row panel", /*!componentEvents(DataRowPanel)!1*/["universal"]), pyModule["Container"]);
-
-
-        // TODO: Add properties for orientation. Vertical for now.
-
-        /*!defMethod(_,component,[column=None])!2*/ "Add a component to the specified column of this DataRowPanel. TODO: If 'column' is not specified, adds the component full-width."
-        $loc["add_component"] = new PyDefUtils.funcWithKwargs(function(kwargs, self, component) {
-            if (!component || !component._anvil) { throw new Sk.builtin.Exception("Argument to add_component() must be a component"); }
-            let colId = kwargs.column;
-            return Sk.misceval.chain(undefined,
-                () => {
-                    let col = getColElement(self, colId);
-                    for (let c of col.find(".auto-row-value").map((_,e) => $(e).data("anvilPyComponent")).toArray()) {
-                        Sk.misceval.callsim(c.tp$getattr(new Sk.builtin.str("remove_from_parent")));
-                    }
-                    col.append(component._anvil.element);
-                },
-                () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs),
-                () => {
-                    let oldRemove = component._anvil.parent.remove;
-                    component._anvil.parent.remove = () => {
-                        let r = oldRemove();
-                        return Sk.misceval.chain(component._anvil.element.hasClass("auto-row-value") || self._anvil.updateColumns(),
-                            // TODO: Repaginate.
-                            () => r,
-                        );
-                    }
-                },
-                () => {
-                    if (component._anvil.paginate) {
-                        // We only need to repaginate ourselves if the component we just added understands pagination.
-                        self._anvil.paginate(component)
-                    }
-                    return Sk.builtin.none.none$;
-                },
-            );
-        });
-
-    }, /*!defClass(anvil,DataRowPanel,Container)!*/ "DataRowPanel", [pyModule["Container"]]);
 };
+
+/*!defClass(anvil,DataRowPanel,Container)!*/
 
 /*
  * TO TEST:

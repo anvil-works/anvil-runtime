@@ -13,7 +13,7 @@
             [anvil.metrics :as metrics]))
 
 
-(clj-logging-config.log4j/set-logger! :level :debug)
+(clj-logging-config.log4j/set-logger! :level :warn)
 
 #_(comment
     (defn run-executor-server!

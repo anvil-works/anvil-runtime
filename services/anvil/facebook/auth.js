@@ -128,9 +128,14 @@ var $builtinmodule = window.memoise('anvil.facebook.auth', function() {
 
         var call = server.tp$getattr(new Sk.builtin.str(new Sk.builtin.str("call")));
         return Sk.misceval.callOrSuspend(call, undefined, undefined, undefined, Sk.ffi.remapToPy("anvil.private.facebook.auth.get_user_id"));
-    })
+    });
 
-    /*!defFunction(anvil.facebook.auth,_,)!2*/ "Get the Facebook access token of the currently-logged-in Facebook user.\n\nTo log in with Facebook, call facebook.auth.login() from form code.";
+    /*!defFunction(anvil.facebook.auth,_,)!2*/
+    ({
+        anvil$helpLink: "/docs/integrations/facebook",
+        //anvil.$args: {argName: "describe this argument"}
+        $doc: "Get the Facebook access token of the currently-logged-in Facebook user.\n\nTo log in with Facebook, call facebook.auth.login() from form code."
+    })
     mod["get_user_access_token"] = new Sk.builtin.func(function() {
         var server = PyDefUtils.getModule("anvil.server");
 

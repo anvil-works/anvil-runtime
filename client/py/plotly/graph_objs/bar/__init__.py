@@ -49,6 +49,11 @@ class Textfont(WrappedObject):
     _module = "plotly.graph_objs.bar"
 
 @serializable_type
+class Transform(WrappedObject):
+    _name = "Transform"
+    _module = "plotly.graph_objs.bar"
+
+@serializable_type
 class Unselected(WrappedObject):
     _name = "Unselected"
     _module = "plotly.graph_objs.bar"
@@ -64,6 +69,7 @@ __all__ = [
     'Selected',
     'Stream',
     'Textfont',
+    'Transform',
     'Unselected',
     'hoverlabel',
     'marker',

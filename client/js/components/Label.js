@@ -15,31 +15,31 @@ description: |
   Labels are useful for displaying text on a form. The user cannot edit text in a label.
 */
 
-module.exports = function(pyModule) {
-
-	pyModule["Label"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-
-        var properties = PyDefUtils.assembleGroupProperties(/*!componentProps(Label)!2*/["layout", "text", "appearance", "icon", "tooltip", "user data"], {
-            text: {
-                pyVal: true,
-                defaultValue: new Sk.builtin.str(""),
-                set: function(s,e,v) {
-                    v = new Sk.builtin.str(v).v;
-                    e.toggleClass("has-text", v ? true : false);
-                    e.find("span").text(v);
-                },
+module.exports = (pyModule) => {
+    pyModule["Label"] = PyDefUtils.mkComponentCls(pyModule, "Label", {
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(Label)!2*/ ["layout", "text", "appearance", "icon", "tooltip", "user data"], {
+            text: { // override the default
+                dataBindingProp: true,
                 multiline: true,
                 suggested: true,
             },
-        });
+        }),
 
-		$loc["__init__"] = PyDefUtils.mkInit(function init(self) {
-            self._anvil.element = $('<div><i class="anvil-component-icon fa left"></i><span class="label-text"></span><i class="anvil-component-icon fa right"></i>').addClass("anvil-label anvil-inlinable");
-            self._anvil.dataBindingProp = "text";
-        }, pyModule, $loc, properties, PyDefUtils.assembleGroupEvents(/*!componentEvents()!2*/"Label", ["universal"]), pyModule["Component"]);
+        events: PyDefUtils.assembleGroupEvents(/*!componentEvents()!2*/ "Label", ["universal"]),
 
-    }, /*!defClass(anvil,Label,Component)!*/ 'Label', [pyModule["Component"]]);
+        element: (props) => (
+            <PyDefUtils.OuterElement className="anvil-label anvil-inlinable" {...props}>
+                <PyDefUtils.IconComponent side="left" {...props} />
+                <span refName="text" className="label-text">
+                    {Sk.builtin.checkNone(props.text) ? "" : props.text.toString()}
+                </span>
+                <PyDefUtils.IconComponent side="right" {...props} />
+            </PyDefUtils.OuterElement>
+        ),
+    });
 };
+
+/*!defClass(anvil,Label,Component)!*/
 
 /*
  * TO TEST:
@@ -49,3 +49,7 @@ module.exports = function(pyModule) {
  *  - Event groups: universal
  *
  */
+
+
+ 
+

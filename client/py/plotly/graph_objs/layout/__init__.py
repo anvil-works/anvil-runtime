@@ -4,8 +4,8 @@ from anvil.server import serializable_type
 
 
 @serializable_type
-class AngularAxis(WrappedObject):
-    _name = "AngularAxis"
+class Activeshape(WrappedObject):
+    _name = "Activeshape"
     _module = "plotly.graph_objs.layout"
 
 @serializable_type
@@ -69,13 +69,13 @@ class Modebar(WrappedObject):
     _module = "plotly.graph_objs.layout"
 
 @serializable_type
-class Polar(WrappedObject):
-    _name = "Polar"
+class Newshape(WrappedObject):
+    _name = "Newshape"
     _module = "plotly.graph_objs.layout"
 
 @serializable_type
-class RadialAxis(WrappedObject):
-    _name = "RadialAxis"
+class Polar(WrappedObject):
+    _name = "Polar"
     _module = "plotly.graph_objs.layout"
 
 @serializable_type
@@ -91,11 +91,6 @@ class Shape(WrappedObject):
 @serializable_type
 class Slider(WrappedObject):
     _name = "Slider"
-    _module = "plotly.graph_objs.layout"
-
-@serializable_type
-class Template(WrappedObject):
-    _name = "Template"
     _module = "plotly.graph_objs.layout"
 
 @serializable_type
@@ -135,7 +130,7 @@ class YAxis(WrappedObject):
 
 
 __all__ = [
-    'AngularAxis',
+    'Activeshape',
     'Annotation',
     'Coloraxis',
     'Colorscale',
@@ -148,12 +143,11 @@ __all__ = [
     'Mapbox',
     'Margin',
     'Modebar',
+    'Newshape',
     'Polar',
-    'RadialAxis',
     'Scene',
     'Shape',
     'Slider',
-    'Template',
     'Ternary',
     'Title',
     'Transition',
@@ -168,11 +162,11 @@ __all__ = [
     'hoverlabel',
     'legend',
     'mapbox',
+    'newshape',
     'polar',
     'scene',
     'shape',
     'slider',
-    'template',
     'ternary',
     'title',
     'updatemenu',
@@ -187,11 +181,11 @@ from plotly.graph_objs.layout import grid
 from plotly.graph_objs.layout import hoverlabel
 from plotly.graph_objs.layout import legend
 from plotly.graph_objs.layout import mapbox
+from plotly.graph_objs.layout import newshape
 from plotly.graph_objs.layout import polar
 from plotly.graph_objs.layout import scene
 from plotly.graph_objs.layout import shape
 from plotly.graph_objs.layout import slider
-from plotly.graph_objs.layout import template
 from plotly.graph_objs.layout import ternary
 from plotly.graph_objs.layout import title
 from plotly.graph_objs.layout import updatemenu

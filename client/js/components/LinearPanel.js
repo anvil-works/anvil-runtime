@@ -31,63 +31,79 @@ description: |
     If you add an `index` layout parameter to the `add_component()` call, the component will be added at that index. Index 0 is the first element in the panel, 1 is the second, etc.
 */
 
-module.exports = function(pyModule) {
+module.exports = (pyModule) => {
 
-    pyModule["LinearPanel"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
+    pyModule["LinearPanel"] = PyDefUtils.mkComponentCls(pyModule, "LinearPanel", {
+        base: pyModule["Container"],
 
-        var properties = PyDefUtils.assembleGroupProperties(/*!componentProps(LinearPanel)!1*/["layout", "containers", "appearance", "tooltip", "user data"]);
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(LinearPanel)!1*/ ["layout", "containers", "appearance", "tooltip", "user data"]),
 
-        $loc["__init__"] = PyDefUtils.mkInit(function init(self) {
-            self._anvil.lpul = $('<ul/>').addClass("linear-panel");
-            self._anvil.element = self._anvil.element || $("<div>");
-            self._anvil.element.addClass("anvil-container").append(self._anvil.lpul);
-        },pyModule, $loc, properties,PyDefUtils.assembleGroupEvents("linear panel", /*!componentEvents(LinearPanel)!1*/["universal"]), pyModule["Container"]);
+        events: PyDefUtils.assembleGroupEvents("linear panel", /*!componentEvents(LinearPanel)!1*/ ["universal"]),
 
+        element: (props) => (
+            <PyDefUtils.OuterElement className="anvil-container" {...props}>
+                <ul refName="lpul" className="linear-panel"></ul>
+            </PyDefUtils.OuterElement>
+        ),
 
-        // TODO: Add properties for orientation. Vertical for now.
+        locals($loc) {
+            // TODO: Add properties for orientation. Vertical for now.
 
-        /*!defMethod(_,component,[index=None])!2*/ "Add a component to this LinearPanel, in the 'index'th position. If 'index' is not specified, adds to the bottom."
-        $loc["add_component"] = new PyDefUtils.funcWithKwargs(function(kwargs, self, component) {
-            if (!component || !component._anvil) { throw new Sk.builtin.Exception("Argument to add_component() must be a component"); }
-            var celt;
-            return Sk.misceval.chain(undefined,
-                () => {
-                    if (component._anvil.metadata.invisible) { return; }
+            const ContainerElement = () => {
+                return <li></li>;
+            };
 
-                    var element = component._anvil.element;
+            /*!defMethod(_,component,[index=None])!2*/ "Add a component to this LinearPanel, in the 'index'th position. If 'index' is not specified, adds to the bottom."
+            $loc["add_component"] = PyDefUtils.funcWithKwargs(function (kwargs, self, component) {
+                pyModule["Container"]._check_no_parent(component);
 
-                    celt = $('<li/>').append(element);
-                    if (typeof(kwargs["index"]) == "number") {
+                let celt;
+                const element = component._anvil.element;
+                const idx = kwargs["index"];
 
-                        var elts = self._anvil.lpul.children();
-                        if (kwargs["index"] < elts.length) {
-                            celt.insertBefore(elts[kwargs["index"]]);
+                return Sk.misceval.chain(
+                    null,
+                    () => {
+                        if (component._anvil.metadata.invisible) {
                             return;
-                            // else fall through and insert at the end
                         }
-                    }
-                    self._anvil.lpul.append(celt);
-                },
-                () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs),
-                () => {
-                    // Now that we've added it to our components array, move it to the right position.
-                    if (typeof(kwargs["index"]) == "number") {
-                        var c = self._anvil.components.pop(); // pop off this new component (pushed on by super.add_component())
-                        self._anvil.components.splice(kwargs["index"], 0, c);
-                    }
-                    let rmFn = component._anvil.parent.remove;
-                    component._anvil.parent.remove = () => {
-                        if (celt) {
-                            celt.detach();
+
+                        [celt] = <ContainerElement />;
+                        celt.appendChild(element[0]);
+                        const lpul = self._anvil.elements.lpul;
+                        if (typeof idx === "number") {
+                            if (idx < lpul.children.length) {
+                                lpul.insertBefore(celt, lpul.children[idx]);
+                                return;
+                            }
                         }
-                        return rmFn();
-                    };
-                    return Sk.builtin.none.none$;
-                }
-            );
-        });
-    }, /*!defClass(anvil,LinearPanel,Container)!*/ "LinearPanel", [pyModule["Container"]]);
+                        lpul.appendChild(celt);
+                    },
+                    () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs),
+                    () => {
+                        // Now that we've added it to our components array, move it to the right position.
+                        if (typeof idx === "number") {
+                            const c = self._anvil.components.pop(); // pop off this new component (pushed on by super.add_component())
+                            self._anvil.components.splice(idx, 0, c);
+                        }
+                        const rmFn = component._anvil.parent.remove;
+                        component._anvil.parent.remove = () => {
+                            if (celt) {
+                                celt.remove();
+                            }
+                            return rmFn();
+                        };
+                        return Sk.builtin.none.none$;
+                    }
+                );
+            });
+        },
+    });
+
+
 };
+
+/*!defClass(anvil,LinearPanel,Container)!*/
 
 /*
  * TO TEST:

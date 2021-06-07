@@ -14,7 +14,7 @@ description: |
   self.add_component(c)
   ```
 
-  Links allow users to navigate to different parts of your app, or to other websites entirely. If a Link's `url` property is set, it will open that URL in a new browser tab.
+  Links allow users to navigate to different parts of your app, or to other websis entirely. If a Link's `url` property is set, it will open that URL in a new browser tab.
 
   ```python
   c = Link(text="Click me")
@@ -38,128 +38,152 @@ description: |
   You can link to another Form by setting the `click` event handler to run `open_form` on an instance of the form you want to open.
 */
 
-module.exports = function(pyModule) {
+module.exports = (pyModule) => {
 
-    pyModule["Link"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
+    const { isTrue } = Sk.misceval;
 
-        var properties = PyDefUtils.assembleGroupProperties(
-            /*!componentProps(Link)!1*/["text", "icon"/*"interaction",*/, "tooltip", "user data"],
-            {
-                text: {
-                    suggested: true,
-                    set: function(s,e,v) {
-                        // use JS's ""-is-falsy behaviour deliberately
-                        e.toggleClass("has-text", v ? true : false);
-                        e.find('.link-text').first().text(v).css('display', v ? 'inline-block' : 'none');
-                    },
-                }
-            }
-        );
+    pyModule["Link"] = PyDefUtils.mkComponentCls(pyModule, "Link", {
+        base: pyModule["ColumnPanel"],
 
-        var setUrl = function(self, url, name=null) {
-            var e = self._anvil.element;
-            if (url) {
-                e.attr("href", url).attr("target", "_blank");
-                if (name) {
-                  e.attr("download", name);
-                } else {
-                  e.removeAttr("download")
-                }
-            } else {
-                e.attr("href", "javascript:void(0)").removeAttr("target");
-                e.removeAttr("download")
-            }
-        };
-
-        /*!componentProp(Link)!1*/
-        properties.push({name: "url", type: "string",
-            defaultValue: new Sk.builtin.str(""),
-            pyVal: true,
-            exampleValue: "https://google.com",
-            description: "The target URL of the link. Can be set to a URL string or to a Media object.",
-            set: function(self,e,v) {
-
-                if(self._anvil.urlHandle) {
-                    self._anvil.urlHandle.release();
-                    self._anvil.urlHandle = null;
-                    delete self._anvil.urlHandleName;
-                }
-
-                if (!v || v === Sk.builtin.none.none$) {
-                    setUrl(self, "");
-                } else if (Sk.builtin.isinstance(v, Sk.builtin.str).v) {
-                    setUrl(self, v.v);
-                } else if (Sk.builtin.isinstance(v, pyModule["Media"]).v) {
-                    return Sk.misceval.chain(PyDefUtils.getUrlForMedia(v), function(h) {
-                        self._anvil.urlHandle = h;
-                        self._anvil.urlHandleName = v._name;
-                        if (self._anvil.onPage) {
-                            self._anvil.pageEvents.add();
-                        }
-                    });
-                }
-            }
-        });
-
-        var events = PyDefUtils.assembleGroupEvents(/*!componentEvents(Link)!1*/["universal"]);
-
-        /*!componentEvent(Link)!1*/
-        events.push({name: "click", description: "When the link is clicked",
-                     parameters: [], important: true, defaultEvent: true});
-
-        /*
-         * We abandoned the new_tab property because this can lead to loading mixed-mode content in the IDE, which is not allowed.
-         * Now all links open in new tabs by default.
-         */
-         /*
-        properties.push({
-                name: "new_tab",
-                type: "boolean",
-                description: "Open the target URL in a new tab",
-                defaultValue: false,
-                set: function(s,e,v) { e.attr("target", v ? "_blank" : ""); }
-            });
-        */
-
-        $loc["__init__"] = new Sk.builtin.func(PyDefUtils.withRawKwargs(function(pyKwargs, self) {
-            
-            var newBuild = !self._anvil;
-
-            PyDefUtils.addProperties(self, properties, events);
-
-            // The ontouchstart="" is there to make :active work on iOS safari. Sigh.
-            self._anvil.element = $('<a ontouchstart="" href="javascript:void(0)" class="anvil-inlinable" rel="noopener noreferrer"><i class="anvil-component-icon fa left"></i><div class="link-text"></div><i class="anvil-component-icon fa right"></i></a>')
-                .on("click", PyDefUtils.funcWithPopupOK(function(e) {
-                    e.stopPropagation();
-                    PyDefUtils.raiseEventAsync({}, self, "click");
-                }));
-
-            self._anvil.pageEvents = {
-                remove: function() {
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(Link)!1*/ ["text", "icon" /*"interaction",*/, "tooltip", "user data"], {
+            text: {
+                suggested: true,
+                dataBindingProp: true,
+                set(s, e, v) {
+                    v = Sk.builtin.checkNone(v) ? "" : v.toString();
+                    const { outer, holder } = s._anvil.elements;
+                    outer.classList.toggle("has-text", !!v);
+                    holder.textContent = v;
+                    holder.style.display = v ? "inline-block" : "none";
+                },
+            },
+            url: /*!componentProp(Link)!1*/ {
+                name: "url",
+                type: "string",
+                defaultValue: Sk.builtin.str.$empty,
+                pyVal: true,
+                exampleValue: "https://google.com",
+                description: "The target URL of the link. Can be set to a URL string or to a Media object.",
+                initialize: true,
+                set(self, e, v) {
                     if (self._anvil.urlHandle) {
                         self._anvil.urlHandle.release();
+                        self._anvil.urlHandle = null;
+                        delete self._anvil.urlHandleName;
                     }
-                },
-                add: function() {
-                    if (self._anvil.urlHandle) {
-                        setUrl(self, self._anvil.urlHandle.getUrl(), self._anvil.urlHandleName);
-                    }
-                },
-            };
-            self._anvil.dataBindingProp = "text";
-        
-            if (newBuild) {
-                return Sk.misceval.callOrSuspend(pyModule["ColumnPanel"].tp$getattr(new Sk.builtin.str("__init__")), undefined, undefined, pyKwargs, self);
-            } else {
-                return Sk.builtin.none.none$;
-            }
-        }));
 
-        for (let prop of properties || []) {
-            $loc[prop.name] = Sk.misceval.callsim(pyModule['ComponentProperty'], prop.name);
+                    if (Sk.builtin.checkNone(v)) {
+                        setUrl(self, "");
+                    } else if (Sk.builtin.checkString(v)) {
+                        setUrl(self, v.toString());
+                    } else if (isTrue(Sk.builtin.isinstance(v, pyModule["Media"]))) {
+                        return Sk.misceval.chain(PyDefUtils.getUrlForMedia(v), (h) => {
+                            self._anvil.urlHandle = h;
+                            self._anvil.urlHandleName = v._name;
+                            if (self._anvil.onPage) {
+                                self._anvil.pageEvents.add();
+                            }
+                        });
+                    }
+                },
+            },
+        }),
+
+        events: PyDefUtils.assembleGroupEvents(/*!componentEvents(Link)!1*/ "Link", ["universal"], {
+            click: /*!componentEvent(Link)!1*/ {
+                name: "click",
+                description: "When the link is clicked",
+                parameters: [
+                    {
+                        name: "keys",
+                        description:
+                            "A dictionary of keys including 'shift', 'alt', 'ctrl', 'meta'. " +
+                            "Each key's value is a boolean indicating if it was pressed during the click event. " +
+                            "The meta key on a mac is the Command key",
+                    },
+                ],
+                important: true,
+                defaultEvent: true,
+            },
+        }),
+
+        element({ col_spacing, ...props }) {
+            const outerClass = PyDefUtils.getOuterClass(props);
+            const outerStyle = PyDefUtils.getOuterStyle(props);
+            const outerAttrs = PyDefUtils.getOuterAttrs(props);
+            const initialText = (props.text = Sk.builtin.checkNone(props.text) ? "" : props.text.toString());
+            const colSpacing = " col-padding-" + col_spacing.toString();
+            return (
+                <a
+                    refName="outer"
+                    ontouchstart=""
+                    href="javascript:void(0)"
+                    className={"anvil-inlinable anvil-container column-panel " + outerClass + colSpacing}
+                    rel="noopener noreferrer"
+                    style={outerStyle}
+                    {...outerAttrs}>
+                    <PyDefUtils.IconComponent side="left" {...props} />
+                    <div refName="holder" className="link-text" style={`display: ${ initialText ? 'inline-block' : 'none'}`}>
+                        {Sk.builtin.checkNone(props.text) ? "" : props.text.toString()}
+                    </div>
+                    <PyDefUtils.IconComponent side="right" {...props} />
+                </a>
+            );
+        },
+
+        locals($loc) {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["ColumnPanel"], (self) => {
+                self._anvil.element.on(
+                    "click",
+                    PyDefUtils.funcWithPopupOK((e) => {
+                        if (self._anvil.eventHandlers["click"] !== undefined) {
+                            e.stopPropagation(); // Prevent nested Buttons and Links from firing click events on parents
+                            PyDefUtils.raiseEventAsync(
+                                { keys: { meta: e.metaKey, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey } },
+                                self,
+                                "click"
+                            );
+                        }
+                    })
+                );
+                self._anvil.pageEvents = {
+                    remove() {
+                        if (self._anvil.urlHandle) {
+                            self._anvil.urlHandle.release();
+                        }
+                    },
+                    add() {
+                        if (self._anvil.urlHandle) {
+                            return setUrl(self, self._anvil.urlHandle.getUrl(), self._anvil.urlHandleName);
+                        }
+                    },
+                };
+            });
+        },
+    });
+
+
+
+    function setUrl(self, url, name = null) {
+        const a = self._anvil.elements.outer;
+        if (url) {
+            a.setAttribute("href", url);
+            a.setAttribute("target", "_blank");
+            if (name) {
+                a.setAttribute("download", name);
+            } else {
+                a.removeAttribute("download");
+            }
+        } else {
+            a.setAttribute("href", "javascript:void(0)");
+            a.removeAttribute("target");
+            a.removeAttribute("download");
         }
-    }, /*!defClass(anvil,Link,ColumnPanel)!*/ 'Link', [pyModule["ColumnPanel"]]);
+    }
+
 };
+
+/*!defClass(anvil,Link,anvil.ColumnPanel)!*/
 
 /*
  * TO TEST:

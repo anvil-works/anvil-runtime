@@ -66,6 +66,212 @@ description: |
 
 module.exports = function(pyModule) {
 
+    const { isTrue } = Sk.misceval;
+    const inDesigner = window.anvilInDesigner;
+
+    let nextGridId = 0;
+
+
+    pyModule["DataGrid"] = PyDefUtils.mkComponentCls(pyModule, "DataGrid", {
+        base: pyModule["Paginator"],
+
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(DataGrid)!1*/ ["layout", "containers", "appearance", "user data", "tooltip"], {
+            columns: /*!componentProp(DataGrid)!1*/ {
+                name: "columns",
+                type: "dataGridColumns",
+                pyVal: true,
+                hidden: true,
+                defaultValue: Sk.builtin.none.none$,
+                //exampleValue: "XXX TODO",
+                description: "A list of columns to display in this Data Grid.",
+                set(s, e, v) {
+                    s._anvil.jsCols = Sk.ffi.toJs(v);
+                    return updateColumns(s, e);
+                    // Gendoc blows up if we reference the function directly, so wrap it.
+                },
+                getJS(s, e) {
+                    return s._anvil.jsCols;
+                }
+            },
+
+            auto_header: /*!componentProp(DataGrid)!1*/ {
+                name: "auto_header",
+                type: "boolean",
+                defaultValue: Sk.builtin.bool.true$,
+                pyVal: true,
+                exampleValue: true,
+                description: "Whether to display an automatic header at the top of this Data Grid.",
+                set(s, e, v) {
+                    return updateColumns(s, e);
+                },
+            },
+
+            show_page_controls: /*!componentProp(DataGrid)!1*/ {
+                name: "show_page_controls",
+                type: "boolean",
+                defaultValue: Sk.builtin.bool.true$,
+                pyVal: true,
+                exampleValue: true,
+                description: "Whether to display the next/previous page buttons.",
+                set: (s, e, v) => (s._anvil.elements.paginationButtons.style.display = isTrue(v) ? "block" : "none"),
+            },
+            rows_per_page: /*!componentProp(DataGrid)!1*/ {
+                name: "rows_per_page",
+                type: "number",
+                defaultValue: new Sk.builtin.int_(20),
+                pyVal: true,
+                exampleValue: 20,
+                description: "The maximum number of rows to display at one time.",
+                set: (s, e, v) => PyDefUtils.pyCallOrSuspend(s.tp$getattr(new Sk.builtin.str("jump_to_first_page"))),
+            },
+        }),
+
+        events: PyDefUtils.assembleGroupEvents("data grid", /*!componentEvents(DataGrid)!1*/ ["universal"]),
+
+        layouts: [
+            {
+                name: "pinned",
+                type: "boolean",
+                description: "Whether this component should show on every page of the grid",
+                defaultValue: false,
+                important: true,
+                priority: 0,
+            },
+        ],
+
+        element: ({ show_page_controls, ...props }) => (
+            <PyDefUtils.OuterElement className="anvil-container anvil-data-grid anvil-paginator" {...props}>
+                <div refName="childPanel" className="data-grid-child-panel"></div>
+                <div refName="footerPanel" className="data-grid-footer-panel">
+                    <div refName="footerSlot" className="footer-slot"></div>
+                    <div refName="paginationButtons" className="pagination-buttons" style={"display:" + (isTrue(show_page_controls) ? "block" : "none") + ";"}>
+                        <a refName="firstPage" href="javascript:void(0)" className="first-page disabled">
+                            <i refName="iconFirst" className="fa fa-angle-double-left" />
+                        </a>
+                        <a refName="prevPage" href="javascript:void(0)" className="previous-page disabled">
+                            <i refName="iconPrev" className="fa fa-angle-left" />
+                        </a>
+                        <a refName="nextPage" href="javascript:void(0)" className="next-page disabled">
+                            <i refName="iconNext" className="fa fa-angle-right" />
+                        </a>
+                        <a refName="lastPage" href="javascript:void(0)" className="last-page disabled">
+                            <i refName="iconLast" className="fa fa-angle-double-right" />
+                        </a>
+                    </div>
+                </div>
+            </PyDefUtils.OuterElement>
+        ),
+
+        locals($loc) {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Paginator"], (self) => {
+                self._anvil.element.data("anvil-py-component", self); // Do this early, so that early pagination will work.
+                self._anvil.childPanel = $(self._anvil.elements.childPanel);
+                self._anvil.footerSlot = $(self._anvil.elements.footerSlot);
+                self._anvil.dataGridId = nextGridId++;
+                self._anvil.dataGrid = self;
+
+                let s = $(`style[anvil-data-grid-id=${self._anvil.dataGridId}]`);
+                if (s.length === 0) {
+                    s = $("<style/>").attr("anvil-data-grid-id", self._anvil.dataGridId).appendTo($("head"));
+                }
+                self._anvil.styleSheet = s[0].sheet;
+                self._anvil.updateColStyles = updateColStyles.bind(self, self);
+                self._anvil.paginate = paginate.bind(self, self);
+
+                $(self._anvil.elements.firstPage).on("click", () =>
+                    PyDefUtils.asyncToPromise(() => Sk.misceval.callsimOrSuspend(self.tp$getattr(new Sk.builtin.str("jump_to_first_page"))))
+                );
+                $(self._anvil.elements.prevPage).on("click", () =>
+                    PyDefUtils.asyncToPromise(() => Sk.misceval.callsimOrSuspend(self.tp$getattr(new Sk.builtin.str("previous_page"))))
+                );
+                $(self._anvil.elements.nextPage).on("click", () =>
+                    PyDefUtils.asyncToPromise(() => Sk.misceval.callsimOrSuspend(self.tp$getattr(new Sk.builtin.str("next_page"))))
+                );
+                $(self._anvil.elements.lastPage).on("click", () =>
+                    PyDefUtils.asyncToPromise(() => Sk.misceval.callsimOrSuspend(self.tp$getattr(new Sk.builtin.str("jump_to_last_page"))))
+                );
+
+                return self._anvil.setProp("columns", self._anvil.props["columns"]);
+            });
+
+
+            /*!defMethod(_,component,[index=None],[pinned=False])!2*/ "Add a component to this DataGrid, in the 'index'th position. If 'index' is not specified, adds to the bottom."
+            $loc["add_component"] = PyDefUtils.funcWithKwargs(function add_component(kwargs, self, component) {
+                pyModule["Container"]._check_no_parent(component);
+                
+                const { index, pinned, slot } = kwargs;
+
+                return Sk.misceval.chain(
+                    undefined,
+                    () => {
+                        if (component._anvil.metadata.invisible) {
+                            return;
+                        }
+
+                        const celt = component._anvil.domNode;
+                        const childPanel = self._anvil.elements.childPanel;
+
+                        component._anvil.dataGrid = self;
+                        // celt.classList.toggle("hide-while-paginating", !pinned);
+
+                        if (typeof index === "number") {
+                            const elts = self._anvil.elements.childPanel.children;
+                            if (index < elts.length) {
+                                childPanel.insertBefore(celt, elts[index]);
+                                return;
+                                // else fall through and insert at the end
+                            }
+                        }
+                        if (slot === "footer") {
+                            self._anvil.elements.footerSlot.appendChild(celt);
+                        } else {
+                            childPanel.appendChild(celt);
+                        }
+                    },
+                    () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs),
+                    () => {
+                        // Now that we've added it to our components array, move it to the right position.
+                        if (typeof index === "number") {
+                            const c = self._anvil.components.pop(); // pop off this new component (pushed on by super.add_component())
+                            self._anvil.components.splice(index, 0, c);
+                        }
+                        const rmFn = component._anvil.parent.remove;
+                        component._anvil.parent.remove = () => {
+                            delete component._anvil.dataGrid;
+                            return Sk.misceval.chain(rmFn(), () => PyDefUtils.pyCallOrSuspend(self.tp$getattr(new Sk.builtin.str("repaginate"))));
+                        };
+                    },
+                    () => PyDefUtils.pyCallOrSuspend(self.tp$getattr(new Sk.builtin.str("jump_to_first_page")))
+                );
+            });
+
+            // This shares an annoying amount of code with Container.js
+            // (apart from the conditional slicing off of the automatic header)
+            $loc["__serialize__"] = PyDefUtils.mkSerializePreservingIdentity(function (self) {
+                const v = [];
+                for (let n in self._anvil.props) {
+                    v.push(new Sk.builtin.str(n), self._anvil.props[n]);
+                }
+                const d = new Sk.builtin.dict(v);
+                let components = self._anvil.components;
+                if (self._anvil.getPropJS("auto_header")) {
+                    components = components.slice(1);
+                }
+                components = components.map((c) => new Sk.builtin.tuple([c.component, Sk.ffi.remapToPy(c.layoutProperties)]));
+                d.mp$ass_subscript(new Sk.builtin.str("$_components"), new Sk.builtin.list(components));
+                return d;
+            });
+
+            // Gendoc can't handle multiple inheritance, which is why we're defining these here.
+
+            /*!defMethod(_)!2*/ "Jump to the last page of this DataGrid"["jump_to_last_page"];
+            /*!defMethod(_)!2*/ "Jump to the first page of this DataGrid"["jump_to_first_page"];
+            /*!defMethod(_)!2*/ "Jump to the next page of this DataGrid"["next_page"];
+            /*!defMethod(_)!2*/ "Jump to the previous page of this DataGrid"["previous_page"];
+            /*!defMethod(_)!2*/ "Get the current page number of this DataGrid"["get_page"];
+        },
+    });
+
     let updateColStyles = (self, cols) => {
         let style = self._anvil.styleSheet;
 
@@ -94,32 +300,32 @@ module.exports = function(pyModule) {
 
         self._anvil.updateColStyles(cols);
 
-        if (self._inDesigner && self._anvil.updateConfigHeader) {
+        if (inDesigner && self._anvil.updateConfigHeader) {
             self._anvil.updateConfigHeader();
         }
 
         element.find(".anvil-data-row-panel:not(.auto-grid-header)")
             .map((_,e) => $(e).data("anvilPyComponent"))
-            .each((_,c) => c._anvil.updateColumns());
+            .each((_,c) => c._anvil.updateColumns(true));
 
         let h = element.find(".auto-grid-header").map((_,e) => $(e).data("anvilPyComponent"));
-        if (self._anvil.getPropJS("auto_header")) {
+        if (isTrue(self._anvil.getProp("auto_header"))) {
 
             let headerData = {};
             for (let c of cols || []) {
                 headerData[c.id] = c.title;
             }
 
-            if (h.length == 0) {
-                h = Sk.misceval.call(pyModule["DataRowPanel"], undefined, undefined, [
-                    Sk.ffi.remapToPy("item"), Sk.ffi.remapToPy(headerData),
-                    Sk.ffi.remapToPy("bold"), Sk.ffi.remapToPy(true),
-                ]);
-                Sk.misceval.call(self.tp$getattr(new Sk.builtin.str("add_component")), undefined, undefined, [Sk.ffi.remapToPy("index"), Sk.ffi.remapToPy(0)], h);
-                h._anvil.element.addClass("no-hit auto-grid-header").removeClass("hide-while-paginating");
+            if (h.length === 0) {
+                h = PyDefUtils.pyCall(pyModule["DataRowPanel"], [], ["bold", Sk.builtin.bool.true$]);
+                h._anvil.autoGridHeader = true;
+                h._anvil.domNode.classList.add("no-hit", "auto-grid-header");
+                // h._anvil.domNode.classList.remove("hide-while-paginating");
+                PyDefUtils.pyCall(self.tp$getattr(new Sk.builtin.str("add_component")), [h], ["index", new Sk.builtin.int_(0)])
             } else {
-                h[0].tp$setattr(new Sk.builtin.str("item"), Sk.ffi.remapToPy(headerData));
+                h = h[0];
             }
+            h.tp$setattr(new Sk.builtin.str("item"), Sk.ffi.remapToPy(headerData));
         } else if (h.length > 0) {
             Sk.misceval.callsim(h[0].tp$getattr(new Sk.builtin.str("remove_from_parent")));
         }
@@ -130,13 +336,12 @@ module.exports = function(pyModule) {
     // self._anvil.pagination = { startAfter: object, rowQuota: number}
     let paginate = (self, updatedChild=null) => {
         if (self._anvil.pagination) {
-            self._anvil.childPanel.css("min-height", self._anvil.childPanel.height() + "px");
-            self._anvil.element.addClass("paginating");
+
 
             let childIdx = -1;
             let rowQuotaForChildren = self._anvil.pagination.rowQuota
             if (updatedChild && updatedChild._anvil.pagination) {
-                childIdx = self._anvil.components.findIndex(c => c.component == updatedChild);
+                childIdx = self._anvil.components.findIndex(c => c.component === updatedChild);
                 rowQuotaForChildren = self._anvil.lastChildPagination.reduce((remaining, child, idx) => (child && idx < childIdx) ? remaining - child[0] : remaining, self._anvil.pagination.rowQuota);
                 rowQuotaForChildren -= updatedChild._anvil.pagination.rowsDisplayed;
 
@@ -152,8 +357,10 @@ module.exports = function(pyModule) {
             return Sk.misceval.chain(PyDefUtils.repaginateChildren(self, childIdx+1, self._anvil.pagination.startAfter, rowQuotaForChildren),
                 ([rows, stoppedAt, done]) => {
 
-                    if (PyDefUtils.logPagination) console.log("DataGrid displayed", rows, "rows.", done ? "Done" : "Interrupted", "at", stoppedAt, "Pagination results:", self._anvil.lastChildPagination);
-                    if (PyDefUtils.logPagination) console.groupEnd();
+                    if (PyDefUtils.logPagination) { 
+                        console.log("DataGrid displayed", rows, "rows.", done ? "Done" : "Interrupted", "at", stoppedAt, "Pagination results:", self._anvil.lastChildPagination);
+                        console.groupEnd();
+                    }
 
                     self._anvil.pagination.rowsDisplayed = rows;
                     self._anvil.pagination.stoppedAt = stoppedAt;
@@ -162,7 +369,7 @@ module.exports = function(pyModule) {
                     return Sk.misceval.chain(undefined,
                         () => {
                             if (self._anvil.paginatorPages) {
-                                if (done == "INVALID") {
+                                if (done === "INVALID") {
                                     self._anvil.repaginating = false; // HACK: Allow recursive call to previous_page. Ew.
                                     return Sk.misceval.callsimOrSuspend(self.tp$getattr(new Sk.builtin.str("previous_page")));
                                 } else {
@@ -173,10 +380,6 @@ module.exports = function(pyModule) {
                             }
                         },
                         self._anvil.updatePaginationControls,
-                        () => {
-                            self._anvil.element.removeClass("paginating");
-                            self._anvil.childPanel.css("min-height", "0px");
-                        },
                         () => [rows, stoppedAt, done],
                     );
                 }
@@ -188,182 +391,9 @@ module.exports = function(pyModule) {
         }
     }
 
-    let nextGridId = 0;
-
-    pyModule["DataGrid"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-
-        var properties = PyDefUtils.assembleGroupProperties(/*!componentProps(DataGrid)!1*/["layout", "containers", "appearance", "user data", "tooltip"]);
-
-        /*!componentProp(DataGrid)!1*/
-        properties.push({name: "columns", type: "dataGridColumns",
-            pyVal: true,
-            hidden: true,
-            defaultValue: Sk.builtin.none.none$,
-            //exampleValue: "XXX TODO",
-            description: "A list of columns to display in this Data Grid.",
-            set: (s,e,v) => updateColumns(s,e), // Gendoc blows up if we reference the function directly, so wrap it.
-        });
-
-        /*!componentProp(DataGrid)!1*/
-        properties.push({name: "auto_header", type: "boolean",
-            defaultValue: true,
-            exampleValue: true,
-            description: "Whether to display an automatic header at the top of this Data Grid.",
-            set: (s,e,v) => updateColumns(s,e),
-        });
-
-        /*!componentProp(DataGrid)!1*/
-        properties.push({name: "show_page_controls", type: "boolean",
-            defaultValue: true,
-            exampleValue: true,
-            description: "Whether to display the next/previous page buttons.",
-            set: (s,e,v) => e.find(">.data-grid-footer-panel>.pagination-buttons").toggle(v),
-        });
-
-        /*!componentProp(DataGrid)!1*/
-        properties.push({name: "rows_per_page", type: "number",
-            defaultValue: 20,
-            exampleValue: 20,
-            description: "The maximum number of rows to display at one time.",
-            set: (s,e,v) => Sk.misceval.callsimOrSuspend(s.tp$getattr(new Sk.builtin.str('jump_to_first_page'))),
-        });
-
-        $loc["__init__"] = PyDefUtils.mkInit(function init(self) {
-            
-            self._anvil.element = self._anvil.element || $("<div>");
-            self._anvil.element.data("anvil-py-component", self); // Do this early, so that early pagination will work.
-            self._anvil.element.addClass("anvil-container anvil-data-grid anvil-paginator")
-
-            self._anvil.childPanel = $('<div>').addClass("data-grid-child-panel");
-            let footerPanel = $('<div>').addClass("data-grid-footer-panel");
-            self._anvil.footerSlot = $('<div>').addClass("footer-slot").appendTo(footerPanel);
-            let paginationButtonsPanel = $('<div>').addClass("pagination-buttons").appendTo(footerPanel);
-
-            $("<a>").attr("href", "javascript:void(0)")
-                     .append($(`<i class="fa fa-angle-double-left">`))
-                     .addClass("first-page")
-                     .addClass("disabled")
-                     .on("click", () => PyDefUtils.asyncToPromise(() => Sk.misceval.callsimOrSuspend(self.tp$getattr(new Sk.builtin.str('jump_to_first_page')))))   
-                     .appendTo(paginationButtonsPanel);
-
-            $("<a>").attr("href", "javascript:void(0)")
-                     .append($(`<i class="fa fa-angle-left">`))
-                     .addClass("previous-page")
-                     .addClass("disabled")
-                     .on("click", () => PyDefUtils.asyncToPromise(() => Sk.misceval.callsimOrSuspend(self.tp$getattr(new Sk.builtin.str('previous_page')))))
-                     .appendTo(paginationButtonsPanel);
-
-            $("<a>").attr("href", "javascript:void(0)")
-                     .append($(`<i class="fa fa-angle-right">`))
-                     .addClass("next-page")
-                     .addClass("disabled")
-                     .on("click", () => PyDefUtils.asyncToPromise(() => Sk.misceval.callsimOrSuspend(self.tp$getattr(new Sk.builtin.str('next_page')))))
-                     .appendTo(paginationButtonsPanel);
-
-            $("<a>").attr("href", "javascript:void(0)")
-                     .append($(`<i class="fa fa-angle-double-right">`))
-                     .addClass("last-page")
-                     .addClass("disabled")
-                     .on("click", () => PyDefUtils.asyncToPromise(() => Sk.misceval.callsimOrSuspend(self.tp$getattr(new Sk.builtin.str('jump_to_last_page')))))
-                     .appendTo(paginationButtonsPanel);
-
-            self._anvil.element.append(self._anvil.childPanel);
-            self._anvil.element.append(footerPanel);
-
-            self._anvil.layoutPropTypes = [{
-                name: "pinned",
-                type: "boolean",
-                description: "Whether this component should show on every page of the grid",
-                defaultValue: false,
-                important: true,
-                priority: 0,
-            }];
-
-            self._anvil.dataGridId = nextGridId++;
-
-            let s = $(`style[anvil-data-grid-id=${self._anvil.dataGridId}]`)
-            if (s.length == 0) {
-                s = $("<style/>").attr("anvil-data-grid-id", self._anvil.dataGridId).appendTo($("head"));
-            }
-            self._anvil.styleSheet = s[0].sheet;
-            self._anvil.updateColStyles = updateColStyles.bind(self, self);
-
-            self._anvil.paginate = paginate.bind(self, self);
-
-            return Sk.misceval.callsimOrSuspend(pyModule["Paginator"].tp$getattr(new Sk.builtin.str("__init__")), self);
-
-        },pyModule, $loc, properties,PyDefUtils.assembleGroupEvents("data grid", /*!componentEvents(DataGrid)!1*/["universal"]), pyModule["Container"]);
-
-
-        /*!defMethod(_,component,[index=None],[pinned=False])!2*/ "Add a component to this DataGrid, in the 'index'th position. If 'index' is not specified, adds to the bottom."
-        $loc["add_component"] = new PyDefUtils.funcWithKwargs(function(kwargs, self, component) {
-            if (!component || !component._anvil) { throw new Sk.builtin.Exception("Argument to add_component() must be a component"); }
-            return Sk.misceval.chain(undefined,
-                () => {
-                    if (component._anvil.metadata.invisible) { return; }
-
-                    var celt = component._anvil.element;
-
-                    celt.toggleClass("hide-while-paginating", !kwargs["pinned"])
-
-                    if (typeof(kwargs["index"]) == "number") {
-
-                        var elts = self._anvil.childPanel.children();
-                        if (kwargs["index"] < elts.length) {
-                            celt.insertBefore(elts[kwargs["index"]]);
-                            return;
-                            // else fall through and insert at the end
-                        }
-                    }
-                    if (kwargs["slot"] == "footer") {
-                        self._anvil.footerSlot.append(celt);
-                    } else {
-                        self._anvil.childPanel.append(celt);
-                    }
-                },
-                () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs),
-                () => {
-                    // Now that we've added it to our components array, move it to the right position.
-                    if (typeof(kwargs["index"]) == "number") {
-                        var c = self._anvil.components.pop(); // pop off this new component (pushed on by super.add_component())
-                        self._anvil.components.splice(kwargs["index"], 0, c);
-                    }
-                },
-                // TODO: Repaginate on remove too. See DataRowPanel.
-                () => Sk.misceval.callsimOrSuspend(self.tp$getattr(new Sk.builtin.str("jump_to_first_page")))
-            );
-        });
-
-        // This shares an annoying amount of code with Container.js
-        // (apart from the conditional slicing off of the automatic header)
-        $loc["__serialize__"] = PyDefUtils.mkSerializePreservingIdentity(function (self) {
-            let v = [];
-            for (let n in self._anvil.props) {
-                v.push(new Sk.builtin.str(n), self._anvil.props[n]);
-            }
-            let d = new Sk.builtin.dict(v);
-            let components = self._anvil.components;
-            if (self._anvil.getPropJS("auto_header")) {
-                components = components.slice(1);
-            }
-            components = components.map(
-                (c) => new Sk.builtin.tuple([c.component, Sk.ffi.remapToPy(c.layoutProperties)])
-            );
-            d.mp$ass_subscript(new Sk.builtin.str("_components"), new Sk.builtin.list(components));
-            return d;
-        });
-
-        // Gendoc can't handle multiple inheritance, which is why we're defining these here.
-
-        /*!defMethod(_)!2*/ "Jump to the last page of this DataGrid" ["jump_to_last_page"]
-        /*!defMethod(_)!2*/ "Jump to the first page of this DataGrid" ["jump_to_first_page"]
-        /*!defMethod(_)!2*/ "Jump to the next page of this DataGrid" ["next_page"]
-        /*!defMethod(_)!2*/ "Jump to the previous page of this DataGrid" ["previous_page"]
-        /*!defMethod(_)!2*/ "Get the current page number of this DataGrid" ["get_page"]
-
-    }, /*!defClass(anvil,DataGrid,Container)!*/ "DataGrid", [pyModule["Container"], pyModule["Paginator"]]);
-
 };
+
+/*!defClass(anvil,DataGrid,Container)!*/
 
 /*
  * TO TEST:
@@ -373,3 +403,6 @@ module.exports = function(pyModule) {
  *  - Methods: add_component
  *
  */
+
+
+

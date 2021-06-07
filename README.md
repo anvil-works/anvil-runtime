@@ -2,11 +2,24 @@
 
 ## Introduction
 
-[Anvil](https://anvil.works) is a platform for building full-stack web apps with nothing but Python. The Anvil Runtime is the open-source engine that powers those apps.
+[Anvil](https://anvil.works) is a framework for building full-stack web apps with nothing but Python:
 
-This repository contains the Anvil Runtime libraries, as well as a standalone App Server which uses the Runtime to serve an Anvil app from the local filesystem.
+ * Your [browser-side code](https://anvil.works/python-browser) is in Python
+ * Your [user interface](https://anvil.works/articles/python-gui-builder-web) is in Python
+ * Your [server-side code](https://anvil.works/docs/server-code) is in Python
+ * (Optional:) Your [database](https://anvil.works/docs/data-tables) is Python object
 
-You can also **build and deploy your apps in Anvil's cloud** -- by far the easiest way to build a web app. Build your app using our [online IDE](https://anvil.works), complete with drag-and-drop UI designer and autocomplete -- then [click one button](https://anvil.works/docs/deployment), and it's live on the web!
+The Anvil Runtime is the open-source engine that powers those apps. This repository contains the Anvil Runtime libraries, as well as a standalone App Server which uses the Runtime to serve an Anvil app from the local filesystem.
+
+## The Anvil Cloud Editor
+
+The easiest way to build an Anvil app is the free online editor at https://anvil.works. It includes a [drag-and-drop GUI builder](https://anvil.works/articles/python-gui-builder-web) and [free, built-in hosting](https://anvil.works/docs/deployment) for your apps.
+
+![A short animated clip of the Anvil editor](https://anvil.works/learn/tutorials/img/feedback-form/add-button.gif)
+
+[![Try the Anvil Editor](https://anvil.works/img/github/try-editor.png)](https://anvil.works)
+
+Nevertheless, you **don't need the cloud service at all** to build or run Anvil applications!
 
 ## Using the standalone App Server
 
@@ -253,10 +266,8 @@ The Anvil Runtime stores most of its data in a Postgres database. By default, th
 
 You can access this database directly with the command `psql-anvil-app-server <data-dir>`:
 
-> **Note:** You will need the `psql` command-line client installed. On Debian-like Linux systems, run `apt-get install postgresql-client`; on a Mac, run `brew install postgresql`.
-
 1. Run your app using the `anvil-app-server --app <directory-name>` command
-2. In a new terminal, run `psql-anvil-app-server` in the same directory as you started `anvil-app-server`. You can also specify a `data-dir`, which should match the `--data-dir` option passed to `anvil-app-server` (if applicable). For example, if you launched your app using `anvil-app-server --app MyApp --data-dir my-data-dir`, you would access the psql shell using `psql-anvil-app-server my-data-dir`.
+2. In a new terminal, run `psql-anvil-app-server` in the same directory as you started `anvil-app-server`. You can also specify a `data-dir`, which should match the `--data-dir` option passed to `anvil-app-server` (if applicable). For example, if you launched your app using `anvil-app-server --app MyApp --data-dir my-data-dir`, you would access the pgcli shell using `psql-anvil-app-server my-data-dir`.
 
 You can also access the database shell using the port and password, which you can find in the `<data-dir>` directory:
 
@@ -264,7 +275,7 @@ You can also access the database shell using the port and password, which you ca
 * Port: stored in `<data-dir>/db/postmaster.opts`
 * Password: stored in `<data-dir>/postgres.password`
 
-This means you can run `psql -h localhost -p <port> -U postgres` to access the psql shell directly, or connect other graphical tools to it.
+This means you can run `pgcli -h localhost -p <port> -U postgres` to access the psql shell directly, or connect other graphical tools to it.
 
 ### Sending email
 
@@ -318,8 +329,18 @@ If your app uses Anvil's [Microsoft Service](https://anvil.works/docs/integratio
 
 If your app uses Anvil's [Microsoft Service](https://anvil.works/docs/integrations/microsoft), for login or anything else, you may wish to restrict all logins to one Azure AD tenant. Specify it with this option.
 
-----
 
+## Troubleshooting and other notes
+
+### Startup behaviour and code download
+
+The App Server contains an HTTP server component that runs on the JVM, and is not downloaded as part of the `pip install` (it's too large for PyPI's index). Instead, the App Server will download a JAR file from the server on first launch. It will attempt to store this file in the package directory (if it is writable), or into the `.anvil` folder in your home directory.
+
+### Mac OS certificate issues
+
+Some Python versions may encounter certificate issues downloading this file, because Python packages bundle their own root certificates (and may therefore be out of date). See [this StackOverflow question](https://stackoverflow.com/questions/40684543/how-to-make-python-use-ca-certificates-from-mac-os-truststore) for a solution.
+
+---
 
 ## Architecture
 

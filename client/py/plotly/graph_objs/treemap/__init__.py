@@ -34,6 +34,11 @@ class Pathbar(WrappedObject):
     _module = "plotly.graph_objs.treemap"
 
 @serializable_type
+class Root(WrappedObject):
+    _name = "Root"
+    _module = "plotly.graph_objs.treemap"
+
+@serializable_type
 class Stream(WrappedObject):
     _name = "Stream"
     _module = "plotly.graph_objs.treemap"
@@ -48,6 +53,11 @@ class Tiling(WrappedObject):
     _name = "Tiling"
     _module = "plotly.graph_objs.treemap"
 
+@serializable_type
+class Transform(WrappedObject):
+    _name = "Transform"
+    _module = "plotly.graph_objs.treemap"
+
 
 __all__ = [
     'Domain',
@@ -56,9 +66,11 @@ __all__ = [
     'Marker',
     'Outsidetextfont',
     'Pathbar',
+    'Root',
     'Stream',
     'Textfont',
     'Tiling',
+    'Transform',
     'hoverlabel',
     'marker',
     'pathbar',

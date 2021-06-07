@@ -36,7 +36,8 @@
             [anvil.util :as util]
             [anvil.metrics :as metrics]
             [anvil.core.worker-pool :as worker-pool]
-            [anvil.dispatcher.native-rpc-handlers.util :as rpc-util])
+            [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]
+            [anvil.runtime.util :as runtime-util])
   (:import (java.io ByteArrayInputStream)
            (anvil.dispatcher.types Media MediaDescriptor InputStreamMedia ChunkedStream)
            (org.apache.commons.codec.binary Base64)
@@ -45,14 +46,14 @@
            (com.onelogin.saml2.settings SettingsBuilder Saml2Settings)
            (com.onelogin.saml2.util Constants)))
 
-(clj-logging-config.log4j/set-logger! :level :trace)
+(clj-logging-config.log4j/set-logger! :level :warn)
 (clj-logging-config.log4j/set-logger! "com.onelogin.saml2" :level :debug)
 
 (defn app-500
   ([req] (app-500 req "An internal error occurred"))
-  ([{:keys [app-id app-origin] :as _req} message]
+  ([{:keys [app-id app-origin] :as req} message]
    (log/debug "Couldn't load app" app-id ":" message)
-   (-> (resp/response (-> (slurp (io/resource "runtime-client-core/500-app.html"))
+   (-> (resp/response (-> (slurp (runtime-client-resource req "/500-app.html"))
                           (.replace "{{anvil-error}}" (hiccup-util/escape-html message))
                           (clojure.string/replace #"\{\{cdn\-origin\}\}" conf/static-root-url)
                           (clojure.string/replace #"\{\{ide\-origin\}\}" conf/static-root-url)))
@@ -62,10 +63,10 @@
 
 (defn app-404
   ([req] (app-404 req false))
-  ([{:keys [app-id app-origin] :as _req} app-exists-but-no-key?]
+  ([{:keys [app-id app-origin] :as req} app-exists-but-no-key?]
    (log/debug "Couldn't load app" app-id)
-   (-> (resp/response (-> (slurp (if app-exists-but-no-key? (io/resource "runtime-client-core/403-app-no-key.html")
-                                                            (io/resource "runtime-client-core/404-app.html")))
+   (-> (resp/response (-> (slurp (if app-exists-but-no-key? (runtime-client-resource req "/404-app-no-key.html")
+                                                            (runtime-client-resource req "/404-app.html")))
                           (.replace "{{canonical-url}}" (hiccup-util/escape-html app-origin))
                           (clojure.string/replace #"\{\{cdn\-origin\}\}" conf/static-root-url)
                           (clojure.string/replace #"\{\{ide\-origin\}\}" conf/static-root-url)))
@@ -170,7 +171,7 @@
         (reload-anvil-cookies! (:app-session req) req)
         (metrics/inc! :api/runtime-serve-app-total)
 
-        (-> (serve-templated-html req (io/resource "runtime-client-core/runner.html")
+        (-> (serve-templated-html req (runtime-client-resource req "/runner.html")
                                   {"{{body-class}}"         (or body-class "")
                                    "{{app-name}}"           (hiccup-util/escape-html
                                                               (util/or-str (:title meta) (:name app-info) (:name app-map)))
@@ -312,10 +313,10 @@
                                  (do
                                    (send! channel (-> {:status status}
                                                       (resp/content-type (.getContentType ^MediaDescriptor body))
-                                                      (with-safe-anvil-cookies (conj headers ["Transfer-Encoding" "chunked"]))) false)
+                                                      (with-safe-anvil-cookies headers)) false)
                                    (types/consume ^ChunkedStream body
                                                   (fn [chunk-idx last-chunk? data]
-                                                    (send! channel (-> {:body (ByteArrayInputStream. data)}) last-chunk?))))
+                                                    (send! channel {:body (ByteArrayInputStream. data)} last-chunk?))))
 
                                  (string? body)
                                  (send! channel (-> {:body   body,
@@ -495,14 +496,14 @@
   (GET "/_/email-confirm/:email/:email-key" [email email-key :as request]
     (when-let [app (get-app-from-request request)]
       (if (user-service/confirm-email app (:environment request) email email-key)
-        (serve-templated-html request (io/resource "runtime-client-core/user_email_confirmed.html")
+        (serve-templated-html request (runtime-client-resource request "/user_email_confirmed.html")
                               {"{{email-address}}" (hiccup-util/escape-html email)})
         (resp/redirect (:app-origin request)))))
 
   (GET "/_/email-pw-reset/:email/:email-key" [email email-key :as request]
     (when-let [app (get-app-from-request request)]
       (when (user-service/email-password-reset-key-valid? app (:environment request) email email-key)
-        (serve-templated-html request (io/resource "runtime-client-core/user_email_password_reset.html")
+        (serve-templated-html request (runtime-client-resource request "/user_email_password_reset.html")
                               {"{{email-address}}" (hiccup-util/escape-html email)
                                "{{error}}" ""}))))
 
@@ -515,10 +516,10 @@
     (when-let [app (get-app-from-request request)]
       (try+
         (when (user-service/reset-email-password! app (:environment request) email email-key password)
-          (serve-templated-html request (io/resource "runtime-client-core/user_email_password_reset_done.html")
+          (serve-templated-html request (runtime-client-resource request "/user_email_password_reset_done.html")
                                 {"{{email-address}}" (hiccup-util/escape-html email)}))
         (catch :anvil/server-error e
-          (serve-templated-html request (io/resource "runtime-client-core/user_email_password_reset.html")
+          (serve-templated-html request (runtime-client-resource request "/user_email_password_reset.html")
                                 {"{{email-address}}" (hiccup-util/escape-html email)
                                  "{{error}}"         (str "<div class=\"alert alert-danger\" role=\"alert\"><b>" (:anvil/server-error e) "</b></div>")})))))
 
@@ -565,7 +566,7 @@
           (log/error (:throwable &throw-context) "App dependency error when connecting websocket")))))
 
   (GET "/_/service-worker" req
-    (-> (slurp (io/resource "runtime-client-core/js/sw.bundle.js"))
+    (-> (slurp (runtime-client-resource req "/js/sw.bundle.js"))
         (resp/response)
         (resp/header "Service-Worker-Allowed" (hiccup-util/escape-html (:app-origin req)))
         (resp/content-type "application/javascript")))
@@ -746,7 +747,7 @@
         (resp/redirect redirect-target))
       (catch Exception e
         (-> (resp/response
-              (populate-template (io/resource "runtime-client-core/auth_result.html")
+              (populate-template (runtime-client-resource request "/auth_result.html")
                                  {"{{canonical-url}}" (hiccup-util/escape-html (:app-origin @(:app-session request)))
                                   "{{callback-fn}}"   "samlAuthErrorCallback"
                                   "{{args-json}}"     (json/write-str {:message (str "SAML Redirect failed: " (.getMessage e))})}))
@@ -766,7 +767,7 @@
 
   (GET "/_/manifest.json" {:keys [app-info] :as req}
     (let [[_ _ style] (app-data/sanitised-app-and-style-for-client (:app-id req) (app-data/get-version-spec-for-environment (:environment req)))]
-      (-> (populate-template (io/resource "runtime-client-core/manifest.json")
+      (-> (populate-template (runtime-client-resource req "/manifest.json")
                              {"{{app-name}}"         (:name app-info)
                               "{{theme-color}}"      (:primary-color style)
                               "{{background-color}}" (if (and (:primary-color style)
@@ -825,9 +826,9 @@
 
               (swap! (:app-session request) #(assoc-in % [:google :user-tokens] tokens))
 
-              (-> (resp/response (-> (slurp (io/resource "runtime-client-core/client_auth_success.html"))
+              (-> (resp/response (-> (slurp (runtime-client-resource request "/client_auth_success.html"))
                                      (.replace "{{canonical-url}}" (hiccup-util/escape-html (:app-origin @app-session)))
-                                     (clojure.string/replace #"\{\{cdn\-origin\}\}" conf/static-root-url)))
+                                     (clojure.string/replace #"\{\{cdn\-origin\}\}" (runtime-util/get-static-origin request))))
                   (resp/content-type "text/html")
                   (resp/status 200)))
 
@@ -887,9 +888,9 @@
                                                         :form-params {:access_token access-token}}))
                           body (json/read-str body-json :key-fn keyword)]
                       (swap! (:app-session request) assoc :facebook (merge body {:access-token access-token}))
-                      (-> (resp/response (-> (slurp (io/resource "runtime-client-core/facebook_auth_success.html"))
+                      (-> (resp/response (-> (slurp (runtime-client-resource request "/facebook_auth_success.html"))
                                              (.replace "{{canonical-url}}" (hiccup-util/escape-html (:app-origin @app-session)))
-                                             (clojure.string/replace #"\{\{cdn\-origin\}\}" conf/static-root-url)
+                                             (clojure.string/replace #"\{\{cdn\-origin\}\}" (runtime-util/get-static-origin request))
                                              (clojure.string/replace #"\{\{ide\-origin\}\}" conf/static-root-url)))
                           (resp/content-type "text/html")
                           (resp/status 200)))))))
@@ -975,9 +976,9 @@
                                                                                     :access-token   (:access_token body)
                                                                                     :application-id application-id})))))))
 
-            (-> (resp/response (-> (slurp (io/resource "runtime-client-core/microsoft_auth_success.html"))
+            (-> (resp/response (-> (slurp (runtime-client-resource req "/microsoft_auth_success.html"))
                                    (.replace "{{canonical-url}}" (hiccup-util/escape-html (:app-origin @app-session)))
-                                   (clojure.string/replace #"\{\{cdn\-origin\}\}" conf/static-root-url)
+                                   (clojure.string/replace #"\{\{cdn\-origin\}\}" (runtime-util/get-static-origin request))
                                    (clojure.string/replace #"\{\{ide\-origin\}\}" conf/static-root-url)))
                 (resp/content-type "text/html")
                 (resp/status 200))
@@ -998,7 +999,7 @@
 
       (-> (resp/response
             (populate-template
-              (io/resource "runtime-client-core/auth_result.html")
+              (runtime-client-resource req "/auth_result.html")
               (if-not (= provided-csrf-token (::saml-csrf-token @app-session))
                 (assoc response-params "{{args-json}}" (json/write-str {:message "Login failed: Invalid CSRF token"}))
 

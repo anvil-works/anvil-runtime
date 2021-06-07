@@ -11,7 +11,7 @@ server_config_properties:
   - name: idp_sso_url
     type: string
     description: The Single Sign-On URL of the SAML Identity Provider
-  - name: idp_cert
+  - name: idp_signing_cert
     type: string
     description: The x509 certificate of the SAML Identity Provider
   - name: shared

@@ -27,133 +27,174 @@ description: |
   The `text` property of a TextBox can trigger write-back of data bindings. This occurs before the `lost_focus` and `pressed_enter` events.
 */
 
-module.exports = function(pyModule) {
+module.exports = (pyModule) => {
 
-	pyModule["TextBox"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
+    const { isTrue } = Sk.misceval;
 
-        var properties = PyDefUtils.assembleGroupProperties(/*!componentProps(TextBox)!2*/["layout", "text", "interaction", "appearance", "tooltip", "user data"], {
-          text: {
-            get: function get(self,e) {
-                if (self._anvil.inputType == 'number') {
-                    let r = Number.parseFloat(e.val());
-                    return isNaN(r) ? null : r;
-                } else {
-                    return e.val();
-                }
-            },
-            set: function set(s,e,v) { 
-                e.val(v); 
-                s._anvil.lastChangeVal = v;
-            },
-            allowBindingWriteback: true,
-            suggested: true,
-          },
-        });
 
-        /*!componentProp(TextBox)!1*/
-        properties.push({
-            name: "placeholder",
-            type: "string",
-            description: "The text to be displayed when the component is empty.",
-            defaultValue: "",
-            exampleValue: "Enter text here",
-            set: function(self,e,v) {
-              e.attr("placeholder", v);
-            },
-        });
-
-        /*!componentProp(TextBox)!1*/
-        properties.push({
-            name: "hide_text",
-            type: "boolean",
-            description: "Display stars instead of the text in this box",
-            defaultValue: false,
-            set: function(self,e,v) {
-                self._anvil.hiddenInput = !!v;
-                self._anvil.updateType();
-            },
-        });
-
-        /*!componentProp(TextBox)!1*/
-        properties.push({
-            name: "type",
-            type: "string",
-            enum: ["text", "number", "email", "tel", "url"],
-            description: "What type of data will be entered into this box?",
-            defaultValue: "text",
-            exampleValue: "number",
-            set: function(self,e,v) {
-                if (v != 'number' && v != 'tel' && v != 'url' && v != 'email') {
-                    v = "text";
-                }
-                self._anvil.inputType = v;
-                self._anvil.updateType();
-            }
-        });
-
-        var events = PyDefUtils.assembleGroupEvents(/*!componentEvents()!2*/ "TextBox", ["universal", "focus"]);
-
-        /*!componentEvent(TextBox)!1*/
-        events.push({name: "change", description: "When the text in this text box is edited",
-                     parameters: [], important: true});
-        /*!componentEvent(TextBox)!1*/
-        events.push({name: "pressed_enter", description: "When the user presses Enter in this text box",
-                     parameters: [], important: true, defaultEvent: true });
-
-        $loc["__init__"] = PyDefUtils.mkInit(function init(self) {
-            self._anvil.element = $('<input type="text" class="form-control to-disable anvil-text-box"/>')
-                .on("propertychange change keyup paste input", function(e) {
-                    if (e.type != "change") // Happens just before we tab away
-                        this.focus();
-                    var lc = self._anvil.element.val();
-                    if (lc != self._anvil.lastChangeVal) {
-                        self._anvil.lastChangeVal = self._anvil.element.val();
-                        PyDefUtils.raiseEventAsync({}, self, "change");
+    pyModule["TextBox"] = PyDefUtils.mkComponentCls(pyModule, "TextBox", {
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(TextBox)!2*/ ["layout", "text", "interaction", "appearance", "tooltip", "user data"], {
+            text: {
+                dataBindingProp: true,
+                get(self, e) {
+                    if (self._anvil.inputType === "number") {
+                        const r = Number.parseFloat(self._anvil.elements.input.value);
+                        return Sk.ffi.remapToPy(isNaN(r) ? null : r);
+                    } else {
+                        return new Sk.builtin.str(self._anvil.elements.input.value);
                     }
-                }).on("keydown", function(e) {
-                    if (e.which == 13) {
-                        self._anvil.dataBindingWriteback(self, "text").finally(function() {
-                            return PyDefUtils.raiseEventAsync({}, self, "pressed_enter");
-                        });
-                        e.stopPropagation();
-                        e.preventDefault();
-                    }
-                }).on("focus", function(e) {
-                    PyDefUtils.raiseEventAsync({}, self, "focus");
-                }).on("blur", function(e) {
-                    setTimeout(
-                        () => self._anvil.dataBindingWriteback(self, "text").finally(
-                            () => PyDefUtils.raiseEventAsync({}, self, "lost_focus")));
-                });
+                },
+                set(s, e, v) {
+                    v = Sk.builtin.checkNone(v) ? "" : v.toString();
+                    s._anvil.elements.input.value = v;
+                    s._anvil.lastChangeVal = v;
+                },
+                allowBindingWriteback: true,
+                suggested: true,
+            },
+            placeholder: /*!componentProp(TextBox)!1*/ {
+                name: "placeholder",
+                type: "string",
+                description: "The text to be displayed when the component is empty.",
+                defaultValue: Sk.builtin.str.$empty,
+                pyVal: true,
+                exampleValue: "Enter text here",
+                set(self, e, v) {
+                    v = Sk.builtin.checkNone(v) ? "" : v.toString();
+                    self._anvil.elements.input.setAttribute("placeholder", v);
+                },
+            },
+            hide_text: /*!componentProp(TextBox)!1*/ {
+                name: "hide_text",
+                type: "boolean",
+                description: "Display stars instead of the text in this box",
+                defaultValue: Sk.builtin.bool.false$,
+                pyVal: true,
+                set(self, e, v) {
+                    self._anvil.hiddenInput = isTrue(v);
+                    self._anvil.updateType();
+                },
+            },
+            type: /*!componentProp(TextBox)!1*/ {
+                name: "type",
+                type: "string",
+                enum: ["text", "number", "email", "tel", "url"],
+                description: "What type of data will be entered into this box?",
+                defaultValue: new Sk.builtin.str("text"),
+                pyVal: true,
+                exampleValue: "number",
+                set(self, e, v) {
+                    v = v.toString();
+                    v = ["text", "number", "tel", "url", "email"].includes(v) ? v : "text";
+                    self._anvil.inputType = v;
+                    self._anvil.updateType();
+                },
+            },
+        }),
 
-            self._anvil.inputType = 'text';
-            self._anvil.hiddenInput = false;
-            self._anvil.updateType = function() {
-                self._anvil.element.attr("type", self._anvil.hiddenInput ? "password" : self._anvil.inputType);
-            }
-            self._anvil.dataBindingProp = "text";
-        }, pyModule, $loc, properties, events, pyModule["Component"]);
+        events: PyDefUtils.assembleGroupEvents(/*!componentEvents()!2*/ "TextBox", ["universal", "focus"], {
+            change: /*!componentEvent(TextBox)!1*/ {
+                name: "change",
+                description: "When the text in this text box is edited",
+                parameters: [],
+                important: true,
+            },
+            pressed_enter: /*!componentEvent(TextBox)!1*/ {
+                name: "pressed_enter",
+                description: "When the user presses Enter in this text box",
+                parameters: [],
+                important: true,
+                defaultEvent: true,
+            },
+        }),
 
-
-        /*!defMethod(_)!2*/ "Set the keyboard focus to this TextBox"
-        $loc["focus"] = new Sk.builtin.func(function(self) {
-            self._anvil.element.trigger("focus");
-        });
-
-        /*!defMethod(_)!2*/ "Select the text in this TextBox"
-        $loc["select"] = new Sk.builtin.func(function(self, pySelectionStart, pySelectionEnd, pyDirection) {
-            if (pySelectionStart && pySelectionEnd) {
-                let selectionStart = Sk.ffi.remapToJs(pySelectionStart);
-                let selectionEnd = Sk.ffi.remapToJs(pySelectionEnd);
-                let direction = pyDirection ? Sk.ffi.remapToJs(pyDirection) : undefined;
-                self._anvil.element[0].setSelectionRange(selectionStart, selectionEnd, direction);
+        element({ hide_text, type, placeholder, text, ...props }) {
+            const outerClass = PyDefUtils.getOuterClass(props);
+            const outerStyle = PyDefUtils.getOuterStyle(props);
+            const outerAttrs = PyDefUtils.getOuterAttrs(props);
+            placeholder = Sk.builtin.checkNone(placeholder) ? "" : placeholder.toString();
+            type = type.toString();
+            text = Sk.builtin.checkNone(text) ? "" : text.toString();
+            if (isTrue(hide_text)) {
+                type = "password";
             } else {
-                self._anvil.element.trigger("select");
+                type = ["text", "number", "tel", "url", "email"].includes(type) ? type : "text";
             }
-        });
+            return (
+                <input
+                    refName="input"
+                    type={type}
+                    className={"form-control to-disable anvil-text-box " + outerClass}
+                    style={outerStyle}
+                    value={text}
+                    placeholder={placeholder}
+                    {...outerAttrs}
+                />
+            );
+        },
 
-    }, /*!defClass(anvil,TextBox,Component)!*/ 'TextBox', [pyModule["Component"]]);
+        locals($loc) {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Component"], (self) => {
+                self._anvil.element
+                    .on("propertychange change keyup paste input", function (e) {
+                        if (e.type !== "change")
+                            // Happens just before we tab away
+                            this.focus();
+                        const lc = self._anvil.elements.input.value;
+                        if (lc !== self._anvil.lastChangeVal) {
+                            self._anvil.lastChangeVal = lc;
+                            PyDefUtils.raiseEventAsync({}, self, "change");
+                        }
+                    })
+                    .on("keydown", (e) => {
+                        if (e.which == 13) {
+                            self._anvil.dataBindingWriteback(self, "text").finally(function () {
+                                return PyDefUtils.raiseEventAsync({}, self, "pressed_enter");
+                            });
+                            e.stopPropagation();
+                            e.preventDefault();
+                        }
+                    })
+                    .on("focus", function (e) {
+                        PyDefUtils.raiseEventAsync({}, self, "focus");
+                    })
+                    .on("blur", function (e) {
+                        setTimeout(() => self._anvil.dataBindingWriteback(self, "text").finally(() => PyDefUtils.raiseEventAsync({}, self, "lost_focus")));
+                    });
+
+                const type = self._anvil.props["type"].toString();
+                self._anvil.inputType = ["text", "number", "tel", "url", "email"].includes(type) ? type : "text";
+                self._anvil.hiddenInput = isTrue(self._anvil.props["hide_text"]);
+                self._anvil.updateType = () => {
+                    self._anvil.elements.input.setAttribute("type", self._anvil.hiddenInput ? "password" : self._anvil.inputType);
+                };
+            });
+
+            /*!defMethod(_)!2*/ "Set the keyboard focus to this TextBox"
+            $loc["focus"] = new Sk.builtin.func(function focus(self) {
+                // vanilla javascript doesn't dispatch this event so use jquery
+                self._anvil.element.trigger("focus");
+                return Sk.builtin.none.none$;
+            });
+
+            /*!defMethod(_)!2*/ "Select the text in this TextBox"
+            $loc["select"] = new Sk.builtin.func(function select(self, pySelectionStart, pySelectionEnd, pyDirection) {
+                if (pySelectionStart && pySelectionEnd) {
+                    let selectionStart = Sk.ffi.remapToJs(pySelectionStart);
+                    let selectionEnd = Sk.ffi.remapToJs(pySelectionEnd);
+                    let direction = pyDirection ? Sk.ffi.remapToJs(pyDirection) : undefined;
+                    self._anvil.elements.input.setSelectionRange(selectionStart, selectionEnd, direction);
+                } else {
+                    self._anvil.element.trigger("select");
+                }
+                return Sk.builtin.none.none$;
+            });
+        },
+    });
+
 };
+
+/*!defClass(anvil,TextBox,Component)!*/
 
 /*
  * TO TEST:

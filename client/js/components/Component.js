@@ -2,268 +2,363 @@
 
 var PyDefUtils = require("PyDefUtils");
 
-module.exports = function(pyModule) {
+module.exports = (pyModule) => {
+    pyModule["ComponentTag"] = Sk.misceval.buildClass(
+        pyModule,
+        ($gbl, $loc) => {
+            $loc["__serialize__"] = new Sk.builtin.func((self) => self.$d);
+            $loc["__repr__"] = new Sk.builtin.func((self) => new Sk.builtin.str("ComponentTag(" + Sk.misceval.objectRepr(self.$d) + ")"));
+        },
+        "ComponentTag",
+        []
+    );
 
-	pyModule["ComponentTag"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-        $loc["__serialize__"] = new Sk.builtin.func((self) => self.$d);
-	}, "ComponentTag", []);
+    // We use buildNativeClass to ensure that all instances of subclasses of Component follow prototypical inheritance
+    // this is enforced by python. It is the reason why you get layout conflicts when trying to inherit from str and int
+    // in javascript land the winner of __base__ is the next class on the prototypical chain
+    // having Component as a nativeClass means that a subclass of Component will always be the winner of __base__
+    // class A(Component): pass
+    // class B: pass
+    // class C(B, A): pass
+    // C.__base__ # A (A is the winer of __base__)  in javascript C instanceof Component // true
+    // an alternative would be to implement slots and give Component a __slots__ attribute. This does the same thing as above. 
+    const inDesigner = window.anvilInDesigner;
 
-	pyModule["Component"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
+    pyModule["Component"] = Sk.abstr.buildNativeClass("anvil.Component", {
+        constructor: function Component() {
+            this._anvil = {}; // note a pure instance of Component doesn't have a __dict__, all subclasses do however.
+        },
+        slots: {
+            tp$new(args, kwargs) {
+                const cls = this.constructor; // this is the prototype of an Anvil Component Class (this.prototype.tp$new)
+                const self = new cls();
+                const _anvil = (self._anvil = createAnvil(self));
 
-		// All components have a set of properties, supplied in self._anvil.propMap
-		// and self_anvil.propTypes (defaulting to empty). PyDefUtils containers
-		// convenience methods for setting up these properties, as well as
-		// generating an __init__() method that calls Component.__init__().
-		//
-		// Component.__init__() checks that only valid properties
-		// were supplied and initialises them all, and __getattr__ and __setattr__
-		// read and write those properties using the supplied 'set' and 'get'
-		// functions.
-		// As a convenience for Anvil components, the getter function will be supplied
-		// with the component's  DOM element pre-looked-up.
-		// (ie the arguments are (self, self._anvil.element))
-		// Likewise, the setter function is passed (self, element, newValue).
+                kwargs = kwargs || [];
+                const propsToInit = {};
+                for (let i = 0; i < kwargs.length; i += 2) {
+                    propsToInit[kwargs[i]] = kwargs[i + 1];
+                }
 
-		/*!defMethod(,**properties)!2*/ "You can set properties on a new component by passing them as keyword arguments. For example:\n\nx = Label(text='Hello')"
-	    $loc["__init__"] = new Sk.builtin.func(PyDefUtils.withRawKwargs(function(pyKwargs, self) {
+                const {
+                    prop$defaults: propDefaults,
+                    create$element: createElement,
+                    prop$map: propMap,
+                    prop$types: propTypes,
+                    event$types: eventTypes,
+                    layout$props: layoutPropTypes,
+                    prop$dataBinding: dataBindingProp,
+                    props$toInitialize: propsToInitialize,
+                } = self;
+                // use prototypical inheritance to get these
+                // this won't break since native classes demand prototypical inheritance
 
-	        if (arguments.length > 2) {
-	            throw new Sk.builtin.Exception("Components take only keyword arguments (eg Label(text=\"Hello\"))");
-	        }
+                const props = {};
+                Object.keys(propDefaults).forEach((propName) => {
+                    const propVal = propsToInit[propName] || propDefaults[propName];
+                    if (propVal !== undefined) {
+                        props[propName] = propVal; // we shouldn't put undefined in props see getProp
+                    }
+                });
+                props.tag = props.tag || PyDefUtils.pyCall(pyModule["ComponentTag"]);
 
-	        var a = {
-	            element: $('<div/>'),
-	            parent: null, // will be {pyObj: parent_component, remove: fn}
-	            eventTypes: {},
-	            eventHandlers: {},
-	            props: {},
-	            propTypes: [],
-	            propMap: {},
-	            layoutPropTypes: [],
-	            childLayoutProps: {},
-	            metadata: {},
-	            defaultWidth: null,
-	            onPage: false,
-	            components: [],
-				addedToPage: function() {
-					self._anvil.onPage = true;
-					self._anvil.delayAddedToPage = false;
-					return Sk.misceval.chain(undefined,
-						self._anvil.pageEvents.add || function() { },
-						PyDefUtils.raiseEventOrSuspend.bind(null, {}, self, "show")
-					);
-				},
-				removedFromPage: function() {
-					self._anvil.onPage = false;
-					return Sk.misceval.chain(undefined,
-						PyDefUtils.raiseEventOrSuspend.bind(null, {}, self, "hide"),
-						self._anvil.pageEvents.remove || function() { }
-					);
-				},
-				shownOnPage: function() {
-					if (self._anvil.onPage) {
-						return Sk.misceval.chain(undefined,
-							PyDefUtils.raiseEventOrSuspend.bind(null, {}, self, "show"),
-							self._anvil.pageEvents.show || function() { }
-						);
-					}
-				},
-	            pageEvents: {},
-	            getProp: function(name) {
-	                var prop = self._anvil.propMap[name];
-	                if (!prop) {
-	                    throw new Sk.builtin.AttributeError(self.tp$name + " component has no property called '"+name+"'");
-	                }
-	                var v;
-	                if (prop.get) {
-	                    v = prop.get(self, self._anvil.element);
-	                    v = prop.pyVal ? v : Sk.ffi.remapToPy(v);
-	                } else {
-	                	if (name in self._anvil.props) {
-		                    v = self._anvil.props[name];
-	                	} else {
-	                		v = prop.pyVal ? prop.defaultValue : Sk.ffi.remapToPy(prop.defaultValue);
-		                    if (v === undefined) {
-		                        throw new Sk.builtin.Exception(self.tp$name + " component has no value or default for property '"+name+"'");
-		                    }
-	                	}
+                _anvil.props = props;
+                _anvil.propMap = propMap;
+                _anvil.propTypes = propTypes;
+                _anvil.eventTypes = eventTypes;
+                _anvil.layoutPropTypes = layoutPropTypes;
+                _anvil.dataBindingProp = dataBindingProp;
 
-	                }
-	                return v;
-	            },
-	            getPropJS: function(name) {
-	                var prop = self._anvil.propMap[name];
-	                if (prop && prop.getJS) {
-	                    return prop.getJS(self, self._anvil.element);
-	                } else {
-	                    return Sk.ffi.remapToJs(Sk.misceval.retryOptionalSuspensionOrThrow(this.getProp(name)));
-	                }
-	            },
-	            setProp: function(name, pyValue) {
-	                var prop = self._anvil.propMap[name];
 
-	                if (!prop) {
-	                    throw new Sk.builtin.AttributeError(self.tp$name + " component has no property called '"+name+"'");
-	                }
+                // We have discussed passing self to createElement. 
+                // This would be totally reasonable, and probably be useful, but we don't need it right now.
+                const [domNode, elements] = createElement(props);
+                const element = $(domNode);
 
-	                if (pyValue === undefined) {
-	                    throw new Sk.builtin.Exception("'undefined' is not a valid Python value");
-	                }
+                _anvil.element = element
+                _anvil.elements = elements;
+                _anvil.domNode = domNode;
 
-	                if (prop.readOnly) {
-	                    throw new Sk.builtin.Exception("The '"+name+"' property for a " + self.tp$name + " is read-only");
-	                }
+                domNode.classList.add("anvil-component"); // this is a relatively slow operation
+                element.data("anvil-py-component", self);
+                // These may have already been set if we created this component in the designer, but
+                // we need to set them if we created this component at runtime. No harm setting them
+                // twice, so just do it.
 
-	                var pyOldValue = self._anvil.props[name];
-	                pyOldValue = (pyOldValue === undefined ? Sk.builtin.none.none$ : pyOldValue);
-	                self._anvil.props[name] = pyValue;
-
-	                var v;
-	                if (prop.set) {
-	                    v = prop.set(self, self._anvil.element, prop.pyVal ? pyValue : Sk.ffi.remapToJs(pyValue), prop.pyVal ? pyOldValue : Sk.ffi.remapToJs(pyOldValue));
-	                }
-	                return (v === undefined) ? Sk.builtin.none.none$ : v;
-	            },
-	            setPropJS: function(name, value) {
-	                Sk.misceval.retryOptionalSuspensionOrThrow(this.setProp(name, Sk.ffi.remapToPy(value)));
-	            },
-	            // Gets overwritten by form if this component is data-bound
-	            dataBindingWriteback: function(pyComponent, attrName, pyNewValue) { return Promise.resolve(); },
-
-	            dataBindingProp: null,
-
-	            // Ew
-	            themeColors: pyModule["Component"].$_anvilThemeColors,
-	        };
-
-			if (self._anvil) {
-				for (var i in a) {
-					if (!(i in self._anvil)) {
-						self._anvil[i] = a[i];
-					}
-				}
-			} else {
-				self._anvil = a;
-			}
-
-	        var setPropFns = [undefined];
-	        
-	        // Set all properties to their default values.
-	        for (var p in self._anvil.propMap) {
-	            var pp = self._anvil.propMap[p];
-	            if ("defaultValue" in pp && !pp.deprecated) {
-	                setPropFns.push(function(p,pp) {
-	                    return self._anvil.setProp(p, pp.pyVal ? pp.defaultValue : Sk.ffi.remapToPy(pp.defaultValue));
-	                }.bind(null, p, pp));
-	            }
-	        }
-	        self.tp$setattr(new Sk.builtin.str("tag"), Sk.misceval.callsim(pyModule['ComponentTag']));
-
-            var quietOnPropertyExceptions = false;
-	        for (var i=0; i < pyKwargs.length; i+=2) {
-	            var k = pyKwargs[i].v, pyV = pyKwargs[i+1];
-
-	            if (k == "__ignore_property_exceptions") { quietOnPropertyExceptions = true; continue; }
-
-	            var prop = self._anvil.propMap[k];
-	            if (!prop) {
-	                if (quietOnPropertyExceptions) {
-	                    console.error("No such property '"+k+"' for this component");
-	                } else {
-	                    throw new Sk.builtin.KeyError("No such property '"+k+"' for this component");
-	                }
-	            } else if (prop.readOnly) {
-	            	// Don't initialise read-only properties.
-	            } else {
-	                setPropFns.push(function(k,pyV) {
-                        if (quietOnPropertyExceptions) {
-                            return Sk.misceval.tryCatch(function() { return self._anvil.setProp(k, pyV) }, function(e) {
-                                console.error("Exception setting '",k,"' to ",pyV,":\n", e);
-                            });
+                if (propsToInitialize && propsToInitialize.length) {
+                    const fns = propsToInitialize
+                        .filter((propName) => props[propName] !== undefined)
+                        .map((propName) => () => _anvil.setProp(propName, props[propName]));
+                    fns.push(() => self);
+                    return Sk.misceval.chain(null, ...fns);
+                }
+                return self;
+            },
+            tp$init(args, kwargs) {
+                if (args.length) {
+                    throw new Sk.builtin.TypeError("Component constructor takes keyword arguments only");
+                }
+                if (inDesigner) {
+                    return;
+                }
+                kwargs = kwargs || [];
+                let __ignore_property_exceptions = false;
+                const badKwargs = [];
+                const chainFns = [];
+                const readOnly = [];
+                const props = this._anvil.props;
+                const propMap = this._anvil.propMap;
+                for (let i = 0; i < kwargs.length; i += 2) {
+                    const propName = kwargs[i];
+                    const propVal = kwargs[i + 1];
+                    if (propVal !== props[propName]) {
+                        if (propName === "__ignore_property_exceptions") {
+                            __ignore_property_exceptions = true; 
+                            // this will be true for every anvil yaml component so check this first
+                        } else if (!(propName in propMap)) {
+                            badKwargs.push(propName);
+                        } else if (propMap[propName].readOnly) {
+                            readOnly.push(propName);
                         } else {
-	                        return self._anvil.setProp(k, pyV)
+                            chainFns.push(() => this._anvil.setProp(propName, propVal))
                         }
-	                }.bind(null,k,pyV));
-	            }
-	        }
+                    }
+                }
+                if (!__ignore_property_exceptions && (badKwargs.length || readOnly.length)) {
+                    let msg = Sk.abstr.typeName(this);
+                    if (badKwargs.length) {
+                        msg += " got unexpected keyword argument(s): " + badKwargs.map((x) => "'" + x + "'").join(", "); 
+                    }
+                    if (readOnly.length) {
+                        msg += badKwargs.length ? "\n" : " ";
+                        msg += "cannot set the following readonly properties: " + readOnly.map((x) => "'" + x + "'").join(", ");
+                    }
+                    throw new Sk.builtin.TypeError(msg);
+                }
+                if (chainFns.length) {
+                    return Sk.misceval.chain(null, ...chainFns);
+                }
+            },
+        },
+        methods: {
+            /*!defBuiltinMethod(,event_name, handler_func:callable)!2*/
+            "set_event_handler": {
+                $meth: function (pyEventName, pyHandler) {
+                    const eventName = Sk.ffi.remapToJs(pyEventName);
+                    if (eventName in this._anvil.eventTypes || eventName in (this._anvil.customComponentEventTypes || {}) || eventName.match(/^x\-/)) {
+                        if (Sk.builtin.checkNone(pyHandler)) {
+                            delete this._anvil.eventHandlers[eventName];
+                        } else {
+                            this._anvil.eventHandlers[eventName] = pyHandler;
+                        }
+                    } else {
+                        throw new Sk.builtin.ValueError("Cannot set event handler for unknown event '" + eventName + "' on " + this.tp$name + " component.");
+                    }
+                },
+                $flags: { MinArgs: 2, MaxArgs: 2 },
+                $doc: "Set a function to call when the 'event_name' event happens on this component. Set handler_func to None to remove a handler.",
+            },
 
-			setPropFns.push(function() { return Sk.builtin.none.none$; });
-
-	        return Sk.misceval.chain.apply(null, setPropFns);
-	    }));
-	    $loc["__getattr__"] = new Sk.builtin.func(function(self, pyName) {
-
-	        var name = Sk.ffi.remapToJs(pyName);
-
-	        if (self._anvil && name == "parent") {
-                return self._anvil.parent ? self._anvil.parent.pyObj : Sk.builtin.none.none$;
-	        }
-
-            throw new Sk.builtin.AttributeError("'" + self.tp$name + "' object has no attribute '" + name + "'");
-	    });
-	    
-
-	    $loc["__setattr__"] = new Sk.builtin.func(function(self, pyName, pyValue) {
-
-	        if (pyName.v == "parent") {
-	            throw new Sk.builtin.AttributeError("Cannot set a '" + self.tp$name + "' component's parent this way - use 'add_component' on the container instead");
-	        }
-
-	        return Sk.builtin.object.prototype.tp$setattr.call(self, pyName, pyValue, true);
-	    });
-
-	    /*!defMethod(,event_name, handler_func:callable)!2*/ "Set a function to call when the 'event_name' event happens on this component."
-	    $loc["set_event_handler"] = new Sk.builtin.func(function(self, pyEventName, pyHandler) {
-            const eventName = Sk.ffi.remapToJs(pyEventName);
-            if (eventName in self._anvil.eventTypes || eventName in (self._anvil.customComponentEventTypes || {}) || eventName.match(/^x\-/)) {
-				if (Sk.builtin.checkNone(pyHandler)) {
-					delete self._anvil.eventHandlers[eventName];
-				} else {
-					self._anvil.eventHandlers[eventName] = pyHandler;
-				}                
-            } else {
-                throw new Sk.builtin.Exception("Cannot set event handler for unknown event '" + eventName + "' on " + self.tp$name + " component.");
+            /*!defBuiltinMethod(,event_name,**event_args)!2*/
+            "raise_event": {
+                $meth: function (args, kws) {
+                    Sk.abstr.checkOneArg("raise_event", args);
+                    const eventName = Sk.ffi.remapToJs(args[0]);
+                    kws = kws || [];
+                    const eventArgs = {};
+                    for (var i = 0; i < kws.length - 1; i += 2) {
+                        eventArgs[kws[i].toString()] = kws[i + 1];
+                    }
+                    if (eventName in this._anvil.eventTypes || eventName in (this._anvil.customComponentEventTypes || {}) || eventName.match(/^x\-/)) {
+                        return PyDefUtils.raiseEventOrSuspend(eventArgs, this, eventName);
+                    } else {
+                        throw new Sk.builtin.ValueError(
+                            "Cannot raise unknown event '" + eventName + "' on " + self.tp$name + " component. Custom events must have the 'x-' prefix."
+                        );
+                    }
+                },
+                $flags: { FastCall: true },
+                $doc: "Trigger the 'event_name' event on this component. Any keyword arguments are passed to the handler function.",
+            },
+            /*!defBuiltinMethod(_)!2*/
+            "remove_from_parent": {
+                $meth: function () {
+                    if (this._anvil.parent) {
+                        return this._anvil.parent.remove();
+                    }
+                    return Sk.builtin.none.none$;
+                },
+                $flags: { NoArgs: true },
+                $doc: "Remove this component from its parent container.",
+            },
+            /*!defBuiltinMethod(,smooth=False)!2*/
+            "scroll_into_view": {
+                $meth: function (smooth) {
+                    this._anvil.domNode.scrollIntoView({ behavior: Sk.misceval.isTrue(smooth) ? "smooth" : "instant", block: "center", inline: "center" });
+                },
+                $flags: { NamedArgs: ["smooth"], Defaults: [Sk.builtin.bool.false$] },
+                $doc: "Scroll the window to make sure this component is in view.",
+            },
+        },
+        getsets: {
+            parent: {
+                $get() {
+                    return this._anvil.parent ? this._anvil.parent.pyObj : Sk.builtin.none.none$;
+                },
+                $set() {
+                    throw new Sk.builtin.AttributeError("Cannot set a '" + this.tp$name + "' component's parent this way - use 'add_component' on the container instead");
+                },
+            },
+            __name__: {
+                $get() {
+                    return Sk.abstr.lookupSpecial(this.ob$type, Sk.builtin.str.$name);
+                },
+            },
+            tag: {
+                $get() {
+                    return this._anvil.props.tag || Sk.builtin.none.none$;
+                },
+                $set(val) {
+                    this._anvil.props.tag = val;
+                },
+                $doc: "Use this property to store any extra information about this component",
             }
-	    });
+        },
+        proto: {
+            // just use the self version
+            __serialize__: PyDefUtils.mkSerializePreservingIdentity((self) => {
+                let v = [];
+                for (let n in self._anvil.props) {
+                    v.push(new Sk.builtin.str(n), self._anvil.props[n]);
+                }
+                return new Sk.builtin.dict(v);
+            }),
 
-	    /*!defMethod(,event_name,**event_args)!2*/ "Trigger the 'event_name' event on this component. Any keyword arguments are passed to the handler function."
-	    $loc["raise_event"] = PyDefUtils.funcWithRawKwargsDict(function(eventArgs, self, pyEventName) {
-            var eventName = Sk.ffi.remapToJs(pyEventName);
-            if (eventName in self._anvil.eventTypes || eventName in (self._anvil.customComponentEventTypes || {}) || eventName.match(/^x\-/)) {
-                return PyDefUtils.raiseEventOrSuspend(eventArgs, self, eventName);
-            } else {
-                throw new Sk.builtin.Exception("Cannot raise unknown event '" + eventName + "' on " + self.tp$name + " component. Custom events must have the 'x-' prefix.");
-            }
-	    });
+            __new_deserialized__: PyDefUtils.mkNewDeserializedPreservingIdentity(),
+        },
+        flags: {
+            // Ew. This global should be somewhere else.
+            $_anvilThemeColors: {},
+            sk$klass: true // tell skulpt we can be treated like a regular klass for tp$setatttr
+        },
+    });
 
-	    /*!defMethod(_)!2*/ "Remove this component from its parent container."
-        $loc["remove_from_parent"] = new Sk.builtin.func(function(self) {
-            if (self._anvil.parent) {
-                return self._anvil.parent.remove();
-			}
-			return Sk.builtin.none.none$;
-        });
+    PyDefUtils.initComponentClassPrototype(
+        pyModule["Component"],
+        PyDefUtils.assembleGroupProperties(["user data"]),
+        [], // events
+        () => <div />, // element
+        [] // layoutProps
+    );
 
-        /*!defMethod(_)!2*/ "Scroll the window to make sure this component is in view."
-        $loc["scroll_into_view"] = new Sk.builtin.func((self, smooth) => {
-       		self._anvil.element[0].scrollIntoView({ behavior: smooth && smooth.v ? "smooth" : "instant", block: "center", inline: "center" });
-        });
+    /*!defClass(anvil,Component)!*/
+    
 
-        $loc["__serialize__"] = PyDefUtils.mkSerializePreservingIdentity((self) => {
-        	let v = [];
-        	for (let n in self._anvil.props) {
-        		v.push(new Sk.builtin.str(n), self._anvil.props[n]);
-        	}
-        	return new Sk.builtin.dict(v);
-        });
+    function createAnvil(self) {
+        let show, hide;
+        return {
+            element: null, // will be created in Component.__new__
+            domNode: null, // will be created in Component.__new__
+            elements: null, // will be a dict of {refName: domNode}
+            parent: null, // will be {pyObj: parent_component, remove: fn}
+            eventTypes: {},
+            eventHandlers: {},
+            props: {},
+            propTypes: [],
+            propMap: {},
+            layoutPropTypes: [],
+            childLayoutProps: {},
+            metadata: {},
+            defaultWidth: null,
+            onPage: false,
+            delayAddedToPage: false,
+            components: [],
+            addedToPage() {
+                show = show || PyDefUtils.raiseEventOrSuspend.bind(null, {}, self, "show");
+                self._anvil.onPage = true;
+                self._anvil.delayAddedToPage = false;
+                return Sk.misceval.chain(null, self._anvil.pageEvents.add || (() => {}), show);
+            },
+            removedFromPage() {
+                hide = hide || PyDefUtils.raiseEventOrSuspend.bind(null, {}, self, "hide");
+                self._anvil.onPage = false;
+                return Sk.misceval.chain(hide(), self._anvil.pageEvents.remove || (() => {}));
+            },
+            shownOnPage() {
+                if (self._anvil.onPage) {
+                    show = show || PyDefUtils.raiseEventOrSuspend.bind(null, {}, self, "show");
+                    return Sk.misceval.chain(show(), self._anvil.pageEvents.show || (() => {}));
+                }
+            },
+            pageEvents: {},
+            getProp(name) {
+                var prop = self._anvil.propMap[name];
+                if (!prop) {
+                    throw new Sk.builtin.AttributeError(self.tp$name + " component has no property called '" + name + "'");
+                }
+                var v;
+                if (prop.get) {
+                    v = prop.get(self, self._anvil.element);
+                    v = prop.pyVal ? v : Sk.ffi.remapToPy(v);
+                } else {
+                    if (name in self._anvil.props) {
+                        v = self._anvil.props[name];
+                    } else {
+                        v = prop.pyVal ? prop.defaultValue : Sk.ffi.remapToPy(prop.defaultValue);
+                        if (v === undefined) {
+                            throw new Sk.builtin.ValueError(self.tp$name + " component has no value or default for property '" + name + "'");
+                        }
+                    }
+                }
+                return v;
+            },
+            getPropJS(name) {
+                var prop = self._anvil.propMap[name];
+                if (prop && prop.getJS) {
+                    return prop.getJS(self, self._anvil.element);
+                } else {
+                    return Sk.ffi.remapToJs(Sk.misceval.retryOptionalSuspensionOrThrow(this.getProp(name)));
+                }
+            },
+            setProp(name, pyValue) {
+                var prop = self._anvil.propMap[name];
 
-		$loc["__new_deserialized__"] = PyDefUtils.mkNewDeserializedPreservingIdentity();
+                if (!prop) {
+                    throw new Sk.builtin.AttributeError(self.tp$name + " component has no property called '" + name + "'");
+                }
 
-		$loc["__name__"] = new Sk.builtin.property(new Sk.builtin.func((self) => Sk.abstr.lookupSpecial(self.ob$type, Sk.builtin.str.$name)));
+                if (pyValue === undefined) {
+                    throw new Sk.builtin.ValueError("'undefined' is not a valid Python value");
+                }
 
-	}, /*!defClass(anvil)!1*/ "Component", []);
-	// Ew. This global should be somewhere else.
-	pyModule["Component"].$_anvilThemeColors = {};
+                if (prop.readOnly) {
+                    throw new Sk.builtin.AttributeError("The '" + name + "' property for a " + self.tp$name + " is read-only");
+                }
+
+                var pyOldValue = self._anvil.props[name];
+                pyOldValue = pyOldValue === undefined ? Sk.builtin.none.none$ : pyOldValue;
+                self._anvil.props[name] = pyValue;
+
+                var v;
+                if (prop.set) {
+                    v = prop.set(self, self._anvil.element, prop.pyVal ? pyValue : Sk.ffi.remapToJs(pyValue), prop.pyVal ? pyOldValue : Sk.ffi.remapToJs(pyOldValue));
+                }
+                return v === undefined ? Sk.builtin.none.none$ : v;
+            },
+            setPropJS(name, value) {
+                Sk.misceval.retryOptionalSuspensionOrThrow(this.setProp(name, Sk.ffi.remapToPy(value)));
+            },
+            // Gets overwritten by form if this component is data-bound
+            dataBindingWriteback(pyComponent, attrName, pyNewValue) {
+                return Promise.resolve();
+            },
+
+            dataBindingProp: null,
+
+            // Ew
+            themeColors: pyModule["Component"].$_anvilThemeColors,
+        };
+    }
 };
 
 /*
@@ -272,3 +367,4 @@ module.exports = function(pyModule) {
  *  - Methods: set_event_handler, raise_event, remove_from_parent
  *
  */
+

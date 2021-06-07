@@ -51,12 +51,28 @@ description: |
     explicitly set to the timezone of the user's browser.
 */
 
-module.exports = function(pyModule) {
+module.exports = (pyModule) => {
 
-    var datetime = Sk.importModule("datetime");
+    const datetime = Sk.importModule("datetime");
+    const {isTrue} = Sk.misceval;
+    const {checkString} = Sk.builtin;
+
+    const dateStr = new Sk.builtin.str("date");
+    const datetimeStr = new Sk.builtin.str("datetime");
+    const pyDatetime = datetime.tp$getattr(datetimeStr);
+    const pyDate = datetime.tp$getattr(dateStr);
+    const strftimeStr = new Sk.builtin.str("strftime");
+
+    const tz = {
+        get tzoffset() {
+            delete this.tzoffset;
+            const tz = PyDefUtils.getModule("anvil.tz");
+            return (this.tzoffset = tz.tp$getattr(new Sk.builtin.str("tzoffset")));
+        },
+    };
 
     // See http://momentjs.com/docs/#/displaying/format/
-    var pythonformatToMomentJS = {
+    const pythonformatToMomentJS = {
         "%a": "ddd",
         "%A": "dddd",
         "%b": "MMM",
@@ -81,52 +97,42 @@ module.exports = function(pyModule) {
         "%%": "%",
     };
 
-    var convertFormat = function(f) {
-        for (var k in pythonformatToMomentJS) {
-            f = f.replace(new RegExp(k, "g"), pythonformatToMomentJS[k])
+    const formatRegex = /%[aAbBcdHIjmMpSUwWxXyYZ%]/g
+
+    const convertFormat = (f) => f.replace(formatRegex, (match) => pythonformatToMomentJS[match]);
+
+    // Takes a string or a date or a datetime and converts into a moment().
+    const propValToMoment = (v, props, format) => {
+        if (!isTrue(v)) {
+            return null;
+        } else if (checkString(v)) {
+            const date = v.toString();
+            if (date === "now") {
+                return moment();
+            } else {
+                return moment(date, [format, moment.ISO_8601]);
+            }
+        } else if (v instanceof pyDatetime) {
+            if (!isTrue(props["pick_time"])) {
+                throw new Sk.builtin.ValueError("Cannot display a datetime object on a DatePicker without setting pick_time to True.");
+            }
+            const strftime = v.tp$getattr(strftimeStr);
+            const pyStr = PyDefUtils.pyCall(strftime, [new Sk.builtin.str("%Y-%m-%d %H:%M:%S.%f%z")]);
+            return moment(pyStr.toString());
+        } else if (v instanceof pyDate) {
+            const strftime = v.tp$getattr(strftimeStr);
+            const pyStr = PyDefUtils.pyCall(strftime, [new Sk.builtin.str("%Y-%m-%d")]);
+            return moment(pyStr.toString());
         }
-        return f;
     }
 
-    var updatePicker = function(self, e) {
-        var props = self._anvil.props;
-        var picker = e.find("input");
 
-        if (props['pick_time'] && Sk.ffi.remapToJs(props['pick_time'])) {
-            var defaultFormat = "%c"
-        } else {
-            var defaultFormat = "%x"
-        }
-
-        var format = convertFormat(props['format'] ? Sk.ffi.remapToJs(props['format']) || defaultFormat : defaultFormat);
-
-        // Takes a string or a date or a datetime and converts into a moment().
-        var propValToMoment = function(v) {
-            if (v == "" || v == null || Sk.ffi.remapToJs(v) == "" || v == Sk.builtin.none.none$) {
-                return null;
-            } else if (v instanceof Sk.builtin.str) {
-                var date = Sk.ffi.remapToJs(v);
-                if (date == "now") {
-                    return moment();
-                } else {
-                    return moment(date, [format, moment.ISO_8601]);
-                }
-            } else if (Sk.misceval.isTrue(Sk.builtin.isinstance(v, datetime.tp$getattr(new Sk.builtin.str("datetime"))))) {
-                if (!props['pick_time'].v) {
-                    throw new Sk.builtin.Exception("Cannot display a datetime object on a DatePicker without setting pick_time to True.")
-                }
-                var strftime = v.tp$getattr(new Sk.builtin.str("strftime"));
-                var pyStr = Sk.misceval.callsim(strftime, Sk.ffi.remapToPy("%Y-%m-%d %H:%M:%S.%f%z"));
-                return moment(Sk.ffi.remapToJs(pyStr));
-            } else if (Sk.misceval.isTrue(Sk.builtin.isinstance(v, datetime.tp$getattr(new Sk.builtin.str("date"))))) {
-                var strftime = v.tp$getattr(new Sk.builtin.str("strftime"));
-                var pyStr = Sk.misceval.callsim(strftime, Sk.ffi.remapToPy("%Y-%m-%d"));
-                return moment(Sk.ffi.remapToJs(pyStr));
-            }
-        }
-
-        var minDate = propValToMoment(props['min_date']);
-        var maxDate = propValToMoment(props['max_date']);
+    function updatePicker(self) {
+        const props = self._anvil.props;
+        const defaultFormat = isTrue(props["pick_time"]) ? "%c" : "%x";
+        const format = convertFormat(props["format"].toString() || defaultFormat);
+        const minDate = propValToMoment(props["min_date"], props, format);
+        const maxDate = propValToMoment(props["max_date"], props, format);
 
         self._anvil.pickerConfig = {
             timePicker24Hour: true,
@@ -143,7 +149,7 @@ module.exports = function(pyModule) {
             locale: {
                 format: format,
             },
-            timePicker: props['pick_time'] && Sk.ffi.remapToJs(props['pick_time']),
+            timePicker: isTrue(props["pick_time"]),
 
             // We should probably expose properties for the following.
             singleDatePicker: true,
@@ -151,25 +157,25 @@ module.exports = function(pyModule) {
             timePickerIncrement: 1,
         };
 
-        picker.val('');
+        const picker = self._anvil.picker;
+
+        picker.val("");
         picker.daterangepicker(self._anvil.pickerConfig);
         picker.off("apply.daterangepicker");
-        picker.on("apply.daterangepicker", function(e) {
+        picker.on("apply.daterangepicker", function (e) {
             self._anvil.dateMoment = $(e.target).data("daterangepicker").startDate;
-            self._anvil.dataBindingWriteback(self, "date").finally(function() {
+            self._anvil.dataBindingWriteback(self, "date").finally(() => {
                 picker.val(self._anvil.dateMoment.format(format));
                 return PyDefUtils.raiseEventAsync({}, self, "change");
             });
         });
         picker.off("change");
-        picker.on("change", function() {
-            self._anvil.dateMoment = picker.val() == "" ? null : picker.data("daterangepicker").startDate;
-            self._anvil.dataBindingWriteback(self, "date").finally(function() {
-                return PyDefUtils.raiseEventAsync({}, self, "change");
-            })
+        picker.on("change", () => {
+            self._anvil.dateMoment = picker.val() === "" ? null : picker.data("daterangepicker").startDate;
+            self._anvil.dataBindingWriteback(self, "date").finally(() => PyDefUtils.raiseEventAsync({}, self, "change"));
         });
 
-        self._anvil.dateMoment = propValToMoment(props['date']);
+        self._anvil.dateMoment = propValToMoment(props["date"], props, format);
         if (self._anvil.dateMoment) {
             picker.data("daterangepicker").setStartDate(self._anvil.dateMoment);
             picker.data("daterangepicker").setEndDate(self._anvil.dateMoment);
@@ -177,160 +183,196 @@ module.exports = function(pyModule) {
         }
     }
 
-	pyModule["DatePicker"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-
-
-        var properties = PyDefUtils.assembleGroupProperties(/*!componentProps(DatePicker)!2*/["text", "layout", "interaction", "appearance", "tooltip", "user data"], {
+    pyModule["DatePicker"] = PyDefUtils.mkComponentCls(pyModule, "DatePicker", {
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(DatePicker)!2*/ ["text", "layout", "interaction", "appearance", "tooltip", "user data"], {
             foreground: {
-                set: (s,e,v) => {
-                    let m = (""+v).match(/^theme:(.*)$/);
-                    if (m) {
-                        v = s._anvil.themeColors[m[1]] || '';
-                    }
-                    e.find("input,i").css("color", v);
-                }
+                set: (s, e, v) => {
+                    s._anvil.elements.input.style.color = s._anvil.elements.icon.style.color = PyDefUtils.getColor(v);
+                },
             },
             background: {
-                set: (s,e,v) => {
-                    let m = (""+v).match(/^theme:(.*)$/);
-                    if (m) {
-                        v = s._anvil.themeColors[m[1]] || '';
-                    }
-                    e.find("input").css("background", v);
-                }
+                set: (s, e, v) => {
+                    s._anvil.elements.input.style.background = PyDefUtils.getColor(v);
+                },
             },
             font_size: {
-                set: (s,e,v) => {
-                    e.find("input").addBack().css("font-size", (typeof(v) == "number") ? (""+v+"px") : "");
-                }
+                set(s, e, v) {
+                    v = Sk.ffi.remapToJs(v);
+                    s._anvil.picker.addBack().css("font-size", typeof v === "number" ? v + "px" : "");
+                },
             },
             align: {
-                set: (s,e,v) => {
-                    e.find("input").css("text-align", v).removeClass("align-left align-center align-right");
-                    if (["left","center","right"].indexOf(v) > -1) {
-                        e.find("input").addClass("align-"+v);
+                set(s, e, v) {
+                    v = v.toString();
+                    const input = s._anvil.elements.input;
+                    input.classList.remove("align-left", "align-center", "align-right");
+                    input.style.textAlign = v;
+                    if (["left", "center", "right"].includes(v)) {
+                        input.classList.add("align-" + v);
                     }
-                }
-            }
-        });
-
-        properties = properties.filter(p => p.name != "text");
-
-
-        /*
-         * timePickerIncrement minute_increment (5)
-        /*
-
-        /*!componentProp(DatePicker)!1*/
-        properties.push({
-            name: "date",
-            type: "string",
-            description: "The date selected on this component.",
-            defaultValue: "",
-            exampleValue: "2001-01-01 14:57",
-            allowBindingWriteback: true,
-            suggested: true,
-            pyVal: true,
-            set: function(s, e, v) { updatePicker(s, e); },
-            get: function(self, e) {
-
-                if (!self._anvil.dateMoment || self._anvil.dateMoment == Sk.builtin.none.none$) {
-                    return Sk.builtin.none.none$;
-                }
-
-                var dateArray = self._anvil.dateMoment.toArray();
-                dateArray[6] *= 1000; // Python works in microseconds, momentJS works in milliseconds.
-                dateArray[1] += 1; // Python months are 0-indexed
-
-                // The datePicker gives us moments that are already in the timezone of the browser.
-                var tz = PyDefUtils.getModule("anvil.tz");
-                var tzinfo = Sk.misceval.call(tz.tp$getattr(new Sk.builtin.str("tzoffset")), undefined, undefined, ["minutes", Sk.ffi.remapToPy(self._anvil.dateMoment.utcOffset())]);
-
-                if (Sk.ffi.remapToJs(self._anvil.props['pick_time'])) {
-                    return Sk.misceval.apply(datetime.tp$getattr(new Sk.builtin.str("datetime")), undefined, undefined, undefined, Sk.ffi.remapToPy(dateArray).v.concat([tzinfo]));
-                } else {
-                    return Sk.misceval.apply(datetime.tp$getattr(new Sk.builtin.str("date")), undefined, undefined, undefined, Sk.ffi.remapToPy(dateArray.slice(0,3)).v);
-                }
+                },
             },
-            getJS: function(self, e) {
-                return Sk.ffi.remapToJs(self._anvil.props['date']);
+            text: {
+                omit: true,
             },
-        });
+            enabled: {
+                set(s, e, v) {
+                    v = !isTrue(v);
+                    s._anvil.elements.input.disabled = v;
+                    s._anvil.elements.icon.classList.toggle("anvil-disabled", v);
+                },
+            },
+            date: /*!componentProp(DatePicker)!1*/ {
+                name: "date",
+                type: "string",
+                description: "The date selected on this component.",
+                defaultValue: Sk.builtin.str.$empty,
+                exampleValue: "2001-01-01 14:57",
+                allowBindingWriteback: true,
+                dataBindingProp: true,
+                suggested: true,
+                pyVal: true,
+                set(s, e, v) {
+                    updatePicker(s, e);
+                },
+                get(self, e) {
+                    if (!self._anvil.dateMoment || self._anvil.dateMoment === Sk.builtin.none.none$) {
+                        return Sk.builtin.none.none$;
+                    }
 
-        /*!componentProp(DatePicker)!1*/
-        properties.push({
-            name: "format",
-            type: "string",
-            description: "The format in which to display the selected date.",
-            defaultValue: "",
-            exampleValue: "%Y-%m-%d, %H:%M",
-            set: function(s, e, v) { updatePicker(s, e); },
-        });
+                    const dateArray = self._anvil.dateMoment.toArray();
+                    dateArray[6] *= 1000; // Python works in microseconds, momentJS works in milliseconds.
+                    dateArray[1] += 1; // Python months are 0-indexed
 
-        /*!componentProp(DatePicker)!1*/
-        properties.push({
-            name: "pick_time",
-            type: "boolean",
-            description: "Whether the user should be able to select a time as well as a date",
-            defaultValue: false,
-            exampleValue: true,
-            set: function(s, e, v) { updatePicker(s, e); },
-        });
+                    // The datePicker gives us moments that are already in the timezone of the browser.
+                    if (isTrue(self._anvil.props["pick_time"])) {
+                        const tzinfo = PyDefUtils.pyCall(tz.tzoffset, [], ["minutes", Sk.ffi.remapToPy(self._anvil.dateMoment.utcOffset())]);
+                        dateArray.push(tzinfo);
+                        return PyDefUtils.pyCall(
+                            pyDatetime,
+                            dateArray.map((x) => Sk.ffi.remapToPy(x))
+                        );
+                    } else {
+                        return PyDefUtils.pyCall(
+                            pyDate,
+                            dateArray.slice(0, 3).map((x) => Sk.ffi.remapToPy(x))
+                        );
+                    }
+                },
+                getJS(self, e) {
+                    return Sk.ffi.remapToJs(self._anvil.props["date"]);
+                },
+            },
 
-        /*!componentProp(DatePicker)!1*/
-        properties.push({
-            name: "min_date",
-            type: "string",
-            description: "The minimum date the user can select.",
-            defaultValue: "",
-            exampleValue: "1995-07-31",
-            set: function(s, e, v) { updatePicker(s, e); },
-        });
+            /*!componentProp(DatePicker)!1*/
+            format: {
+                name: "format",
+                type: "string",
+                description: "The format in which to display the selected date.",
+                defaultValue: Sk.builtin.str.$empty,
+                pyVal: true,
+                exampleValue: "%Y-%m-%d, %H:%M",
+                set(s, e, v) {
+                    updatePicker(s);
+                },
+            },
 
-        /*!componentProp(DatePicker)!1*/
-        properties.push({
-            name: "max_date",
-            type: "string",
-            description: "The maximum date the user can select.",
-            defaultValue: "",
-            exampleValue: "2020-12-31",
-            set: function(s, e, v) { updatePicker(s, e); },
-        });
+            /*!componentProp(DatePicker)!1*/
+            pick_time: {
+                name: "pick_time",
+                type: "boolean",
+                description: "Whether the user should be able to select a time as well as a date",
+                defaultValue: Sk.builtin.bool.false$,
+                pyVal: true,
+                exampleValue: true,
+                set(s, e, v) {
+                    updatePicker(s);
+                },
+            },
 
-        /*!componentProp(DatePicker)!1*/
-        properties.push({
-            name: "placeholder",
-            type: "string",
-            description: "A string to display when the DatePicker is empty.",
-            defaultValue: "",
-            exampleValue: "Choose a date",
-            set: function(s, e, v) { e.find("input.placehold-this").attr("placeholder", v || null); },
-        });
+            /*!componentProp(DatePicker)!1*/
+            min_date: {
+                name: "min_date",
+                type: "string",
+                description: "The minimum date the user can select.",
+                defaultValue: Sk.builtin.str.$empty,
+                pyVal: true,
+                exampleValue: "1995-07-31",
+                set(s, e, v) {
+                    updatePicker(s);
+                },
+            },
 
+            /*!componentProp(DatePicker)!1*/
+            max_date: {
+                name: "max_date",
+                type: "string",
+                description: "The maximum date the user can select.",
+                defaultValue: Sk.builtin.str.$empty,
+                exampleValue: "2020-12-31",
+                set(s, e, v) {
+                    updatePicker(s);
+                },
+            },
 
-        var events = PyDefUtils.assembleGroupEvents(/*!componentEvents()!2*/ "DatePicker", ["universal"]);
+            /*!componentProp(DatePicker)!1*/
+            placeholder: {
+                name: "placeholder",
+                type: "string",
+                description: "A string to display when the DatePicker is empty.",
+                defaultValue: Sk.builtin.str.$empty,
+                exampleValue: "Choose a date",
+                set(s, e, v) {
+                    s._anvil.elements.input.setAttribute("placeholder", isTrue(v) ? v.toString() : "");
+                },
+            },
+        }),
 
-        /*!componentEvent(DatePicker)!1*/
-        events.push({name: "change", description: "When the selected date changes",
-                     parameters: [], important: true, defaultEvent: true});
+        events: PyDefUtils.assembleGroupEvents(/*!componentEvents()!2*/ "DatePicker", ["universal"], {
+            change: /*!componentEvent(DatePicker)!1*/ {
+                name: "change",
+                description: "When the selected date changes",
+                parameters: [],
+                important: true,
+                defaultEvent: true,
+            },
+        }),
 
+        element({ background, align, placeholder, foreground, font_size, ...props }) {
+            placeholder = isTrue(placeholder) ? placeholder.toString() : "";
+            const color = isTrue(foreground) ? "color: " + PyDefUtils.getColor(foreground) + ";" : "";
+            const inputStyle = PyDefUtils.getOuterStyle({ background, align, foreground, font_size });
+            const inputClass = PyDefUtils.getOuterClass({ align });
+            const inputAttrs = !isTrue(props.enabled) ? {disabled: ""} : {};
+            const iconClass = !isTrue(props.enabled) ? " anvil-disabled" : "";
+            return (
+                <PyDefUtils.OuterElement className="anvil-datepicker" {...{ font_size, ...props }}>
+                    <input refName="input" className={"form-control to-disable placehold-this " + inputClass} style={inputStyle + color} placeholder={placeholder} {...inputAttrs}/>
+                    <i refName="icon" className={"fa fa-calendar" + iconClass} style={color}/>
+                </PyDefUtils.OuterElement>
+            );
+        },
 
-		$loc["__init__"] = PyDefUtils.mkInit(function init(self) {
-            self._anvil.pickerConfig = { };
-            self._anvil.element = $('<div class="anvil-datepicker" />')
-                .append($('<input type="text" class="form-control to-disable placehold-this"/>'))
-                .append($('<i class="fa fa-calendar" />').on("click", function() {
-                    self._anvil.element.find("input").trigger("focus");
-                }));
+        locals($loc) {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Component"], (self) => {
+                self._anvil.picker = $(self._anvil.elements.input);
+                self._anvil.elements.icon.addEventListener("click", () => {
+                    if (isTrue(self._anvil.getProp("enabled"))) {
+                        self._anvil.picker.trigger("focus");
+                    }
+                });
+                self._anvil.pickerConfig = {};
 
-            self._anvil.dataBindingProp = "date";
-        }, pyModule, $loc, properties, events, pyModule["Component"]);
+                updatePicker(self);
+            });
 
-        /*!defMethod(_)!2*/ "Set the keyboard focus to this component"
-        $loc["focus"] = new Sk.builtin.func(function(self) {
-            self._anvil.element.find("input").trigger("focus");
-        });
+            $loc["focus"] = new Sk.builtin.func(function focus(self) {
+                self._anvil.picker.trigger("focus");
+                return Sk.builtin.none.none$;
+            });
+        },
+    });
 
-
-    }, /*!defClass(anvil,DatePicker,Component)!*/ 'DatePicker', [pyModule["Component"]]);
 };
+
+/*!defClass(anvil,DatePicker,Component)!*/

@@ -2,20 +2,28 @@
 
 var PyDefUtils = require("PyDefUtils");
 
-module.exports = function(pyModule) {
-
-	pyModule["InvalidComponent"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-
-		var properties = [
-			{name: "text", set: function(s,e,v) { e.find(".err").text(v); }},
-			{name: "width", get: function(s,e) { return "default"; }},
-		];
-
-		$loc["__init__"] = PyDefUtils.mkInit(function init(self) {
-            self._anvil.element = $('<div class="invalid-component"><i class="glyphicon glyphicon-remove"></i><div class="err"></div></div>');
-        }, pyModule, $loc, properties, {}, pyModule["Component"]);
-
-    }, 'InvalidComponent', [pyModule["Component"]]);
+module.exports = (pyModule) => {
+    pyModule["InvalidComponent"] = PyDefUtils.mkComponentCls(pyModule, "InvalidComponent", {
+        properties: [
+            {
+                name: "text",
+                pyVal: true,
+                defaultValue: Sk.builtin.str.$empty,
+                set(s, e, v) {
+                    v = Sk.builtin.checkNone(v) ? "" : v.toString();
+                    s._anvil.elements.err.textContent = v;
+                },
+            },
+        ],
+        element: ({ text }) => (
+            <div refName="outer" className="invalid-component">
+                <i refName="icon" className="glyphicon glyphicon-remove"></i>
+                <div refName="err" className="err">
+                    {text.toString()}
+                </div>
+            </div>
+        ),
+    });
 };
 
 /*

@@ -10,10 +10,11 @@
             [clj-logging-config.log4j]
             digest
             [anvil.metrics :as metrics]
-            [hiccup.util :as hiccup-util])
+            [hiccup.util :as hiccup-util]
+            [clojure.java.io :as io])
   (:import (com.google.common.net InternetDomainName)))
 
-;;(clj-logging-config.log4j/set-logger! :level :info)
+;;(clj-logging-config.log4j/set-logger! :level :trace)
 
 
 (defn client-info-from-request [session-type req]
@@ -80,6 +81,14 @@
 
 
 (defn- session-matches? [{:keys [environment] :as req} existing-session]
+  (log/trace "Session match?"
+             [(:app-id @existing-session)
+              (:app-id req)
+              (= (:app-id req) (:app-id @existing-session))]
+             "second set"
+             [(not environment)                             ; Some requests allegedly don't have an environment, e.g. OAuth callbacks
+              (:env_id environment)
+              (:env_id (:environment @existing-session))])
   (and existing-session
        ; If we're using an existing session, make sure its app-id matches this request.
        (or (not (:app-id @existing-session))
@@ -119,6 +128,10 @@
 (defn request-with-session-by-url-token-when-valid [req session-id supplied-token]
   (when-let [app-session (and session-id supplied-token (get @app-sessions session-id))]
     (let [{:keys [url-token temporary-url-tokens]} @app-session]
+      (log/trace "Checking URL token" supplied-token "against possibilities:" url-token temporary-url-tokens)
+      (log/trace [(and url-token (= (util/sha-256 url-token) (util/sha-256 supplied-token)))
+                  (some #(= (util/sha-256 %) (util/sha-256 supplied-token)) temporary-url-tokens)]
+                 "match?" (session-matches? req app-session))
       (when (and (or (and url-token (= (util/sha-256 url-token) (util/sha-256 supplied-token)))
                      (some #(= (util/sha-256 %) (util/sha-256 supplied-token)) temporary-url-tokens))
                  (session-matches? req app-session))
@@ -266,16 +279,24 @@
     (reduce (fn [^String content [^String k ^String v]] (.replace content k ^String (or v "")))
             content substitutions)))
 
-(defn serve-templated-html [req resource substitutions]
-  (-> (populate-template resource (assoc substitutions
-                                    "{{canonical-url}}" (hiccup-util/escape-html (:app-origin req))
-                                    "{{cdn-origin}}" conf/static-root-url
-                                    "{{app-origin}}" (hiccup-util/escape-html (:app-origin req))))
-      (resp/response)
-      (resp/content-type "text/html")))
-
 (defn with-assert-app-id [handler]
   (fn [req]
     (assert (contains? req :app-id))
     (assert (contains? req :app-info))
     (handler req)))
+
+(defonce runtime-client-resource (fn
+                               ([req path] (runtime-client-resource req "runtime-client-core" path))
+                               ([req prefix path] (io/resource (str prefix path)))))
+
+(defonce get-static-origin (fn [req] conf/static-root-url))
+
+(defn serve-templated-html [req resource substitutions]
+  (-> (populate-template resource (assoc substitutions
+                                    "{{canonical-url}}" (hiccup-util/escape-html (:app-origin req))
+                                    "{{cdn-origin}}" (get-static-origin req)
+                                    "{{app-origin}}" (hiccup-util/escape-html (:app-origin req))))
+      (resp/response)
+      (resp/content-type "text/html")))
+
+(def set-hooks! (util/hook-setter #{runtime-client-resource get-static-origin}))

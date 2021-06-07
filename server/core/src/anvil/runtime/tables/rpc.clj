@@ -22,7 +22,7 @@
            (java.io ByteArrayOutputStream)
            (org.postgresql.util PSQLException)))
 
-(clj-logging-config.log4j/set-logger! :level :info)
+(clj-logging-config.log4j/set-logger! :level :warn)
 
 (def TRow)
 
@@ -92,7 +92,7 @@
   (let [reconstitute-with-permissions (fn [live-object-map]
                                         (when live-object-map
                                           (let [live-object-map (update-in live-object-map [:methods] (fn [m] (or m (when (= (:backend live-object-map "anvil.tables.Row"))
-                                                                                                                      (log/warn "****** Live object without methods!" (pr-str *reinflating-los*))
+                                                                                                                      #_(log/warn "****** Live object without methods!" (pr-str *reinflating-los*))
                                                                                                                       ["__anvil_iter_page__" "__getitem__" "update" "get_id" "__setitem__" "delete" "set"]))))
                                                 lo (live-objects/load-LiveObjectProxy live-object-map {:permitted-live-object-backends #{"anvil.tables.Row"}})]
                                             (if (and (= (:backend lo) "anvil.tables.Row")
@@ -933,27 +933,18 @@
                                                                                      :mime-type "text/csv", :name "download.csv"}
                                                                                     rpc-util/*req*)))})
 
-(defn- transform-err [^SQLException e]
-  (log/debug e)
-  (if (= "40001" (.getSQLState e))
-    (general-tables-error "Another transaction has changed this data; aborting"
-                          "anvil.tables.TransactionConflict")
-    e))
+
 
 (defn- wrap-native-fn [f]
-  (rpc-util/wrap-native-fn #(try
-                              (apply f %&)
-                              (catch SQLException e
-                                (throw+ (transform-err e))))
+  (rpc-util/wrap-native-fn #(tables-util/with-transform-err
+                              (apply f %&))
                            :db-time))
 
 (defn- add-sql-error-transformation-to-live-object-backend [method-map]
   (into {}
         (for [[name f] method-map]
-          [name #(try
-                   (apply f %&)
-                   (catch SQLException e
-                     (throw+ (transform-err e))))])))
+          [name #(tables-util/with-transform-err
+                   (apply f %&))])))
 
 
 (defn- wrap-live-object-backend [method-map]

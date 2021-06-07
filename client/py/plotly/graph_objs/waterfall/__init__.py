@@ -48,6 +48,11 @@ class Totals(WrappedObject):
     _name = "Totals"
     _module = "plotly.graph_objs.waterfall"
 
+@serializable_type
+class Transform(WrappedObject):
+    _name = "Transform"
+    _module = "plotly.graph_objs.waterfall"
+
 
 __all__ = [
     'Connector',
@@ -59,6 +64,7 @@ __all__ = [
     'Stream',
     'Textfont',
     'Totals',
+    'Transform',
     'connector',
     'decreasing',
     'hoverlabel',

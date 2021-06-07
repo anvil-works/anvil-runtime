@@ -188,7 +188,7 @@ else:
         panel = LinearPanel()
 
         email_box = TextBox(placeholder="Email address", text=initial_email)
-        panel.add_component(Label(text="To receive a login link by email, enter your registered email address"))
+        panel.add_component(Label(text="Enter your registered email address, and we will send you a \"magic link\" by email that will log you in."))
         panel.add_component(email_box)
 
         def show(**e):
@@ -495,7 +495,7 @@ else:
 
         if get_client_config().get("use_token", False):
             some_method_available = True
-            b = Link(text="Log in via email", icon="fa:envelope", icon_align="left", align="center")
+            b = Link(text="Send a login link by email", icon="fa:envelope", icon_align="left", align="center")
             b.set_event_handler('click', lambda **e: lp.raise_event('x-close-alert', value='email_token'))
             lp.add_component(b)
 

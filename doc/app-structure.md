@@ -385,6 +385,16 @@ If you're using the Users Service, user accounts are stored in a Data Table, con
 
 The Users service supports a number of [sign-in methods](https://anvil.works/docs/users/authentication_choices). These are configured using `client_config` in the `anvil.yaml` entry. The `server_config` tells the database which of your Data Tables should be used to store user accounts. By convention, this should be "users".
 
+In some configurations, the Users Service will send emails to users (for example, to confirm ownership of an email address). You can optionally configure the address from which these messages are sent by configuring `email_from_address`, and the content of these messages with `email_content`. The email identifiers are:
+
+ - `confirm_address` - Confirm ownership of the email address for a new account (parameterised by `{{confirm_link}}`, the link to click). Sent when `use_email` and `allow_signup` are enabled in `client_config`.
+
+ - `reset_password` - Reset the password for an account by email (parameterised by `{{reset_link}}`, the link to click, and `{{email}}`, the email address). Sent when `use_email` is enabled in `client_config`.
+
+ - `token_login` - Log in with a "magic link", aka "passwordless" login. Sent when `use_token` is enabled in `client_config`.
+
+ - `mfa_reset` - Reset a user's two-factor authentication device by email. Sent when `allow_mfa_email_reset` is enabled in `client_config`.
+
 Here's an example entry in `anvil.yaml`, produced by enabling the Users Service in the online IDE. It adds and configures the User Service (the Data Tables service is required to use the Users service):
 
 ```
@@ -393,10 +403,34 @@ services:
   client_config: {}
   server_config: {auto_create_missing_columns: false}
 - source: /runtime/services/anvil/users.yml
-  client_config: {use_microsoft: false, require_secure_passwords: true, share_login_status: true,
-    use_email: true, allow_remember_me: true, allow_signup: true, enable_automatically: true,
-    confirm_email: true, remember_me_days: 7, use_google: false, use_facebook: false}
-  server_config: {user_table: 'users'}
+  client_config: {require_secure_passwords: true, share_login_status: true,
+    use_email: true, use_token: true, allow_remember_me: true, allow_signup: true,
+    enable_automatically: true, confirm_email: true, require_mfa: true, mfa_timeout_days: 30,
+    remember_me_days: 7, use_google: false, use_facebook: false, use_microsoft: false, use_saml: false}
+  server_config: 
+    user_table: 'users'
+    email_from_address: something@my-domain.com
+    email_content:
+      token_login:
+        subject: "My App Login"
+        html: "<p>Hi there,<p>A login request was received for your account ({{email}}). To log in, click the link below:<p>{{login_link}}<p>This link will expire in ten minutes."
+
+      mfa_reset:
+        subject: "My App Authentication Reset"
+        html: "<p>Hi there,<p>A two-factor authentication reset request was received for your account {{email}}. To continue, click the link below.<p>{{login_link}}<p>This link will expire in ten minutes."
+
+      confirm_address:
+        subject: "Confirm your email address"
+        html: |
+          <p>Thanks for registering your account with us. Please click the following link to confirm that this is your account:
+          <p>{{confirm_link}}
+          <p>Thanks
+          <p>The team
+
+      reset_password:
+        subject: "Reset your password"
+        html: "<p>Hi there,<p>You have requested a password reset for your account {{email}}. To reset your password, click the link below:<p>{{reset_link}}<p>This link will expire in ten minutes."
+
 db_schema:
 - name: Users
   id: 3

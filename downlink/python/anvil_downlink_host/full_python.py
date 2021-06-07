@@ -89,8 +89,9 @@ class Worker:
             self.hard_timeout()
         else:
             print("Cached worker %s timed out; draining" % self.cache_key)
-            if cached_workers[self.cache_key][1] is self:
-                cached_workers.pop(self.cache_key, None)
+            with CACHE_LOCK:
+                if self.cache_key in cached_workers and cached_workers[self.cache_key][1] is self:
+                    cached_workers.pop(self.cache_key, None)
             self.timeout_timer = threading.Timer(TIMEOUT, self.hard_timeout)
             self.timeout_timer.start()
 

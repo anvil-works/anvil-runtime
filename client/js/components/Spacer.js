@@ -16,18 +16,17 @@ description: |
   or to make vertical space on your form.
 */
 
-module.exports = function(pyModule) {
+module.exports = (pyModule) => {
+    pyModule["Spacer"] = PyDefUtils.mkComponentCls(pyModule, "Spacer", {
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(Spacer)!1*/ ["visibility", "layout", "height", "tooltip", "user data"]),
 
-    pyModule["Spacer"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
+        events: PyDefUtils.assembleGroupEvents(/*!componentEvents()!2*/ "Spacer", ["universal"]),
 
-        var properties = PyDefUtils.assembleGroupProperties(/*!componentProps(Spacer)!1*/["visibility", "layout", "height", "tooltip", "user data"]);
-
-        $loc["__init__"] = PyDefUtils.mkInit(function init(self) {
-            self._anvil.element = $('<div/>').addClass("anvil-spacer");
-        }, pyModule, $loc, properties, PyDefUtils.assembleGroupEvents(/*!componentEvents()!2*/"Spacer", ["universal"]), pyModule["Component"]);
-
-    }, /*!defClass(anvil,Spacer,Component)!*/ 'Spacer', [pyModule["Component"]]);
+        element: (props) => <PyDefUtils.OuterElement className="anvil-spacer" {...props} />,
+    });
 };
+
+/*!defClass(anvil,Spacer,Component)!*/
 
 /*
  * TO TEST:

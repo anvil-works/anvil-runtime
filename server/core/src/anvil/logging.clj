@@ -3,8 +3,12 @@
   (:require [anvil.runtime.conf :as conf])
   (:import [org.apache.log4j Logger RollingFileAppender EnhancedPatternLayout]))
 
-; Disable all logging
-(set-logger! (Logger/getRootLogger) :level :off)
+;; This is a sensible default:
+(set-logger! (Logger/getRootLogger) :level :warn)
+
+;; ...however, a bunch of our libraries are *really* noisy, so we should turn them off.
+;; Do something like this:
+;; (clj-logging-config.log4j/set-logger! "com.onelogin.saml2" :level :off)
 
 (defn setup-logging! []
 

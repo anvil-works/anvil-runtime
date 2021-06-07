@@ -351,23 +351,67 @@
               (login! new-user remember?)
               new-user)))))))
 
-(defn send-email! [to subject text html]
-  (if (get-in @util/*session-state* [:users :test-email-divert])
-    (swap! util/*session-state* update-in [:users :test-email-divert] concat [{:to to, :subject subject, :text text}])
-    (binding [email/*use-quota* false
-              email/*require-service-config* false]
-      (email/send! {:from_name    (if (app-data/abuse-caution? util/*session-state* util/*app-id*)
-                                    "Accounts"
-                                    (str (:name util/*app*) " Accounts"))
-                    :from_address "accounts"
-                    :to           to
-                    :subject      subject
-                    :text         text
-                    :html         html}))))
+(def default-emails
+  {:token_login     {:subject_suffix "Login"
+                     :html           "<p>Hi there,\n\n<p>A login request was received for your account ({{email}}). To log in, click the link below:\n\n<p>{{login_link}}\n\n<p>This link will expire in ten minutes."}
+
+   :mfa_reset       {:subject_suffix "Authentication Reset"
+                     :html           "<p>Hi there,\n\n<p>A two-factor authentication reset request was received for your account {{email}}. To continue, click the link below.\n\n<p>{{login_link}}\n\n<p>This link will expire in ten minutes."}
+
+   :confirm_address {:subject "Confirm your email address"
+                     :html    (str "<p>Thanks for registering your account with us. Please click the following link to confirm that this is your account:\n\n"
+                                   "<p>{{confirm_link}}\n\n"
+                                   "<p>Thanks,\n"
+                                   "<p>The team")}
+
+   :reset_password  {:subject "Reset your password"
+                     :html    (str "<p>Hi there,\n\n<p>You have requested a password reset for your account {{email}}. To reset your password, click the link below:\n\n<p>{{reset_link}}\n\n<p>This link will expire in ten minutes.")}})
+
+(defn send-email! [service-props to email-name text-subs link-subs]
+  (let [{:keys [email_content email_from_address]} service-props
+        ;; only allow overriding email content for trusted apps; otherwise could become a spam free-for-all
+        email_content (when-not (app-data/abuse-caution? util/*session-state* util/*app-id*)
+                        email_content)
+        from-name (if (app-data/abuse-caution? util/*session-state* util/*app-id*)
+                    "Accounts"
+                    (str (:name util/*app*) " Accounts"))
+        from-address (or email_from_address "accounts")
+        subject (or (get-in email_content [email-name :subject])
+                    (get-in default-emails [email-name :subject])
+                    (str (:name util/*app*) " " (get-in default-emails [email-name :subject_suffix])))
+
+        replace-subs (fn [html subs f]
+                       (reduce (fn [^String html [sub-name sub]]
+                                 (.replace html (str "{{" (name sub-name) "}}") ^String (f sub)))
+                               html subs))
+        html (-> (or (get-in email_content [email-name :html])
+                     (get-in default-emails [email-name :html]))
+                 (replace-subs text-subs identity)
+                 (replace-subs link-subs html-link))
+        text (-> html
+                 (.replaceAll "\n" "")
+                 (.replaceAll "^<p>" "")
+                 (.replace "<p>" "\n\n")
+                 (.replace "<br>" "\n")
+                 (.replaceAll "<[^>]*>" "")
+                 (.replace "&lt;" "<")
+                 (.replace "&gt;" ">")
+                 (.replace "&amp;" "&")
+                 (.replace "&quot;" "\""))]
+    (if (get-in @util/*session-state* [:users :test-email-divert])
+      (swap! util/*session-state* update-in [:users :test-email-divert] concat [{:to to, :from_name from-name, :from_address from-address, :subject subject, :text text}])
+      (binding [email/*use-quota* false
+                email/*require-service-config* false]
+        (email/send! {:from_name    from-name
+                      :from_address from-address
+                      :to           to
+                      :subject      subject
+                      :text         text
+                      :html         html})))))
 
 (defn send-token-login-email [_kwargs email]
   (binding [util/*client-request?* false]
-    (let [{:keys [user_table use_token]} (get-props-with-named-user-table)]
+    (let [{:keys [user_table use_token] :as props} (get-props-with-named-user-table)]
       ;; We're only allowed to call this from the client if logging in with a token is enabled. We can call this from the server either way.
       (when (not use_token)
         (throw+ {:anvil/server-error "Token login is not enabled." :type "anvil.users.AuthenticationFailed"}))
@@ -379,15 +423,13 @@
         (let [login-link (str (get-our-origin)
                               "/_/login/"
                               (anvil-util/real-actual-genuine-url-encoder (generate-email-link-token nil email "login")))]
-          (send-email! email (str (:name util/*app*) " Login")
-                       (str "Hi there,\n\nA login request was received for your account (" email "). To log in, click the link below.\n\n" login-link "\n\nThis link will expire in ten minutes.")
-                       (str "<p>Hi there,<p>A login request was received for your account (" email "). To log in, click the link below:<p>" (html-link login-link) "<p>This link will expire in ten minutes."))
+          (send-email! props email :token_login {:email email} {:login_link login-link})
           nil)
         (throw+ {:anvil/server-error "User disabled, or not found." :type "anvil.users.AuthenticationFailed"})))))
 
 (defn send-mfa-reset-email [_kwargs email]
   (binding [util/*client-request?* false]
-    (let [{:keys [user_table require_mfa allow_mfa_email_reset]} (get-props-with-named-user-table)]
+    (let [{:keys [user_table require_mfa allow_mfa_email_reset] :as props} (get-props-with-named-user-table)]
 
       (when (empty? email)
         (throw+ {:anvil/server-error "Please provide an email address." :type "anvil.users.AuthenticationFailed"}))
@@ -400,16 +442,14 @@
           ;; Only send the email if reset is allowed, or if mfa is required and we have no methods available.
           (if (or allow_mfa_email_reset
                   (and require_mfa (not mfa-available-for-user?)))
-            (do (send-email! email (str (:name util/*app*) " Authentication Reset")
-                             (str "Hi there,\n\nA two-factor authentication reset request was received for your account " email ". To continue, click the link below.\n\n" login-link "\n\nThis link will expire in ten minutes.")
-                             (str "<p>Hi there,<p>A two-factor authentication reset request was received for your account " email ". To continue, click the link below.<p>" (html-link login-link) "<p>This link will expire in ten minutes."))
+            (do (send-email! props email :mfa_reset {:email email} {:login_link login-link})
                 nil)
             (throw+ {:anvil/server-error "Cannot reset two-factor authentication by email." :type "anvil.users.AuthenticationFailed"})))
         (throw+ {:anvil/server-error "User disabled, or not found." :type "anvil.users.AuthenticationFailed"})))))
 
 (defn signup-with-email [{:keys [remember mfa_method] :as _kwargs} email password]
   (let [email (.trim (.toLowerCase ^String (or email "")))
-        {:keys [confirm_email enable_automatically require_secure_passwords require_mfa]} (get-props-with-named-user-table)
+        {:keys [confirm_email enable_automatically require_secure_passwords require_mfa] :as props} (get-props-with-named-user-table)
         _ (when (and require_secure_passwords
                      (< (.length (str password)) 7))
             (throw+ {:anvil/server-error "Passwords must be 8 characters or more" :type "anvil.users.PasswordNotAcceptable"}))
@@ -434,22 +474,12 @@
                             (codec/url-encode email)
                             (codec/url-encode confirmation-key))]
     (when confirm_email
-      (send-email! email "Confirm your email address"
-                   (str "Thanks for registering your account with us. Please click the following link to confirm that this is your account:\n\n"
-                        confirm-url "\n\n"
-                        "Thanks,\n"
-                        "The team"
-                        )
-                   (str "<p>Thanks for registering your account with us. Please click the following link to confirm that this is your account:"
-                        "<p>" (html-link confirm-url)
-                        "<p>Thanks,\n"
-                        "<p>The team"
-                        )))
+      (send-email! props email :confirm_address {:email email} {:confirm_link confirm-url}))
     new-user-row))
 
 (defn send-password-reset-email [_kwargs email]
   (binding [util/*client-request?* false]
-    (let [{:keys [user_table use_email]} (get-props-with-named-user-table)]
+    (let [{:keys [user_table use_email] :as props} (get-props-with-named-user-table)]
 
       (when (not use_email)
         (throw+ {:anvil/server-error "Email/password login is not enabled." :type "anvil.users.AuthenticationFailed"}))
@@ -458,13 +488,11 @@
         (throw+ {:anvil/server-error "Please provide an email address." :type "anvil.users.AuthenticationFailed"}))
 
       (if (get-user-and-check-enabled user_table {:email email} :email)
-        (let [login-link (str (get-our-origin)
+        (let [reset-link (str (get-our-origin)
                               "/_/reset_password/"
                               (anvil-util/real-actual-genuine-url-encoder (generate-email-link-token nil email "pw-reset")))]
 
-          (send-email! email "Reset your password"
-                       (str "Hi there,\n\nYou have requested a password reset for your account " email ". To reset your password, click the link below:\n\n" login-link "\n\nThis link will expire in ten minutes.")
-                       (str "<p>Hi there,<p>You have requested a password reset for your account " email ". To reset your password, click the link below:<p>" (html-link login-link) "<p>This link will expire in ten minutes."))
+          (send-email! props email :reset_password {:email email} {:reset_link reset-link})
           nil)
         (throw+ {:anvil/server-error "User disabled, or not found." :type "anvil.users.AuthenticationFailed"})))))
 
@@ -512,13 +540,14 @@
 
 (defn reset-password [_kwargs old-password new-password]
   (binding [util/*client-request?* false]
-    (let [{:keys [user_table require_secure_passwords] :as _props} (get-props-with-named-user-table)
-          row-id (or (get-in @util/*session-state* [:users :logged-in-id]) (get-in @util/*session-state* [:users :password-reset-user-id]))
+    (let [{:keys [user_table require_secure_passwords confirm_email] :as _props} (get-props-with-named-user-table)
+          email-reset-user (get-in @util/*session-state* [:users :password-reset-user-id])
+          row-id (or (get-in @util/*session-state* [:users :logged-in-id]) email-reset-user)
           user ((tables/Table "get_by_id") [user_table {}] {} row-id)
           {pw-hash "password_hash"
            password-failures "n_password_failures"} (row-to-map user)]
 
-      (when-not (or (get-in @util/*session-state* [:users :password-reset-user-id])
+      (when-not (or email-reset-user
                     (anvil.util/bcrypt-checkpw old-password pw-hash))
         ;; Don't require old password when resetting by token.
         (throw+ {:anvil/server-error "Incorrect password" :type "anvil.users.AuthenticationFailed"}))
@@ -534,6 +563,8 @@
       (swap! util/*session-state* assoc-in [:users :password-reset-user-id] nil)
       (set-values-creating-col-if-necessary user_table (json/read-str row-id)
                                             (merge {"password_hash" (BCrypt/hashpw new-password (BCrypt/gensalt))}
+                                                   (when (and confirm_email email-reset-user)
+                                                     {:confirmed_email true})
                                                    (when (number? password-failures)
                                                      {"n_password_failures" 0})))
       true)))

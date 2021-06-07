@@ -66,21 +66,29 @@ __pycache__
         jar-entries (-> jar-file
                         (.entries)
                         (enumeration-seq))
-        dir-entries (filter #(re-matches (re-pattern (str dir-name ".+")) (.getName %)) jar-entries)]
-    (reduce (fn [dir-map ^JarEntry entry] (if (.isDirectory entry)
-                                            dir-map
-                                            (let [path-parts (str/split (.substring (.getName entry) (.length dir-name)) #"/")]
-                                              (assoc-in dir-map path-parts (let [file-size (.getSize entry)
-                                                                                 ary (byte-array file-size)
-                                                                                 is (.getInputStream jar-file entry)]
-                                                                             (loop [start 0]
-                                                                               (let [read-count (.read is ary start (util/$ file-size - start))
-                                                                                     next-start (util/$ start + read-count)
-                                                                                     remaining (- file-size next-start)]
-                                                                                 (when (util/$ remaining > 0)
-                                                                                   (recur next-start))))
-                                                                             (.close is)
-                                                                             ary))))) {} dir-entries)))
+        dir-entries (filter #(re-matches (re-pattern (str dir-name ".+")) (.getName %)) jar-entries)
+        eager-map (reduce (fn [dir-map ^JarEntry entry]
+                            (if (.isDirectory entry)
+                              dir-map
+                              (let [path-parts (str/split (.substring (.getName entry) (.length dir-name)) #"/")]
+                                (assoc-in dir-map path-parts
+                                          (let [file-size (.getSize entry)
+                                                ary (byte-array file-size)
+                                                is (.getInputStream jar-file entry)]
+                                            (loop [start 0]
+                                              (let [read-count (.read is ary start (util/$ file-size - start))
+                                                    next-start (util/$ start + read-count)
+                                                    remaining (- file-size next-start)]
+                                                (when (util/$ remaining > 0)
+                                                  (recur next-start))))
+                                            (.close is)
+                                            ary))))) {} dir-entries)
+        eager->lazy-map (fn eager->lazy-map [m]
+                          (into (lazy-map {})
+                                (for [[k v] m] (if (map? v)
+                                                 [k (eager->lazy-map v)]
+                                                 [k (delay v)]))))]
+    (eager->lazy-map eager-map)))
 
 (defn- add-subtree-to-yaml [yaml package-path tree client? get-unique-id]
   (let [dotted-name #(clojure.string/join "." (concat package-path [%]))]

@@ -17,235 +17,275 @@ description: |
 
 */
 
-module.exports = function(pyModule) {
+module.exports = (pyModule) => {
 
-    pyModule["YouTubeVideo"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
 
-        var update = function(self) {
-            var p = function(propname) {
-                var v = self._anvil.props[propname];
-                if (v === undefined) {
-                    return undefined;
-                } else {
-                    return Sk.ffi.remapToJs(v);
-                }
-            };
-            var np = function(propname) { return p(propname) ? "1" : "0"; };
+    const {isTrue} = Sk.misceval;
+    const inDesigner = window.anvilInDesigner;
 
-            function YouTubeGetID(url) {
-                var ID = '';
-                url = url.replace(/(>|<)/gi,'').split(/(vi\/|v=|\/v\/|youtu\.be\/|\/embed\/)/);
-                if(url[2] !== undefined) {
-                    ID = url[2].split(/[^0-9a-z_\-]/i);
-                    ID = ID[0];
-                } else {
-                    ID = url;
-                }
-                return ID;
-            }
 
-            var vid = YouTubeGetID(p("youtube_id"));
+    pyModule["YouTubeVideo"] = PyDefUtils.mkComponentCls(pyModule, "YouTubeVideo", {
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(YouTubeVideo)!1*/ ["layout", "height", /*"interaction",*/ "appearance", "user data"], {
+            height: { defaultValue: new Sk.builtin.int_(300) },
 
-            // If we want to loop, we must also set the 'playlist' parameter to the ID of the video. See https://developers.google.com/youtube/player_parameters?hl=en
-            self._anvil.element.find("iframe").attr("src", "https://www.youtube.com/embed/" + encodeURIComponent(vid) +
-                                                           "?rel=0&enablejsapi=1&autoplay=" + np("autoplay") + "&loop=" + np("loop") + (p("loop") ? ("&playlist=" + encodeURIComponent(p("youtube_id"))) : ""));
-        };
-
-        var properties = PyDefUtils.assembleGroupProperties(/*!componentProps(YouTubeVideo)!1*/["layout", "height", /*"interaction",*/ "appearance", "user data"], {
-            height: {defaultValue: 300},
-        });
-
-        properties.push(/*!componentProp(YouTubeVideo)!1*/{
-            name: "youtube_id", type: "string",
-            defaultValue: "",
-            exampleValue: "m7kzwpJfEeY",
-            description: "The ID of the YouTube video to play",
-            suggested: true,
-            set: function(s) { update(s); }
-        });
-
-        properties.push(/*!componentProp(YouTubeVideo)!1*/{
-            name: "autoplay", type: "boolean",
-            defaultValue: false,
-            description: "Set to true to play this video immediately",
-            set: function(s) { update(s); }
-        });
-
-        properties.push(/*!componentProp(YouTubeVideo)!1*/{
-            name: "loop", type: "boolean", defaultValue: false,
-            description: "Set to true to play this video repeatedly",
-            set: function(s) { update(s); }
-        });
-
-        properties.push(/*!componentProp(YouTubeVideo)!1*/{
-            name: "current_time",
-            type: "object",
-            description: "Get or set the current playback position, in seconds.",
-            exampleValue: 10.2,
-            set: function(s,e,v) {
-                if (s._anvil.player && s._anvil.player.seekTo) {
-                    s._anvil.player.seekTo(v,true);
-                }
+            youtube_id: /*!componentProp(YouTubeVideo)!1*/ {
+                name: "youtube_id",
+                type: "string",
+                defaultValue: Sk.builtin.str.$empty,
+                pyVal: true,
+                dataBindingProp: "youtube_id",
+                exampleValue: "m7kzwpJfEeY",
+                description: "The ID of the YouTube video to play",
+                suggested: true,
+                set(s) {
+                    update(s);
+                },
             },
-            get: function(s,e) {
-                if (s._anvil.player && s._anvil.player.getCurrentTime) {
-                    return s._anvil.player.getCurrentTime();
-                }
-                return 0;
-            }
-        })
 
-        properties.push(/*!componentProp(YouTubeVideo)!1*/{
-            name: "volume",
-            type: "object",
-            description: "Get or set the current volume, from 0 - 100.",
-            exampleValue: 50,
-            set: function(s,e,v) {
-                if (s._anvil.player && s._anvil.player.setVolume && v != null) {
-                    s._anvil.player.setVolume(v);
-                }
+            autoplay: /*!componentProp(YouTubeVideo)!1*/ {
+                name: "autoplay",
+                type: "boolean",
+                defaultValue: Sk.builtin.bool.false$,
+                pyVal: true,
+                description: "Set to true to play this video immediately",
+                set(s) {
+                    update(s);
+                },
             },
-            get: function(s,e) {
-                if (s._anvil.player && s._anvil.player.getVolume) {
-                    return s._anvil.player.getVolume();
-                } else {
-                    return 0;
-                }
-            }
-        });
 
-        let translateState = (state) => {
-            switch(state) {
-                case -1:
-                    return "UNSTARTED";
-                case 0:
-                    return "ENDED";
-                case 1:
-                    return "PLAYING";
-                case 2:
-                    return "PAUSED";
-                case 3:
-                    return "BUFFERING";
-                case 5:
-                    return "CUED";
-                default:
-                    return "UNKNOWN";
-            };
-        };
+            loop: /*!componentProp(YouTubeVideo)!1*/ {
+                name: "loop",
+                type: "boolean",
+                defaultValue: Sk.builtin.bool.false$,
+                pyVal: true,
+                description: "Set to true to play this video repeatedly",
+                set(s) {
+                    update(s);
+                },
+            },
 
-        properties.push(/*!componentProp(YouTubeVideo)!1*/{
-            name: "state",
-            type: "object",
-            description: "Get the current playback state of the video as a string. E.g. PLAYING",
-            readOnly: true,
-            get: function(s,e) {
-                if (s._anvil.player && s._anvil.player.getPlayerState) {
-                    var state = s._anvil.player.getPlayerState();
-                }
-
-                return translateState(state);
-            }
-        });
-
-        properties.push(/*!componentProp(YouTubeVideo)!1*/{
-            name: "duration",
-            type: "object",
-            description: "Get the duration of the video in seconds.",
-            readOnly: true,
-            get: function(s,e) {
-                if (s._anvil.player && s._anvil.player.getDuration) {
-                    return s._anvil.player.getDuration();
-                } else {
-                    return 0;
-                }
-            }
-        });
-
-        properties.push(/*!componentProp(YouTubeVideo)!1*/ {
-            name: "mute",
-            type: "boolean",
-            description: "Set whether the video is muted or not.",
-            defaultValue: false,
-            set: function(s,e,v) {
-                if (s._anvil.player && s._anvil.player.mute && s._anvil.player.unMute) {
-                    if (v) {
-                        s._anvil.player.mute();
-                    } else {
-                        s._anvil.player.unMute();
+            current_time: /*!componentProp(YouTubeVideo)!1*/ {
+                name: "current_time",
+                type: "object",
+                description: "Get or set the current playback position, in seconds.",
+                exampleValue: 10.2,
+                defaultValue: new Sk.builtin.float_(0.0),
+                pyVal: true,
+                set(s, e, v) {
+                    v = Sk.ffi.remapToJs(v);
+                    if (s._anvil.player && s._anvil.player.seekTo) {
+                        s._anvil.player.seekTo(v, true);
                     }
-                }
+                },
+                get(s, e) {
+                    if (s._anvil.player && s._anvil.player.getCurrentTime) {
+                        return Sk.ffi.remapToPy(s._anvil.player.getCurrentTime());
+                    }
+                    return new Sk.builtin.float_(0);
+                },
             },
-        });
 
-        var events = PyDefUtils.assembleGroupEvents(/*!componentEvents()!3*/ "YouTubeVideo", ["universal", "user data"],
-                                                    {show: {description: "When this video is shown on the screen (or it is added to a visible form)"},
-                                                     hide: {description: "When this video is hidden from the screen (or it is removed from a visible form)"}});
+            volume: /*!componentProp(YouTubeVideo)!1*/ {
+                name: "volume",
+                type: "object",
+                description: "Get or set the current volume, from 0 - 100.",
+                exampleValue: 50,
+                defaultValue: new Sk.builtin.int_(50),
+                pyVal: true,
+                set(s, e, v) {
+                    v = Sk.ffi.remapToJs(v);
+                    if (s._anvil.player && s._anvil.player.setVolume && v != null) {
+                        s._anvil.player.setVolume(v);
+                    }
+                },
+                get(s, e) {
+                    if (s._anvil.player && s._anvil.player.getVolume) {
+                        return Sk.ffi.remapToPy(s._anvil.player.getVolume());
+                    } else {
+                        return new Sk.builtin.int_(0);
+                    }
+                },
+            },
 
-        /*!componentEvent(YouTubeVideo)!1*/
-        events.push({name: "state_change",
-                     description: "When the video changes state (eg PAUSED to PLAYING)",
-                     parameters: [{
+            state: /*!componentProp(YouTubeVideo)!1*/ {
+                name: "state",
+                type: "object",
+                description: "Get the current playback state of the video as a string. E.g. PLAYING",
+                readOnly: true,
+                pyVal: true,
+                get(s, e) {
+                    if (s._anvil.player && s._anvil.player.getPlayerState) {
+                        var state = s._anvil.player.getPlayerState();
+                    }
+
+                    return new Sk.builtin.str(translateState(state));
+                },
+            },
+
+            duration: /*!componentProp(YouTubeVideo)!1*/ {
+                name: "duration",
+                type: "object",
+                description: "Get the duration of the video in seconds.",
+                readOnly: true,
+                pyVal: true,
+                get(s, e) {
+                    if (s._anvil.player && s._anvil.player.getDuration) {
+                        return Sk.ffi.remapToPy(s._anvil.player.getDuration());
+                    } else {
+                        return new Sk.builtin.int_(0);
+                    }
+                },
+            },
+
+            mute: /*!componentProp(YouTubeVideo)!1*/ {
+                name: "mute",
+                type: "boolean",
+                description: "Set whether the video is muted or not.",
+                defaultValue: Sk.builtin.bool.false$,
+                pyVal: true,
+                set(s, e, v) {
+                    v = isTrue(v);
+                    if (s._anvil.player && s._anvil.player.mute && s._anvil.player.unMute) {
+                        if (v) {
+                            s._anvil.player.mute();
+                        } else {
+                            s._anvil.player.unMute();
+                        }
+                    }
+                },
+            },
+        }),
+
+        events: PyDefUtils.assembleGroupEvents(/*!componentEvents()!3*/ "YouTubeVideo", ["universal", "user data"], {
+            show: { description: "When this video is shown on the screen (or it is added to a visible form)" },
+            hide: { description: "When this video is hidden from the screen (or it is removed from a visible form)" },
+            state_change: /*!componentEvent(YouTubeVideo)!1*/ {
+                name: "state_change",
+                description: "When the video changes state (eg PAUSED to PLAYING)",
+                parameters: [
+                    {
                         name: "state",
                         type: "string",
                         description: "The new state of the video (values from the YouTube API)",
                         important: true,
-                     }],
-                     important: true,
-                     defaultEvent: true});
+                    },
+                ],
+                important: true,
+                defaultEvent: true,
+            },
+        }),
 
+        element: (props) => (
+            <PyDefUtils.OuterElement style="min-height: 34px" className="anvil-youtube-video" {...props}>
+                <iframe refName="iframe" enablejsapi={true} frameborder="0" allowfullscreen="" style="height: 100%; width: 100%;"></iframe>
+            </PyDefUtils.OuterElement>
+        ),
 
-        $loc["__init__"] = PyDefUtils.mkInit(function init(self, kwargs) {
-            self._anvil.element = $("<div/>").css({
-                minHeight: 34,
-            }).addClass("anvil-youtube-video").append($('<iframe enablejsapi=true frameborder="0" allowfullscreen></iframe>').width("100%").height("100%"));
-            self._anvil.dataBindingProp = "youtube_id";
+        locals($loc) {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Component"], (self) => {
+                self._anvil.playerDefer = RSVP.defer();
+                self._anvil.player = null;
+                update(self);
 
-            self._anvil.playerDefer = RSVP.defer();
-            self._anvil.player = null;
-
-            if (!self._inDesigner) {
-                setTimeout(function load() {
-                    if (window.YT && window.YT.Player) {
-                        self._anvil.player = new YT.Player(self._anvil.element.find("iframe")[0], {
-                            events: {
-                                onReady: function() {
-                                    if (kwargs["mute"]) {
-                                        self._anvil.player.mute();
-                                    }
-                                    self._anvil.playerDefer.resolve(self._anvil.player);
+                if (!inDesigner) {
+                    setTimeout(function load() {
+                        if (window.YT && window.YT.Player) {
+                            self._anvil.player = new YT.Player(self._anvil.elements.iframe, {
+                                events: {
+                                    onReady() {
+                                        if (isTrue(self._anvil.getProp(["mute"]))) {
+                                            self._anvil.player.mute();
+                                        }
+                                        self._anvil.playerDefer.resolve(self._anvil.player);
+                                    },
+                                    onStateChange(e) {
+                                        PyDefUtils.raiseEventAsync({ state: translateState(e.data) }, self, "state_change");
+                                    },
                                 },
-                                onStateChange: function(e) {
-                                    PyDefUtils.raiseEventAsync({state: translateState(e.data)}, self, "state_change");
-                                },
-                            },
-                        });
-                    } else {
-                        console.log("YouTube Player not yet loaded. Trying again in 1 sec.");
-                        setTimeout(load, 1000);
-                    }
+                            });
+                        } else {
+                            console.log("YouTube Player not yet loaded. Trying again in 1 sec.");
+                            setTimeout(load, 1000);
+                        }
+                    }, 0);
+                }
+            });
 
-                }, 0)
+            /*!defMethod(_)!2*/ "Start playing this YouTube video"
+            $loc["play"] = new Sk.builtin.func(function play(self) {
+                self._anvil.playerDefer.promise.then((p) => p.playVideo());
+                return Sk.builtin.none.none$;
+            });
+
+            /*!defMethod(_)!2*/ "Pause this YouTube video"
+            $loc["pause"] = new Sk.builtin.func(function pause(self) {
+                self._anvil.playerDefer.promise.then((p) => p.pauseVideo());
+                return Sk.builtin.none.none$;
+            });
+
+            /*!defMethod(_)!2*/ "Stop playing this YouTube video"
+            $loc["stop"] = new Sk.builtin.func(function stop(self) {
+                self._anvil.playerDefer.promise.then((p) => p.stopVideo());
+                return Sk.builtin.none.none$;
+            });
+        },
+
+    });
+
+
+    function update(self) {
+        var p = function(propname) {
+            var v = self._anvil.props[propname];
+            if (v === undefined) {
+                return undefined;
+            } else {
+                return Sk.ffi.remapToJs(v);
             }
-        }, pyModule, $loc, properties, events, pyModule["Component"]);
+        };
+        var np = function(propname) { return p(propname) ? "1" : "0"; };
 
-        /*!defMethod(_)!2*/ "Start playing this YouTube video"
-        $loc["play"] = new Sk.builtin.func(function(self) {
-            self._anvil.playerDefer.promise.then(p => p.playVideo());
-        });
+        function YouTubeGetID(url) {
+            var ID = '';
+            url = url.replace(/(>|<)/gi,'').split(/(vi\/|v=|\/v\/|youtu\.be\/|\/embed\/)/);
+            if(url[2] !== undefined) {
+                ID = url[2].split(/[^0-9a-z_\-]/i);
+                ID = ID[0];
+            } else {
+                ID = url;
+            }
+            return ID;
+        }
 
-        /*!defMethod(_)!2*/ "Pause this YouTube video"
-        $loc["pause"] = new Sk.builtin.func(function(self) {
-            self._anvil.playerDefer.promise.then(p => p.pauseVideo());
-        });
+        var vid = YouTubeGetID(p("youtube_id"));
 
-        /*!defMethod(_)!2*/ "Stop playing this YouTube video"
-        $loc["stop"] = new Sk.builtin.func(function(self) {
-            self._anvil.playerDefer.promise.then(p => p.stopVideo());
-        });
+        // If we want to loop, we must also set the 'playlist' parameter to the ID of the video. See https://developers.google.com/youtube/player_parameters?hl=en
+        self._anvil.elements.iframe.setAttribute("src", "https://www.youtube.com/embed/" + encodeURIComponent(vid) +
+                                                       "?rel=0&enablejsapi=1&autoplay=" + np("autoplay") + "&loop=" + np("loop") + (p("loop") ? ("&playlist=" + encodeURIComponent(p("youtube_id"))) : ""));
+    };
 
 
-    }, /*!defClass(anvil,YouTubeVideo,Component)!*/ 'YouTubeVideo', [pyModule["Component"]]);
+    let translateState = (state) => {
+        switch(state) {
+            case -1:
+                return "UNSTARTED";
+            case 0:
+                return "ENDED";
+            case 1:
+                return "PLAYING";
+            case 2:
+                return "PAUSED";
+            case 3:
+                return "BUFFERING";
+            case 5:
+                return "CUED";
+            default:
+                return "UNKNOWN";
+        };
+    };
+
 };
+
+/*!defClass(anvil,YouTubeVideo,Component)!*/
 
 /*
  * TO TEST:

@@ -26,7 +26,8 @@
             [anvil.util :as util]
             [anvil.dispatcher.core :as dispatcher]
             [anvil.runtime.app-data :as app-data]
-            [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]))
+            [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]
+            [anvil.dispatcher.background-tasks :as background-tasks]))
 
 
 (def debug-rpc-handlers
@@ -46,6 +47,14 @@
    "anvil.private.dummy_liveobject"     {:fn (fn [_ return-path]
                                                (dispatcher/respond! return-path {:response (live-objects/mk-LiveObjectProxy "anvil.private.DummyLiveObject" "123" ["foo"] ["call_me"])}))}
 
+   ;"anvil.private.test_native_bg_task"  (native-util/wrap-native-fn (fn [_] (background-tasks/launch-native-background-task!
+   ;                                                                           (println "Starting task")
+   ;                                                                           (doseq [i (range 10)]
+   ;                                                                             (swap! background-tasks/*native-bg-task-state* assoc :progress i)
+   ;                                                                             (Thread/sleep 1000))
+   ;                                                                           (println "Finished task")
+   ;                                                                           42)))
+   ;
    "anvil.private.iter_test"            (native-util/wrap-native-fn
                                           (fn [_kwargs]
                                             (live-objects/mk-LiveObjectProxy "anvil.private.TestLiveObjectIteration" "123" [] ["__anvil_iter_page__"])))
@@ -69,18 +78,17 @@
    ;; You might expect "anvil.private.reset_session" to be here. It isn't. It's in anvil.runtime.ws because it uses low-level request stuff.
 
    "anvil.private.get_app_origin"       (native-util/wrap-native-fn
-                                          (fn [_kwargs & [branch]]
-                                            (or
-                                              (when (not= branch "published")
-                                                native-util/*app-origin*)
+                                          (fn [_kwargs & [env-spec]]
+                                            (if (= env-spec "published")
                                               (app-data/get-default-app-origin native-util/*environment*)
                                               native-util/*app-origin*)))
 
    "anvil.private.get_api_origin"       (native-util/wrap-native-fn
-                                          (fn [_kwargs & [branch]]
-                                            (or (app-data/get-default-api-origin native-util/*environment*)
-                                                (when rpc-util/*app-origin*
-                                                  (str rpc-util/*app-origin* "/_/api")))))
+                                          (fn [_kwargs & [env-spec]]
+                                            (if (= env-spec "published")
+                                              (app-data/get-default-api-origin native-util/*environment*)
+                                              (when-let [origin rpc-util/*app-origin*]
+                                                (str origin "/_/api")))))
 
    "anvil.private.get_lazy_media_url"   (native-util/wrap-native-fn
                                           (fn [_kwargs lm is-download?]

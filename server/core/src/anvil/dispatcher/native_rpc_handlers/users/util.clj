@@ -25,7 +25,8 @@
   ([db-c mapping app]
    (let [{:keys [user_table] :as props} (get-props app)]
      (if (string? user_table)
-       (assoc props :user_table (tables-util/get-table-id-by-name db-c mapping user_table))
+       (assoc props :user_table (tables-util/with-transform-err
+                                  (tables-util/get-table-id-by-name db-c mapping user_table)))
        props))))
 
 (defn remap-user-table [source-app-info source-app-version-spec new-app-yaml table-mappings]

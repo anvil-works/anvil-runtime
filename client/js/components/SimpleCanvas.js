@@ -83,7 +83,7 @@ module.exports = function(pyModule) {
                 var w = self._anvil.element.width();
                 var h = self._anvil.element.height();
 
-                var ctx = self._anvil.element[0].getContext('2d');
+                var ctx = self._anvil.domNode.getContext('2d');
 
                 ctx.clearRect(0,0,w,h);
 

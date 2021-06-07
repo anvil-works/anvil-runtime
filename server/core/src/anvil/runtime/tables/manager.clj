@@ -26,6 +26,11 @@
       {:id id, :name name,
        :access access})))
 
+(defn rename-table! [table-id new-name]
+  (first
+    (jdbc/query (db) ["UPDATE app_storage_tables SET name = ? WHERE id = ? RETURNING id, name"
+                      new-name table-id])))
+
 (defn delete-table-content! [db-c table-id use-quota!]
   (table-util/delete-media-in-table table-id use-quota!)
   (let [deleted-row-count (first (jdbc/execute! db-c ["DELETE FROM app_storage_data WHERE table_id = ?" table-id]))]

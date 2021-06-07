@@ -3,7 +3,7 @@
 window.messages = window.messages || {};
 
 $(function() {
-    window.addEventListener("message", function(e) {
+    window.addEventListener("message", async function(e) {
 
         // Filter out messages without data.
         if (!e.data) {
@@ -21,14 +21,14 @@ $(function() {
         var rv;
         try {
             if (fn) {
-                rv = {result: fn.call(window.messages, e.data.args)};
+                rv = {result: await fn.call(window.messages, e.data.args)};
             } else {
                 console.debug("Message not recognised:", e.data);
                 //rv = {error: "Message '"+e.data.fn+"' not recognised"};
             }
         } catch (err) {
             console.error(err, err.stack || "(no stack trace)");
-            if (err instanceof Sk.builtin.Exception) {
+            if (err instanceof Sk.builtin.BaseException) {
                 rv = {fn: "pythonError", filename: err.filename, line: err.lineno,
                       col: err.colno, type: err.tp$name, msg: Sk.ffi.remapToJs(err.args).join("; ")};
             } else {

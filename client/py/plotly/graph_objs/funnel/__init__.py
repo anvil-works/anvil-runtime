@@ -38,6 +38,11 @@ class Textfont(WrappedObject):
     _name = "Textfont"
     _module = "plotly.graph_objs.funnel"
 
+@serializable_type
+class Transform(WrappedObject):
+    _name = "Transform"
+    _module = "plotly.graph_objs.funnel"
+
 
 __all__ = [
     'Connector',
@@ -47,6 +52,7 @@ __all__ = [
     'Outsidetextfont',
     'Stream',
     'Textfont',
+    'Transform',
     'connector',
     'hoverlabel',
     'marker',

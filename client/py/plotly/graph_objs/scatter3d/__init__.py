@@ -48,6 +48,11 @@ class Textfont(WrappedObject):
     _name = "Textfont"
     _module = "plotly.graph_objs.scatter3d"
 
+@serializable_type
+class Transform(WrappedObject):
+    _name = "Transform"
+    _module = "plotly.graph_objs.scatter3d"
+
 
 __all__ = [
     'ErrorX',
@@ -59,6 +64,7 @@ __all__ = [
     'Projection',
     'Stream',
     'Textfont',
+    'Transform',
     'hoverlabel',
     'line',
     'marker',

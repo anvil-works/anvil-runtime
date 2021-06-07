@@ -33,6 +33,11 @@ class Title(WrappedObject):
     _name = "Title"
     _module = "plotly.graph_objs.indicator"
 
+@serializable_type
+class Transform(WrappedObject):
+    _name = "Transform"
+    _module = "plotly.graph_objs.indicator"
+
 
 __all__ = [
     'Delta',
@@ -41,6 +46,7 @@ __all__ = [
     'Number',
     'Stream',
     'Title',
+    'Transform',
     'delta',
     'gauge',
     'number',

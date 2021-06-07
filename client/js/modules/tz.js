@@ -26,7 +26,7 @@ module.exports = function() {
 
         $loc["__init__"] = PyDefUtils.funcWithKwargs(function(kwargs, self) {
             if(Object.keys(kwargs).length > 1 || !(Object.keys(kwargs).length == 0|| 'hours' in kwargs || 'minutes' in kwargs || 'seconds' in kwargs)) {
-                throw new Sk.builtin.Exception("tzoffset must be initialised with precisely one of 'seconds', 'minutes' or 'hours' keyword arguments");
+                throw new Sk.builtin.TypeError("tzoffset must be initialised with precisely one of 'seconds', 'minutes' or 'hours' keyword arguments");
             }
 
             var offset = Sk.misceval.call(timedelta, Sk.ffi.remapToPy(kwargs), undefined, []);

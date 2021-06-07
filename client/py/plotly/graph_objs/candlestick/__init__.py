@@ -28,6 +28,11 @@ class Stream(WrappedObject):
     _name = "Stream"
     _module = "plotly.graph_objs.candlestick"
 
+@serializable_type
+class Transform(WrappedObject):
+    _name = "Transform"
+    _module = "plotly.graph_objs.candlestick"
+
 
 __all__ = [
     'Decreasing',
@@ -35,6 +40,7 @@ __all__ = [
     'Increasing',
     'Line',
     'Stream',
+    'Transform',
     'decreasing',
     'hoverlabel',
     'increasing',

@@ -1,7 +1,7 @@
 # Run this file, using a marshalled version of the RPC protocol on file descriptor #3.
 # Kill it when done.
 from __future__ import absolute_import
-import os, sys, marshal, threading, json
+import os, sys, marshal, threading, json, importlib
 from anvil_downlink_worker import handle_incoming_call, load_app
 from anvil import _serialise, _server, _threaded_server
 import anvil.server
@@ -94,10 +94,16 @@ def run():
             os._exit(1)
 
 
-def plotly_serialization_helper():
-    import plotly
+def plotly_serialization_helper(class_fullname):
+    name_parts = class_fullname.split(".")
+    module_name = ".".join(name_parts[:-1])
+    class_name = name_parts[-1]
 
-    def register(cls,name=None):
+    module = importlib.import_module(module_name)
+    cls = getattr(module, class_name)
+
+    if not hasattr(cls, '__serialize__'):
+        #print(f"Registering {cls}")
         def serialize(self, global_data):
             #print("Serialising %s on downlink" % type(self))
             return self.to_plotly_json()
@@ -106,19 +112,10 @@ def plotly_serialization_helper():
         def new_deserialized(data, global_data):
             #print("Deserialising %s on downlink" % cls)
             return cls(data)
-        
+
         cls.__serialize__ = serialize
         cls.__new_deserialized__ = new_deserialized
-        anvil.server.portable_class(cls,name)
-
-    def all_subclasses(cls):
-        return set(cls.__subclasses__()).union(
-            [s for c in cls.__subclasses__() for s in all_subclasses(c)])
-
-    for c in all_subclasses(plotly.basedatatypes.BasePlotlyType):
-        register(c)
-
-    register(plotly.graph_objs._figure.Figure)
+        anvil.server.portable_class(cls, class_fullname)
 
 _server._serialization_helpers["plotly.graph_objs"] = plotly_serialization_helper
 

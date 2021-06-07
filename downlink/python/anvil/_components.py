@@ -102,6 +102,10 @@ class RadioButton(Component):
 class RepeatingPanel(Component):
     pass
 
+@server.portable_class('anvil.RichText')
+class RichText(Container):
+    pass
+
 @server.portable_class('anvil.Spacer')
 class Spacer(Component):
     pass

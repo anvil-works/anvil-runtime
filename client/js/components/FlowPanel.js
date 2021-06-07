@@ -38,122 +38,137 @@ description: |
   Index 0 is the first element in the panel, 1 is the second, etc.
 */
 
-module.exports = function(pyModule) {
-
-	pyModule["FlowPanel"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-
-        var properties = PyDefUtils.assembleGroupProperties(/*!componentProps(FlowPanel)!1*/["appearance", "user data", "layout", "tooltip"], {
-        });
+module.exports = (pyModule) => {
 
 
-        /*!componentProp(FlowPanel)!1*/
-        properties.push({
-            name: "align",
-            important: true,
-            type: "string",
-            enum: ["left", "center", "right", "justify"],
-            description: "Align this component's content",
-            defaultValue: "left",
-            set: function(s,e,v) {
-                let j = {
-                    "center": "center",
-                    "right": "flex-end",
-                    "justify": "space-between",
-                }
-                v = j[v] || "flex-start";
-                e.find(">.flow-panel-gutter").css("justify-content", v);
-            }
-        })
+    pyModule["FlowPanel"] = PyDefUtils.mkComponentCls(pyModule, "FlowPanel", {
+        base: pyModule["Container"],
 
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(FlowPanel)!1*/ ["appearance", "user data", "layout", "tooltip"], {
+            align: /*!componentProp(FlowPanel)!1*/ {
+                name: "align",
+                important: true,
+                type: "string",
+                enum: ["left", "center", "right", "justify"],
+                description: "Align this component's content",
+                defaultValue: new Sk.builtin.str("left"),
+                pyVal: true,
+                set(s, e, v) {
+                    v = v.toString();
+                    const j = {
+                        center: "center",
+                        right: "flex-end",
+                        justify: "space-between",
+                    };
+                    v = j[v] || "flex-start";
+                    s._anvil.elements.gutter.style.justifyContent = v;
+                },
+            },
 
-        /*!componentProp(FlowPanel)!1*/
-        properties.push({
-            name: "spacing",
-            description: "Space between components",
-            type: "string",
-            enum: ["none", "tiny", "small", "medium", "large", "huge"],
-            defaultValue: "medium",
-            important: false,
-            priority: 0,
-            set: function(s,e,v) {
-                for (let i of ["none", "tiny", "small", "medium", "large", "huge"]) {
-                    e.toggleClass("flow-spacing-"+i, (v==i));
-                }
-            }
-        });
+            spacing: /*!componentProp(FlowPanel)!1*/ {
+                name: "spacing",
+                description: "Space between components",
+                type: "string",
+                enum: ["none", "tiny", "small", "medium", "large", "huge"],
+                defaultValue: new Sk.builtin.str("medium"),
+                pyVal: true,
+                important: false,
+                priority: 0,
+                set(s, e, v) {
+                    v = v.toString();
+                    ["none", "tiny", "small", "medium", "large", "huge"].forEach((i) => {
+                        s._anvil.domNode.classList.toggle("flow-spacing-" + i, v === i);
+                    });
+                },
+            },
+        }),
 
+        events: PyDefUtils.assembleGroupEvents("FlowPanel", /*!componentEvents(FlowPanel)!1*/ ["universal"]),
 
-		$loc["__init__"] = PyDefUtils.mkInit(function init(self) {
-
-            self._anvil.element = $('<div>').addClass("flow-panel anvil-container anvil-container-overflow");
-            self._anvil.gutter = $('<div>').addClass("flow-panel-gutter");
-            self._anvil.element.append(self._anvil.gutter);
-
-            self._anvil.layoutPropTypes = [{
+        layouts: [
+            {
                 name: "width",
                 type: "number",
                 description: "The width for an element that is not horizontally self-sizing",
                 defaultValue: null,
                 priority: 0,
-            }];
+            },
+        ],
 
-        },pyModule, $loc, properties,PyDefUtils.assembleGroupEvents("FlowPanel", /*!componentEvents(FlowPanel)!1*/["universal"]), pyModule["Container"]);
+        element({ align, spacing, ...props }) {
+            spacing = " flow-spacing-" + spacing.toString();
+            align =
+                "justify-content: " +
+                ({
+                    center: "center",
+                    right: "flex-end",
+                    justify: "space-between",
+                }[align.toString()] || "flex-start") +
+                ";";
 
-        /*!defMethod(_,component,[index=],[width=])!2*/ "Add a component to this panel. Optionally specify the position in the panel to add it, or the width to apply to components that can't self-size width-wise."
-        $loc["add_component"] = new PyDefUtils.funcWithKwargs(function (kwargs, self, component) {
-            if (!component || !component._anvil) {
-                throw new Sk.builtin.Exception("Argument to add_component() must be a component");
-            }
-            return Sk.misceval.chain(Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs), () => {
+            return (
+                <PyDefUtils.OuterElement className={"flow-panel anvil-container anvil-container-overflow" + spacing} {...props}>
+                    <div refName="gutter" className="flow-panel-gutter" style={align} />
+                </PyDefUtils.OuterElement>
+            );
+        },
 
+        locals($loc) {
+            const ContainerElement = ({ visible, width }) => {
+                visible = !Sk.misceval.isTrue(visible) ? " visisble-false" : "";
+                width = width && "width: " + PyDefUtils.cssLength(width.toString()) + ";";
+                return <div className={"flow-panel-item anvil-always-inline-container hide-with-component" + visible} style={width}></div>;
+            };
 
-                let element = component._anvil.element;
-                let celt;
+            /*!defMethod(_,component,[index=],[width=])!2*/ "Add a component to this panel. Optionally specify the position in the panel to add it, or the width to apply to components that can't self-size width-wise."
+            $loc["add_component"] = PyDefUtils.funcWithKwargs(function (kwargs, self, component) {
+                pyModule["Container"]._check_no_parent(component);
                 const idx = kwargs["index"];
+                let containerElement;
 
-                if (!component._anvil.metadata.invisible) {
-                    celt = $("<div>")
-                        .addClass("flow-panel-item")
-                        .addClass("anvil-always-inline-container")
-                        .addClass("hide-with-component")
-                        .append(element);
-
-                    if ("visible" in component._anvil.propMap && !component._anvil.getPropJS("visible")) {
-                        celt.addClass("visible-false");
-                    }
-
-                    if (!element.hasClass("anvil-inlinable")) {
-                        celt.width(kwargs["width"] || "auto");
-                    }
-
-                    if (typeof idx == "number") {
-                        const elts = self._anvil.gutter.children();
-                        if (idx < elts.length) {
-                            celt.insertBefore(elts[idx]);
-                        } else {
-                            self._anvil.gutter.append(celt);
+                return Sk.misceval.chain(
+                    null,
+                    () => {
+                        if (component._anvil.metadata.invisible) {
+                            return;
                         }
-                    } else {
-                        self._anvil.gutter.append(celt);
+                        const gutter = self._anvil.elements.gutter;
+                        const domNode = component._anvil.domNode;
+                        const visible = "visible" in component._anvil.propMap ? component._anvil.getProp("visible") : Sk.builtin.bool.true$;
+                        const width = domNode.classList.contains("anvil-inlinable") ? "" : kwargs["width"] || "auto";
+                        [containerElement] = <ContainerElement visible={visible} width={width} />;
+                        containerElement.appendChild(domNode);
+                        if (typeof idx === "number") {
+                            if (idx < gutter.children.length) {
+                                gutter.insertBefore(containerElement, gutter.children[idx]);
+                                return;
+                            }
+                            // fall through
+                        } 
+                        gutter.appendChild(containerElement);
+                    },
+                    () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs),
+                    () => {
+                        if (typeof idx === "number") {
+                            const c = self._anvil.components.pop(); // pop off this new component (pushed on by super.add_component())
+                            self._anvil.components.splice(idx, 0, c);
+                        }
+
+                        const rmFn = component._anvil.parent.remove;
+                        component._anvil.parent.remove = () => {
+                            if (containerElement) {
+                                containerElement.remove();
+                            }
+                            return rmFn();
+                        };
+
+                        return Sk.builtin.none.none$;
                     }
-                }
-
-                if (typeof idx == "number") {
-                    const c = self._anvil.components.pop(); // pop off this new component (pushed on by super.add_component())
-                    self._anvil.components.splice(idx, 0, c);
-                }
-
-                let rmFn = component._anvil.parent.remove;
-                component._anvil.parent.remove = () => {
-                    if (celt) {
-                        celt.detach();
-                    }
-                    return rmFn();
-                };
-
-                return Sk.builtin.none.none$;
+                );
             });
-        });
+        },
+    });
 
-    }, /*!defClass(anvil,FlowPanel,Container)!*/ "FlowPanel", [pyModule["Container"]]);
 };
+
+/*!defClass(anvil,FlowPanel,Container)!*/

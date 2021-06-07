@@ -11,10 +11,12 @@
             [clojure.string :as str]
             [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]
             [anvil.dispatcher.types :as types]
-            [anvil.runtime.app-data :as app-data])
+            [anvil.runtime.app-data :as app-data]
+            [anvil.core.worker-pool :as worker-pool])
   (:use     [slingshot.slingshot :only [throw+ try+]])
   (:import (anvil.dispatcher.types DateTime)
-           (java.util Date)))
+           (java.util Date)
+           (java.io StringWriter)))
 
 ;; Background task managers available on this node
 ;; maps impl-name -> {:get-state, kill!}
@@ -170,54 +172,89 @@
           (app-log/record-raw! session (get-environment-for-background-task task) "session_ended" {:type "background_task" :state nil}))))))
 
 
+;; When we send Media into a background task, we need to ensure that it has all arrived
+;; before launch_background_task() returns. Ideally we'd plumb this through to the downlink,
+;; but in the meantime realising it all in Clojure will do the trick.
+
+(defn wait-for-media [req]
+  (let [find-chunked-streams (fn find-media [obj path]
+                               (cond
+                                 (satisfies? types/ChunkedStream obj)
+                                 [[obj path]]
+
+                                 (satisfies? types/Media obj)
+                                 nil
+
+                                 (map? obj)
+                                 (->> (for [[k v] obj]
+                                        (find-media v (conj path k)))
+                                      (apply concat))
+
+                                 (sequential? obj)
+                                 (->> (map-indexed (fn [idx v]
+                                                     (find-media v (conj path idx))) obj)
+                                      (apply concat))))
+
+        chunked-streams (doall (concat (find-chunked-streams (:args (:call req)) [:call :args])
+                                       (find-chunked-streams (:kwargs (:call req)) [:call :kwargs])))]
+
+    (reduce (fn [req [obj path]]
+              (assoc-in req path (types/ChunkedStream->Media obj)))
+            req chunked-streams)))
+
 
 (def rpc-handlers {"anvil.private.background_tasks.launch"    {:fn (fn [{{[task-fn] :args} :call, :keys [origin from-bg-task? app-id environment session-state], :as request} return-path]
-                                                                     (dispatcher/report-exceptions-to-return-path return-path
-                                                                       (let [restrict? (app-data/abuse-caution? session-state app-id)]
-                                                                         (when (= :client origin)
-                                                                           (throw+ {:anvil/server-error "Can't launch background tasks from the client." :type "anvil.server.BackgroundTaskError"}))
+                                                                     (worker-pool/run-task! {:type :native-rpc,
+                                                                                             :name ::bg-task-launch-async-for-media-wait
+                                                                                             :tags (worker-pool/get-task-tags-for-dispatch-request request)}
+                                                                       (dispatcher/report-exceptions-to-return-path return-path
+                                                                         ;; This is naaaasty:
+                                                                         (let [request (wait-for-media request)
+                                                                               restrict? (app-data/abuse-caution? session-state app-id)]
+                                                                           (when (= :client origin)
+                                                                             (throw+ {:anvil/server-error "Can't launch background tasks from the client." :type "anvil.server.BackgroundTaskError"}))
 
-                                                                         (when (and (= :pypy origin)
-                                                                                    from-bg-task?)
-                                                                           (throw+ {:anvil/server-error (str "Can't launch background tasks from other Background Tasks in the Restricted Python environment. " (if restrict?
-                                                                                                                                                                                                                  "Please upgrade to use a Full Python server environment."
-                                                                                                                                                                                                                  "Please choose a Full Python server environment.")) :type "anvil.server.BackgroundTaskError"}))
+                                                                           (when (and (= :pypy origin)
+                                                                                      from-bg-task?)
+                                                                             (throw+ {:anvil/server-error (str "Can't launch background tasks from other Background Tasks in the Restricted Python environment. " (if restrict?
+                                                                                                                                                                                                                    "Please upgrade to use a Full Python server environment."
+                                                                                                                                                                                                                    "Please choose a Full Python server environment.")) :type "anvil.server.BackgroundTaskError"}))
 
-                                                                         ;; We could just launch the task here, but we want to limit free users to 2 concurrent tasks per app
-                                                                         (let [do-dispatch! (fn [] (dispatcher/dispatch! (-> request
-                                                                                                                             (assoc-in [:call :func] (str "task:" task-fn))
-                                                                                                                             (update-in [:call :args] rest)
-                                                                                                                             (assoc :background? true)
-                                                                                                                             (assoc :scheduled? (boolean (:scheduled-task-id request)))
-                                                                                                                             (assoc :bg-task-timeout (if restrict?
-                                                                                                                                                       30000
-                                                                                                                                                       nil)))
-                                                                                                                         return-path))]
+                                                                           ;; We could just launch the task here, but we want to limit free users to 2 concurrent tasks per app
+                                                                           (let [do-dispatch! (fn [] (dispatcher/dispatch! (-> request
+                                                                                                                               (assoc-in [:call :func] (str "task:" task-fn))
+                                                                                                                               (update-in [:call :args] rest)
+                                                                                                                               (assoc :background? true)
+                                                                                                                               (assoc :scheduled? (boolean (:scheduled-task-id request)))
+                                                                                                                               (assoc :bg-task-timeout (if restrict?
+                                                                                                                                                         30000
+                                                                                                                                                         nil)))
+                                                                                                                           return-path))]
 
-                                                                           (if-not restrict?
-                                                                             (do-dispatch!)
-                                                                             ;; Don't let it gobble too many resources. Get all the tasks that might still be running...
-                                                                             (let [existing-tasks (list-background-tasks environment true)
-                                                                                   potentially-running-tasks (filter #(nil? (:completion_status %)) existing-tasks)
-                                                                                   state-responses (atom {})]
+                                                                             (if-not restrict?
+                                                                               (do-dispatch!)
+                                                                               ;; Don't let it gobble too many resources. Get all the tasks that might still be running...
+                                                                               (let [existing-tasks (list-background-tasks environment true)
+                                                                                     potentially-running-tasks (filter #(nil? (:completion_status %)) existing-tasks)
+                                                                                     state-responses (atom {})]
 
-                                                                               (if (< (count potentially-running-tasks) 2)
-                                                                                 ;; There aren't many, so just go ahead and launch
-                                                                                 (do-dispatch!)
+                                                                                 (if (< (count potentially-running-tasks) 2)
+                                                                                   ;; There aren't many, so just go ahead and launch
+                                                                                   (do-dispatch!)
 
-                                                                                 ;; We probably have too many tasks running, so check whether they're still alive by swapping their completion statuses into an atom.
-                                                                                 (doseq [task potentially-running-tasks]
-                                                                                   (get-state task request
-                                                                                              {:update!  (partial dispatcher/update! return-path)
-                                                                                               :respond! (fn [{data :response}]
-                                                                                                           (let [updated-state-responses (swap! state-responses assoc (:id task) data)]
-                                                                                                             (when (= (count updated-state-responses) (count potentially-running-tasks))
-                                                                                                               ;; We have collected completion state from all the possibly-running tasks, now count how many are actually still running.
-                                                                                                               (if (< (count (filter identity (vals updated-state-responses))) 2)
-                                                                                                                 (do-dispatch!)
-                                                                                                                 (dispatcher/respond! return-path {:error {:message "Free users can only run two simultaneous Background Tasks."
-                                                                                                                                                           :type    "anvil.server.BackgroundTaskError"}})))))}
-                                                                                              is-running?)))))))))}
+                                                                                   ;; We probably have too many tasks running, so check whether they're still alive by swapping their completion statuses into an atom.
+                                                                                   (doseq [task potentially-running-tasks]
+                                                                                     (get-state task request
+                                                                                                {:update!  (partial dispatcher/update! return-path)
+                                                                                                 :respond! (fn [{data :response}]
+                                                                                                             (let [updated-state-responses (swap! state-responses assoc (:id task) data)]
+                                                                                                               (when (= (count updated-state-responses) (count potentially-running-tasks))
+                                                                                                                 ;; We have collected completion state from all the possibly-running tasks, now count how many are actually still running.
+                                                                                                                 (if (< (count (filter identity (vals updated-state-responses))) 2)
+                                                                                                                   (do-dispatch!)
+                                                                                                                   (dispatcher/respond! return-path {:error {:message "Free users can only run two simultaneous Background Tasks."
+                                                                                                                                                             :type    "anvil.server.BackgroundTaskError"}})))))}
+                                                                                                is-running?))))))))))}
                    "anvil.private.background_tasks.get_by_id" (rpc-util/wrap-native-fn
                                                                 (fn [_kwargs id]
                                                                   (when rpc-util/*client-request?*
@@ -319,12 +356,17 @@
 (def respond!)
 (defn launch-local-background-task! [executor {:keys [app-id app-origin func] :as request}]
   ;; Launch an background task on a non-async-aware executor, using return value as final state
-  (let [[bt return-path] (setup-background-task-context request :local-wrapper #(swap! local-background-tasks dissoc (:id %)))]
+  (let [[bt return-path] (setup-background-task-context request :local-wrapper #(swap! local-background-tasks dissoc (:id %)))
+        task-state (atom {})]
 
-    (swap! local-background-tasks assoc (:id bt) {})              ;; TODO store some useful info
+    (swap! local-background-tasks assoc (:id bt) {:task-state task-state})
 
     (try+
-      ((:fn executor) (dissoc request :background?) return-path)
+      ((:fn executor) (-> request
+                          (assoc ::task bt)
+                          (assoc ::task-state task-state)
+                          (dissoc :background?))
+       return-path)
       (catch :anvil/server-error e
         (record-final-state! bt {:error {:message (:anvil/server-error e) :type (:type e)}} true)
         (swap! local-background-tasks dissoc (:id bt)))
@@ -337,14 +379,54 @@
 
 (swap! implementations assoc :local-wrapper
        {:get-state (fn [{:keys [id]} return-path]
-                     (dispatcher/respond! return-path (if (contains? @local-background-tasks id)
-                                                        {:response nil}
+                     (dispatcher/respond! return-path (if-let [{:keys [task-state]} (get @local-background-tasks id)]
+                                                        {:response (when task-state @task-state)}
                                                         {:error {:type "anvil.server.NotRunningTask" :message "No such task"}})))
         :kill!     (fn [{:keys [id] :as task} return-path]
                      (log/info "Cannot honour request to kill background task " id ": " task)
-                     (dispatcher/respond! return-path (if (contains? @local-background-tasks id)
-                                                        {:response nil}
+                     (dispatcher/respond! return-path (if-let [{:keys [thread]} (get @local-background-tasks id)]
+                                                        (do
+                                                          (when thread
+                                                            (.interrupt thread))
+                                                          {:response nil})
                                                         {:error {:type "anvil.server.NotRunningTask" :message "No such task"}})))})
+
+(def ^:dynamic *native-bg-task-state* nil)
+
+(defn launch-native-background-task!* [f]
+  (when-not rpc-util/*req*
+    (throw (Exception. "Tried to launch native BG task without a request")))
+
+  (-> (launch-local-background-task! {:fn (fn [request return-path]
+                                            (let [t (worker-pool/spawn-thread! :native-bg-task
+                                                      (let [return-path {:respond! #(dispatcher/respond! return-path (assoc % :taskState @(::task-state request)))
+                                                                         :update!  #(dispatcher/update! return-path %)}]
+                                                        (dispatcher/report-exceptions-to-return-path return-path
+                                                          (try+
+                                                            (rpc-util/with-native-bindings-from-request request return-path
+                                                                                                        (binding [*native-bg-task-state* (::task-state rpc-util/*req*)]
+                                                                                                          (dispatcher/respond! return-path {:response (f)})))
+                                                            (catch InterruptedException e
+                                                              (record-final-state! (::task request) {:taskState @(::task-state request)} :killed))))))]
+                                              (swap! local-background-tasks (fn [ts]
+                                                                              (if (contains? ts (:id (::task request)))
+                                                                                (assoc-in ts [(:id (::task request)) :thread] t)
+                                                                                ts)))))}
+                                     rpc-util/*req*)
+
+      (dispatcher/mk-BackgroundTaskLiveObject)))
+
+(defmacro launch-native-background-task! [& body]
+  `(launch-native-background-task!* (fn [] ~@body)))
+
+(defmacro with-capture-output-into-state [& body]
+  `(let [output!# #(swap! *native-bg-task-state* assoc :output %)]
+     (binding [*out* (proxy [StringWriter] []
+                       (write
+                         ([a#] (proxy-super write a#) (output!# (.toString ~'this)))
+                         ([a# b# c#] (proxy-super write a# b# c#) (output!# (.toString ~'this)))))
+               util/*in-repl?* true]
+       ~@body)))
 
 (reset! dispatcher/default-background-wrapper launch-local-background-task!)
 

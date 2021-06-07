@@ -117,7 +117,6 @@ module.exports = function() {
                         freeBlob();
                         resolve(r);
                     };
-                    console.log(jsUrl);
                     img.src = jsUrl;
                 });
             }
@@ -171,7 +170,9 @@ module.exports = function() {
                         var small = canvas.toDataURL("image/jpeg", 0.8);
                     } catch (e) {
                         if (e.name == "SecurityError") {
-                            reject(new Sk.builtin.Exception("Cannot rotate image from untrusted cross-origin source."));
+                            reject(
+                                new Sk.builtin.RuntimeError("Cannot rotate image from untrusted cross-origin source.")
+                            );
                             return;
                         } else {
                             throw e;
@@ -238,7 +239,7 @@ module.exports = function() {
                             var newImgDataURL = canvas.toDataURL(Sk.ffi.remapToJs(pyContentType));                            
                         } catch (e) {
                             if (e.name == "SecurityError") {
-                                reject(new Sk.builtin.Exception("Cannot rotate image from untrusted cross-origin source."));
+                                reject(new Sk.builtin.RuntimeError("Cannot rotate image from untrusted cross-origin source."));
                                 return;
                             } else {
                                 throw e;

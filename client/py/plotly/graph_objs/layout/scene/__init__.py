@@ -48,6 +48,7 @@ __all__ = [
     'YAxis',
     'ZAxis',
     'annotation',
+    'aspectratio',
     'camera',
     'xaxis',
     'yaxis',
@@ -55,6 +56,7 @@ __all__ = [
 ]
 
 from plotly.graph_objs.layout.scene import annotation
+from plotly.graph_objs.layout.scene import aspectratio
 from plotly.graph_objs.layout.scene import camera
 from plotly.graph_objs.layout.scene import xaxis
 from plotly.graph_objs.layout.scene import yaxis

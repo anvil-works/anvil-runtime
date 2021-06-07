@@ -166,7 +166,7 @@
                                     (ws-util/tag-channel! channel {:app-info app-info, :environment env, :app-session default-session-state})
                                     (reset! app-id (:id app-info))
                                     (reset! environment env)
-                                    (reset! app-origin (:app-origin request))
+                                    (reset! app-origin (app-data/get-default-app-origin env))
                                     (reset! priv-level priv)
                                     (reset! default-session-state
                                             {:client (runtime-util/client-info-from-request (if (= :uplink priv) :uplink :client_uplink)

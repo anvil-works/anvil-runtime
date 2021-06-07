@@ -752,6 +752,10 @@ def serialise_live_object(obj, known_methods):
 def _repr_path(p):
     return "".join(("[%s]" % repr(k) for k in p))
 
+def _module_prefixes(module):
+    module_parts = module.split(".")
+    return [".".join(module_parts[:i]) for i in range(1, len(module_parts)+1)]
+
 
 def fill_out_media(json, handle_media_fn, collect_capabilities=None):
     obj_descr = []
@@ -764,12 +768,11 @@ def fill_out_media(json, handle_media_fn, collect_capabilities=None):
 
         t_json = type(_json)
 
-        if t_json.__module__.startswith("plotly.graph_objs") and "plotly.graph_objs" in _serialization_helpers:
-            helper_fn = _serialization_helpers.pop("plotly.graph_objs")
-            helper_fn()
-        elif t_json.__module__ in _serialization_helpers:
-            helper_fn = _serialization_helpers.pop(t_json.__module__)
-            helper_fn()
+        cls_fullname = t_json.__module__ + "." + t_json.__name__
+        for prefix in _module_prefixes(cls_fullname):
+            if prefix in _serialization_helpers:
+                _serialization_helpers[prefix](cls_fullname)
+                break
 
 
         if hasattr(_json, "SERIALIZATION_INFO"):
@@ -984,11 +987,12 @@ def _reconstruct_objects(json, reconstruct_data_media, hold_back_value_types=Fal
                         i = type_name.rfind('.')
                         if i != -1:
                             # TODO do we filter what we can specify as import? I don't *think* this is dangerous...
-                            module_name = type_name[:i]
-                            if module_name in _serialization_helpers:
-                                helper_fn = _serialization_helpers.pop(module_name)
-                                helper_fn()
+                            for prefix in _module_prefixes(type_name):
+                                if prefix in _serialization_helpers:
+                                    _serialization_helpers[prefix](type_name)
+                                    break
                             else:
+                                module_name = type_name[:i]
                                 importlib.import_module(module_name)
                             value_type = _value_types.get(type_name)
 

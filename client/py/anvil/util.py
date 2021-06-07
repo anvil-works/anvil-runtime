@@ -1,4 +1,7 @@
 import json
+from anvil.server import serializable_type
+from copy import deepcopy as _deepcopy
+
 
 def _wrap(value):
     if isinstance(value, (WrappedObject, WrappedList)):
@@ -14,6 +17,7 @@ def _wrap(value):
         return value
 
 
+@serializable_type
 class WrappedObject(dict):
     _name = None
     _module = None
@@ -47,8 +51,8 @@ class WrappedObject(dict):
 
     def __repr__(self):
         n = self._name or "WrappedObject"
-        m = self._module or "<unknown>"
-        return "%s.%s<%s>" % (
+        m = self._module + "." if self._module else ""
+        return "%s%s<%s>" % (
             m, n, ", ".join(["%s=%s" % (k, repr(self[k])) for k in self.keys()])
         )
 
@@ -58,7 +62,14 @@ class WrappedObject(dict):
     def __deserialize__(self, data, global_data):
         self.__init__(data)
 
+    def __copy__(self):
+        return self.__class__(dict.copy(self))
 
+    def __deepcopy__(self, memo):
+        return self.__class__(_deepcopy(dict(self)))
+
+
+@serializable_type
 class WrappedList(list):
     def __init__(self, lst=[]):
         for x in lst:
@@ -79,3 +90,9 @@ class WrappedList(list):
 
     def __deserialize__(self, data, global_data):
         self.__init__(data)
+
+    def __copy__(self):
+        return self.__class__(list.copy(self))
+
+    def __deepcopy__(self, memo):
+        return self.__class__(_deepcopy(list(self)))

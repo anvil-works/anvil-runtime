@@ -8,7 +8,5 @@ class Figure(WrappedObject):
     _name = "Figure"
     _module = "plotly.graph_objs._figure"
 
-
-__all__ = [
-    'Figure',
-]
+    def __init__(self, d=None, **kwargs):
+        WrappedObject.__init__(self, d, type='figure', **kwargs)

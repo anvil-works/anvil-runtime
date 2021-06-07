@@ -34,6 +34,11 @@ class Stream(WrappedObject):
     _module = "plotly.graph_objs.histogram2dcontour"
 
 @serializable_type
+class Transform(WrappedObject):
+    _name = "Transform"
+    _module = "plotly.graph_objs.histogram2dcontour"
+
+@serializable_type
 class XBins(WrappedObject):
     _name = "XBins"
     _module = "plotly.graph_objs.histogram2dcontour"
@@ -51,6 +56,7 @@ __all__ = [
     'Line',
     'Marker',
     'Stream',
+    'Transform',
     'XBins',
     'YBins',
     'colorbar',

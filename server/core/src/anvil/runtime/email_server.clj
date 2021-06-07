@@ -50,8 +50,9 @@
 
         environment (assoc environment :commit-id (:version app))
 
-        app-session (atom {:app-origin (app-data/get-default-app-origin environment)
-                           :client     {:type :email}})
+        app-session (atom {:app-origin  (app-data/get-default-app-origin environment)
+                           :client      {:type :email}
+                           :environment environment})
         log-ctx {:app-session app-session, :app-id (:id app-info), :environment (assoc environment :commit-id (:version app))}
         _ (app-log/record! log-ctx :new-session {:type "email" :from_addr from :to_addr recipient})
 
@@ -65,7 +66,7 @@
                                 true))
 
         timer-task (util/timer-task "timing out SMTP response"
-                     (simple-smtp-result! {:error {:type "unknown", :message "Server code timed out"}}))
+                     (simple-smtp-result! {:error "The server timed out while attempting to deliver your message. Please try again."}))
 
         smtp-result! (fn [r]
                        (when (simple-smtp-result! r)
@@ -139,28 +140,34 @@
                                              :domains           (map #(.getDToken %) acceptable-signatures)}))}
 
         transform-message (fn transform-message [transformed-email, ^MimePart m]
-                            (if (= (.getDisposition m) Part/ATTACHMENT)
-                              (update-in transformed-email [:attachments] conj
-                                         (InputStreamMedia. (.getContentType m) (.getInputStream m) (.getFileName m) (.getSize m)))
+                            (let [add-attachment (fn [mime-part]
+                                                   (if (.getContentID m)
+                                                     ;; If this part has a Content-ID, record it as an inline attachment.
+                                                     (update-in transformed-email [:inline_attachments] assoc
+                                                                (-> (or (.getContentID m) "")
+                                                                    (.replace "<" "")
+                                                                    (.replace ">" ""))
+                                                                (InputStreamMedia. (.getContentType mime-part) (.getInputStream mime-part) (or (.getFileName mime-part) "Attachment") (.getSize mime-part)))
+                                                     ;; Otherwise, it's a normal attachment
+                                                     (update-in transformed-email [:attachments] conj
+                                                                (InputStreamMedia. (.getContentType mime-part) (.getInputStream mime-part) (or (.getFileName mime-part) "Attachment") (.getSize mime-part)))))]
 
-                              ;; Sometimes content-type headers have newlines in them, hence the (?s). Grr.
-                              (condp re-matches (.getContentType m)
-                                #"(?s)text/plain.*"
-                                (update-in transformed-email [:text] (fn [t] (str t (.getContent m))))
-                                #"(?s)text/html.*"
-                                (update-in transformed-email [:html] (fn [h] (str (.getContent m))))
-                                #"(?s)multipart/.*"
-                                (let [^Multipart mp (.getContent m)
-                                      n-parts (.getCount mp)]
-                                  (reduce transform-message transformed-email (for [i (range n-parts)] (.getBodyPart mp i))))
+                              (if (= (.getDisposition m) Part/ATTACHMENT)
+                                (add-attachment m)
 
-                                (if (= (.getDisposition m) Part/INLINE)
-                                  (update-in transformed-email [:inline_attachments] assoc
-                                             (-> (or (.getContentID m) "")
-                                                 (.replace "<" "")
-                                                 (.replace ">" ""))
-                                             (InputStreamMedia. (.getContentType m) (.getInputStream m) (.getFileName m) (.getSize m)))
-                                  transformed-email))))
+                                ;; Sometimes content-type headers have newlines in them, hence the (?s). Grr.
+                                (condp re-matches (.getContentType m)
+                                  #"(?s)text/plain.*"
+                                  (update-in transformed-email [:text] (fn [t] (str t (.getContent m))))
+                                  #"(?s)text/html.*"
+                                  (update-in transformed-email [:html] (fn [h] (str (.getContent m))))
+                                  #"(?s)multipart/.*"
+                                  (let [^Multipart mp (.getContent m)
+                                        n-parts (.getCount mp)]
+                                    (reduce transform-message transformed-email (for [i (range n-parts)] (.getBodyPart mp i))))
+
+                                  ;; If all else fails, add this part as an attachment.
+                                  (add-attachment m)))))
 
         transformed-email (transform-message transformed-email message)]
 

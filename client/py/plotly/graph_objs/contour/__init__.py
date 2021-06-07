@@ -28,6 +28,11 @@ class Stream(WrappedObject):
     _name = "Stream"
     _module = "plotly.graph_objs.contour"
 
+@serializable_type
+class Transform(WrappedObject):
+    _name = "Transform"
+    _module = "plotly.graph_objs.contour"
+
 
 __all__ = [
     'ColorBar',
@@ -35,6 +40,7 @@ __all__ = [
     'Hoverlabel',
     'Line',
     'Stream',
+    'Transform',
     'colorbar',
     'contours',
     'hoverlabel',

@@ -29,6 +29,11 @@ class Stream(WrappedObject):
     _module = "plotly.graph_objs.box"
 
 @serializable_type
+class Transform(WrappedObject):
+    _name = "Transform"
+    _module = "plotly.graph_objs.box"
+
+@serializable_type
 class Unselected(WrappedObject):
     _name = "Unselected"
     _module = "plotly.graph_objs.box"
@@ -40,6 +45,7 @@ __all__ = [
     'Marker',
     'Selected',
     'Stream',
+    'Transform',
     'Unselected',
     'hoverlabel',
     'marker',

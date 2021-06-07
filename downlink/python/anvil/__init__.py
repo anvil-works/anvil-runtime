@@ -35,17 +35,21 @@ def _clear_live_object_caches(lo):
         raise Exception("Not a LiveObject")
 
 class Media(object):
-    def __getattribute__(self, item):
-        if item == "url":
-            return self.get_url()
-        elif item == "content_type":
-            return self.get_content_type()
-        elif item == "name":
-            return self.get_name()
-        elif item == "length":
-            return self.get_length()
-        else:
-            return object.__getattribute__(self, item)
+    @property
+    def url(self):
+        return self.get_url()
+    @property
+    def content_type(self):
+        return self.get_content_type()
+    @property
+    def name(self):
+        return self.get_name()
+    @property
+    def length(self):
+        return self.get_length()
+    
+    def get_content_type(self):
+        return None
 
     def get_url(self, download=True):
         return None

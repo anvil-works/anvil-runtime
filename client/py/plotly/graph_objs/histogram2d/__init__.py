@@ -24,6 +24,11 @@ class Stream(WrappedObject):
     _module = "plotly.graph_objs.histogram2d"
 
 @serializable_type
+class Transform(WrappedObject):
+    _name = "Transform"
+    _module = "plotly.graph_objs.histogram2d"
+
+@serializable_type
 class XBins(WrappedObject):
     _name = "XBins"
     _module = "plotly.graph_objs.histogram2d"
@@ -39,6 +44,7 @@ __all__ = [
     'Hoverlabel',
     'Marker',
     'Stream',
+    'Transform',
     'XBins',
     'YBins',
     'colorbar',

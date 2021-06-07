@@ -1,5 +1,8 @@
 "use strict";
-
+let v = null;
+let o = v?.u?.k?.l;
+let x = new Promise((y) => y());
+let f = async () => { await x; let {xyz1, ...rtd} = {xyz1: 42, f:7}; };
 window.RSVP = require('rsvp');
 
 require("./messages");
@@ -42,25 +45,29 @@ function initComponentsOnForm(components, pyForm, eventBindingsByName) {
     fns.push(function() {
         // Register any event handlers for the new component
 
-        pyForm._anvil.componentNames = [];
+        pyForm._anvil.componentNames = new Set();
         for(var name in componentsByName) {
             var pyComponent = componentsByName[name];
-            pyForm._anvil.componentNames.push(name);
+            pyForm._anvil.componentNames.add(name);
+
+            const pyFormDict = Sk.abstr.lookupSpecial(pyForm, Sk.builtin.str.$dict);
 
             if (name) {
                 if (Sk.misceval.isTrue(Sk.builtin.hasattr(pyForm, new Sk.builtin.str(name)))) {
                     Sk.misceval.call(Sk.builtins.print, undefined, undefined, undefined, new Sk.builtin.str("Warning: " + pyForm.tp$name + " has a method or attribute '" + name + "' and a component called '" + name + "'. The method or attribute will be inaccessible. This is probably not what you want."));
                 }
-                Sk.generic.setAttr.call(pyForm, new Sk.builtin.str(name), pyComponent);
+                // add it to the dunder dict
+                Sk.abstr.objectSetItem(pyFormDict, new Sk.builtin.str(name), pyComponent);
             }
 
             // Add event handlers.
 
             var bindings = eventBindingsByName[name]
             for (var evt in bindings) {
-                if (pyForm[bindings[evt]]) {
+                const pyHandler = Sk.generic.getAttr.call(pyForm, new Sk.builtin.str(bindings[evt])); // use generic getattr for performance
+                if (pyHandler) {
                     // The handler exists.
-                    addHandler(pyComponent, Sk.abstr.gattr(pyForm, new Sk.builtin.str(bindings[evt])), evt);
+                    addHandler(pyComponent, pyHandler, evt);
                 } else {
                     // TODO: Should probably at least warn that we tried to attach a non-existent handler.
                 }
@@ -153,6 +160,7 @@ function loadApp(app, appId, appOrigin, preloadModules) {
 
     let dependencyErrors = [];
     let dependencyPackageNames = [];
+    let dataBindingCompilations = {};
 
     for (let app_id in app.dependency_code) {
         let depApp = app.dependency_code[app_id];
@@ -279,6 +287,12 @@ function loadApp(app, appId, appOrigin, preloadModules) {
 
     var uncaughtExceptions = {pyHandler: Sk.builtin.none.none$};
 
+    window.onunhandledrejection = (event) => {
+        window.onerror(null, null, null, null, event.reason);
+    };
+
+    RSVP.on('error', e => window.onunhandledrejection({reason: e}));
+
     window.onerror = function(errormsg, url, line, col, errorObj) {
         if (errormsg && errormsg.indexOf('__gCrWeb.autofill.extractForms') > -1) {
             // This is a Chrome-on-iOS bug. Only happens when autofill=off in settings. Ignore.
@@ -315,7 +329,7 @@ function loadApp(app, appId, appOrigin, preloadModules) {
                 } else {
                     $("#session-expired-modal").modal("show");
                 }
-            } else if (errorObj instanceof Sk.builtin.Exception) {
+            } else if (errorObj instanceof Sk.builtin.BaseException) {
                 var args = Sk.ffi.remapToJs(errorObj.args);
 
                 var errorMsg = {
@@ -363,12 +377,17 @@ function loadApp(app, appId, appOrigin, preloadModules) {
                     window.anvilOnRuntimeError(errormsg, url, line, col, errorObj);
                 }
 
-                $('#error-indicator .output').text(errormsg);
+                $('#error-indicator .output').text(errormsg || "Unhandled runtime error");
 
-                let err = {runtimeError: errorObj && errorObj.constructor && errorObj.constructor.name,
-                           jsUrl: url, jsLine: line, jsCol: col,
-                           message: ""+errorObj, jsTrace: errorObj && errorObj.stack,
-                           anvilVersion: window.anvilVersion};
+                const err = {
+                    runtimeError: (errorObj && errorObj.constructor && errorObj.constructor.name) || "Unknown error",
+                    jsUrl: url,
+                    jsLine: line,
+                    jsCol: col,
+                    message: "" + (errorObj || "Unknown error"),
+                    jsTrace: errorObj && errorObj.stack,
+                    anvilVersion: window.anvilVersion,
+                };
 
                 sendLog({ error: err });
 
@@ -407,7 +426,7 @@ function loadApp(app, appId, appOrigin, preloadModules) {
     // Inject the theme HTML assets into the HtmlTemplate component
     anvilModule["HtmlTemplate"].$_anvilThemeAssets = (app.theme && app.theme.html) || {};
     // Inject them theme colour scheme into the Component class
-    anvilModule["Component"].$_anvilThemeColors = (app.theme && app.theme.color_scheme) || {};
+    window.anvilThemeColors = anvilModule["Component"].$_anvilThemeColors = (app.theme && app.theme.color_scheme) || {};
 
     window.anvilCustomComponentProperties = {}; // {'depId:class_name' => properties}
     var defineForm = function(f, anvilModule, topLevelPackage, depId=null) {
@@ -454,449 +473,454 @@ function loadApp(app, appId, appOrigin, preloadModules) {
 
         appModules[templateModulePath] = templateModule.replace(/..INSERT../, "/*INSERT*/ mod['"+className+"Template'] = window.anvilFormTemplates["+aft.length+"];");
 
-        aft[aft.length] = anvilModule[className + "Template"] = Sk.misceval.buildClass(anvilModule, function($gbl, $loc) {
+        aft[aft.length] = anvilModule[className + "Template"] = PyDefUtils.mkComponentCls(anvilModule, className + "Template", {
 
-            // The setup code is *mostly* in common between __new__ and __new_deserialized__, except for
-            // components (__new_deserialized__ already has the objects, whereas __new__ needs to
-            // instantiate them), so we keep it mostly in common
+            base: anvilModule[f.container.type],
 
-            let getContainerKwargs = () => {
+            /*!componentEvents(form)!1*/
+            events: [
+                {name: "show", description: "When the form is shown on the page",
+                    parameters: [], important: true},
+                {name: "hide", description: "When the form is removed from the page",
+                    parameters: [], important: true},
+                {name: "refreshing_data_bindings", important: true, parameters: [],
+                    description: "When refresh_data_bindings is called"},
+            ],
+
+            /*!componentProp(form)!1*/
+            properties: [{
+                name: "item",
+                type: "dict",
+                description: "A dictionary-like object connected to this form",
+                pyVal: true,
+                set(s,e,v) {
+                    return s._anvil.refreshOnItemSet && Sk.misceval.callsimOrSuspend(s.tp$getattr(new Sk.builtin.str("refresh_data_bindings")));
+                }
+            }],
+            
+            locals($loc) {
+
+                // The setup code is *mostly* in common between __new__ and __new_deserialized__, except for
+                // components (__new_deserialized__ already has the objects, whereas __new__ needs to
+                // instantiate them), so we keep it mostly in common
+
+
                 // Here we need to generate kwargs to give to the container constructor and initialiser, (which should be taken directly from the yaml, and cannot be interfered-with by our kwargs)
-                let containerKwargs = ["__ignore_property_exceptions", true];
+                const containerKwargs = ["__ignore_property_exceptions", true];
                 for (let [k,v] of Object.entries(f.container.properties || {})) {
                     if (v === undefined) continue;
-                    containerKwargs.push(k);
-                    containerKwargs.push(Sk.ffi.remapToPy(v));
-                }
-                return containerKwargs;
-            }
-
-            let skeletonNew = (cls) => {
-                let containerNew = Sk.abstr.typeLookup(anvilModule[f.container.type], new Sk.builtin.str("__new__"));
-
-                if (containerNew && containerNew !== Sk.builtin.object.prototype["__new__"]) {
-                    return Sk.misceval.callOrSuspend(containerNew, undefined, undefined, getContainerKwargs(), cls);
-                } else {
-                    return Sk.misceval.callOrSuspend(Sk.builtin.object.prototype["__new__"], undefined, undefined, undefined, cls);
-                }
-            };
-
-            // Back half of __new__ for conventionally constructed objects;
-            // __deserialize__ for deserialized ones
-            let commonSetup = (c, setupComponents) => {
-                if (!c._anvil) {
-                    c._anvil = {};
+                    containerKwargs.push(k, Sk.ffi.toPy(v));
                 }
 
-                c._anvil.refreshOnItemSet = true;
+                const containerNew = Sk.abstr.typeLookup(anvilModule[f.container.type], new Sk.builtin.str("__new__"));
 
-                /*!componentEvents(form)!1*/
-                var events = [
-                    {name: "show", description: "When the form is shown on the page",
-                     parameters: [], important: true},
-                    {name: "hide", description: "When the form is removed from the page",
-                     parameters: [], important: true},
-                    {name: "refreshing_data_bindings", important: true, parameters: [],
-                     description: "When refresh_data_bindings is called"},
-                ];
+                const skeletonNew = (cls) => PyDefUtils.pyCallOrSuspend(containerNew, [cls], containerKwargs);
 
-                /*!componentProp(form)!1*/
-                var properties = [{
-                    name: "item",
-                    type: "dict",
-                    description: "A dictionary-like object connected to this form",
-                    pyVal: true,
-                    set: function(s,e,v) {
-                        return s._anvil.refreshOnItemSet && Sk.misceval.callsimOrSuspend(s.tp$getattr(new Sk.builtin.str("refresh_data_bindings")));
-                    }
-                }];
-                PyDefUtils.addProperties(c, properties, events);
+                // Back half of __new__ for conventionally constructed objects;
+                // __deserialize__ for deserialized ones
+                let commonSetup = (c, setupComponents) => {
 
-                if (f.custom_component) {
-                    c._anvil.customComponentEventTypes = {};
-                    for (let e of f.events || []) {
-                        c._anvil.customComponentEventTypes[e.name] = e;
-                    }
-                    c._anvil.customComponentProperties = f.properties;
-                }
+                    c._anvil.refreshOnItemSet = true;
 
-                var writeBackChildBoundData = function(pyComponent, attrName, pyNewValue) {
-                    if (pyNewValue === undefined) {
-                        pyNewValue = pyComponent.tp$getattr(new Sk.builtin.str(attrName));
-                    }
-                    for (var i in c._anvil.dataBindings) {
-                        var binding = c._anvil.dataBindings[i];
-                        if (binding.pyComponent === pyComponent && binding.property === attrName && binding.pySave) {
-                            return PyDefUtils.callAsyncWithoutDefaultError(binding.pySave, undefined, undefined, undefined, c, pyComponent).catch(function (e) {
-                                if (e instanceof Sk.builtin.KeyError) {
-                                    return; // Unremarkable
-                                }
-                                console.error(e);
-                                if (e instanceof Sk.builtin.Exception && e.args.v[0] instanceof Sk.builtin.str) {
-                                    e.args.v[0] = new Sk.builtin.str(e.args.v[0].v + "\n while setting " + binding.code + " = self." + binding.component_name + "." + binding.property + "\n in a data binding for self." + binding.component_name);
-                                }
-                                window.onerror(null, null, null, null, e);
-                            });
+                    if (f.custom_component) {
+                        c._anvil.customComponentEventTypes = {};
+                        for (let e of f.events || []) {
+                            c._anvil.customComponentEventTypes[e.name] = e;
                         }
+                        c._anvil.customComponentProperties = f.properties;
                     }
-                    return Promise.resolve();
-                };
 
-                return Sk.misceval.chain(
-                    Sk.misceval.callOrSuspend(anvilModule[f.container.type].tp$getattr(new Sk.builtin.str("__init__")), undefined, undefined, getContainerKwargs(), c),
-                    () => { c._anvil.props["item"] = new Sk.builtin.dict() },
-                    function () {
-                        c._anvil.dataBindings = [];
-                        
-                        for (var i in f.container.data_bindings || []) {
-                            var binding = Object.create(f.container.data_bindings[i]);
-                            binding.pyComponent = c;
-                            binding.component_name = "";
-                            c._anvil.dataBindings.push(binding);
+                    var writeBackChildBoundData = function(pyComponent, attrName, pyNewValue) {
+                        if (pyNewValue === undefined) {
+                            pyNewValue = pyComponent.tp$getattr(new Sk.builtin.str(attrName));
                         }
-
-                        return setupComponents(c);
-                    }, 
-                    function() {
                         for (var i in c._anvil.dataBindings) {
                             var binding = c._anvil.dataBindings[i];
-                            binding.pyComponent._anvil.dataBindingWriteback = writeBackChildBoundData;
-
-                            if (binding.code) {
-                                var readCode = "def update_val(self, _anvil_component):\n" +
-                                               "  _anvil_component." + binding.property + " = " + binding.code + "\n" + 
-                                               "def clear_val(self, _anvil_component):\n" +
-                                               "  _anvil_component." + binding.property + " = None\n";
-                                // TODO: Check whether we actually allowBindingWriteback on this binding property. This is not as simple as 
-                                // looking at the propMap of binding.pyComponent, because they could be custom component properties, which 
-                                // aren't registered anywhere on the instance.
-                                var writeCode = (binding.writeback ?
-                                                    "def save_val(self, _anvil_component):\n" +
-                                                    "  " + binding.code + " = _anvil_component." + binding.property + "\n"
-                                                    : "");
-                                var bmod;
-                                try {
-                                    bmod = Sk.compile(readCode + writeCode, "update_binding.py", "exec", true);
-                                } catch(e) {
-                                    // Usability: detect the "chose writeback but didn't give an lvalue" situation
-                                    if (binding.writeback) {
-                                        let readCompiledOk = false;
-                                        try {
-                                            Sk.compile(readCode, "update_binding.py", "exec", true);
-                                            readCompiledOk = true;
-                                        } catch(e) {}
-                                        if (readCompiledOk) {
-                                            throw new Sk.builtin.SyntaxError("Can't assign to data binding expression for " + binding.component_name + "." + binding.property + ", but writeback is enabled for this data binding.");
-                                        }
+                            if (binding.pyComponent === pyComponent && binding.property === attrName && binding.pySave) {
+                                return PyDefUtils.callAsyncWithoutDefaultError(binding.pySave, undefined, undefined, undefined, c, pyComponent).catch(function (e) {
+                                    if (e instanceof Sk.builtin.KeyError) {
+                                        return; // Unremarkable
                                     }
-                                    throw new Sk.builtin.SyntaxError("Syntax error in data binding for " + binding.component_name + "." + binding.property);
-                                }
-                                var modlocs = eval(bmod.code + "\n" + bmod.funcname + "({__name__: new Sk.builtin.str('update_binding')});\n");
-                                modlocs = Sk.misceval.retryOptionalSuspensionOrThrow(modlocs);
-                                binding.pyUpdate = modlocs["update_val"];
-                                binding.pyClear = modlocs["clear_val"];
-                                binding.pySave = modlocs["save_val"];
+                                    console.error(e);
+                                    if (e instanceof Sk.builtin.BaseException && e.args.v[0] instanceof Sk.builtin.str) {
+                                        e.args.v[0] = new Sk.builtin.str(e.args.v[0].v + "\n while setting " + binding.code + " = self." + binding.component_name + "." + binding.property + "\n in a data binding for self." + binding.component_name);
+                                    }
+                                    window.onerror(null, null, null, null, e);
+                                });
                             }
                         }
-                    },
-                    () => c
-                );
-            };
+                        return Promise.resolve();
+                    };
 
-            $loc["__new__"] = new Sk.builtin.func(PyDefUtils.withRawKwargs((pyKwargs, cls) => {
-                function setupComponents(c) {
-                    let eventBindingsByName = {"": f.container.event_bindings};
+                    c._anvil.props["item"] = new Sk.builtin.dict([]);
 
-                    return componentModule.withDependencyTrace(depId, () =>
-                        componentModule.withFormTrace(appPackage + "." + f.class_name, function() {
-                            return initComponentsOnForm(f.components, c, eventBindingsByName);
-                        })
-                    );
-                }
-                return Sk.misceval.chain(skeletonNew(cls), (c) => commonSetup(c, setupComponents));
-            }));
-
-            $loc["__new_deserialized__"] = PyDefUtils.mkNewDeserializedPreservingIdentity((self, pyData, _pyGlobalData) => {
-                let pyComponents = pyData.mp$subscript(new Sk.builtin.str("c"));
-                let pyDict = pyData.mp$subscript(new Sk.builtin.str("d"));
-                let pyAttrs = pyData.mp$subscript(new Sk.builtin.str("a"));
-
-                function setupComponents(c) {
-                    let addComponent = c.tp$getattr(new Sk.builtin.str("add_component"))
-                    return Sk.misceval.chain(
-                        // First, add_component() all our contents
-                        Sk.misceval.iterFor(Sk.abstr.iter(pyComponents), (pyC) => {
-                            let [pyComponent, pyLayoutProps] = pyC.v;
-                            return Sk.misceval.apply(addComponent, pyLayoutProps, undefined, [], [pyComponent]);
-                        }),
-                        // Set up our __dict__, then
-                        // crawl all over our component tree, wiring up
-                        // events and data bindings
+                    return Sk.misceval.chain(null,
                         () => {
-                            let update = c.$d.tp$getattr(new Sk.builtin.str("update"));
-                            Sk.misceval.callsim(update, pyDict);
-
-                            function wireUpEvents(pyComponent, yaml) {
-                                let setEventHandler = pyComponent.tp$getattr(new Sk.builtin.str("set_event_handler"));
-                                for (let eventName in yaml.event_bindings) {
-                                    let pyHandler = c.tp$getattr(new Sk.builtin.str(yaml.event_bindings[eventName]));
-                                    if (pyHandler) {
-                                        Sk.misceval.callsimArray(setEventHandler, [new Sk.builtin.str(eventName), pyHandler]);
-                                    }
-                                }
-
-                                for (let i in yaml.data_bindings) {
-                                    let binding = Object.create(yaml.data_bindings[i]);
-                                    binding.pyComponent = pyComponent;
-                                    binding.component_name = yaml.name;
-                                    c._anvil.dataBindings.push(binding);
-                                }
+                            c._anvil.dataBindings = [];
+                            
+                            for (var i in f.container.data_bindings || []) {
+                                var binding = Object.create(f.container.data_bindings[i]);
+                                binding.pyComponent = c;
+                                binding.component_name = "";
+                                c._anvil.dataBindings.push(binding);
                             }
 
-                            wireUpEvents(c, f.container);
-
-                            function walkComponents(components) {
-                                for (let yaml of components || []) {
-                                    let pyComponent = c.tp$getattr(new Sk.builtin.str(yaml.name));
-                                    wireUpEvents(pyComponent, yaml);
-                                    if (yaml.components) {
-                                        walkComponents(yaml.components);
-                                    }
-                                }
-                            }
-
-                            walkComponents(f.components);
-                        },
-                        // We set our component attrs last (this could trigger user code that expects
-                        // everything to be in its place)
+                            return setupComponents(c);
+                        }, 
                         () => {
-                            let items = pyAttrs.tp$getattr(new Sk.builtin.str("items"));
-                            return Sk.misceval.iterFor(Sk.abstr.iter(Sk.misceval.call(items)), (pyItem) => {
-                                let pyName = pyItem.v[0];
-                                let pyValue = pyItem.v[1];
-                                return c.tp$setattr(pyName, pyValue, true);
+                            c._anvil.dataBindings.forEach((binding) => {
+                                binding.pyComponent._anvil.dataBindingWriteback = writeBackChildBoundData;
+
+                                if (binding.code) {
+
+                                    const readCode = "def update_val(self, _anvil_component):\n" +
+                                                "  _anvil_component." + binding.property + " = " + binding.code + "\n" + 
+                                                "def clear_val(self, _anvil_component):\n" +
+                                                "  _anvil_component." + binding.property + " = None\n";
+                                    // TODO: Check whether we actually allowBindingWriteback on this binding property. This is not as simple as 
+                                    // looking at the propMap of binding.pyComponent, because they could be custom component properties, which 
+                                    // aren't registered anywhere on the instance.
+                                    const writeCode = (binding.writeback ?
+                                                        "def save_val(self, _anvil_component):\n" +
+                                                        "  " + binding.code + " = _anvil_component." + binding.property + "\n"
+                                                        : "");
+
+                                    let modlocs;
+                                    const cachedCompile = dataBindingCompilations[readCode + writeCode];
+                                    if (cachedCompile) {
+                                        modlocs = cachedCompile;
+                                    } else {
+                                        let bmod;
+                                        try {
+                                            bmod = Sk.compile(readCode + writeCode, "update_binding.py", "exec", true);
+                                        } catch(e) {
+                                            // Usability: detect the "chose writeback but didn't give an lvalue" situation
+                                            if (binding.writeback) {
+                                                let readCompiledOk = false;
+                                                try {
+                                                    Sk.compile(readCode, "update_binding.py", "exec", true);
+                                                    readCompiledOk = true;
+                                                } catch(e) {}
+                                                if (readCompiledOk) {
+                                                    throw new Sk.builtin.SyntaxError("Can't assign to data binding expression for " + binding.component_name + "." + binding.property + ", but writeback is enabled for this data binding.");
+                                                }
+                                            }
+                                            throw new Sk.builtin.SyntaxError("Syntax error in data binding for " + binding.component_name + "." + binding.property);
+                                        }
+                                        modlocs = eval(bmod.code + "\n" + bmod.funcname + "({__name__: new Sk.builtin.str('update_binding')});\n");
+                                        modlocs = Sk.misceval.retryOptionalSuspensionOrThrow(modlocs);
+                                        dataBindingCompilations[readCode + writeCode] = modlocs;
+                                    }
+                                    binding.pyUpdate = modlocs["update_val"];
+                                    binding.pyClear = modlocs["clear_val"];
+                                    binding.pySave = modlocs["save_val"];
+                                }
                             })
                         },
+                        () => c
                     );
-                }
+                };
 
-                return commonSetup(self, setupComponents);
-            }, skeletonNew);
 
-            $loc["__serialize__"] = PyDefUtils.mkSerializePreservingIdentity(function (self) {
-                // We serialise our components, our object dict, and the properties of our container
-                // type separately
+                $loc["__new__"] = new Sk.builtin.func(PyDefUtils.withRawKwargs((pyKwargs, cls) => {
+                    function setupComponents(c) {
+                        let eventBindingsByName = {"": f.container.event_bindings};
 
-                const d = Sk.abstr.lookupSpecial(self, Sk.builtin.str.$dict);
-                try {
-                    Sk.abstr.objectDelItem(d, new Sk.builtin.str("_serialization_key"))
-                } catch(e) {}
-
-                let a = new Sk.builtin.dict();
-                for (let n in self._anvil.props) {
-                    a.mp$ass_subscript(new Sk.builtin.str(n), self._anvil.props[n]);
-                }
-
-                let components = self._anvil.components.map(
-                    (c) => new Sk.builtin.tuple([c.component, Sk.ffi.remapToPy(c.layoutProperties)])
-                );
-
-                // Custom component properties need no special handling - they are reflected in
-                // __dict__ or elsewhere
-
-                return new Sk.builtin.dict([
-                    new Sk.builtin.str("d"), d,
-                    new Sk.builtin.str("a"), a,
-                    new Sk.builtin.str("c"), new Sk.builtin.list(components),
-                ]);
-
-            });
-
-            $loc["__init__"] = new Sk.builtin.func(PyDefUtils.withRawKwargs(function(pyKwargs, self) {
-                // Sort out property attrs.
-                let validKwargs = ["item"];
-
-                if (f.custom_component) {
-                    for(let pt of f.properties || []) {
-                        validKwargs.push(pt.name);
+                        return componentModule.withDependencyTrace(depId, () =>
+                            componentModule.withFormTrace(appPackage + "." + f.class_name, function() {
+                                return initComponentsOnForm(f.components, c, eventBindingsByName);
+                            })
+                        );
                     }
-                }
+                    return Sk.misceval.chain(skeletonNew(cls), (c) => commonSetup(c, setupComponents));
+                }));
 
-                let propAttrs = {};
-                // Overwrite any valid props we were given as kwargs.
-                for (let i = 0; i < pyKwargs.length; i+=2) {
-                    let propName = pyKwargs[i].v;
-                    let pyPropVal = pyKwargs[i+1];
-                    if (validKwargs.indexOf(propName) > -1) {
-                        propAttrs[propName] = pyPropVal;
-                    } else {
-                        console.log("Ignoring form constructor kwarg: ", propName);
-                    }
-                }
-                var setAttrs = () => Sk.misceval.chain(undefined, 
-                    ...Object.entries(propAttrs).map(([propName, pyPropVal]) => 
-                        (() => self.tp$setattr(new Sk.builtin.str(propName), pyPropVal, true))));
 
-                return Sk.misceval.chain(undefined,
-                    () => { self._anvil.refreshOnItemSet = false; },
-                    setAttrs,
-                    () => { self._anvil.refreshOnItemSet = true; },
-                    () => Sk.misceval.tryCatch(
-                        () => Sk.misceval.callsimOrSuspend(self.tp$getattr(new Sk.builtin.str("refresh_data_bindings"))),
-                        e => {
-                            if (e instanceof Sk.builtin.Exception && e.args.v[0] instanceof Sk.builtin.str) {
-                                e.args.v[0] = new Sk.builtin.str(e.args.v[0].v + ". Did you initialise all data binding sources before initialising this component?");
-                            }
-                            throw e; 
-                        })
-                    );
-            }));
+                $loc["__new_deserialized__"] = PyDefUtils.mkNewDeserializedPreservingIdentity((self, pyData, _pyGlobalData) => {
+                    let pyComponents = pyData.mp$subscript(new Sk.builtin.str("c"));
+                    let pyDict = pyData.mp$subscript(new Sk.builtin.str("d"));
+                    let pyAttrs = pyData.mp$subscript(new Sk.builtin.str("a"));
 
-            $loc["item"] = Sk.misceval.callsim(anvilModule['ComponentProperty'], "item", new Sk.builtin.dict());
+                    function setupComponents(c) {
+                        let addComponent = c.tp$getattr(new Sk.builtin.str("add_component"))
+                        return Sk.misceval.chain(
+                            // First, add_component() all our contents
+                            Sk.misceval.iterFor(Sk.abstr.iter(pyComponents), (pyC) => {
+                                let [pyComponent, pyLayoutProps] = pyC.v;
+                                return Sk.misceval.apply(addComponent, pyLayoutProps, undefined, [], [pyComponent]);
+                            }),
+                            // Set up our __dict__, then
+                            // crawl all over our component tree, wiring up
+                            // events and data bindings
+                            () => {
+                                let update = c.$d.tp$getattr(new Sk.builtin.str("update"));
+                                Sk.misceval.callsim(update, pyDict);
 
-            if (f.custom_component) {
-                // Create property descriptors for custom properties.
-                for(let pt of f.properties || []) {
-                    $loc[pt.name] = Sk.misceval.callsim(anvilModule['CustomComponentProperty'], pt.name, Sk.ffi.remapToPy(pt.default_value || null));
-                }
-            }
-
-            // Kept for backwards compatibility.
-            $loc["init_components"] = new Sk.builtin.func(PyDefUtils.withRawKwargs(function(pyKwargs, self) {
-                return Sk.misceval.callOrSuspend($loc["__init__"], undefined, undefined, pyKwargs, self);
-            }));
-
-            $loc["refresh_data_bindings"] = new Sk.builtin.func(function(self) {
-                var chainArgs = [Sk.builtin.none.none$];
-
-                // TODO: Confirm that we want to refresh even if 'item' is None - we don't necessarily just bind to item.
-                //var item = self.tp$getattr(new Sk.builtin.str("item"));
-                //if (!item || item === Sk.builtin.none.none$) { return Sk.builtin.none.none$; }
-
-                chainArgs.push(() => PyDefUtils.raiseEventOrSuspend({}, self, "refreshing_data_bindings"));
-                if (self._anvil.onRefreshDataBindings) {
-                    chainArgs.push(self._anvil.onRefreshDataBindings);
-                }
-                let bindingErrors = [];
-                for (var i in self._anvil.dataBindings) {
-                    var binding = self._anvil.dataBindings[i]
-                    chainArgs.push(function(binding) {
-                        return Sk.misceval.tryCatch(function() {
-                            if (binding.pyUpdate) {
-                                return Sk.misceval.callsimOrSuspend(binding.pyUpdate, self, binding.pyComponent);
-                            }
-                        }, function(e) {
-                            if (e instanceof Sk.builtin.KeyError) {
-                                if (binding.pyClear) {
-                                    return Sk.misceval.callsimOrSuspend(binding.pyClear, self, binding.pyComponent);
-                                } else {
-                                    return; // And we can't clear the property, so leave it with whatever value it had. Ew.
-                                }
-                            }
-                            //console.error(e);
-                            if (e instanceof Sk.builtin.Exception && e.args.v[0] instanceof Sk.builtin.str) {
-                                //e.args.v[0] = new Sk.builtin.str(e.args.v[0].v + "\n while data binding self." + binding.component_name + "." + binding.property + " = " + binding.code + ".");
-                                // We don't want the last line of the traceback - it's inside our dummy update_binding.py
-                                e.traceback.pop();
-
-                                // Collect up all the binding errors so we can present them all, rather than one at a time.
-                                if (e._anvil && e._anvil.errorObj && e._anvil.errorObj.bindingErrors) {
-                                    bindingErrors.push(...e._anvil.errorObj.bindingErrors);
-                                    // Special case: Preserve the exception object itself in case it's the only one
-                                    // and we need to re-throw it
-                                    if (bindingErrors.length === 1) {
-                                        bindingErrors[0].exception = e;
+                                function wireUpEvents(pyComponent, yaml) {
+                                    let setEventHandler = pyComponent.tp$getattr(new Sk.builtin.str("set_event_handler"));
+                                    for (let eventName in yaml.event_bindings) {
+                                        let pyHandler = c.tp$getattr(new Sk.builtin.str(yaml.event_bindings[eventName]));
+                                        if (pyHandler) {
+                                            Sk.misceval.callsimArray(setEventHandler, [new Sk.builtin.str(eventName), pyHandler]);
+                                        }
                                     }
-                                } else {
-                                    bindingErrors.push({
-                                        exception: e,
-                                        traceback: e.traceback,
-                                        message: e.args.v[0].v,
-                                        formName: f.class_name,
-                                        binding: {
-                                            component_name: binding.component_name,
-                                            property: binding.property,
-                                            code: binding.code,
-                                        },
-                                    });
+
+                                    for (let i in yaml.data_bindings) {
+                                        let binding = Object.create(yaml.data_bindings[i]);
+                                        binding.pyComponent = pyComponent;
+                                        binding.component_name = yaml.name;
+                                        c._anvil.dataBindings.push(binding);
+                                    }
                                 }
 
-                            } else {
-                                throw e; // Not sure what sort of error this was. Throw it to be safe.
-                            }
+                                wireUpEvents(c, f.container);
 
-                        });
-                    }.bind(null, binding));
-                }
+                                function walkComponents(components) {
+                                    for (let yaml of components || []) {
+                                        let pyComponent = c.tp$getattr(new Sk.builtin.str(yaml.name));
+                                        wireUpEvents(pyComponent, yaml);
+                                        if (yaml.components) {
+                                            walkComponents(yaml.components);
+                                        }
+                                    }
+                                }
 
-                chainArgs.push(() => {
-                    // If there's only one error, we throw the original exception object (so it has the right type etc).
-                    // If there were multiple errors, we throw a generic Exception saying "5 errors in this data binding".
-                    if (bindingErrors.length == 1) {
-                        let err = bindingErrors[0].exception;
-                        if (!err._anvil) {
-                            err._anvil = {};
-                        }
-                        if (!err._anvil.errorObj) {
-                            err._anvil.errorObj = {type: err.tp$name};
-                        }
-                        err._anvil.errorObj.bindingErrors = bindingErrors;
-                        delete bindingErrors[0].exception;
-
-                        throw err;
-                    } else if (bindingErrors.length > 0) {
-                        let err = new Sk.builtin.Exception(`Data Binding update failed with ${bindingErrors.length} error${bindingErrors.length > 1 ? 's' : ''}`);
-                        err._anvil = {
-                            errorObj: {
-                                type: "Exception",
-                                bindingErrors: bindingErrors,
-                            }
-                        };
-                        for (let e of bindingErrors) {
-                            delete e.exception;
-                        }
-                        throw err;
+                                walkComponents(f.components);
+                            },
+                            // We set our component attrs last (this could trigger user code that expects
+                            // everything to be in its place)
+                            () => {
+                                let items = pyAttrs.tp$getattr(new Sk.builtin.str("items"));
+                                return Sk.misceval.iterFor(Sk.abstr.iter(Sk.misceval.call(items)), (pyItem) => {
+                                    let pyName = pyItem.v[0];
+                                    let pyValue = pyItem.v[1];
+                                    return c.tp$setattr(pyName, pyValue, true);
+                                })
+                            },
+                        );
                     }
+
+                    return commonSetup(self, setupComponents);
+                }, skeletonNew);
+
+
+                $loc["__serialize__"] = PyDefUtils.mkSerializePreservingIdentity(function (self) {
+                    // We serialise our components, our object dict, and the properties of our container
+                    // type separately
+
+                    const d = Sk.abstr.lookupSpecial(self, Sk.builtin.str.$dict);
+                    try {
+                        Sk.abstr.objectDelItem(d, new Sk.builtin.str("_serialization_key"))
+                    } catch(e) {}
+
+                    let a = new Sk.builtin.dict();
+                    for (let n in self._anvil.props) {
+                        a.mp$ass_subscript(new Sk.builtin.str(n), self._anvil.props[n]);
+                    }
+
+                    let components = self._anvil.components.map(
+                        (c) => new Sk.builtin.tuple([c.component, Sk.ffi.remapToPy(c.layoutProperties)])
+                    );
+
+                    // Custom component properties need no special handling - they are reflected in
+                    // __dict__ or elsewhere
+
+                    return new Sk.builtin.dict([
+                        new Sk.builtin.str("d"), d,
+                        new Sk.builtin.str("a"), a,
+                        new Sk.builtin.str("c"), new Sk.builtin.list(components),
+                    ]);
+
                 });
 
-                return Sk.misceval.chain(...chainArgs);
-            });
 
-            $loc["__setattr__"] = new Sk.builtin.func(function(self, pyName, pyValue) {
+                // Kept for backwards compatibility.
+                $loc["init_components"] = $loc["__init__"] = PyDefUtils.funcFastCall(function __init__(args, pyKwargs) {
+                    Sk.abstr.checkArgsLen("init_components", args, 1, 1);
+                    const self = args[0];
+                    // Sort out property attrs.
+                    const validKwargs = new Set(["item"]);
 
-                var name = Sk.ffi.remapToJs(pyName);
-
-                if (self._anvil && self._anvil.componentNames && self._anvil.componentNames.indexOf(name) > -1) {
-                    throw new Sk.builtin.AttributeError("Cannot set attribute '" + name + "' on '" + self.tp$name + "' form. There is already a component with this name.");
-                }
-
-                if (name == "parent") {
-                    throw new Sk.builtin.AttributeError("Cannot set a '" + self.tp$name + "' component's parent this way - use 'add_component' on the container instead");
-                }
-
-                return Sk.generic.setAttr.call(self, pyName, pyValue, true);
-            });
-
-            $loc["__getattr__"] = new Sk.builtin.func(function(self, pyName) {
-                var name = Sk.ffi.remapToJs(pyName);
-
-                var componentName = false;
-                for (var i in f.components) {
-                    if (f.components[i].name == name) {
-                        componentName = true;
-                        break;
+                    if (f.custom_component) {
+                        for(let pt of f.properties || []) {
+                            validKwargs.add(pt.name);
+                        }
                     }
+
+                    const propAttrs = [];
+                    // Overwrite any valid props we were given as kwargs.
+                    pyKwargs = pyKwargs || [];
+                    for (let i = 0; i < pyKwargs.length; i += 2) {
+                        const propName = pyKwargs[i].toString();
+                        const pyPropVal = pyKwargs[i + 1];
+                        if (validKwargs.has(propName)) {
+                            propAttrs.push([propName, pyPropVal]);
+                        } else {
+                            console.log("Ignoring form constructor kwarg: ", propName);
+                        }
+                    }
+
+                    return Sk.misceval.chain(
+                        undefined,
+                        () => {
+                            self._anvil.refreshOnItemSet = false;
+                        },
+                        ...propAttrs.map(([propName, pyPropVal]) => () => self.tp$setattr(new Sk.builtin.str(propName), pyPropVal, true)),
+                        () => {
+                            self._anvil.refreshOnItemSet = true;
+                        },
+                        () =>
+                            Sk.misceval.tryCatch(
+                                () => PyDefUtils.pyCallOrSuspend(self.tp$getattr(new Sk.builtin.str("refresh_data_bindings"))),
+                                (e) => {
+                                    if (e instanceof Sk.builtin.BaseException && e.args.v[0] instanceof Sk.builtin.str) {
+                                        e.args.v[0] = new Sk.builtin.str(
+                                            e.args.v[0].v + ". Did you initialise all data binding sources before initialising this component?"
+                                        );
+                                    }
+                                    throw e;
+                                }
+                            )
+                    );
+                });
+
+                if (f.custom_component) {
+                    // Create property descriptors for custom properties.
+                    (f.properties || []).forEach((pt) => {
+                        $loc[pt.name] = PyDefUtils.pyCall(anvilModule["CustomComponentProperty"], [pt.name, Sk.ffi.remapToPy(pt.default_value || null)]);
+                    });
                 }
 
-                if (!componentName && name == "parent") {
-                    return self._anvil.parent ? self._anvil.parent.pyObj : Sk.builtin.none.none$;
-                }
+                
+                $loc["refresh_data_bindings"] = new Sk.builtin.func(function(self) {
+                    const chainArgs = [Sk.builtin.none.none$];
 
-                throw new Sk.builtin.AttributeError("'" + self.tp$name + "' object has no attribute '" + name + "'");
-            });
+                    // TODO: Confirm that we want to refresh even if 'item' is None - we don't necessarily just bind to item.
+                    //var item = self.tp$getattr(new Sk.builtin.str("item"));
+                    //if (!item || item === Sk.builtin.none.none$) { return Sk.builtin.none.none$; }
+
+                    chainArgs.push(() => PyDefUtils.raiseEventOrSuspend({}, self, "refreshing_data_bindings"));
+                    if (self._anvil.onRefreshDataBindings) {
+                        chainArgs.push(self._anvil.onRefreshDataBindings);
+                    }
+                    const bindingErrors = [];
+                    self._anvil.dataBindings.forEach((binding) => {
+                        chainArgs.push(
+                            function (binding) {
+                                return Sk.misceval.tryCatch(
+                                    () => {
+                                        if (binding.pyUpdate) {
+                                            return Sk.misceval.callsimOrSuspend(binding.pyUpdate, self, binding.pyComponent);
+                                        }
+                                    },
+                                    (e) => {
+                                        if (e instanceof Sk.builtin.KeyError) {
+                                            if (binding.pyClear) {
+                                                return Sk.misceval.callsimOrSuspend(binding.pyClear, self, binding.pyComponent);
+                                            } else {
+                                                return; // And we can't clear the property, so leave it with whatever value it had. Ew.
+                                            }
+                                        }
+                                        //console.error(e);
+                                        if (e instanceof Sk.builtin.BaseException && e.args.v[0] instanceof Sk.builtin.str) {
+                                            //e.args.v[0] = new Sk.builtin.str(e.args.v[0].v + "\n while data binding self." + binding.component_name + "." + binding.property + " = " + binding.code + ".");
+                                            // We don't want the last line of the traceback - it's inside our dummy update_binding.py
+                                            e.traceback.pop();
+
+                                            // Collect up all the binding errors so we can present them all, rather than one at a time.
+                                            if (e._anvil && e._anvil.errorObj && e._anvil.errorObj.bindingErrors) {
+                                                bindingErrors.push(...e._anvil.errorObj.bindingErrors);
+                                                // Special case: Preserve the exception object itself in case it's the only one
+                                                // and we need to re-throw it
+                                                if (bindingErrors.length === 1) {
+                                                    bindingErrors[0].exception = e;
+                                                }
+                                            } else {
+                                                bindingErrors.push({
+                                                    exception: e,
+                                                    traceback: e.traceback,
+                                                    message: e.args.v[0].v,
+                                                    formName: f.class_name,
+                                                    binding: {
+                                                        component_name: binding.component_name,
+                                                        property: binding.property,
+                                                        code: binding.code,
+                                                    },
+                                                });
+                                            }
+                                        } else {
+                                            throw e; // Not sure what sort of error this was. Throw it to be safe.
+                                        }
+                                    }
+                                );
+                            }.bind(null, binding)
+                        );
+                    });
+
+                    chainArgs.push(() => {
+                        // If there's only one error, we throw the original exception object (so it has the right type etc).
+                        // If there were multiple errors, we throw a generic Exception saying "5 errors in this data binding".
+                        if (bindingErrors.length === 1) {
+                            let err = bindingErrors[0].exception;
+                            if (!err._anvil) {
+                                err._anvil = {};
+                            }
+                            if (!err._anvil.errorObj) {
+                                err._anvil.errorObj = {type: err.tp$name};
+                            }
+                            err._anvil.errorObj.bindingErrors = bindingErrors;
+                            delete bindingErrors[0].exception;
+
+                            throw err;
+                        } else if (bindingErrors.length > 0) {
+                            let err = new Sk.builtin.RuntimeError(`Data Binding update failed with ${bindingErrors.length} error${bindingErrors.length > 1 ? 's' : ''}`);
+                            err._anvil = {
+                                errorObj: {
+                                    type: "Exception",
+                                    bindingErrors: bindingErrors,
+                                }
+                            };
+                            for (let e of bindingErrors) {
+                                delete e.exception;
+                            }
+                            throw err;
+                        }
+                    });
+
+                    return Sk.misceval.chain(...chainArgs);
+                });
 
 
-        }, className + "Template", [anvilModule[f.container.type]])
+                $loc["__setattr__"] = new Sk.builtin.func(function(self, pyName, pyValue) {
+                    const name = Sk.ffi.toJs(pyName);
+                    if (self._anvil.componentNames && self._anvil.componentNames.has(name)) {
+                        throw new Sk.builtin.AttributeError("Cannot set attribute '" + name + "' on '" + self.tp$name + "' form. There is already a component with this name.");
+                    }
+                    return Sk.generic.setAttr.call(self, pyName, pyValue, true);
+                });
+
+
+                const object_getattribute = Sk.abstr.typeLookup(Sk.builtin.object, Sk.builtin.str.$getattribute);
+
+                $loc["__getattribute__"] = new Sk.builtin.func(function(self, pyName) {
+                    const name = Sk.ffi.toJs(pyName);
+                    // we prioritise the component over descriptors 
+                    // i.e. we guarantee that if you name a component parent you will get the component and not the parent
+                    if (self._anvil.componentNames && self._anvil.componentNames.has(name)) {
+                        const dict = Sk.abstr.lookupSpecial(self, Sk.builtin.str.$dict);
+                        const component = dict && dict.quick$lookup(pyName);
+                        if (component !== undefined) {
+                            return component;
+                        }
+                    }
+                    // use object.__getattribute__ because it will throw an attribute error 
+                    // unlike Sk.generic.getAttr which returns undefined
+                    return PyDefUtils.pyCallOrSuspend(object_getattribute, [self, pyName]);
+                });
+
+            }
+
+        });
 
     };
 
@@ -1068,10 +1092,10 @@ function printComponents(printId, printKey) {
     })
     .catch(e => {
         let data;
-        if (e instanceof Sk.builtin.Exception) {
+        if (e instanceof Sk.builtin.BaseException) {
             data = {
                 type: (e._anvil && e._anvil.errorObj && e._anvil.errorObj.type) || e.tp$name,
-                message: Sk.ffi.remapToJs(e.args.v[0]),
+                message: Sk.ffi.remapToJs(e.args.v[0] || ""),
                 trace: []
             };
             if (e.traceback) {

@@ -252,6 +252,11 @@ def _get_connection():
 
 def connect(key, url='wss://anvil.works/uplink', quiet=False, init_session=None, extra_headers={}):
     global _key, _url, _fatal_error, _quiet, _init_session, _get_extra_headers
+    if _key is not None and _key != key:
+        if not quiet:
+            print("Disconnecting from previous connection first...")
+        disconnect()
+
     _key = key
     _url = url
     _fatal_error = None # Reset because of reconnection attempt

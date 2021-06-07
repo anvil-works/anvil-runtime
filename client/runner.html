@@ -289,10 +289,10 @@
 
   <script src="https://checkout.stripe.com/checkout.js"></script>
 
-  <script src='{{cdn-origin}}/runtime/js/lib/unorm.js?buildTime=0' crossorigin></script>
+  <script src="{{cdn-origin}}/runtime/js/lib/unorm.js?buildTime=0" crossorigin></script>
 
-  <script src='{{cdn-origin}}/runtime/js/lib/skulpt.min.js?buildTime=0' crossorigin></script>
-  <script src='{{cdn-origin}}/runtime/js/lib/skulpt-stdlib.js?buildTime=0' crossorigin></script>
+  <script src="{{cdn-origin}}/runtime/js/lib/skulpt.min.js?buildTime=0" crossorigin></script>
+  <script src="{{cdn-origin}}/runtime/js/lib/skulpt-stdlib.js?buildTime=0" crossorigin></script>
 
   <script src="{{cdn-origin}}/runtime/js/runner.bundle.js?buildTime=0" crossorigin></script>
 
@@ -304,7 +304,7 @@
       window.anvilAppInfo = {{app-info-object}};
 
       // NB: We will need to preserve things other than ?s= at some point.
-      window.history.replaceState({}, "Anvil App", document.location.origin + document.location.pathname + document.location.hash);
+      window.history.replaceState(window.history.state || {}, "Anvil App", document.location.origin + document.location.pathname + document.location.hash);
 
       // {{load-app-code}}
   </script>

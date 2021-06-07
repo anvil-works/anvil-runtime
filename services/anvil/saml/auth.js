@@ -120,7 +120,7 @@ var $builtinmodule = window.memoise('anvil.saml.auth', function() {
 
         var args = [new Sk.builtin.str(fnName)].concat(Array.prototype.slice.call(arguments, 2));
 
-        var call = server.tp$getattr(new Sk.builtin.str("call_$rn$"));
+        var call = server.tp$getattr(new Sk.builtin.str("call"));
         return Sk.misceval.applyOrSuspend(call, undefined, undefined, undefined, args);
     }
 

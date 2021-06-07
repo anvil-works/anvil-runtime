@@ -34,6 +34,11 @@ class Outsidetextfont(WrappedObject):
     _module = "plotly.graph_objs.sunburst"
 
 @serializable_type
+class Root(WrappedObject):
+    _name = "Root"
+    _module = "plotly.graph_objs.sunburst"
+
+@serializable_type
 class Stream(WrappedObject):
     _name = "Stream"
     _module = "plotly.graph_objs.sunburst"
@@ -41,6 +46,11 @@ class Stream(WrappedObject):
 @serializable_type
 class Textfont(WrappedObject):
     _name = "Textfont"
+    _module = "plotly.graph_objs.sunburst"
+
+@serializable_type
+class Transform(WrappedObject):
+    _name = "Transform"
     _module = "plotly.graph_objs.sunburst"
 
 
@@ -51,8 +61,10 @@ __all__ = [
     'Leaf',
     'Marker',
     'Outsidetextfont',
+    'Root',
     'Stream',
     'Textfont',
+    'Transform',
     'hoverlabel',
     'marker',
 ]

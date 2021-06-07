@@ -85,9 +85,15 @@
             (update-indexes-and-views! table-id)))))))
 
 (defn validate-app-tables-schema [schema-tables main-app-id auto-migrate? ignore-invalid?]
-  (if-not schema-tables
+  (cond
+    (not schema-tables)
     (log/warn "This app does not have a 'db_schema' configuration, so we are not setting up the database.")
 
+    (map? schema-tables)
+    ;; TODO: Support new DB schema format.
+    (log/warn "The DB schema of this app is in the new, unsupported format. Cannot migrate DB automatically.")
+
+    :else
     ; Find all the tables that don't exist in the DB. Create them.
     (let [database-tables (into {}
                                 (for [row (jdbc/query util/db ["SELECT * FROM app_storage_access NATURAL JOIN app_storage_tables"])]

@@ -77,7 +77,7 @@
        [(app-data/get-app-info-insecure (conf/get-main-app-id)) nil :uplink]
 
        (when-let [k (conf/get-client-uplink-key)] (= (sha-256 uplink-key) (sha-256 k)))
-       [(app-data/get-app-info-insecure (conf/get-main-app-id) nil :client)]))
+       [(app-data/get-app-info-insecure (conf/get-main-app-id)) nil :client]))
 
    :on-uplink-connect
    (fn [_environment _protocol-version]

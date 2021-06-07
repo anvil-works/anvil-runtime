@@ -38,6 +38,11 @@ class Title(WrappedObject):
     _name = "Title"
     _module = "plotly.graph_objs.funnelarea"
 
+@serializable_type
+class Transform(WrappedObject):
+    _name = "Transform"
+    _module = "plotly.graph_objs.funnelarea"
+
 
 __all__ = [
     'Domain',
@@ -47,6 +52,7 @@ __all__ = [
     'Stream',
     'Textfont',
     'Title',
+    'Transform',
     'hoverlabel',
     'marker',
     'title',
