@@ -4,14 +4,16 @@
   "dependencies": {
     "animate.css": "3.5.2",
     "bootstrap": "3.3.7",
+    "core-js-bundle": "^3.13.1",
     "html5-boilerplate": "7.3.0",
     "jquery": "3.4.1",
     "jquery-migrate": "3.1.0",
     "js-yaml": "3.13.1",
     "moment": "2.24.0",
     "moment-timezone": "0.5.28",
+    "remarkable": "2.0.1",
     "rsvp": "^4.7.0",
-    "remarkable": "2.0.1"
+    "core-js": "3.8.3"
   },
   "devDependencies": {
     "@babel/cli": "^7.6.4",
@@ -20,7 +22,6 @@
     "@babel/preset-env": "^7.6.3",
     "@babel/preset-react": "^7.12.5",
     "babel-loader": "^8.0.6",
-    "core-js": "3.8.3",
     "regenerator-runtime": "0.13.7",
     "webpack": "4.42.0",
     "webpack-cli": "^3.3.11"

@@ -21,7 +21,10 @@ module.exports = {
             {
                 test: /\.js$/,
                 include: [path.resolve(__dirname, "js"), /client/],
-                exclude: /core-js/,
+                exclude : [
+                  /core-js/,
+                  /buildin/ // This bit of webpack has a circular dependency on core-js, which means... something. See https://github.com/zloirock/core-js/issues/743#issuecomment-572096103
+                ],
                 use: {
                     loader: "babel-loader",
                     options: {
