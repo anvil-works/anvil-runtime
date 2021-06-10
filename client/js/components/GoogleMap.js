@@ -37,7 +37,7 @@ description: |
     i =GoogleMap.InfoWindow(content=Label(text="This is Cambridge!"))
     i.open(map, sender)
 
-  marker.set_event_handler("click", marker_click)
+  marker.add_event_handler("click", marker_click)
   ```
 
   Markers (and other overlays) can respond to mouse events. Here we display an 

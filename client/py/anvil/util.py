@@ -1,6 +1,4 @@
-import json
 from anvil.server import serializable_type
-from copy import deepcopy as _deepcopy
 
 
 def _wrap(value):
@@ -66,7 +64,10 @@ class WrappedObject(dict):
         return self.__class__(dict.copy(self))
 
     def __deepcopy__(self, memo):
-        return self.__class__(_deepcopy(dict(self)))
+        # lazy load this - its only need on the 
+        # server and we don't want to load copy on the client
+        from copy import deepcopy
+        return self.__class__(deepcopy(dict(self)))
 
 
 @serializable_type
@@ -95,4 +96,5 @@ class WrappedList(list):
         return self.__class__(list.copy(self))
 
     def __deepcopy__(self, memo):
-        return self.__class__(_deepcopy(list(self)))
+        from copy import deepcopy
+        return self.__class__(deepcopy(list(self)))

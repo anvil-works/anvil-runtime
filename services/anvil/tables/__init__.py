@@ -1,5 +1,5 @@
 import anvil.server
-import time, random
+import time
 
 # Hack: Force ourselves into the top-level package, even
 # if we were loaded into a runtime-v1 per-app Anvil package
@@ -86,6 +86,8 @@ def in_transaction(f):
 				with Transaction():
 					return f(*args, **kwargs)
 			except TransactionConflict:
+                # lazy load random incase we make random.js a slow path on the client
+				import random
 				n += 1
 				if n == 18:
 					raise

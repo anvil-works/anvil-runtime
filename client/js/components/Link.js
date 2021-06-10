@@ -18,7 +18,7 @@ description: |
 
   ```python
   c = Link(text="Click me")
-  c.set_event_handler('click', ...)
+  c.add_event_handler('click', ...)
   ```
 
   If a link's `url` property is not set, it will not open a new page when it is clicked. It will, however, still trigger the `click` event.

@@ -57,7 +57,7 @@ description: |
 
   The template has access to its parent RepeatingPanel in the code via `self.parent`.
   This can be useful if you want actions in the template form to have an impact on the whole RepeatingPanel.
-  Let's say you want to refresh the entire RepeatingPanel when a button is clicked in the template form - you could use `set_event_handler` to bind an event called `x-refresh-panel` to the RepeatingPanel, then call `self.parent.raise_event('x-refresh')`.
+  Let's say you want to refresh the entire RepeatingPanel when a button is clicked in the template form - you could use `add_event_handler` to bind an event called `x-refresh-panel` to the RepeatingPanel, then call `self.parent.raise_event('x-refresh')`.
 
   ```python
   self.repeating_panel_1.items = app_tables.people.search()

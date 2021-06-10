@@ -81,10 +81,10 @@
 
 (defn get-app-from-request
   ([request] (get-app-from-request request true))
-  ([request allow-broken-deps?]
+  ([request allow-errors?]
    (app-data/get-app (:app-info request)
                      (app-data/get-version-spec-for-environment (:environment request))
-                     allow-broken-deps?)))
+                     allow-errors?)))
 
 (defn get-service-code [app-map]
   (apply str
@@ -230,7 +230,7 @@
                     (resp/header "X-Frame-Options" (str "allow-from " apps-always-embeddable-from))
                     (resp/header "Content-Security-Policy" (str "frame-ancestors " apps-always-embeddable-from)))
                 %))))
-      (catch :anvil/app-dependency-error e
+      (catch :anvil/app-loading-error e
         (app-500 req (:message e))))))
 
 (defn serve-api-request [path request]
@@ -428,7 +428,7 @@
                            (resp/status 500)
                            (resp/content-type "text/plain"))))
 
-      (catch :anvil/app-dependency-error e
+      (catch :anvil/app-loading-error e
         (let [error-id (random/hex 6)]
           (log/error (:throwable &throw-context) "App dependency error when loading app for API call:" error-id)
           (send! channel (-> {:body (str "Internal server error: " error-id)}
@@ -484,7 +484,7 @@
                 (send! channel (-> {:body (str "Internal server error: " error-id)}
                                    (resp/status 500)
                                    (resp/content-type "text/plain"))))))))
-      (catch :anvil/app-dependency-error e
+      (catch :anvil/app-loading-error e
         (let [error-id (random/hex 6)]
           (log/error (:throwable &throw-context) "App dependency error when getting lazy media:" error-id)
           (send! channel (-> {:body (str "Internal server error: " error-id)}
@@ -562,7 +562,7 @@
       (try+
         (when-let [app (get-app-from-request request false)]
           (browser-ws/ws-handler (assoc-in request [:environment :commit-id] (:version app)) (:content app)))
-        (catch :anvil/app-dependency-error e
+        (catch :anvil/app-loading-error e
           (log/error (:throwable &throw-context) "App dependency error when connecting websocket")))))
 
   (GET "/_/service-worker" req

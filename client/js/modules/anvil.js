@@ -820,10 +820,13 @@ module.exports = function(appOrigin, uncaughtExceptions) {
 
                     a.find(".modal-body").removeClass('alert-text').text("");
 
-                    if ('content' in kwargs && kwargs['content'] && kwargs['content'] != Sk.builtin.none.none$) {
+                    if ('content' in kwargs && kwargs['content'] && kwargs['content'] !== Sk.builtin.none.none$) {
                         if (Sk.misceval.isTrue(Sk.builtin.isinstance(kwargs.content, pyModule["Component"]))) {
                             pyForm = kwargs.content;
                             a.find(".modal-body").text("").append(pyForm._anvil.element);
+                            // this one should be set_event_handler
+                            // we want to reset this event if the same form
+                            // is added to a modal multiple times
                             Sk.misceval.callsim(pyForm.tp$getattr(new Sk.builtin.str("set_event_handler")),
                                                 Sk.ffi.remapToPy("x-close-alert"), 
                                                 PyDefUtils.funcWithRawKwargsDict(function(kws) {

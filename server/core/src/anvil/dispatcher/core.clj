@@ -288,7 +288,7 @@
           app-info (:app-info request)
           request (if (or app (not app-id))
                     request
-                    (let [{:keys [content version]} (app-data/get-app app-info (app-data/get-version-spec-for-environment environment))]
+                    (let [{:keys [content version]} (app-data/get-app app-info (app-data/get-version-spec-for-environment environment) false)]
                       (-> request
                           (assoc :app content)
                           (update-in [:environment] assoc :commit-id version))))

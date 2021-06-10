@@ -30,9 +30,9 @@ function initComponentsOnForm(components, pyForm, eventBindingsByName) {
     var addHandler = function(pyComponent, pyHandler, eventName) {
         // pyHandler is a method.
 
-        var seh = Sk.abstr.gattr(pyComponent,new Sk.builtin.str("set_event_handler"));
+        var aeh = Sk.abstr.gattr(pyComponent,new Sk.builtin.str("add_event_handler"));
 
-        Sk.misceval.call(seh, undefined, undefined, undefined, new Sk.builtin.str(eventName), pyHandler)
+        PyDefUtils.pyCall(aeh, [new Sk.builtin.str(eventName), pyHandler]);
     }
 
     var fns = [Sk.builtin.none.none$];
@@ -225,11 +225,23 @@ function loadApp(app, appId, appOrigin, preloadModules) {
                 }
             }
         }*/
-
-        if (Sk.builtinFiles === undefined || Sk.builtinFiles["files"][x] === undefined)
+        const file = Sk.builtinFiles?.files[x];
+        if (file === undefined) {
             throw "File not found: '" + x + "'";
+        } else if (file === 1 || file === 2) {
+            // slow path we need to do a fetch
+            return Sk.misceval.promiseToSuspension(
+                fetch(window.anvilCDNOrigin + `/runtime/js/lib/skulpt-stdlib-${file}.json?buildTime=0`)
+                    .then((res) => res.json())
+                    .then((newFiles) => {
+                        Object.assign(Sk.builtinFiles.files, newFiles);
+                        return newFiles[x];
+                    })
+            );
+        } else {
+            return file;
+        }
 
-        return Sk.builtinFiles["files"][x];
     };
 
     var firstMsg = undefined;
@@ -657,11 +669,11 @@ function loadApp(app, appId, appOrigin, preloadModules) {
                                 Sk.misceval.callsim(update, pyDict);
 
                                 function wireUpEvents(pyComponent, yaml) {
-                                    let setEventHandler = pyComponent.tp$getattr(new Sk.builtin.str("set_event_handler"));
+                                    let addEventHandler = pyComponent.tp$getattr(new Sk.builtin.str("add_event_handler"));
                                     for (let eventName in yaml.event_bindings) {
                                         let pyHandler = c.tp$getattr(new Sk.builtin.str(yaml.event_bindings[eventName]));
                                         if (pyHandler) {
-                                            Sk.misceval.callsimArray(setEventHandler, [new Sk.builtin.str(eventName), pyHandler]);
+                                            Sk.misceval.callsimArray(addEventHandler, [new Sk.builtin.str(eventName), pyHandler]);
                                         }
                                     }
 

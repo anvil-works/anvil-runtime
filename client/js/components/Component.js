@@ -144,41 +144,76 @@ module.exports = (pyModule) => {
             /*!defBuiltinMethod(,event_name, handler_func:callable)!2*/
             "set_event_handler": {
                 $meth: function (pyEventName, pyHandler) {
-                    const eventName = Sk.ffi.remapToJs(pyEventName);
-                    if (eventName in this._anvil.eventTypes || eventName in (this._anvil.customComponentEventTypes || {}) || eventName.match(/^x\-/)) {
-                        if (Sk.builtin.checkNone(pyHandler)) {
-                            delete this._anvil.eventHandlers[eventName];
-                        } else {
-                            this._anvil.eventHandlers[eventName] = pyHandler;
-                        }
+                    const eventName = this.$verifyEventName(pyEventName, "set event handler for");
+                    if (Sk.builtin.checkNone(pyHandler)) {
+                        // we delete as a signal that the event handlers for this event don't exist. See link click event for example
+                        delete this._anvil.eventHandlers[eventName];
                     } else {
-                        throw new Sk.builtin.ValueError("Cannot set event handler for unknown event '" + eventName + "' on " + this.tp$name + " component.");
+                        // replace existing handlers with the new handler
+                        verifyCallableHandler(pyHandler);
+                        this._anvil.eventHandlers[eventName] = [pyHandler];
                     }
+                    return Sk.builtin.none.none$;
                 },
                 $flags: { MinArgs: 2, MaxArgs: 2 },
-                $doc: "Set a function to call when the 'event_name' event happens on this component. Set handler_func to None to remove a handler.",
+                $doc: "Set a function to call when the 'event_name' event happens on this component. Using set_event_hanlder removes all other handlers. Seting the handler function to None removes all handlers.",
             },
-
+            /*!defBuiltinMethod(,event_name, handler_func:callable)!2*/
+            "add_event_handler": {
+                $meth: function (pyEventName, pyHandler) {
+                    const eventName = this.$verifyEventName(pyEventName, "set event handler");
+                    verifyCallableHandler(pyHandler);
+                    const eventHandlers = this._anvil.eventHandlers[eventName] || (this._anvil.eventHandlers[eventName] = []);
+                    eventHandlers.push(pyHandler);
+                    return Sk.builtin.none.none$;
+                },
+                $flags: { MinArgs: 2, MaxArgs: 2 },
+                $doc: "Add an event handler function to be called when the event happens on this component. Event handlers will be called in the order they are added. Adding the same event handler multiple times will mean it gets called multiple times.",
+            },
+            /*!defBuiltinMethod(,event_name, [handler_func:callable])!2*/
+            "remove_event_handler": {
+                $meth: function (pyEventName, pyHandler) {
+                    const eventName = this.$verifyEventName(pyEventName, "remove event handler");
+                    if (pyHandler === undefined) {
+                        // remove all the handlers
+                        delete this._anvil.eventHandlers[eventName];
+                        return Sk.builtin.none.none$;
+                    }
+                    verifyCallableHandler(pyHandler);
+                    const currentHandlers = this._anvil.eventHandlers[eventName];
+                    if (currentHandlers === undefined) {
+                        throw new Sk.builtin.LookupError(`event handler '${pyHandler}' was not found in '${eventName}' event handlers for this component`);
+                    }
+                    const eventHandlers = currentHandlers.filter(
+                        (handler) => handler !== pyHandler && Sk.misceval.richCompareBool(handler, pyHandler, "NotEq")
+                    );
+                    if (eventHandlers.length === currentHandlers.length) {
+                        throw new Sk.builtin.LookupError(`event handler '${pyHandler}' was not found in '${eventName}' event handlers for this component`);
+                    } else if (eventHandlers.length) {
+                        this._anvil.eventHandlers[eventName] = eventHandlers;
+                    } else {
+                        // we delete as a signal that the event handlers for this event don't exist. See link click event for example
+                        delete this._anvil.eventHandlers[eventName];
+                    }
+                    return Sk.builtin.none.none$;
+                },
+                $flags: { MinArgs: 1, MaxArgs: 2 },
+                $doc: "Remove a specific event handler function for a given event. Calling remove_event_handler with just the event name will remove all the handlers for this event",
+            },
             /*!defBuiltinMethod(,event_name,**event_args)!2*/
             "raise_event": {
                 $meth: function (args, kws) {
                     Sk.abstr.checkOneArg("raise_event", args);
-                    const eventName = Sk.ffi.remapToJs(args[0]);
-                    kws = kws || [];
+                    const eventName = this.$verifyEventName(args[0], "raise event");
+                    kws || (kws = []);
                     const eventArgs = {};
-                    for (var i = 0; i < kws.length - 1; i += 2) {
+                    for (let i = 0; i < kws.length - 1; i += 2) {
                         eventArgs[kws[i].toString()] = kws[i + 1];
                     }
-                    if (eventName in this._anvil.eventTypes || eventName in (this._anvil.customComponentEventTypes || {}) || eventName.match(/^x\-/)) {
-                        return PyDefUtils.raiseEventOrSuspend(eventArgs, this, eventName);
-                    } else {
-                        throw new Sk.builtin.ValueError(
-                            "Cannot raise unknown event '" + eventName + "' on " + self.tp$name + " component. Custom events must have the 'x-' prefix."
-                        );
-                    }
+                    return PyDefUtils.raiseEventOrSuspend(eventArgs, this, eventName);
                 },
                 $flags: { FastCall: true },
-                $doc: "Trigger the 'event_name' event on this component. Any keyword arguments are passed to the handler function.",
+                $doc: "Trigger the event on this component. Any keyword arguments are passed to the handler function.",
             },
             /*!defBuiltinMethod(_)!2*/
             "remove_from_parent": {
@@ -195,9 +230,19 @@ module.exports = (pyModule) => {
             "scroll_into_view": {
                 $meth: function (smooth) {
                     this._anvil.domNode.scrollIntoView({ behavior: Sk.misceval.isTrue(smooth) ? "smooth" : "instant", block: "center", inline: "center" });
+                    return Sk.builtin.none.none$;
                 },
                 $flags: { NamedArgs: ["smooth"], Defaults: [Sk.builtin.bool.false$] },
                 $doc: "Scroll the window to make sure this component is in view.",
+            },
+            /*!defBuiltinMethod(tuple_of_event_handlers, event_name)!2*/
+            "get_event_handlers": {
+                $meth: function (eventName) {
+                    eventName = this.$verifyEventName(eventName, "get event handlers");
+                    return new Sk.builtin.tuple(this._anvil.eventHandlers[eventName] || []);
+                },
+                $flags: { OneArg: true },
+                $doc: "Get the current event_handlers for a given event_name",
             },
         },
         getsets: {
@@ -235,6 +280,18 @@ module.exports = (pyModule) => {
             }),
 
             __new_deserialized__: PyDefUtils.mkNewDeserializedPreservingIdentity(),
+
+            $verifyEventName(eventName, msg) {
+                if (!Sk.builtin.checkString(eventName)) {
+                    throw new Sk.builtin.TypeError("expected the first argument to be a string");
+                }
+                eventName = eventName.toString();
+                if (eventName in this._anvil.eventTypes || eventName in (this._anvil.customComponentEventTypes || {}) || eventName.match(/^x\-/)) {
+                    return eventName;
+                } else {
+                    throw new Sk.builtin.ValueError(`Cannot ${msg} for unknown event '${eventName}' on ${self.tp$name} component. Custom event names must start with 'x-'.`)
+                }                
+            },
         },
         flags: {
             // Ew. This global should be somewhere else.
@@ -252,6 +309,12 @@ module.exports = (pyModule) => {
     );
 
     /*!defClass(anvil,Component)!*/
+
+    function verifyCallableHandler(pyHandler) {
+        if (!Sk.builtin.checkCallable(pyHandler)) {
+            throw new Sk.builtin.TypeError("The event handler must be a callable, not type '" + Sk.abstr.typeName(pyHandler) + "'");
+        }
+    }
     
 
     function createAnvil(self) {
@@ -364,7 +427,7 @@ module.exports = (pyModule) => {
 /*
  * TO TEST:
  *
- *  - Methods: set_event_handler, raise_event, remove_from_parent
+ *  - Methods: set_event_handler, add_event_handler, raise_event, remove_from_parent
  *
  */
 

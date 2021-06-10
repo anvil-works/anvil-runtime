@@ -1,12 +1,8 @@
 (ns anvil.runtime.app-data
   (:require [digest]
-            [anvil.runtime.conf :as conf]
             [anvil.core.pg-json-handler]
-            [clojure.java.jdbc :as jdbc]
             [anvil.util :as util]
-            [crypto.random :as random]
-            [org.httpkit.client :as http]
-            [clojure.data.json :as json])
+            [crypto.random :as random])
   (:use     slingshot.slingshot)
   (:import (org.apache.commons.codec.binary Base64)))
 
@@ -138,12 +134,14 @@
 
 (defn get-app
   ([app-info version-spec] (get-app app-info version-spec true))
-  ([app-info version-spec allow-broken-deps?]
+  ([app-info version-spec allow-errors?]
    (let [app-content (get-app-content-with-dependencies app-info version-spec)]
-     (when-not allow-broken-deps?
+     (when-not allow-errors?
        (doseq [[app-id dep] (-> app-content :content :dependency_code)]
          (when-let [err (:error dep)]
-           (throw+ {:anvil/app-dependency-error app-id :message (:error dep)}))))
+           (throw+ {:anvil/app-loading-error app-id :message (:error dep)})))
+       (when (:conflicts (:content app-content))
+         (throw+ {:anvil/app-loading-error (:id app-info) :message "This application has unresolved conflicts"})))
 
      (assoc app-content
        :info app-info
@@ -180,10 +178,10 @@
                           "#2ab1eb")})))
 
 (defn sanitised-app-and-style-for-client
-  ([id version-spec] (sanitised-app-and-style-for-client id version-spec nil {:allow-broken-deps? true}))
-  ([id version-spec app-session-state {:keys [allow-broken-deps?] :as flags}]
+  ([id version-spec] (sanitised-app-and-style-for-client id version-spec nil {:allow-errors? true}))
+  ([id version-spec app-session-state {:keys [allow-errors?] :as flags}]
    (let [app-info (get-app-info-insecure id)
-         app (get-app app-info version-spec allow-broken-deps?)
+         app (get-app app-info version-spec allow-errors?)
          yaml (:content app)
          only-version (fn [runtime-options] (merge {:version 0}
                                                    (select-keys runtime-options [:version :client_version])))]

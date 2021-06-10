@@ -700,6 +700,12 @@ module.exports = function(appId, appOrigin) {
 
     function doRpcCall(pyKwargs, args, commandOrMethod, liveObjectSpec, suppressLoading) {
 
+        if (!window.navigator.onLine) {
+            // if we're offline we can't make this call
+            // throw an error that can be caught by the custom error handler
+            throw PyDefUtils.pyCall(pyMod["AppOfflineError"], [new Sk.builtin.str("App is offline")]);
+        }
+
         suppressLoading = suppressLoading || (globalSuppressLoading > 0);
 
         // Get a JS map of non-transformed python kwargs. Ugh.
@@ -1194,6 +1200,11 @@ module.exports = function(appId, appOrigin) {
     }, "SessionExpiredError", [Sk.builtin.Exception]);
 
     pyMod["AnvilSessionExpiredException"] = pyMod["SessionExpiredError"];
+
+    /*!defClass(anvil.server,!AppOfflineError, __builtins__..Exception)!*/ 
+    pyNamedExceptions["anvil.server.AppOfflineError"] = 
+    pyMod["AppOfflineError"] = Sk.misceval.buildClass(pyMod, function($gbl, $loc) {
+    }, "AppOfflineError", [Sk.builtin.Exception]);    
 
     /*!defClass(anvil.server,%UplinkDisconnectedError, __builtins__..Exception)!*/ 
     pyNamedExceptions["anvil.server.UplinkDisconnectedError"] = 

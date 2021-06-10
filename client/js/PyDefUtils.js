@@ -428,7 +428,7 @@ PyDefUtils.asyncToPromise = (fn) =>
 // (expects a Javascript object as first parameter, keys are JS, vals are Python if pyVal is true, otherwise JS.
 PyDefUtils.raiseEventOrSuspend = function(eventArgs, self, eventName) {
 
-    var handler = self._anvil.eventHandlers[eventName];
+    const handlers = self._anvil.eventHandlers[eventName];
 
     var expectedParameters = {};
 
@@ -447,7 +447,7 @@ PyDefUtils.raiseEventOrSuspend = function(eventArgs, self, eventName) {
         chainFns.push(() => PyDefUtils.suspensionFromPromise(self._anvil.dataBindingWriteback(self, p.name)));
     }
 
-    if (handler) {
+    if (handlers) {
         eventArgs["event_name"] = Sk.ffi.remapToPy(eventName);
 
         var kwa = [];
@@ -460,7 +460,8 @@ PyDefUtils.raiseEventOrSuspend = function(eventArgs, self, eventName) {
         kwa.push("sender");
         kwa.push(self);
 
-        chainFns.push(() => (Sk.misceval.callOrSuspend(handler, undefined, undefined, kwa) || Sk.builtin.bool.true$));
+        chainFns.push(...handlers.map((pyHandler) => () => PyDefUtils.pyCallOrSuspend(pyHandler, [], kwa)));
+
     }
 
     return Sk.misceval.chain(Sk.builtin.none.none$, ...chainFns);

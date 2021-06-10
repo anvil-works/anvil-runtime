@@ -297,7 +297,7 @@
                               [nil "--smtp-host HOST" "Hostname of SMTP server to use for sending email"]
                               [nil "--smtp-port PORT" "Port to connect to on SMTP server"
                                :validate [#(re-matches #"[0-9]+" %) "Expected a port number"]]
-                              [nil "--smtp-encryption" "Use TLS to connect to SMTP server"
+                              [nil "--smtp-encryption TYPE" "Use TLS to connect to SMTP server"
                                :validate [#(contains? #{"ssl" "starttls"} %) "Expected 'ssl' or 'starttls'"]]
                               [nil "--smtp-username USER" "Username to authenticate with on SMTP server"]
                               [nil "--smtp-password PASSWORD" "Password to authenticate with on SMTP server"]
