@@ -166,7 +166,7 @@
                         (.replace css (str "%color:" name "%") color))
                       css (get-in theme [:parameters :color_scheme :colors]))
           css (.replace css "%anvil-banner-height%"
-                        (or (:banner-height (get-extra-rendering-info app-id session-state flags)) "0"))
+                        (or (:banner-height (get-extra-rendering-info app-id session-state flags)) "0px"))
           shims (reduce (fn [css {:keys [version description shim]}]
                           (str "/* Shim to runtime version " version ": " description " */\n"
                                shim "\n\n" css))

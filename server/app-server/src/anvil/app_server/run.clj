@@ -370,12 +370,12 @@
         options (update-in options [:letsencrypt-storage] #(or % (str (:data-dir options) "/letsencrypt-certs.json")))
 
         options (assoc options :app-smtp-config (when (:smtp-host options)
-                                                  (merge {:host       (:smtp-host options)
-                                                          :port       (or (:smtp-port options) (if (:smtp-encryption options) 587 25))
-                                                          :encryption (:smtp-encryption options)}
-                                                         (when-let [pass (:smtp-password options)]
-                                                           {:user (or (:smtp-username options) "apikey")
-                                                            :pass pass}))))
+                                                  {:default (merge {:host       (:smtp-host options)
+                                                                    :port       (or (:smtp-port options) (if (:smtp-encryption options) 587 25))
+                                                                    :encryption (:smtp-encryption options)}
+                                                                   (when-let [pass (:smtp-password options)]
+                                                                     {:user (or (:smtp-username options) "apikey")
+                                                                      :pass pass}))}))
 
         origin-uri (URI. (:origin options))
 

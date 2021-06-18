@@ -34,7 +34,7 @@
 
 (defn set-config! [conf]
   (reset! config (-> (merge DEFAULTS conf)
-                     (update-in [:hostname] #(or % (second (re-matches #".*://([^/:]+).*" (str (:url config)))) "localhost"))
+                     (update-in [:hostname] #(or % (second (re-matches #".*://([^/:]+).*" (str (:origin config)))) "localhost"))
                      (update-in [:app-path] #(or % "."))))
 
   (assert (:database conf))

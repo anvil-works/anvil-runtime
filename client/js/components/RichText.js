@@ -30,6 +30,24 @@ const SAFE_TAGS = [
   "col", "colgroup", "table", "tbody", "td", "tfoot", "th", "thead", "tr",
 ];
 
+// https://developer.mozilla.org/en-US/docs/Glossary/empty_element
+// subset based on the SAFE_TAGS
+const EMPTY_TAGS = new Set(["br", "col", "hr", "img", "wbr"]);
+
+const REMOVE_TAGS = new Set(["script", "style"]);
+
+const needsClose = tag => tag !== "p" && tag !== "li";
+const ANY = x => true;
+const URL = x => /^(\/|_\/theme\/|https?:\/\/)/.test(x);
+
+const allowedTags = {};
+
+for (let t of SAFE_TAGS) { allowedTags[t] = {}; }
+
+// allowedTags["div"] = {}; // was {"class": ANY}, but then realised that we don't actually want content being allowed to "burst its banks"
+allowedTags["a"] = { "href": URL };
+allowedTags["img"] = { "src": URL };
+
 const escapeHtml = str => str.replace(/[<>&]/g, tag => ({
     '&': '&amp;',
     '<': '&lt;',
@@ -55,21 +73,9 @@ const escapeHtmlPreservingEntitiesAndEscapingBraces = str => str.replace(/&(?![a
 
 const sanitizeHtml = (unsafeHtml, escapeBracesInAttrs) => {
     // Importantly, this regex is *not* safety-critical. If it fails to identify HTML, we miss tags (and render them as escaped text)
-    let tagFinder = /([^<]*)(<\s*(\/?)\s*([^\s"''>]*)\s*(([^'">\s]+(?=['">\s])|'[^']*'|"[^"]*"|\s+)*)>)?/g;
+    const tagFinder = /([^<]*)(<\s*(\/?)\s*([^\s"''>]*)\s*(([^'">\s]+(?=['">\s])|'[^']*'|"[^"]*"|\s+)*)>)?/g;
     let safeHtml = "";
-    let tagStack = [], tagPeek = () => tagStack[tagStack.length - 1];
-
-    let needsClose = tag => tag !== "p" && tag !== "li";
-
-    let ANY = x => true;
-    let URL = x => /^(\/|_\/theme\/|https?:\/\/)/.test(x);
-
-    let allowedTags = {};
-    for (let t of SAFE_TAGS) { allowedTags[t] = {}; }
-
-    allowedTags["div"] = {}; // was {"class": ANY}, but then realised that we don't actually want content being allowed to "burst its banks"
-    allowedTags["a"] = { "href": URL };
-    allowedTags["img"] = { "src": URL };
+    const tagStack = [], tagPeek = () => tagStack[tagStack.length - 1];
 
     let e = escapeHtmlPreservingEntities;
     let m;
@@ -81,11 +87,24 @@ const sanitizeHtml = (unsafeHtml, escapeBracesInAttrs) => {
 
         let allowedAttrs = allowedTags[tagName];
         //console.log("Tag", tagName, "->", allowedAttrs);
-        if (!allowedAttrs) {
+        if (REMOVE_TAGS.has(tagName) && !isClose) {
+            const re = new RegExp("<\\s*/\\s*" + tagName + "\\s*>", "i");
+            console.log(re);
+            const closeMatch = unsafeHtml.substring(tagFinder.lastIndex).match(re);
+            if (!closeMatch) {
+                break;
+            } else {
+                console.log(closeMatch, closeMatch.index);
+                tagFinder.lastIndex += closeMatch.index + closeMatch[0].length
+                continue;
+            }
+        } else if (!allowedAttrs) {
             continue;
-        } if (isClose) {
-            while (tagStack.length && tagPeek() !== tagName && !needsClose(tagPeek())) { tagStack.pop(); }
-            if (tagStack.length && tagName === tagPeek()) {
+        } else if (isClose) {
+            while (tagStack.length && tagPeek() !== tagName && !needsClose(tagPeek())) {
+                tagStack.pop();
+            }
+            if (tagStack.length && (tagName === tagPeek())) {
                 safeHtml += "</" + e(tagName) + ">";
                 tagStack.pop();
             } // else ignore
@@ -115,7 +134,10 @@ const sanitizeHtml = (unsafeHtml, escapeBracesInAttrs) => {
             }
             safeTag += ">";
             safeHtml += safeTag;
-            tagStack.push(tagName);
+            if (!EMPTY_TAGS.has(tagName)) {
+                // don't push empty tags onto the stack - they shouldn't have children
+                tagStack.push(tagName);
+            }
         }
         //console.log("Spinning on tags:", m);
     }
@@ -316,7 +338,7 @@ module.exports = (pyModule) => {
                 important: true,
                 priority: 10,
                 pyVal: true,
-                initialize: true,
+                // initialize: true, // no need to initialize here since enable_slots initializes the same function
                 defaultValue: Sk.builtin.str.$empty,
                 set(s, e, v) {
                     updateContent(s, e[0]);

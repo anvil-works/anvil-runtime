@@ -50,17 +50,44 @@ module.exports = (pyModule) => {
                 description: "The status of the checkbox",
                 suggested: true,
                 pyVal: true,
+				important: true,
+				priority: 10,
                 exampleValue: true,
                 defaultValue: Sk.builtin.bool.false$,
                 allowBindingWriteback: true,
                 dataBindingProp: true,
                 set(s, e, v) {
+                    if (isTrue(s._anvil.props.allow_indeterminate)) {
+                        s._anvil.elements.input.indeterminate = v === Sk.builtin.none.none$;
+                    }
                     s._anvil.elements.input.checked = isTrue(v);
                 },
                 get(s, e) {
-                    return new Sk.builtin.bool(s._anvil.elements.input.checked);
+                    if (isTrue(s._anvil.props.allow_indeterminate) && s._anvil.elements.input.indeterminate) {
+                        return Sk.builtin.none.none$;
+                    } else {
+                        return new Sk.builtin.bool(s._anvil.elements.input.checked);
+                    }                    
                 },
             },
+            /*!componentProp(CheckBox)!1*/
+            allow_indeterminate: {
+                name: "allow_indeterminate",
+                type: "boolean",
+                description: "Support an indeterminate state. The indeterminate state can only be set in code by setting checked=None.",
+                pyVal: true,
+                defaultValue: Sk.builtin.bool.false$,
+                initialize: true, // we can't set this in the render method because browsers don't support this as an html attribute
+                set(s, e, v) {
+                    if (isTrue(v)) {
+                        // access the raw checked prop to see what the user set it to
+                        s._anvil.elements.input.indeterminate = s._anvil.props.checked === Sk.builtin.none.none$;
+                    } else {
+                        s._anvil.elements.input.indeterminate = false;
+                    }
+                },
+            },
+
         }),
 
         events: PyDefUtils.assembleGroupEvents(/*!componentEvents()!2*/ "CheckBox", ["universal"], {
