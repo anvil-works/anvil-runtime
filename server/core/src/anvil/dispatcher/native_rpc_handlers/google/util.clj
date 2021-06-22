@@ -16,7 +16,8 @@
 
 (defn has-own-client-id?
   ([] (has-own-client-id? nil))
-  ([service] (let [client-id (get-in (or service (get-google-service-props)) [:server_config :client_id])]
+  ([service] (let [client-id (or (get-in (or service (get-google-service-props)) [:server_config :client_id])
+                                 (and (:custom? conf/google-client-config) (:client-id conf/google-client-config)))]
                (and client-id (not= "" client-id)))))
 
 (defn add-credentials [httpkit-map creds]
