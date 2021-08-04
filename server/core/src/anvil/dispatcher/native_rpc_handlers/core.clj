@@ -27,7 +27,11 @@
             [anvil.dispatcher.core :as dispatcher]
             [anvil.runtime.app-data :as app-data]
             [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]
-            [anvil.dispatcher.background-tasks :as background-tasks]))
+            [anvil.dispatcher.background-tasks :as background-tasks]
+            [anvil.runtime.sessions :as sessions]
+            [anvil.dispatcher.native-rpc-handlers.users.util :as users-util]
+            [anvil.runtime.tables.rpc :as tables]
+            [clojure.data.json :as json]))
 
 
 (def debug-rpc-handlers
@@ -96,39 +100,34 @@
                                                   enc util/real-actual-genuine-url-encoder]
                                               (log/info "Session state: " (keys @native-util/*session-state*))
                                               (str native-util/*app-origin* "/_/lm/" (enc manager) "/" (enc key) "/" (enc id) "/" (enc (or name "")) "?s="
-                                                   (:url-token @native-util/*session-state*)
+                                                   (sessions/url-token native-util/*session-state*)
                                                    (if is-download? "" "&nodl=1")))))
 
    "anvil.private.enable_profiling"     (native-util/wrap-native-fn
                                           (fn [_kwargs]
-                                            (when native-util/*client-request?*
-                                              (throw+ {:anvil/server-error "Permission denied. Cannot profile from client code."}))
+                                            (native-util/require-server! "profile")
                                             (swap! native-util/*session-state* assoc :anvil/enable-profiling true)
                                             nil))
 
    "anvil.private.disable_profiling"    (native-util/wrap-native-fn
                                           (fn [_kwargs]
-                                            (when native-util/*client-request?*
-                                              (throw+ {:anvil/server-error "Permission denied. Cannot profile from client code."}))
+                                            (native-util/require-server! "profile")
                                             (swap! native-util/*session-state* assoc :anvil/enable-profiling false)
                                             nil))
 
    "anvil.private.set_cookie"           (native-util/wrap-native-fn
                                           (fn [kwargs type timeout]
-                                            (when native-util/*client-request?*
-                                              (throw+ {:anvil/server-error "Permission denied. Cannot set cookies from client code."}))
+                                            (native-util/require-server! "set cookies")
                                             (native-cookies/set-cookie! (keyword type) kwargs timeout)))
 
    "anvil.private.del_cookie"           (native-util/wrap-native-fn
                                           (fn [_kwargs type key]
-                                            (when native-util/*client-request?*
-                                              (throw+ {:anvil/server-error "Permission denied. Cannot delete cookies from client code."}))
+                                            (native-util/require-server! "delete cookies")
                                             (native-cookies/del-cookie! (keyword type) (keyword key))))
 
    "anvil.private.get_cookie"           (native-util/wrap-native-fn
                                           (fn [_kwargs type key]
-                                            (when native-util/*client-request?*
-                                              (throw+ {:anvil/server-error "Permission denied. Cannot read cookies from client code."}))
+                                            (native-util/require-server! "read cookies")
                                             (let [val (native-cookies/get-cookie-val (keyword type) (keyword key) :not-found)]
                                               (when (= val :not-found)
                                                 (throw+ {:type "KeyError" :anvil/server-error key}))
@@ -137,8 +136,7 @@
 
    "anvil.private.clear_cookie"         (native-util/wrap-native-fn
                                           (fn [_kwargs type]
-                                            (when native-util/*client-request?*
-                                              (throw+ {:anvil/server-error "Permission denied. Cannot clear cookies from client code."}))
+                                            (native-util/require-server! "clear cookies")
                                             (native-cookies/clear-cookie! (keyword type))))
 
    "anvil.private.switch_session!"      {:fn (fn [req return-path]
@@ -150,7 +148,78 @@
                                                      (do
                                                        ((:anvil.dispatcher/change-session! req) alternate-session)
                                                        (:pymods @alternate-session))
-                                                     (:pymods @(:session-state req))))))}})
+                                                     (:pymods @(:session-state req))))))}
+
+   "anvil.private.raise_event"          (native-util/wrap-native-fn
+                                          ;; Specify at most one of session_id, session_ids, and channel.
+                                          (fn [{:keys [session_id session_ids channel]} name payload]
+                                            (native-util/require-server! "raise server events")
+                                            ;; If none of session_id, session_ids or channel are specified, raise on current session.
+                                            (let [session_id (if (and (not session_id)
+                                                                      (empty? session_ids)
+                                                                      (not channel))
+                                                               (sessions/persistent-id native-util/*session-state*)
+                                                               session_id)
+                                                  evt {:name    name
+                                                       :payload payload}
+                                                  send-to-session-id! #(sessions/send-event! native-util/*app-id*
+                                                                                             (:env_id native-util/*environment*)
+                                                                                             %
+                                                                                             evt)]
+                                              ;; TODO: Check only one kwarg provided (or support all of them at once, I suppose)
+                                              (cond
+                                                session_id
+                                                (send-to-session-id! session_id)
+
+                                                session_ids
+                                                (doseq [session-id session_ids]
+                                                  (send-to-session-id! session-id))
+
+                                                channel
+                                                (let [all-sessions (sessions/list-sessions native-util/*app-id* (:env_id native-util/*environment*))
+                                                      subscribed-sessions (filter #(let [session-state (sessions/get-session-data-for-env native-util/*app-id* (:env_id native-util/*environment*) %)]
+                                                                                     (contains? (:channel-subscriptions session-state) channel)) all-sessions)]
+                                                  (doseq [session-id subscribed-sessions]
+                                                    (send-to-session-id! session-id)))))))
+
+   "anvil.private.subscribe"            (native-util/wrap-native-fn
+                                          (fn [_ channel]
+                                            (native-util/require-server! "subscribe to a channel")
+                                            (swap! native-util/*session-state* update-in [:channel-subscriptions] clojure.set/union #{channel})
+                                            (sessions/notify-session-update! native-util/*session-state*)))
+
+   "anvil.private.unsubscribe"          (native-util/wrap-native-fn
+                                          (fn [_ channel]
+                                            (native-util/require-server! "unsubscribe from a channel")
+                                            (swap! native-util/*session-state* update-in [:channel-subscriptions] disj channel)
+                                            (sessions/notify-session-update! native-util/*session-state*)))
+
+   "anvil.private.get_subscriptions"    (native-util/wrap-native-fn
+                                          (fn [_]
+                                            (native-util/require-server! "get subscriptions")
+                                            (vec (get @native-util/*session-state* :channel-subscriptions))))
+
+   "anvil.private.get_session_id"       (native-util/wrap-native-fn
+                                          (fn [_kwargs]
+                                            (native-util/require-server! "get the current session ID")
+                                            (sessions/persistent-id native-util/*session-state*)))
+
+   "anvil.private.list_sessions"        (native-util/wrap-native-fn
+                                          ;; Returns all the sessions in the current environment, or just the ones where a particular user is logged in.
+                                          (fn [{:keys [user] :as _kwargs}]
+                                            (native-util/require-server! "list sessions")
+                                            (let [all-sessions (sessions/list-sessions native-util/*app-id* (:env_id native-util/*environment*))]
+                                              (if user
+                                                (let [user-id ((tables/TRow "get_id") (json/read-str (:id user)) {})]
+                                                  (filter #(let [session-state (sessions/get-session-data-for-env native-util/*app-id* (:env_id native-util/*environment*) %)]
+                                                             (let [user-in-session (get-in session-state [:users :logged-in-id])]
+                                                               (= user-in-session user-id))) all-sessions))
+                                                all-sessions))))
+
+   "anvil.private.get_session_data"     (native-util/wrap-native-fn
+                                          (fn [_kwargs session-id]
+                                            (native-util/require-server! "get session data")
+                                            (sessions/get-python-session-data-for-env native-util/*app-id* (:env_id native-util/*environment*) session-id)))})
 
 
 (def debug-live-object-backends

@@ -65,11 +65,13 @@ function initComponentsOnForm(components, pyForm, eventBindingsByName) {
             var bindings = eventBindingsByName[name]
             for (var evt in bindings) {
                 const pyHandler = Sk.generic.getAttr.call(pyForm, new Sk.builtin.str(bindings[evt])); // use generic getattr for performance
-                if (pyHandler) {
-                    // The handler exists.
+                if (pyHandler === undefined) {
+                    // TODO: Should probably at least warn that we tried to attach a non-existent handler.
+                } else if (Sk.builtin.checkCallable(pyHandler)) {
                     addHandler(pyComponent, pyHandler, evt);
                 } else {
-                    // TODO: Should probably at least warn that we tried to attach a non-existent handler.
+                    // Trying to set the event handler to an attribute - ignore but give a warning - e.g. Form1.tooltip
+                    Sk.builtin.print([`Warning: ${pyForm.tp$name}.${bindings[evt]} is not a valid handler for the '${evt}' event of ${name || pyForm.tp$name}. It should be a callable function (found type '${Sk.abstr.typeName(pyHandler)}')`]);
                 }
             }
         }

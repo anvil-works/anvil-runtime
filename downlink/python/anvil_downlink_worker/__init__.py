@@ -208,6 +208,7 @@ def handle_incoming_call(msg, send_to_host):
     elif msg['type'] == "TERMINATE_REPL":
         repl_scopes.pop(msg['repl'], None)
         send_to_host({"id": msg['repl'], "response": None})
+        send_to_host({"id": msg['id'], "response": None})
         return
 
     try:

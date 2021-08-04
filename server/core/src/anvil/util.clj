@@ -123,6 +123,9 @@
 (defn write-json-str [val]
   (json/write-str val :key-fn preserve-slashes))
 
+(defn read-json-str [val]
+  (json/read-str val :key-fn keyword))
+
 (defn as-properties [kw-map]
   (let [p (Properties.)]
     (doseq [[k v] kw-map]
@@ -169,7 +172,7 @@
                              (getConnection [_this] (.getConnection ^DataSource @datasource))))})
 
 
-(def LATEST-DB-VERSION? #{"2020-11-11-fix-up-direct-sql" "2020-09-29-multibranch-malleable-commits"})
+(def LATEST-DB-VERSION? #{"2021-08-03-crosslink-fix"})
 
 (defn require-latest-db-version [continue-anyway?]
   (try
@@ -228,6 +231,33 @@
   `(-with-db-transaction ~spec (fn [db#]
                                  (let [~conn-sym db#]
                                    ~@body))))
+
+(defn -with-try-db-lock [lock-name f]
+  (let [lock-number (.hashCode (str lock-name))]
+    (jdbc/with-db-transaction [db-t db] ;; Note that we don't actually use this txn connection for anything except locking.
+      (if (:locked (first (jdbc/query db-t ["SELECT pg_try_advisory_xact_lock(?::bigint) as locked;" lock-number])))
+        (f)
+        (throw+ {:anvil/lock-unavailable lock-name})))))
+
+(defmacro with-try-db-lock [lock-name & body]
+  `(-with-try-db-lock ~lock-name (fn [] ~@body)))
+
+(def ^:dynamic *db-locks* {})
+
+(defn -with-db-lock [lock-name shared? f]
+  (if-let [lock (get *db-locks* lock-name)]
+    (if (or shared? (not (:shared? lock)))
+      (f)
+      (throw (Exception. (str "Tried to upgrade from a shared to an exclusive lock for " lock-name))))
+    (let [lock-number (.hashCode (str lock-name))]
+      (jdbc/with-db-transaction [db-t db]                   ;; Note that we don't actually use this txn connection for anything except locking.
+        (jdbc/query db-t [(if shared? "SELECT pg_advisory_xact_lock_shared(?::bigint)" "SELECT pg_advisory_xact_lock(?::bigint)")
+                          lock-number])
+        (binding [*db-locks* (assoc *db-locks* lock-name {:shared? true})]
+          (f))))))
+
+(defmacro with-db-lock [lock-name shared? & body]
+  `(-with-db-lock ~lock-name (boolean ~shared?) (fn [] ~@body)))
 
 (defn- double-escape [^String x]
   (.replace (.replace x "\\" "\\\\") "$" "\\$"))
@@ -348,3 +378,34 @@
     (when-let [old-req (old-context-request request route)]
       (assoc old-req :context-paths (conj (or (:context-paths request) []) (remove-suffix (:source route) ":__path-info"))))))
 (in-ns 'anvil.util)
+
+(defn wait-for [pred timeout check-ms]
+  (let [timeout-time (+ (System/currentTimeMillis) timeout)]
+    (while (and (not (pred))
+               (< (System/currentTimeMillis) timeout-time))
+      (Thread/sleep check-ms)))
+  (pred))
+
+;;;;;;;;;;;;;;;;;;;
+;; The following two functions are corrected versions of the ones in ring.middleware.proxy-headers, which
+;; incorrectly take the LAST value in the X-Forwarded-For header.
+(defn forwarded-remote-addr-request
+  "Change the :remote-addr key of the request map to the FIRST value present in
+  the X-Forwarded-For header. See: wrap-forwarded-remote-addr."
+  [request]
+  (if-let [forwarded-for (get-in request [:headers "x-forwarded-for"])]
+    (let [remote-addr (clojure.string/trim (re-find #"^[^,]*" forwarded-for))]
+      (assoc request :remote-addr remote-addr))
+    request))
+
+(defn wrap-correct-forwarded-remote-addr
+  "Middleware that changes the :remote-addr of the request map to the
+  FIRST value present in the X-Forwarded-For header."
+  [handler]
+  (fn
+    ([request]
+     (handler (forwarded-remote-addr-request request)))
+    ([request respond raise]
+     (handler (forwarded-remote-addr-request request) respond raise))))
+
+;;;;;;;;;;;;;;;;;;;;;; End middleware fix

@@ -94,6 +94,17 @@ module.exports = (pyModule) => {
                 }
                 return self;
             },
+            /*
+             * The job of __init__ here is to be friendly to subclassing
+             * We wait until __init__ to throw any exceptions
+             * We only update component props that are not strictly equal to the props we received in __new__
+             * This allows users to extract properties and manipulate them before calling super().__init__
+             * 
+             *     def __init__(self, foo, background, **properties):
+             *         self.foo = foo
+             *         background = 'red'
+             *         super().__init__(background=background, **properties)
+             */
             tp$init(args, kwargs) {
                 if (args.length) {
                     throw new Sk.builtin.TypeError("Component constructor takes keyword arguments only");
@@ -150,7 +161,7 @@ module.exports = (pyModule) => {
                         delete this._anvil.eventHandlers[eventName];
                     } else {
                         // replace existing handlers with the new handler
-                        verifyCallableHandler(pyHandler);
+                        this.$verifyCallable(eventName, pyHandler);
                         this._anvil.eventHandlers[eventName] = [pyHandler];
                     }
                     return Sk.builtin.none.none$;
@@ -162,7 +173,7 @@ module.exports = (pyModule) => {
             "add_event_handler": {
                 $meth: function (pyEventName, pyHandler) {
                     const eventName = this.$verifyEventName(pyEventName, "set event handler");
-                    verifyCallableHandler(pyHandler);
+                    this.$verifyCallable(eventName, pyHandler);
                     const eventHandlers = this._anvil.eventHandlers[eventName] || (this._anvil.eventHandlers[eventName] = []);
                     eventHandlers.push(pyHandler);
                     return Sk.builtin.none.none$;
@@ -179,7 +190,7 @@ module.exports = (pyModule) => {
                         delete this._anvil.eventHandlers[eventName];
                         return Sk.builtin.none.none$;
                     }
-                    verifyCallableHandler(pyHandler);
+                    this.$verifyCallable(eventName, pyHandler);
                     const currentHandlers = this._anvil.eventHandlers[eventName];
                     if (currentHandlers === undefined) {
                         throw new Sk.builtin.LookupError(`event handler '${pyHandler}' was not found in '${eventName}' event handlers for this component`);
@@ -289,9 +300,14 @@ module.exports = (pyModule) => {
                 if (eventName in this._anvil.eventTypes || eventName in (this._anvil.customComponentEventTypes || {}) || eventName.match(/^x\-/)) {
                     return eventName;
                 } else {
-                    throw new Sk.builtin.ValueError(`Cannot ${msg} for unknown event '${eventName}' on ${self.tp$name} component. Custom event names must start with 'x-'.`)
+                    throw new Sk.builtin.ValueError(`Cannot ${msg} for unknown event '${eventName}' on ${this.tp$name} component. Custom event names must start with 'x-'.`)
                 }                
             },
+            $verifyCallable(eventName, pyHandler) {
+                if (!Sk.builtin.checkCallable(pyHandler)) {
+                    throw new Sk.builtin.TypeError(`The '${eventName}' event handler added to ${this.tp$name} must be a callable, not type '${Sk.abstr.typeName(pyHandler)}'`);
+                }
+            }
         },
         flags: {
             // Ew. This global should be somewhere else.
@@ -309,12 +325,6 @@ module.exports = (pyModule) => {
     );
 
     /*!defClass(anvil,Component)!*/
-
-    function verifyCallableHandler(pyHandler) {
-        if (!Sk.builtin.checkCallable(pyHandler)) {
-            throw new Sk.builtin.TypeError("The event handler must be a callable, not type '" + Sk.abstr.typeName(pyHandler) + "'");
-        }
-    }
     
 
     function createAnvil(self) {

@@ -11,29 +11,40 @@
             [anvil.executors.ws-calls :as ws-calls]
             [anvil.dispatcher.core :as dispatcher]
             [anvil.dispatcher.background-tasks :as background-tasks]
-            [anvil.core.worker-pool :as worker-pool]))
+            [anvil.core.worker-pool :as worker-pool]
+            [anvil.executors.ws-server :as ws-server]
+            [anvil.runtime.app-data :as app-data]))
 
 
 (clj-logging-config.log4j/set-logger! :level :info)
 
 ;; Hookable functions
-(defonce register-downlink! (fn [registration-request executor] (throw (UnsupportedOperationException.))))
+(defonce register-downlink! (fn [registration-request send-request!] (throw (UnsupportedOperationException.))))
 (defonce drain-downlink! (fn [cookie] nil))
 (defonce unregister-downlink! (fn [cookie] (throw (UnsupportedOperationException.))))
 (defonce report-downlink-stats (fn [cookie stats] nil))
+(defonce dispatch-downlink-call! (fn [cookie context call-stack-info extra-request-params deserialiser-conf wire-request return-path]
+                                   (throw (UnsupportedOperationException.))))
+;; used by PDF rendering to identify a particular downlink
+(defonce get-downlink-executor (fn [spec] (throw (UnsupportedOperationException.))))
 
-(def set-downlink-hooks! (util/hook-setter [register-downlink! drain-downlink! unregister-downlink! report-downlink-stats]))
+(def set-downlink-hooks! (util/hook-setter [register-downlink! drain-downlink! unregister-downlink! report-downlink-stats dispatch-downlink-call! get-downlink-executor]))
+
+(def STACK-FRAME-INFO {:origin :server, :stack-frame-type :server_module})
 
 (defn- sanitise-app-for-downlink [app]
   (select-keys app [:modules :server_modules :forms :runtime_options :dependency_code :dependency_order :package_name]))
 
-(defn gen-id [hint]
-  (str (name hint) "-" (random/base64 16)))
+#_(defn gen-id [hint]
+  (str (name hint) "-" (random/base64 18)))
 
-(defn- request-template-from-pending-response [pending-response]
-  (select-keys pending-response [:app-id :app :environment :app-origin :session-state :call-stack]))
+;; TODO make sure the new version supports:
+;; * Blended versions
+;; * Same-server executors (for PDF rendering)
+;; * Sending app with request when we have a nil or blank blended-version (ie hard-coded apps)
 
-(defn send-request! [channel pending-responses bg-task req-id
+
+#_(defn send-request! [channel pending-responses bg-task req-id
                      {{:keys [live-object args kwargs func vt_global] :as _call} :call
                       :keys [app-id environment app-origin app session-state origin stale-uplink? call-stack]
                       :as _request}
@@ -95,7 +106,7 @@
           (log/error e "Error serialising downlink request:" error-id)
           (dispatcher/respond! return-path {:error {:type "anvil.server.SerializationError" :message (str "Internal server error: " error-id)}}))))))
 
-(defn call-fn [channel pending-responses
+#_(defn call-fn [channel pending-responses
                {{:keys [live-object func]} :call
                 :keys [origin]
                 :as request}
@@ -110,86 +121,88 @@
                      {:command func}))
                  return-path))
 
-;; [app-id id] -> {:channel, :call-id}
-(defonce background-tasks (atom {}))
+#_(defn launch-bg-fn [channel pending-responses request return-path]
+  (dispatcher/synchronous-return-path return-path
+    (let [[{:keys [id] :as bt} request new-return-path]
+          (background-tasks/setup-background-task-context
+            request :downlink #(swap! background-tasks dissoc (:id %)))
 
-(defn launch-bg-fn [channel pending-responses request]
-  (let [[{:keys [id] :as bt} new-return-path]
-        (background-tasks/setup-background-task-context
-          request :downlink #(swap! background-tasks dissoc (:id %)))
+          ;; Ugly two-step setup because we don't know the call-id until executor-fn is finished.
+          ;; Make this nicer (perhaps when we go horizontal?)
 
-        ;; Ugly two-step setup because we don't know the call-id until executor-fn is finished.
-        ;; Make this nicer (perhaps when we go horizontal?)
+          _ (swap! background-tasks assoc id {:channel channel, :pending-responses pending-responses})
 
-        _ (swap! background-tasks assoc id {:channel channel, :pending-responses pending-responses})
+          call-id (send-request! channel pending-responses bt (gen-id :bgtask) request
+                                 {:type "LAUNCH_BACKGROUND", :command (get-in request [:call :func])}
+                                 new-return-path)
 
-        call-id (send-request! channel pending-responses bt (gen-id :bgtask) request
-                               {:type "LAUNCH_BACKGROUND", :command (get-in request [:call :func])}
-                               new-return-path)
+          _ (swap! background-tasks #(if (get % id)
+                                       (assoc-in % [id :call-id] call-id)
+                                       %))]
+      (background-tasks/mk-BackgroundTaskLiveObject id))))
 
-        _ (swap! background-tasks #(if (get % id)
-                                    (assoc-in % [id :call-id] call-id)
-                                    %))]
-    id))
+(def WS-SERVER-PARAMS {:link-name "Downlink",
+                       :bg-impl-id :downlink,
+                       :disconnection-error "anvil.server.RuntimeUnavailableError"})
 
+(defn launch-bg-task! [connection {:keys [app-info environment] :as request} return-path]
+  ;; This could be called in contexts where we don't have the app:
+  (let [get-app (fn []
+                  (log/trace "Getting app for" app-info "env:" environment)
+                  (or (:app request)
+                      (:content (app-data/get-app app-info (app-data/get-version-spec-for-environment environment)))))]
+    (ws-server/launch-bg-task! WS-SERVER-PARAMS {::get-app get-app} connection request return-path)))
 
-(swap! background-tasks/implementations assoc :downlink
-       {:kill!     (fn [{:keys [id]} return-path]
-                     (dispatcher/synchronous-return-path return-path
-                       (if-let [{:keys [channel call-id]} (@background-tasks id)]
-                         (when-not (send! channel (util/write-json-str {:type "KILL_TASK", :task call-id}))
-                           (throw+ {:anvil/server-error "Downlink disconnected" :type "anvil.server.NotRunningTask"}))
-                         (throw+ {:anvil/server-error "Downlink disconnected" :type "anvil.server.NotRunningTask"}))
-                       nil))
+(defn wrap-as-executor [{:keys [send-request!] :as connection}]
+  {:fn    (fn execute-on-downlink! [{{:keys [func]} :call, :keys [app app-info environment] :as request} return-path]
+            (let [profiling-info {:origin      "Server (Downlink executor)"
+                                  :description (format "Downlink execute (%s)" func)}
+                  blended-version (apply str (:commit-id environment) (for [[_ {:keys [commit-id]}] (sort-by first (:dependency_code app))] commit-id))
+                  {:keys [call-context request return-path]} (ws-calls/stateful-request-to-serialisable-request request return-path profiling-info)
+                  request (assoc request :app-version blended-version)]
 
-        :get-state (fn [{:keys [id]} return-path]
-                     (dispatcher/report-exceptions-to-return-path return-path
-                       (if-let [{:keys [channel call-id pending-responses]} (@background-tasks id)]
-                         (let [new-state-request-id (str "bgquery-" (random/base64 16))]
-                           ;; TODO this pending-response context is very minimal - could provide more
-                           ;; (which gets used in serialiser)
-                           (swap! pending-responses assoc new-state-request-id
-                                  {:return-path return-path})
-                           (when-not (send! channel (util/write-json-str {:type "GET_TASK_STATE" :id new-state-request-id :task call-id}))
-                             (swap! pending-responses dissoc new-state-request-id)
-                             (log/trace "Failed to send task-state query to downlink")
-                             (throw+ {:anvil/server-error "Downlink disconnected" :type "anvil.server.NotRunningTask"})))
-                         ;; else, this task isn't one we know of
-                         (throw+ {:anvil/server-error "No such task on this downlink" :type "anvil.server.NotRunningTask"}))))})
+              (send-request! (assoc call-context ::get-app (constantly app)) {:type "CALL"} request return-path)))
 
+   :bg-fn (partial launch-bg-task! connection)})
+
+(ws-server/setup-bg-task-impl! WS-SERVER-PARAMS)
 
 (defn handle-incoming-ws [request]
   (ws-util/with-opening-channel
     request channel on-open
     (let [registration-cookie (atom nil)
-          pending-responses (atom {}) ;; id -> {:app-id app-id :respond! respond!, :send-update! send-update, :ssm-state ssm-state}
-          ds (serialisation/mk-Deserialiser :permitted-live-object-backends #{"uplink."})
+          spec (atom nil) ; Only used for debug logging
+          ds (serialisation/mk-Deserialiser {:origin :server, :permitted-live-object-backends #{}})
           internal-error (atom nil)
-          executor {:fn (partial call-fn channel pending-responses)
-                    :bg-fn (partial launch-bg-fn channel pending-responses)
-                    ::send-fn (partial send-request! channel pending-responses nil)
-                    ::tag-channel! (partial ws-util/tag-channel! channel)}]
+
+          {:keys [get-pending-response get-bg-task get-app-info-and-env is-closed? send-close-errors! send-request! handle-response! handle-update! is-idle?]}
+          (ws-server/setup-request-handlers WS-SERVER-PARAMS channel)
+
+          disconnect-on-idle? (atom false)
+          disconnect-on-idle! (fn []
+                                (reset! disconnect-on-idle? true)
+                                (when (is-idle?)
+                                  (close channel)))
+
+          connection {:send-request! send-request!, ::ws-server/send-raw! #(send! channel %), ::tag-channel! (partial ws-util/tag-channel! channel) ::disconnect-on-idle! disconnect-on-idle!}]
 
       (on-close channel
                 (fn [why]
                   (worker-pool/set-task-info! :websocket ::close)
-                  (log/info "Downlink client disconnected:" (pr-str why))
+                  (log/info "Downlink client disconnected:" (pr-str why) (pr-str @spec))
 
                   ;; Remove closing channel from list of registered downlinks
                   (unregister-downlink! @registration-cookie)
 
-                  (doseq [[_ p] @pending-responses]
-                    (dispatcher/respond! (:return-path p)
-                                         {:error (cond
-                                                   @internal-error
-                                                   {:type "anvil.server.RuntimeUnavailableError", :message (str "Downlink disconnected: " @internal-error)}
+                  (send-close-errors! (cond
+                                        @internal-error
+                                        {:type "anvil.server.RuntimeUnavailableError", :message (str "Downlink disconnected: " @internal-error)}
 
-                                                   (= why :message-too-big)
-                                                   {:type "anvil.server.InternalError", :message "Data payload too big - please use Media objects to transfer large amounts of data."}
+                                        (= why :message-too-big)
+                                        {:type "anvil.server.RuntimeUnavailableError", :message "Data payload too big - please use Media objects to transfer large amounts of data."}
 
-                                                   :else
-                                                   {:type "anvil.server.RuntimeUnavailableError", :message "Downlink disconnected"}
-                                                   )}))))
+                                        :else
+                                        {:type "anvil.server.RuntimeUnavailableError", :message "Downlink disconnected"}))))
 
       (on-receive channel
                   (fn [json-or-binary]
@@ -207,9 +220,10 @@
                                 (send! channel (util/write-json-str {:error "You are using an outdated version of the downlink server"}))
                                 (close channel))
 
-                              (if-let [cookie (register-downlink! raw-data executor)]
+                              (if-let [cookie (register-downlink! raw-data connection)]
                                 (do
                                   (reset! registration-cookie cookie)
+                                  (reset! spec (:spec raw-data))
                                   (log/info "Downlink client connected with spec" (pr-str (:spec raw-data)))
                                   (send! channel (util/write-json-str {:auth "OK"})))
 
@@ -229,38 +243,32 @@
 
                             ;; Background task shuffling off its mortal coil
                             (= (:type raw-data) "NOTIFY_TASK_KILLED")
-                            (when-let [{:keys [bg-task] :as pending-response} (get @pending-responses (:id raw-data))]
-                              (let [data (serialisation/deserialise ds raw-data (assoc (request-template-from-pending-response pending-response)
-                                                                                  :origin :server))]
+                            (when-let [bg-task (get-bg-task (:id raw-data))]
+                              (let [data (serialisation/deserialise ds raw-data)]
                                 (background-tasks/record-final-state! bg-task (if (:taskState data) {:taskState (:taskState data)} {}) :killed)))
 
+                            ;; TODO restart conversion here: Need the versions of everything
                             ;; Fetch app (missed cache)
                             (= (:type raw-data) "GET_APP")
-                            (if-let [{:keys [app-id blended-version app]} (get @pending-responses (:originating-call raw-data))]
-                              (send! channel (util/write-json-str {:type "PROVIDE_APP", :id (:id raw-data),
-                                                                   :app-id app-id, :app-version blended-version,
-                                                                   :app (sanitise-app-for-downlink app)}))
+                            (if-let [get-app (::get-app (:context (get-pending-response (:originating-call raw-data))))]
+                              (send! channel (util/write-json-str {:type   "PROVIDE_APP", :id (:id raw-data),
+                                                                   :app-id (:id raw-data), :app-version (:app-version raw-data),
+                                                                   :app    (sanitise-app-for-downlink (get-app))}))
                               (log/warn "Downlink made GET_APP request without originating-call data:" raw-data))
 
                             ;; Command (request from downlink, ie remote-initiated RPC)
                             (= (:type raw-data) "CALL")
-                            (let [{:keys [session-state app-id environment app-origin app return-path call-stack]} (get @pending-responses (:call-stack-id raw-data))
+                            (let [call-id (:id raw-data)
                                   call-stack-id (:call-stack-id raw-data)
-                                  change-session! (fn [new-session]
-                                                    (swap! pending-responses #(if (contains? % call-stack-id)
-                                                                                (update-in % [call-stack-id] merge {:session-state new-session
-                                                                                                                    :pymod-session-at-send (:pymods @new-session)})
-                                                                                %)))]
-
-                              (ws-calls/process-call-from-ws channel ds raw-data
-                                                             {:app-id                                app-id, :app app, :environment environment, :app-origin app-origin,
-                                                              :session-state                         session-state, :anvil.dispatcher/change-session! change-session!, :origin :downlink,
-                                                              :call-stack                            (cons {:type :server_module} call-stack),
-                                                              :thread-id                             (str "downlink-" app-id "-" call-stack-id),
-                                                              :anvil.dispatcher/same-server-executor executor}
-                                                             {:use-quota? false,
-                                                              :prune-liveobjects? true
-                                                              :update-bypass! (when return-path #(dispatcher/update! return-path %))}))
+                                  pending-response (get-pending-response call-stack-id)
+                                  context (or (:context pending-response))
+                                  return-path {:update! #(send! channel (util/write-json-str (assoc % :id call-id)))
+                                               :respond! #(serialisation/serialise-to-websocket! (assoc % :id call-id) channel true nil)}
+                                  request (serialisation/deserialise ds raw-data)]
+                              (if context
+                                (dispatch-downlink-call! @registration-cookie context STACK-FRAME-INFO {}
+                                                         (serialisation/getConfig ds) request return-path)
+                                (send! channel (util/write-json-str {:id call-id :error {:message "Call from invalid context"}}))))
 
                             ;; Statistics
                             (= (:type raw-data) "STATS")
@@ -268,21 +276,12 @@
 
                             ;; Response from downlink
                             (or (contains? raw-data :response) (contains? raw-data :error))
-                            (when-let [{:keys [session-state app-id app return-path pymod-session-at-send] :as pending-response}
-                                       (@pending-responses (:id raw-data))]
-
-                              (when-let [pysess (:sessionData raw-data)]
-                                (when (= (:pymods @session-state) pymod-session-at-send)
-                                  (swap! session-state assoc :pymods pysess)))
-                              (let [raw-data (dissoc raw-data :sessionData)
-                                    resp (ws-calls/process-response-from-ws ds (request-template-from-pending-response pending-response) return-path raw-data)]
-                                ; Don't do this until we're sure process-response didn't blow up.
-                                (swap! pending-responses dissoc (:id raw-data))
-                                resp))
+                            (do (handle-response! (serialisation/deserialise ds raw-data))
+                                (when (and @disconnect-on-idle? (is-idle?))
+                                  (close channel)))
 
                             (contains? raw-data :output)
-                            (when-let [{:keys [return-path]} (@pending-responses (:id raw-data))]
-                              (ws-calls/process-update-from-ws return-path raw-data)))))
+                            (handle-update! raw-data))))
 
 
                       (catch Exception e

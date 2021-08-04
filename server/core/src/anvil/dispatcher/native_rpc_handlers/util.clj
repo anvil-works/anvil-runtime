@@ -27,6 +27,8 @@
 (def ^:dynamic *lo-cache-updates* nil)
 (def ^:dynamic *live-object-id* nil)
 
+(defn log-ctx []
+  {:app-session *session-state*, :app-id (:id *app-info*), :environment (assoc *environment* :commit-id (:version *app*))})
 
 (defn update-live-object-cache! [backend id new-item-cache]
   (when *lo-cache-updates*
@@ -237,3 +239,9 @@
      (let [~id-var lo-id#
            ~(vec arg-spec) (decode-python-args ~(name fn-name) (quote ~arg-spec) kwargs# args#)]
        ~@body)))
+
+(defn require-server!
+  ([] (require-server! nil))
+  ([operation]
+   (when *client-request?*
+     (throw+ {:anvil/server-error (str "Permission denied. Cannot " (or operation "call this function") " from client code.")}))))

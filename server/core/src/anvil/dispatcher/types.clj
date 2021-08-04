@@ -20,6 +20,15 @@
 (defprotocol ChunkedStream
   (consume [this f] "Call (f chunk-idx last-chunk data) for each byte-array chunk in this stream"))
 
+(defrecord LazyMedia [manager key id mime-type length name]
+  MediaDescriptor
+  (getContentType [_this] mime-type)
+  (getName [_this] name)
+  SerialisableForRpc
+  (serialiseForRpc [this _lo-key]
+    (-> (select-keys this [:manager :key :id :mime-type :length :name])
+        (assoc :type ["LazyMedia"]))))
+
 ; Dates are formatted "YYYY-MM-DD"
 (defrecord Date [date-string]
   SerialisableForRpc
@@ -103,43 +112,7 @@
   (getLength [_] content-length)
   (getInputStream [_] input-stream))
 
-(defn ChunkedStream->Media [chunked-stream]
-  (let [baos (atom (ByteArrayOutputStream.))
-        consumed-bytes (promise)
-        add-bytes (fn [_idx last? bs]
-                    (when-let [os @baos] ;; In case it has already been dropped by a timeout.
-                      (.write os ^bytes bs)
-                      (when last?
-                        (deliver consumed-bytes (.toByteArray os)))))]
-
-    (consume chunked-stream add-bytes)
-
-    (worker-pool/with-expanding-threadpool-when-slow
-      (let [bytes (deref consumed-bytes (* 5 60000) ::timeout)] ;; 5 min timeout
-        (if (= bytes ::timeout)
-          (do
-            (reset! baos nil)
-            (throw+ {:anvil/server-error "Timeout while assembling BlobMedia"}))
-          (BlobMedia. (.getContentType chunked-stream)
-                      bytes
-                      (.getName chunked-stream)))))))
-
-(defn ?->InputStream
-  "Turn ChunkedStream or Media into an InputStream. Use of this function is a code smell,
-   because it causes the whole Media to be buffered in memory at the same time. We should
-   invent ways not to have to use it."
-  [bindata]
-  (cond
-    (satisfies? Media bindata)
-    (.getInputStream bindata)
-
-    (satisfies? ChunkedStream bindata)
-    (.getInputStream (ChunkedStream->Media bindata))
-
-    :else
-    (throw (IllegalArgumentException. (str "'" (class bindata) "' object is neither Media nor ChunkedStream")))))
-
-(defn mk-ChunkedStream [name mime-type content]
+(defn mk-ChunkedStream [name mime-type ^bytes content]
   (reify
     MediaDescriptor
     (getContentType [_this] mime-type)

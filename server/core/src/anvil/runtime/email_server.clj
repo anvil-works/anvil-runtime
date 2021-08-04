@@ -6,7 +6,8 @@
             [anvil.dispatcher.core :as dispatcher]
             [crypto.random :as random]
             [clojure.tools.logging :as log]
-            [anvil.util :as util])
+            [anvil.util :as util]
+            [anvil.runtime.sessions :as sessions])
   (:import (org.subethamail.smtp.helper SimpleMessageListener SimpleMessageListenerAdapter)
            (javax.mail Session Header Part Multipart)
            (java.util Properties Timer TimerTask)
@@ -50,9 +51,9 @@
 
         environment (assoc environment :commit-id (:version app))
 
-        app-session (atom {:app-origin  (app-data/get-default-app-origin environment)
-                           :client      {:type :email}
-                           :environment environment})
+        app-session (sessions/new-session {:app-origin  (app-data/get-default-app-origin environment)
+                                           :client      {:type :email}
+                                           :environment environment})
         log-ctx {:app-session app-session, :app-id (:id app-info), :environment (assoc environment :commit-id (:version app))}
         _ (app-log/record! log-ctx :new-session {:type "email" :from_addr from :to_addr recipient})
 

@@ -14,7 +14,6 @@
             digest
             [clojure.string :as str]
             [anvil.runtime.app-data :as app-data]
-            [anvil.runtime.tables.util :as table-util]
             [clojure.string :as string]
             [anvil.core.server :as anvil-server]
             [anvil.core.worker-pool :as worker-pool])
@@ -472,6 +471,8 @@
                      ;; Tell the JDBC helper it's in a transaction already
                      (assoc :level 1))]
 
+      (log/trace "Opening app transaction in thread" rpc-util/*thread-id*)
+
       (swap! rpc-util/*session-state* update-in [::transaction-threads] #(conj (or % #{}) thread-id))
 
       (swap! open-transactions update-in [thread-id]
@@ -487,6 +488,7 @@
     (throw+ (general-tables-error "Cannot open a transaction in an unidentified thread"))))
 
 (defn close-app-transaction! [_kwargs rollback?]
+  (log/trace "Closing app transaction in thread" rpc-util/*thread-id*)
   (when-not rpc-util/*thread-id*
     (throw+ (general-tables-error "Cannot close a transaction in an unidentified thread")))
   ;; Atomically remove and retrieve the value of the 'thread-id' key from this map

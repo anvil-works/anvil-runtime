@@ -26,7 +26,7 @@
                  [io.zonky.test.postgres/embedded-postgres-binaries-linux-arm32v7 "10.11.0"]
                  [io.zonky.test.postgres/embedded-postgres-binaries-linux-arm64v8 "10.11.0"]
 
-                 [anvil/embedded-traefik "0.1.0"]
+                 [anvil/embedded-traefik "0.2.0"]
 
                  [org.bouncycastle/bcprov-jdk15on "1.60"]
 

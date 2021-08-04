@@ -15,157 +15,6 @@
 
 (clj-logging-config.log4j/set-logger! :level :warn)
 
-#_(comment
-    (defn run-executor-server!
-      "Starts a server that can interpret calls"
-      [on-call-fn])
-
-    (def OUR-SERVICE-URL (or (System/getenv "ANVIL_SERVICE_URL") "ws://localhost:5500"))
-
-    (defn delete-our-ads! []
-      (jdbc/execute! util/db ["DELETE FROM service_ads WHERE url=?" OUR-SERVICE-URL]))
-
-    (defonce deleted-old-ads (delete-our-ads!))
-
-    (defn advertise!
-      "Places an advertisement in the database, saying that the provided spec map is available on this node"
-      [spec]
-      (jdbc/execute! util/db ["INSERT INTO service_ads (url,spec) VALUES (?,?::jsonb)" OUR-SERVICE-URL spec]))
-
-    (defn get-executors [spec]
-      (let [executors (jdbc/query util/db ["SELECT url,spec FROM service_ads WHERE spec @> ?::jsonb OR spec @> ?::jsonb OR spec @> ?::jsonb OR spec @> ?::jsonb"
-                                           (select-keys spec [:app-id :func])
-                                           (select-keys spec [:app-id :backend])
-                                           {:app-id (:app-id spec), :func nil, :backend nil}
-                                           {:app-id nil, :func nil, :backend nil, :runtime (:runtime spec)}])
-            executors (sort-by #(cond
-                                  (or (:func %) (:backend %)) 0
-                                  (:app-id %) 1
-                                  :else 2)
-                               executors)]
-        executors))
-
-    (def message-from-executor)
-    (def executor-connection-died)
-
-    (let [sockets (ref {})]
-      (defn get-executor-send-fn [executor-location]
-        (let [new-socket-promise (promise)
-              new? (dosync
-                     (when-not (get @sockets executor-location)
-                       (alter sockets assoc executor-location new-socket-promise)))]
-          (when new?
-            (let [ws-promise (promise)
-                  ds (serialisation/mk-Deserialiser)
-                  kill-conn (fn [err]
-                              (log/debug "Dispatcher websocket closed:" (pr-str err))
-                              (dosync (alter sockets dissoc executor-location))
-                              (executor-connection-died executor-location err)
-                              (ws/close @ws-promise))]
-              (future
-                (Thread/sleep 500)
-                (when-not (realized? new-socket-promise)
-                  (kill-conn "Connection timed out")))
-              (deliver ws-promise
-                       (ws/connect executor-location
-                                   :on-connect (fn [conn]
-                                                 (log/debug "Dispatcher websocket connected")
-                                                 (deliver new-socket-promise @ws-promise))
-                                   :on-receive (fn [msg]
-                                                 (log/trace "Dispatcher received" msg)
-                                                 (let [msg (json/read-str msg :key-fn keyword)]
-                                                   (cond
-                                                     (= (:type msg) "CHUNK_HEADER")
-                                                     (serialisation/processBlobHeader ds msg)
-
-                                                     :else
-                                                     (message-from-executor executor-location (serialisation/deserialise ds msg :NOW-BROKEN)))))
-
-                                   :on-binary #(serialisation/processBlob ds %)
-                                   :on-error kill-conn
-                                   :on-close #(fn [_ reason]
-                                                (kill-conn reason))))))
-
-          (fn send-fn [msg]
-            (ws/send-msg @(get @sockets executor-location) msg)))))
-
-
-
-    ;; Layers will be:
-    ;; Try executors - In: "Try to make this call", Out: callbacks for when call succeeds or fails
-    ;; Call manager - In: "Try to make this call on this executor", Out: callbacks for when this call succeeds or fails
-    ;; Executors - In: "try to send this message", Out: general callbacks for "got message" (can be response, error or update)
-
-    (def execute!)
-
-    (let [pending-requests (atom {})]                         ;; executor -> id -> callbacks
-
-      (defn make-call-on-executor [executor-url request on-update on-response]
-        ;; Retrieve a connection to executor (url)
-        ;; Invent a request ID
-        ;; Store update and response callbacks in pending-requests (augmenting response to also remove from pending-requests)
-        ;; Send request
-
-        (let [id (random/base64 10)
-              executor-send! (get-executor-send-fn executor-url)]
-          (swap! pending-requests assoc-in [executor-url id] {:on-update   on-update
-                                                              :on-response on-response})
-          (executor-send! (assoc request :id id :type "CALL"))))
-
-      (defn message-from-executor [executor-url msg]
-        (log/trace "Message from" executor-url ":" (pr-str msg))
-
-        (when-let [request-id (:id msg)]
-          (if-let [{:keys [on-update on-response]} (get-in @pending-requests [executor-url request-id])]
-            (cond
-              (or (:error msg) (:response msg)) (do (swap! pending-requests update-in [executor-url] dissoc request-id)
-                                                    (on-response msg))
-
-              (:output msg) (on-update msg)
-
-              :else (log/debug "Unknown message" (pr-str msg)))
-
-            (log/debug "Orphaned message to nonexistent/completed request" (:id msg)))))
-
-      (defn executor-connection-died [executor-url err]
-        (let [swap-returning-old! (fn [atom f & args]
-                                    (loop [old-value @atom]
-                                      (if (compare-and-set! atom old-value (apply f old-value args))
-                                        old-value (recur @atom))))
-
-              orphaned-requests (-> (swap-returning-old! pending-requests dissoc executor-url)
-                                    (get executor-url))]
-
-          (doseq [[_id callbacks] orphaned-requests]
-            ((:on-response callbacks) {:error {:message "Executor died" :err-string (str err)}})))))
-
-
-    (defn dispatch!
-      "Execute a server call on whichever executor is appropriate. Calls on-update with intermediate updates,
-       on-response with the final result (which will be a map with :session-state and :return-value or :error)."
-      [{{:keys [backend method args kwargs func] :as call} :call
-        :keys                                              [app app-id session-state origin]
-        :as                                                request}
-       on-update
-       on-response]
-
-      (let [executor-spec {:app-id app-id, :func func, :backend backend, :runtime "pypy-sandbox"}
-            ;; TODO we will look up the correct runtime from the DB by app ID
-            potential-executors (get-executors executor-spec)
-            try-an-executor (fn try-an-executor [[executor & more-executors]]
-                              (if executor
-                                (make-call-on-executor executor request on-update
-                                                       #(if (get-in % [:error :executor-call-failed])
-                                                          (do
-                                                            (log/debug "Failed to call on executor" executor)
-                                                            (try-an-executor more-executors))
-                                                          (on-response %)))
-
-                                (on-response {:error {:message "No executors available"}})))]
-
-        (try-an-executor (map :url potential-executors)))))
-
-
 ;; Dispatch handlers
 
 ;; Pair of a map of key->spec and a sorted list
@@ -194,14 +43,22 @@
 
 (defonce default-background-wrapper (atom nil))
 
+(defonce response-routes (atom {}))
 
 ;; Standard dispatch
 
+(defn route-response! [resp-type-kw return-path data]
+  (if-let [direct-fn (get return-path resp-type-kw)]
+    (direct-fn data)
+    (if-let [route-handler (get @response-routes (:via return-path))]
+      (route-handler resp-type-kw return-path data)
+      (throw (Exception. (str "Invalid return path: " return-path))))))
+
 (defn update! [return-path data]
-  ((:update! return-path) data))
+  (route-response! :update! return-path data))
 
 (defn respond! [return-path response]
-  ((:respond! return-path) response))
+  (route-response! :respond! return-path response))
 
 ;; A utility macro
 (defn -synchronous-return-path [return-path return? f]
@@ -220,15 +77,11 @@
 (defmacro report-exceptions-to-return-path [return-path & body]
   `(-synchronous-return-path ~return-path false (fn [] ~@body)))
 
-; This is here because we need it here and in the background-tasks ns, which imports this one.
-(defn mk-BackgroundTaskLiveObject [id]
-  (types/mk-LiveObjectProxy "anvil.private.BackgroundTask" (util/write-json-str id) [] ["get_id" "get_termination_status" "get_error" "get_state" "get_return_value" "get_task_name" "get_start_time" "is_completed" "is_running" "kill"]) )
-
 ;; TODO: Stop retrying when source of request is gone (e.g. websocket disconnected, #653)
 
 (defn dispatch!
-  [{{:keys [live-object args kwargs func vt_global] :as call} :call
-    :keys [app app-id app-info environment app-origin session-state call-stack origin thread-id use-quota? background? scheduled?]
+  [{{:keys [live-object args kwargs func] :as call} :call
+    :keys [app app-id app-info environment app-origin session-state call-stack origin thread-id use-quota? background? scheduled? vt_global]
     :as request}
    return-path]
 
@@ -288,10 +141,15 @@
           app-info (:app-info request)
           request (if (or app (not app-id))
                     request
-                    (let [{:keys [content version]} (app-data/get-app app-info (app-data/get-version-spec-for-environment environment) false)]
+                    (let [{:keys [content version dependency-versions]} (app-data/get-app app-info (app-data/get-version-spec-for-environment environment) false)]
                       (-> request
                           (assoc :app content)
-                          (update-in [:environment] assoc :commit-id version))))
+                          (update-in [:environment] assoc :commit-id version :dependency-commit-ids dependency-versions))))
+
+          request (if thread-id
+                    request
+                    (assoc request :thread-id (str (name (or origin :unknown)) "-" (random/base64 18))))
+
           executor (or (util/with-meta-when {:executor :native}
                                             (if live-object
                                               (get @native-live-object-backends (:backend live-object))
@@ -331,15 +189,17 @@
       ;;(log/trace "Using executor:" executor)
       (reset! metrics-timer (metrics/start-timer :api/runtime-dispatch-duration-seconds metric-labels))
 
-      (try
+      (try+
         (if-not background?
           (do
             (reset! dispatch-end (System/nanoTime))
             (executor-fn request return-path))
-          (let [background-launch-fn (or (:bg-fn executor) (partial @default-background-wrapper executor))
-                background-id (background-launch-fn request)]
-            (respond! return-path {:response (mk-BackgroundTaskLiveObject background-id)})))
+          (let [background-launch-fn (or (:bg-fn executor) (partial @default-background-wrapper executor))]
+            (background-launch-fn request return-path)))
 
+        (catch :anvil/runtime-unavailable e
+          ;; We've already responded. Don't do anything - no need to clutter the logs.
+          )
         (catch Exception e
           (let [error-id (random/hex 6)]
             (log/error e "Unexpected error in downlink executor:" error-id)

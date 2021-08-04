@@ -16,7 +16,9 @@
             digest
             [anvil.dispatcher.core :as dispatcher]
             [anvil.runtime.tables.util :as table-util]
-            [anvil.dispatcher.native-rpc-handlers.util :as nrpc-util])
+            [anvil.dispatcher.native-rpc-handlers.util :as nrpc-util]
+            [anvil.runtime.sessions :as sessions]
+            [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks])
   (:import (java.sql SQLException ResultSet Blob)
            (anvil.dispatcher.types Date DateTime LiveObjectProxy MediaDescriptor Media ChunkedStream BlobMedia SerialisableForRpc SerializedPythonObject)
            (java.io ByteArrayOutputStream)
@@ -76,7 +78,10 @@
   (let [media-info (first (jdbc/query (db) ["SELECT * from app_storage_media WHERE object_id = ?" oid]))]
     (lazy-media/mk-LazyMedia-with-correct-mac {:manager   "table-media", :id (str oid),
                                                :mime-type (:content_type media-info), :name (:name media-info)}
-                                              rpc-util/*req*)))
+                                              ;; LazyMedia needs a request for all sorts of reasons, but table RPC functions are sometimes called
+                                              ;; without one (from a Users Service password reset, for example). In that case, Lazy Media won't
+                                              ;; work, but pass a fake request object so that at least it doesn't explode
+                                              (or rpc-util/*req* {:session-state (atom {})}))))
 
 (def reinflate-val)
 (def ^:dynamic *max-reinflation-recursion-depth* 5)
@@ -180,7 +185,7 @@
 
           _ (checkpoint! "Link-col query start")
           LINK-COLS (or (when rpc-util/*session-state*
-                          (get-in @rpc-util/*session-state* [::LINK-COL-CACHE table-id]))
+                          (get-in (sessions/ephemeral-cache rpc-util/*session-state*) [::LINK-COL-CACHE table-id]))
                         (let [link-cols (util/with-metric-query "link-cols-query"
                                           (jdbc/query (db) [link-cols-query table-id table-id]))
                               ;; Based on user-provided data (col-specs via IDE)
@@ -190,7 +195,7 @@
                                                          (re-matches #"[-A-Za-z0-9+_=]+" col_id))]
                                           (select-keys c [:source_table_id :target_table_id :col_id]))]
                           (when rpc-util/*session-state*
-                            (swap! rpc-util/*session-state* assoc-in [::LINK-COL-CACHE table-id] LINK-COLS))
+                            (swap! (sessions/ephemeral-cache rpc-util/*session-state*) assoc-in [::LINK-COL-CACHE table-id] LINK-COLS))
                           LINK-COLS))
 
           _ (checkpoint! "Link-col queried")
@@ -704,10 +709,15 @@
                                 media
 
                                 (satisfies? anvil.dispatcher.types/ChunkedStream media)
-                                (types/ChunkedStream->Media media)
+                                (blocking-hacks/ChunkedStream->Media media)
+
+                                (instance? anvil.dispatcher.types.LazyMedia media)
+                                ;; TODO: Something better here. There's no guarantee what kind of thing (get-lazy-media) will return
+                                ;;       It just so happens that all our current LazyMedia managers return BlobMedia (probably) so this will work for now.
+                                (lazy-media/get-lazy-media rpc-util/*req* media)
 
                                 :else
-                                (throw (IllegalArgumentException. (str "'" (class media) "' object is neither Media nor ChunkedStream"))))
+                                (throw (IllegalArgumentException. (str "'" (class media) "' object is neither Media, LazyMedia nor ChunkedStream"))))
 
                         in-stream (.getInputStream media)]
 
@@ -722,7 +732,7 @@
 (defn realise-media-in-kwargs [kwargs]
   (into {} (map (fn [[c v]]
                   (if (instance? ChunkedStream v)
-                    [c (types/ChunkedStream->Media v)]
+                    [c (blocking-hacks/ChunkedStream->Media v)]
                     [c v])) kwargs)))
 
 

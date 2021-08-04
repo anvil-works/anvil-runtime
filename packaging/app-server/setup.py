@@ -1,9 +1,9 @@
 from setuptools import setup,find_packages
 setup(
     name="anvil-app-server",
-    version="1.5.5",
+    version="1.6.0",
     packages=find_packages(),
-    install_requires=["pychrome", "anvil-uplink==0.3.36", "progressbar2", "wheel", "psutil", "pgcli"],
+    install_requires=["pychrome", "anvil-uplink==0.3.39", "progressbar2", "wheel", "psutil", "pgcli"],
 
     # Include the App Server JAR directly in this debug build of the package. That way the release version won't be downloaded on first run.
     package_data={
@@ -26,8 +26,8 @@ This package includes several assets, some not in Python:
  - The "downlink" Python code for the server-side parts of apps
  - The core Anvil server (requires Java to launch)
  - The client-side Anvil runtime (Javascript, using the Skulpt Python-to-JS compiler)
- 
- Head over to [the Github Repository](https://github.com/anvil-works/anvil-runtime) for usage instructions, and to learn more.
+
+Head over to [the Github Repository](https://github.com/anvil-works/anvil-runtime) for usage instructions, and to learn more.
     """,
     long_description_content_type="text/markdown",
     keywords="anvil web apps standalone browser Python",

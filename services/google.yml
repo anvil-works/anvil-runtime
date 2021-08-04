@@ -31,6 +31,9 @@ server_config_properties:
   - name: client_secret
     type: string
     description: The Google client secret for this app.
+  - name: app_origin_redirect
+    type: boolean
+    description: Redirect OAuth flow back to the domain of this app instead of the default generic Anvil endpoint.
   - name: delegation_refresh_token
     type: string
     description: The token used to refresh an access token for Google Drive

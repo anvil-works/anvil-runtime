@@ -1,7 +1,7 @@
 (defproject anvil-runtime "latest"
   :min-lein-version "2.8.1"
   :repositories {"anvil" "file:../maven_repository"}
-  :dependencies [[org.clojure/clojure "1.9.0"]
+  :dependencies [[org.clojure/clojure "1.10.3"]
                  [compojure "1.6.1"]
 
                  ; Everything depends on different versions of Jackson. Force this one.
@@ -51,7 +51,7 @@
 
                  [org.senatehouse/expect-call "0.3.0"]
 
-                 [org.clojure/tools.nrepl "0.2.12"]
+                 [nrepl "0.8.3"]
 
                  [org.mindrot/jbcrypt "0.4"]
                  [com.maxmind.geoip2/geoip2 "2.9.0"]
@@ -79,7 +79,8 @@
 
                  [com.onelogin/java-saml "2.5.0"]]
 
-  :aot :all
+  :plugins [[lein-aot-order "0.1.0"]]
+  :aot :order
   :auto-clean false
   :omit-source true
   :profiles {:provided {:dependencies [[org.bouncycastle/bcprov-jdk15on "1.65"]]}

@@ -39,11 +39,14 @@ $(function() {
         if (rv) {
             rv.requestId = e.data.requestId;
 
-            if (window.parent != window) {    
+            if (window.parent !== window) {    
                 window.parent.postMessage(rv, e.origin);
+            } else if (window.opener) {
+                window.opener.postMessage(rv, e.origin);
             }
         }
     })
     window.parent.postMessage({fn: "ready"},"*");
+    window.opener?.postMessage({fn: "ready"},"*");
 });
 

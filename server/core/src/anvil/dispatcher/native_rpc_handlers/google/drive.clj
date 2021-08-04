@@ -9,7 +9,8 @@
             [anvil.dispatcher.types]
             [anvil.dispatcher.types :as types]
             [ring.util.codec :as codec]
-            [anvil.util :as util])
+            [anvil.util :as util]
+            [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks])
   (:import (java.io ByteArrayInputStream SequenceInputStream)
            (java.util Collections)
            (anvil.dispatcher.types SerialisableForRpc BlobMedia MediaDescriptor Media)))
@@ -179,7 +180,7 @@
 
         body      (SequenceInputStream.
                     (Collections/enumeration [(ByteArrayInputStream. (.getBytes body-header))
-                                              (types/?->InputStream content)
+                                              (blocking-hacks/?->InputStream *req* content)
                                               (ByteArrayInputStream. (.getBytes "\n--eo1bee8ahChoh3sahjah9laViv0AetiebahH7ahc--"))]))
 
         resp (request {:url     "https://www.googleapis.com/upload/drive/v2/files?uploadType=multipart"
@@ -235,7 +236,7 @@
         resp (request {:url     (str "https://www.googleapis.com/upload/drive/v2/files/" id "?uploadType=media")
                        :method  :put
                        :headers {"Content-Type" mime-type}
-                       :body    (types/?->InputStream content)} creds)]
+                       :body    (blocking-hacks/?->InputStream *req* content)} creds)]
 
     (gen-lm resp creds)))
 

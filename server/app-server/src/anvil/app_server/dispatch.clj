@@ -6,7 +6,8 @@
             [anvil.dispatcher.native-rpc-handlers.pdf :as pdf]
             [anvil.dispatcher.core :as dispatcher]
             [anvil.executors.uplink :as uplink]
-            [anvil.runtime.app-data :as app-data])
+            [anvil.runtime.app-data :as app-data]
+            [anvil.executors.ws-calls :as ws-calls])
   (:import (java.lang ProcessBuilder$Redirect)))
 
 (def shutting-down? (atom false))
@@ -38,23 +39,35 @@
 (defonce downlink (atom nil))
 
 (downlink/set-downlink-hooks!
-  {:register-downlink!   (fn [{:keys [key] :as _registration-request} executor]
-                           (let [correct-key (conf/get-downlink-key)]
-                             (when (and key correct-key (= (sha-256 key) (sha-256 correct-key)))
-                               (reset! downlink executor)
-                               ;; Return the executor itself as the cookie
-                               executor)))
-   :drain-downlink!      (fn [_cookie] nil)
-   :unregister-downlink! (fn [cookie]
-                           (swap! downlink (fn [previous-executor]
-                                             (if (= cookie previous-executor)
-                                               nil
-                                               previous-executor))))})
+  {:register-downlink!      (fn [{:keys [key] :as _registration-request} connection]
+                              (let [correct-key (conf/get-downlink-key)]
+                                (when (and key correct-key (= (sha-256 key) (sha-256 correct-key)))
+                                  (reset! downlink connection)
+                                  ;; Return the connection itself as the cookie
+                                  connection)))
+   :drain-downlink!         (fn [_cookie] nil)
+   :unregister-downlink!    (fn [cookie]
+                              (swap! downlink (fn [previous-connection]
+                                                (if (= cookie previous-connection)
+                                                  nil
+                                                  previous-connection))))
+   :dispatch-downlink-call! (fn [cookie context call-stack-info extra-request-params deserialiser-conf wire-request return-path]
+                              (ws-calls/dispatch-request! context call-stack-info
+                                                          (-> extra-request-params
+                                                              (assoc ::downlink/same-downlink-spec {}))
+                                                          deserialiser-conf wire-request return-path))
+   :get-downlink-executor   (fn [same-server-routing]
+                              (when-let [connection @downlink]
+                                 (downlink/wrap-as-executor connection)))})
 
-(pdf/set-pdf-impl! {:get-pdf-renderer       (fn [& _] @downlink)
+(pdf/set-pdf-impl! {:get-pdf-renderer       (fn [& _] (when-let [connection @downlink]
+                                                        (downlink/wrap-as-executor connection)))
                     :get-pdf-render-timeout (constantly 30)})
 
-(dispatcher/register-dispatch-handler! ::downlink dispatcher/DOWNLINK-PRIORITY (fn [_req] @downlink))
+(dispatcher/register-dispatch-handler! ::downlink dispatcher/DOWNLINK-PRIORITY
+                                       (fn [_request]
+                                         (when-let [connection @downlink]
+                                           (downlink/wrap-as-executor connection))))
 
 (defn downlink-connected? [] (boolean @downlink))
 
@@ -67,30 +80,32 @@
 (defn get-default-environment []
   {:env_id      ::default
    :app_id      (conf/get-main-app-id)
-   :name        "App Server"})
+   :name        "App Server"
+   :description "App Server"})
 
 (uplink/set-uplink-hooks!
   {:get-app-info-environment-and-privileges-for-uplink-key
    (fn [uplink-key]
      (cond
        (when-let [k (conf/get-uplink-key)] (= (sha-256 uplink-key) (sha-256 k)))
-       [(app-data/get-app-info-insecure (conf/get-main-app-id)) nil :uplink]
+       [(app-data/get-app-info-insecure (conf/get-main-app-id)) (get-default-environment) :uplink]
 
        (when-let [k (conf/get-client-uplink-key)] (= (sha-256 uplink-key) (sha-256 k)))
-       [(app-data/get-app-info-insecure (conf/get-main-app-id)) nil :client]))
+       [(app-data/get-app-info-insecure (conf/get-main-app-id)) (get-default-environment) :client]))
 
    :on-uplink-connect
-   (fn [_environment _protocol-version]
-     (swap! next-uplink-id inc))
+   (fn [connection]
+     {:uplink-id (swap! next-uplink-id inc) :executor (uplink/wrap-as-executor connection)})
 
    :set-uplink-handler!
-   (fn [uplink-id func handler]
-     (let [reg-id (swap! next-uplink-id inc)]
-       (swap! uplink-registrations assoc reg-id {:func func, :uplink-id uplink-id, :executor handler})
-       [reg-id func]))
+   (fn [{:keys [uplink-id executor]} func]
+     (let [reg-id (swap! next-uplink-id inc)
+           func-pattern (re-pattern func)]
+       (swap! uplink-registrations assoc reg-id {:func func-pattern, :uplink-id uplink-id, :executor executor})
+       [reg-id func-pattern]))
 
    :clear-uplink-registrations!
-   (fn [_uplink-id registrations]
+   (fn [_uplink-info registrations]
      (let [reg-ids (set (map first registrations))
            funcs (map second registrations)]
        (swap! stale-uplink-funcs #(reduce (fn [stale-funcs func]

@@ -1349,12 +1349,41 @@ cookies = CookieContainer()
 
 class NotABackgroundTaskState():
     def __setitem__(self, key, value):
-        raise Exception("Cannot access anvil.server.task_status outside a background task")
+        raise Exception("Cannot access anvil.server.task_state outside a background task")
 
     def __getitem__(self, item):
-        raise Exception("Cannot access anvil.server.task_status outside a background task")
+        raise Exception("Cannot access anvil.server.task_state outside a background task")
 
 
+# Raise event on all sessions in the current environment, on a specific session, on multiple sessions, or on a named channel
+def raise_event(name, payload=None, session_id=None, session_ids=None, channel=None):
+    anvil.server.call("anvil.private.raise_event", name, payload, session_id=session_id, session_ids=session_ids, channel=channel)
 
 
+# List all sessions in the current environment, or only those where the specified user is logged in.
+def list_client_sessions(user=None):
+    return anvil.server.call("anvil.private.list_sessions", user=user)
 
+
+# Get the value of anvil.server.session for a particular session in the current environment
+def get_client_session(session_id):
+    return anvil.server.call("anvil.private.get_session_data", session_id)
+
+
+# Get the ID of the current session
+def get_session_id():
+    return anvil.server.call("anvil.private.get_session_id")
+
+
+# Subscribe this session to receive events from the named channel
+def subscribe(channel):
+    return anvil.server.call("anvil.private.subscribe", channel)
+
+
+# Unsubscribe this session from receiving events from the named channel
+def unsubscribe(channel):
+    return anvil.server.call("anvil.private.unsubscribe", channel)
+
+
+def get_subscriptions():
+    return anvil.server.call("anvil.private.get_subscriptions")

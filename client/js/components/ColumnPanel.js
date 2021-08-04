@@ -58,11 +58,13 @@ module.exports = (pyModule) => {
                 important: true,
                 set(self, e, v) {
                     v = v.toString();
-                    Object.values(self._anvil.rows).forEach((rowElement) => {
+                    Object.values(self._anvil.rows).forEach((rowContainer) => {
+                        const rowElement = rowContainer.el;
                         rowElement.classList.remove("wrap-never", "wrap-tablet", "wrap-mobile");
                         rowElement.classList.add("wrap-" + v);
                     });
-                    Object.values(self._anvil.cols).forEach((colElement) => {
+                    Object.values(self._anvil.cols).forEach((colContainer) => {
+                        const colElement = colContainer.el;
                         colElement.classList.remove("wrap-never", "wrap-tablet", "wrap-mobile");
                         colElement.classList.add("wrap-" + v);
                     });
@@ -199,6 +201,68 @@ module.exports = (pyModule) => {
                 return <div refName="col" className={"anvil-panel-col anvil-panel-col-" + colId + " belongs-to-" + panelId + wrap_on}></div>;
             };
 
+
+            class PanelContainer {
+                constructor(columnPanel, el, slotEl = null) {
+                    this.columnPanel = columnPanel;
+                    this.parent = null;
+                    this.children = 0;
+                    this.el = el;
+                    this.slotEl = slotEl || el;
+                    this.$el = $(el);
+                }
+                appendChildContainer(childContainer) {
+                    this.children++;
+                    this.slotEl.appendChild(childContainer.el);
+                    childContainer.parent = this;
+                }
+                appendChild(child) {
+                    this.children++;
+                    this.slotEl.appendChild(child);
+                }
+                remove() {
+                    this.children--;
+                    if (this.children === 0) {
+                        this.el.remove();
+                        this.cleanup();
+                        this.parent?.remove();
+                    }
+                }
+                cleanup() {}
+            }
+            class ColContainer extends PanelContainer {
+                constructor(columnPanel, colId, props) {
+                    const [el] = <Column colId={colId} {...props} />;
+                    super(columnPanel, el);
+                    columnPanel._anvil.cols[colId] = this;
+                    this.$el.data("anvil-col-id", colId);
+                    this.colId = colId;
+                }
+                cleanup() {
+                    delete this.columnPanel._anvil.cols[this.colId];
+                }
+            }
+
+            class RowContainer extends PanelContainer {
+                constructor(columnPanel, rowId, props) {
+                    const [el] = <Row rowId={rowId} {...props} />;
+                    super(columnPanel, el);
+                    columnPanel._anvil.rows[rowId] = this;
+                    this.$el.data("anvil-row-id", rowId);
+                    this.rowId = rowId;
+                }
+                cleanup() {
+                    delete this.columnPanel._anvil.rows[this.rowId];
+                }
+            }
+
+            class SectionContainer extends PanelContainer {
+                constructor(columnPanel, props) {
+                    const [section, sectionElements] = <Section {...props} />;
+                    super(columnPanel, section, sectionElements.sectionGutter);
+                }
+            }
+
             /*
                 ColumnPanel DOM structure:
     
@@ -221,6 +285,7 @@ module.exports = (pyModule) => {
             /*!defMethod(_,component,full_width_row=False,**layout_props)!2*/ "Add a component to the bottom of this ColumnPanel. Useful layout properties:\n\n  full_width_row = True|False\n  row_background = [colour]"
             $loc["add_component"] = new PyDefUtils.funcWithKwargs(function (kwargs, self, component) {
                 pyModule["Container"]._check_no_parent(component);
+                let currentColContainer = undefined;
 
                 return Sk.misceval.chain(
                     undefined,
@@ -230,68 +295,58 @@ module.exports = (pyModule) => {
                         }
 
                         const componentElement = component._anvil.element;
-                        const wrap_on = self._anvil.props["wrap_on"];
-                        const panelId = self._anvil.panelId;
 
                         component._anvil.layoutProps = kwargs;
-                        const gridPos = kwargs["grid_position"] || utils.getRandomStr(6) + "," + utils.getRandomStr(6);
-                        const f_w_r = kwargs["full_width_row"];
-                        const row_bg = kwargs["row_background"];
+                        const { grid_position: gridPos, full_width_row, row_background } = kwargs;
+                        const panelId = self._anvil.panelId;
+                        const wrap_on = self._anvil.props["wrap_on"];
+                        const props = { panelId, wrap_on, full_width_row, row_background };
 
-                        let currentParent; // For the first level, current parent will be sections. After that, cols.
-
-                        const levels = gridPos.split(" ");
-                        levels.forEach((level, h) => {
+                        const levels = gridPos?.split(" ") || [utils.getRandomStr(6) + "," + utils.getRandomStr(6)];
+                        for (const level of levels) {
                             const [rowId, colId] = level.split(",");
-                            // let rowElement = self._anvil.element.find(".anvil-panel-row-" + rowId + ".belongs-to-" + panelId);
-                            let rowElement = self._anvil.rows[rowId];
 
-                            if (rowElement === undefined) {
-                                if (h === 0) {
-                                    // We're still at the first level. Create a new section, then create the container inside that.
-                                    const [section, sectionElements] = <Section panelId={panelId} full_width_row={f_w_r} row_background={row_bg} />;
-                                    self._anvil.elements.outer.appendChild(section);
-                                    currentParent = sectionElements.sectionGutter;
-                                }
-
+                            let rowContainer = self._anvil.rows[rowId];
+                            if (rowContainer === undefined) {
                                 // This row doesn't exist yet
-                                [rowElement] = <Row {...{ panelId, rowId, wrap_on }} />;
-                                self._anvil.rows[rowId] = rowElement;
-                                $(rowElement).data("anvil-row-id", rowId);
-                                currentParent.appendChild(rowElement);
+                                rowContainer = new RowContainer(self, rowId, props);
+                                if (currentColContainer === undefined) {
+                                    // We're still at the first level. Create a new section, then append the Row inside that
+                                    currentColContainer = new SectionContainer(self, props);
+                                    self._anvil.elements.outer.appendChild(currentColContainer.el);
+                                }
+                                currentColContainer.appendChildContainer(rowContainer);
                             }
-
-                            // let colElement = rowElement.find(">.anvil-panel-col-" + colId);
-                            let colElement = self._anvil.cols[colId];
-
-                            if (colElement === undefined) {
+                            let colContainer = self._anvil.cols[colId];
+                            if (colContainer === undefined) {
                                 // This column doesn't exist yet
-                                [colElement] = <Column {...{ panelId, colId, wrap_on }} />;
-                                self._anvil.cols[colId] = colElement;
-                                $(colElement).data("anvil-col-id", colId);
-                                //console.debug("Creating col", currentPos, colElement);
-                                rowElement.appendChild(colElement);
+                                colContainer = new ColContainer(self, colId, props);
+                                rowContainer.appendChildContainer(colContainer);
                             }
-
-                            setColumnWidths(self, $(rowElement));
-
-                            currentParent = colElement;
-                        });
+                            currentColContainer = colContainer;
+                            setColumnWidths(self, rowContainer.$el);
+                        }
 
                         componentElement.data("anvil-panel-child-idx", self._anvil.components.length);
                         componentElement.addClass("belongs-to-" + panelId);
 
                         const [paddingElement] = <div refName="padding" className={"col-padding belongs-to-" + panelId + " col-padding-" + self._anvil.getPropJS("col_spacing")} />;
-                        currentParent.appendChild(paddingElement);
+                        currentColContainer.appendChild(paddingElement);
                         paddingElement.appendChild(componentElement[0]);
 
-                        //console.debug("Appending", componentElement, "to", currentParent)
                         component._anvil.delayAddedToPage = true;
                     },
                     () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs),
                     () => {
+                        const rmFn = component._anvil.parent.remove;
+                        component._anvil.parent.remove = () => {
+                            if (currentColContainer !== undefined) {
+                                currentColContainer.remove();
+                            }
+                            return rmFn();
+                        }
+
                         if (self._anvil.onPage) return component._anvil.addedToPage();
-                        // todo add a remove function that removes cols/rows if they are empty
                     },
                     () => Sk.builtin.none.none$
                 );

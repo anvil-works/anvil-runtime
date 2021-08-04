@@ -16,10 +16,6 @@
 (defn get-stripe-service-props []
   (first (filter #(= (:source %) "/runtime/services/stripe.yml") (:services *app*))))
 
-(defn- require-server! []
-  (when *client-request?*
-    (throw+ {:anvil/server-error "This function cannot be called from Form code. It must be called from a server module."})))
-
 (defn- get-request-options []
   (let [service-config (get-stripe-service-props)
 

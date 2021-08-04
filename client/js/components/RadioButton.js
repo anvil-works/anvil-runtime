@@ -163,6 +163,7 @@ module.exports = (pyModule) => {
                 });
             });
 
+            /*!defMethod(str)!2*/ "returns the value of the button in the group which is pressed."
             $loc["get_group_value"] = new Sk.builtin.func(function get_group_value(self) {
                 const name = self._anvil.props["group_name"].toString();
                 // @todo bug when radio buttons are not on the screen

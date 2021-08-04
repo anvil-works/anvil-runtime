@@ -4,7 +4,10 @@
             [anvil.runtime.tables.manager :as tables-manager]
             [crypto.random :as random]
             [anvil.runtime.tables.util :as tables-util]
-            [anvil.runtime.tables.util :as table-util]))
+            [anvil.runtime.tables.util :as table-util]
+            [clojure.tools.logging :as log]))
+
+(clj-logging-config.log4j/set-logger! :level :trace)
 
 (defn yaml-schema-column-from-raw-column [{:keys [name type backend table_id admin_ui]} python-name-from-table-id]
   (merge {:name     name,
@@ -53,6 +56,10 @@
                                          (sort-by (fn [[_col-id col-spec]] (get-in col-spec [:admin_ui :order])) columns)]
                                      (yaml-schema-column-from-raw-column col-schema python-name-from-id))}]))))
 
+(defn yaml-schema-from-old-yaml-schema [old-schema]
+  (->> old-schema
+       (map #(merge % (select-keys (:access %) [:server :client])))
+       (yaml-schema-from-table-mapping-description)))
 
 (defn- ids-overlap? [ids-1 ids-2]
   (some (fn [id-1] (some (fn [id-2] (= id-1 id-2)) ids-1)) ids-2))
@@ -164,12 +171,12 @@
                                                    (when (not-empty renamed-cols)
                                                      (for [[old-name new-name] renamed-cols]
                                                        {:type :RENAME_COLUMN :table table-name :column_name old-name :new_column_name new-name}))
-                                                   (when (not-empty added-cols)
-                                                     (for [col added-cols]
-                                                       {:type :ADD_COLUMN :table table-name :column col}))
                                                    (when (not-empty removed-cols)
                                                      (for [col removed-cols]
-                                                       {:type :DELETE_COLUMN :table table-name :column_name (:name col)})))]
+                                                       {:type :DELETE_COLUMN :table table-name :column_name (:name col)}))
+                                                   (when (not-empty added-cols)
+                                                     (for [col added-cols]
+                                                       {:type :ADD_COLUMN :table table-name :column col})))]
 
                               (concat table-actions column-actions))))))
 

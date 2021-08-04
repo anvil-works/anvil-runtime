@@ -7,7 +7,7 @@
             [anvil.dispatcher.native-rpc-handlers.util :as util]
             [anvil.runtime.secrets :as runtime-secrets]))
 
-(clj-logging-config.log4j/set-logger! :level :debug)
+(clj-logging-config.log4j/set-logger! :level :info)
 
 (defn serialise-cookie [new-map]
   (let [payload-json (promise)]
@@ -24,12 +24,12 @@
     (runtime-secrets/encrypt-str-with-global-key :c @payload-json)))
 
 (let [deserialiser (serialiser/mk-Deserialiser)]
-  (defn deserialise-cookie [{:keys [value]}]
+  (defn deserialise-cookie [value]
     (try
-      (when value
+      (when (not-empty value)
         (log/trace "Deserialise cookie:" value)
         (let [raw-map (json/read-str (runtime-secrets/decrypt-str-with-global-key :c value) :key-fn keyword)
-              deserialised-map (serialiser/deserialise deserialiser raw-map util/*req*)]
+              deserialised-map (serialiser/deserialise deserialiser raw-map)]
           (log/trace "Deserialised cookie:" (pr-str deserialised-map))
           (:c deserialised-map)))
       (catch Exception e
@@ -37,38 +37,55 @@
         ;; Couldn't decode the cookie. Pretend there wasn't one.
         nil))))
 
-(defn- get-cookie-atom [type]
-  (if-let [cookie (get-in @*session-state* [:cookies type])]
-    (do (doseq [[type-key m] @cookie]
-          (doseq [[k [_ expiry-time]] m]
-            (when (< expiry-time (System/currentTimeMillis))
-              (swap! cookie update-in [type-key] dissoc k))))
-        cookie)
+(defn- expire-cookies [cookies-val]
+  (let [now (System/currentTimeMillis)]
+    (into {}
+          (for [[type-key m] cookies-val]
+            [type-key (into {}
+                            (for [[k [_ expiry-time :as v]] m]
+                              (when (> expiry-time now)
+                                [k v])))]))))
+
+(defn- get-raw-cookie-contents [type]
+  (if-let [serialised-cookie (get-in @*session-state* [:cookies type])]
+    (let [cookie (deserialise-cookie serialised-cookie)]
+      (expire-cookies cookie))
     (throw+ {:anvil/server-error "This connection is not from a web browser - cannot access cookies."
              :type "anvil.server.CookieError"
              :anvil/cookie-error true})))
 
+; session-state:
+; :cookies -> :local|:shared -> serialised(<cookie-key> -> <user-key> -> [val, expiry])
+
 (defn get-cookie-val
   ([type key] (get-cookie-val type key nil))
   ([type key default]
-   (let [cookie-map (get @(get-cookie-atom type) (get-in @*session-state* [:cookie-keys type]))]
+   (let [session *session-state*
+         cookie-key-for-this-app (get-in @session [:cookie-keys type])
+         cookie-map (some-> (get-raw-cookie-contents type)
+                            (get cookie-key-for-this-app))]
      (if (contains? cookie-map key)
        (first (get cookie-map key))
        default))))
 
 (defn- update-cookie! [type f & args]
-  (let [cookie-atom (get-cookie-atom type)
-        new-map (apply update-in @cookie-atom [(get-in @*session-state* [:cookie-keys type])] f args)
-        new-map (into {} (filter (fn [[_ v]] (not (nil? v))) new-map))]
+  (let [session *session-state*
+        cookie-key-for-this-app (get-in @session [:cookie-keys type])
+        raw-cookie-value (get-raw-cookie-contents type)
+        new-map (apply f (get raw-cookie-value cookie-key-for-this-app) args)
+        new-map (into {} (filter (fn [[_ v]] (not (nil? v))) new-map))
+
+        new-cookie-value (assoc raw-cookie-value cookie-key-for-this-app new-map)
+        new-serialised-cookie-value (serialise-cookie new-cookie-value)]
 
     ;; We only serialise the cookie map here so we can work out how big it'll be. Oh well.
-    (when (> (count (serialise-cookie new-map)) 4000)
+    (when (> (count new-serialised-cookie-value) 4000)
       (throw+ {:anvil/server-error "Cookie too big"
                :type "anvil.server.CookieError"
                :anvil/cookie-error true}))
 
     (reset! *rpc-cookies-updated?* true)
-    (reset! cookie-atom new-map)
+    (swap! session assoc-in [:cookies type] new-serialised-cookie-value)
     (log/trace "New cookie:" new-map)
     nil))
 

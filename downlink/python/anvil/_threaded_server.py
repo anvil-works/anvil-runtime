@@ -144,16 +144,18 @@ class SendNoResponse(Exception):
 
 
 class IncomingRequest(_serialise.IncomingReqResp):
-    def __init__(self, json, import_modules=None, run_fn=None, dump_task_state=False):
+    def __init__(self, json, import_modules=None, run_fn=None, dump_task_state=False, setup_task_state=None):
         self.import_modules = import_modules
         self.run_fn = run_fn
         self.dump_task_state = dump_task_state
+        self.setup_task_state = setup_task_state
         _serialise.IncomingReqResp.__init__(self, json)
 
     def execute(self):
         def make_call():
             call_info.call_id = self.json.get('id')
             call_info.stack_id = self.json.get('call-stack-id', None)
+            call_info.session_id = self.json.get('session-id')
             sjson = self.json.get('sessionData', {'session': None, 'objects': []})
             call_info.session = None
             call_info.enable_profiling = self.json.get('enable-profiling', False)
@@ -163,11 +165,13 @@ class IncomingRequest(_serialise.IncomingReqResp):
                     "description": "Python _threaded_server execution",
                     "start-time": time.time()*1000,
                 }
-            call_info.cache_filter = _server.get_liveobject_cache_filter_spec([self.json['args'], self.json['kwargs']])
+            call_info.cache_filter = _server.get_liveobject_cache_filter_spec([self.json.get('args'), self.json.get('kwargs')])
             call_info.cache_update = {}
             call_info.dump_task_state = self.dump_task_state
             call_context._setup(self.json.get('client', {}), self.json.get('call-stack'))
             anvil.app._setup(**self.json.get('app-info', {}))
+            if self.setup_task_state:
+                self.setup_task_state(call_info.call_id, True)
             try:
                 if self.import_modules:
                     self.import_modules()
@@ -236,9 +240,10 @@ class IncomingRequest(_serialise.IncomingReqResp):
 
                 if self.dump_task_state:
                     try:
-                        tjson = _server.fill_out_media({'taskState': anvil.server.task_state}, err)
+                        task_state = dict(anvil.server.task_state)
+                        tjson = _server.fill_out_media({'taskState': task_state}, err)
                         json.dumps(tjson)
-                        resp['taskState'] = anvil.server.task_state
+                        resp['taskState'] = task_state
                     except (TypeError, _server.SerializationError):
                         pass
 
@@ -257,12 +262,13 @@ class IncomingRequest(_serialise.IncomingReqResp):
                         raise Exception("Cannot save DataMedia objects in anvil.server.session")
 
                     try:
-                        tjson = _server.fill_out_media({'taskState': anvil.server.task_state}, err)
+                        task_state = dict(anvil.server.task_state)
+                        tjson = _server.fill_out_media({'taskState': task_state}, err)
                         json.dumps(tjson)
                     except (TypeError, _server.SerializationError):
                         pass
                     else:
-                        e['taskState'] = anvil.server.task_state
+                        e['taskState'] = task_state
 
                 try:
                     send_reqresp(e)
@@ -271,6 +277,8 @@ class IncomingRequest(_serialise.IncomingReqResp):
                     console_output.write(("Failed to report exception: %s: %s\nat %s\n" % (e["error"]["type"], e["error"]["message"], trace)).encode("utf-8"))
                     console_output.flush()
             finally:
+                if self.setup_task_state:
+                    self.setup_task_state(call_info.call_id, False)
                 self.complete()
 
         if MULTITHREADED:

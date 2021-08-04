@@ -13,10 +13,12 @@
     [anvil.dispatcher.serialisation.core :as serialisation]
     [crypto.random :as random]
     [anvil.executors.ws-calls :as ws-calls]
+    [anvil.executors.ws-server :as ws-server]
     [anvil.metrics :as metrics]
     [anvil.runtime.util :as runtime-util]
     [anvil.core.worker-pool :as worker-pool]
-    [anvil.runtime.ws-util :as ws-util])
+    [anvil.runtime.ws-util :as ws-util]
+    [anvil.runtime.sessions :as sessions])
   (:import (java.util.regex PatternSyntaxException)))
 
 
@@ -24,9 +26,9 @@
 
 ;; Hookable functions
 
-(defonce on-uplink-connect (fn [environment protocol-version] nil))
+(defonce on-uplink-connect (fn [{:keys [protocol-version environment server-privilege?] :as connect-info} send-request!] nil))
 
-(defonce set-uplink-handler! (fn [cookie func handler]
+(defonce set-uplink-handler! (fn [cookie func]
                                (throw (UnsupportedOperationException.))))
 
 (defonce clear-uplink-registrations! (fn [cookie specs]
@@ -34,70 +36,66 @@
 
 (defonce get-app-info-environment-and-privileges-for-uplink-key (fn [uplink-key] nil))
 
+(defonce dispatch-uplink-call!
+         (fn [cookie context call-stack-info extra-request-params deserialiser-conf wire-request return-path]
+           (ws-calls/dispatch-request! context call-stack-info extra-request-params
+                                       deserialiser-conf wire-request return-path)))
+
 (def set-uplink-hooks! (util/hook-setter [get-app-info-environment-and-privileges-for-uplink-key on-uplink-connect
-                                          clear-uplink-registrations! set-uplink-handler!]))
+                                           clear-uplink-registrations! set-uplink-handler! dispatch-uplink-call!]))
 
-(defn- request-template-from-pending-response [pending-response]
-  (select-keys pending-response [:app-id :app :environment :app-origin :session-state :call-stack]))
+(defn STACK-FRAME-INFO [server-privilege?]
+  {:origin           (if server-privilege? :uplink :client)
+   :stack-frame-type (if server-privilege? :uplink :client-uplink)})
 
-(defn- executor [{:keys [channel pending-responses prune-live-objects]}
-                 {{:keys [live-object args kwargs func vt_global] :as call} :call
-                  :keys [session-state origin call-stack app app-id app-origin environment] :as request}
-                 return-path]
+(def WS-SERVER-PARAMS {:link-name           "Uplink",
+                       :bg-impl-id          :uplink,
+                       :disconnection-error "anvil.server.UplinkDisconnected"})
 
-  (let [new-id (str (if (= origin :client) "client-" "server-") (random/base64 10))
-        return-path {:update! #(dispatcher/update! return-path (assoc % :id new-id))
-                     :respond! #(dispatcher/respond! return-path (dissoc % :id))}]
+(def launch-bg-task! (partial ws-server/launch-bg-task! WS-SERVER-PARAMS {}))
 
-    (swap! pending-responses assoc new-id {:app-id        app-id
-                                           :app           app
-                                           :app-origin    app-origin
-                                           :environment   environment
-                                           :call-stack    call-stack
-                                           :return-path   return-path
-                                           :session-state session-state})
+(defn wrap-as-executor [{:keys [send-request!] :as connection}]
+  {:fn    (fn execute-on-uplink! [{{:keys [func]} :call, :keys [app app-info environment] :as request} return-path]
+            (let [profiling-info {:origin      (format "Server (Uplink executor)")
+                                  :description (str "Uplink execute (" func ")")}
+                  {:keys [call-context request return-path]} (ws-calls/stateful-request-to-serialisable-request request return-path profiling-info)]
 
+              (send-request! call-context {:type "CALL"} request return-path)))
 
-    (log/debug "Executing RPC function on uplink:" (str func (when live-object (str " (" (:backend live-object) ")"))))
+   :bg-fn (partial launch-bg-task! connection)})
 
-    (try
-      (serialisation/serialise-to-websocket! (merge {:id               new-id
-                                                     :call-stack-id    new-id
-                                                     :call-stack       (map #(select-keys % [:type]) call-stack)
-                                                     :from-server?     (runtime-util/is-server-origin? origin)
-                                                     :client           (:client @session-state)
-                                                     :type             "CALL"
-                                                     :args             args
-                                                     :kwargs           kwargs
-                                                     :enable-profiling (:anvil/enable-profiling @session-state)
-                                                     :app-info         {:id app-id, :branch (:branch environment),
-                                                                        :environment (select-keys environment [:description :tags])}
-                                                     :vt_global        vt_global}
-                                                    (if live-object
-                                                      {:liveObjectCall (assoc live-object :method func)}
-                                                      {:command func})) channel false nil prune-live-objects)
-      (catch Exception e
-        (log/error e "Error serialising uplink request")
-        (dispatcher/respond! return-path {:error {:type "anvil.server.SerializationError" :message (str e)}})))))
+(ws-server/setup-bg-task-impl! WS-SERVER-PARAMS)
 
 (defonce connected-uplink-count (atom 0))
 
 (defn handle-incoming-ws [request]
   (ws-util/with-opening-channel
     request channel on-open
-    (let [app-id (atom nil)
-          environment (atom nil)
-          app-origin (atom nil)
-          priv-level (atom nil)
+    (let [connection (atom nil)
           my-fn-registrations (atom #{})
-          protocol-version (atom nil)
-          closed (atom false)
-          ds (delay (serialisation/mk-Deserialiser :permitted-live-object-backends #{"uplink."}
-                                                   :no-live-object-pruning (<= @protocol-version 4)))
+          ds (delay (serialisation/mk-Deserialiser
+                      (if (:server-privilege? @connection)
+                        {:origin :uplink}
+                        {:origin :client})))
 
-          ;; id -> {:return-path return-path, :session-state ssm-state}
-          pending-responses (atom {})
-          default-session-state (atom {})
+          outstanding-incoming-call-ids (atom #{})
+
+          {:keys [get-pending-response is-closed? send-close-errors! send-request! handle-response! handle-update! is-idle?]}
+          (ws-server/setup-request-handlers WS-SERVER-PARAMS channel)
+
+          disconnect-on-idle? (atom false)
+          maybe-disconnect-if-idle! (fn []
+                                     (when (and @disconnect-on-idle? (is-idle?) (empty? outstanding-incoming-call-ids))
+                                       (close channel)))
+          disconnect-on-idle! (fn []
+                                (reset! disconnect-on-idle? true)
+                                (maybe-disconnect-if-idle!))
+
+          default-session-state (sessions/new-session {})
+          ;; call-stack-ids aren't trusted (they're user supplied), but we need stable thread-ids for uplink-originated
+          ;; calls (for transactions etc) - so we generate them for outbound calls by prefixing
+          ;; the user-supplied string with a string unique to this session:
+          thread-id-prefix (str "uplink-outbound-" (random/base64 18) "-")
           internal-error (atom nil)
           connection-cookie (atom nil)]
 
@@ -106,44 +104,41 @@
       (on-close channel
                 (fn [why]
                   (worker-pool/set-task-info! :websocket ::close)
-                  (when @app-id
-                    (log/debug "Uplink websocket closed for app" @app-id (pr-str why)))
+                  (when-let [{:keys [app-info]} @connection]
+                    (log/debug "Uplink websocket closed for app" (:id app-info) (pr-str why)))
                   (metrics/set! :api/runtime-connected-uplinks-total (swap! connected-uplink-count dec))
 
                   (clear-uplink-registrations! @connection-cookie @my-fn-registrations)
 
-                  (doseq [[_ p] @pending-responses]
-                    (dispatcher/respond! (:return-path p)
-                                         {:error (cond
-                                                   @internal-error
-                                                   {:type "anvil.server.UplinkDisconnectedError", :message (str "Uplink disconnected: " @internal-error)}
+                  (send-close-errors! {:type    "anvil.server.UplinkDisconnectedError"
+                                       :message (cond
+                                                  @internal-error
+                                                  (str "Uplink disconnected: " @internal-error)
 
-                                                   (= why :message-too-big)
-                                                   {:type "anvil.server.UplinkDisconnectedError", :message "Data payload too big - please use Media objects to transfer large amounts of data."}
+                                                  (= why :message-too-big)
+                                                  "Data payload too big - please use Media objects to transfer large amounts of data."
 
-                                                   :else
-                                                   {:type "anvil.server.UplinkDisconnectedError", :message "Uplink disconnected"}
-                                                   )}))
-                  (reset! closed true)))
+                                                  :else
+                                                  "Uplink disconnected")})))
 
       (on-receive channel
                   (fn [json-or-binary]
                     (worker-pool/set-task-info! :websocket ::receive)
-                    (when-not @closed
+                    (when-not (is-closed?)
                       (log/trace "Uplink got data: " json-or-binary)
                       (try+
                         (if-not (string? json-or-binary)
-                          (when @app-id
+                          (when @connection
                             (serialisation/processBlob @ds json-or-binary))
 
                           (let [raw-data (json/read-str json-or-binary :key-fn keyword)]
                             (cond
-                              (not @app-id)
-                              (let [[app-info env priv] (get-app-info-environment-and-privileges-for-uplink-key (if (string? (:key raw-data)) (:key raw-data) ""))]
-                                (reset! protocol-version (:v raw-data))
+                              (not @connection)
+                              (let [[app-info env priv] (get-app-info-environment-and-privileges-for-uplink-key (if (string? (:key raw-data)) (:key raw-data) ""))
+                                    protocol-version (:v raw-data)]
                                 (cond
-                                  (not (and (number? @protocol-version)
-                                            (>= @protocol-version 4)))
+                                  (not (and (number? protocol-version)
+                                            (>= protocol-version 5)))
                                   (do
                                     (send! channel "{\"error\": \"You are using an outdated version of the uplink library. Please use 'pip install --upgrade anvil-uplink' to get a new one.\"}")
                                     (log/debug "Closing connecting uplink channel: Uplink library out of date for app" (:id app-info))
@@ -164,49 +159,48 @@
                                   :else
                                   (do
                                     (ws-util/tag-channel! channel {:app-info app-info, :environment env, :app-session default-session-state})
-                                    (reset! app-id (:id app-info))
-                                    (reset! environment env)
-                                    (reset! app-origin (app-data/get-default-app-origin env))
-                                    (reset! priv-level priv)
+                                    (reset! connection {:app-info app-info,
+                                                        :protocol-version protocol-version,
+                                                        :environment env,
+                                                        :app-origin (app-data/get-default-app-origin env),
+                                                        :server-privilege? (= priv :uplink)})
                                     (reset! default-session-state
                                             {:client (runtime-util/client-info-from-request (if (= :uplink priv) :uplink :client_uplink)
                                                                                             request)
                                              :app-id (:id app-info)
-                                             :environment @environment})
+                                             :environment env})
                                     (send! channel (util/write-json-str {:auth     "OK"
                                                                          :priv     priv
-                                                                         :app-info {:branch      (:branch @environment)
-                                                                                    :id          @app-id
-                                                                                    :environment (select-keys @environment [:description :tags])}}))
+                                                                         :app-info (runtime-util/get-runtime-app-info env)}))
 
-                                    (when (< @protocol-version 7)
+                                    (when (< protocol-version 7)
                                       (send! channel "{\"output\": \"You are using a deprecated version of the Anvil Uplink. Upgrade for bug-fixes and new features by typing 'pip install --upgrade anvil-uplink'\"}"))
 
-                                    (log/info "Uplink connected for app" @app-id " environment " @environment)
-                                    (reset! connection-cookie (on-uplink-connect @environment @protocol-version)))))
+                                    (log/debug "Uplink connected for app" (:id app-info) " environment " env)
+                                    (reset! connection-cookie (on-uplink-connect (assoc @connection
+                                                                                   :send-request! send-request!
+                                                                                   ::ws-server/send-raw! #(send! channel %)
+                                                                                   ::disconnect-on-idle! disconnect-on-idle!))))))
 
                               (= (:type raw-data) "REGISTER")
-                              (if-not (= @priv-level :uplink)
+                              (if-not (:server-privilege? @connection)
                                 (do
                                   (send! channel "{\"error\": \"Cannot register @anvil.server.callable functions from an unprivileged (client) uplink.\"}")
-                                  (log/info "Closing uplink channel: Client uplink attempted to register a function")
+                                  (log/debug "Closing uplink channel: Client uplink attempted to register a function")
                                   (close channel))
                                 (try
-                                  (let [handler {:fn (partial executor {:channel            channel
-                                                                        :pending-responses  pending-responses
-                                                                        :prune-live-objects (>= @protocol-version 5)})}]
-                                    (log/debug "Server function registered:" (:name raw-data))
+                                  (log/debug "Server function registered:" (:name raw-data))
 
-                                    (swap! my-fn-registrations conj (set-uplink-handler! @connection-cookie (re-pattern (:name raw-data)) handler)))
+                                  (swap! my-fn-registrations conj (set-uplink-handler! @connection-cookie (:name raw-data)))
                                   (catch PatternSyntaxException _e
                                     (send! channel "{\"error\": \"Invalid function name specification\"}")
-                                    (log/info "Closing uplink channel: Invalid function spec")
+                                    (log/debug "Closing uplink channel: Invalid function spec")
                                     (close channel))))
 
                               (= (:type raw-data) "REGISTER_LIVE_OBJECT_BACKEND")
                               (do
                                 (send! channel "{\"error\": \"Cannot register live-object backends the uplink.\"}")
-                                (log/info "Closing uplink channel: Uplink attempted to register a LiveObject backend")
+                                (log/debug "Closing uplink channel: Uplink attempted to register a LiveObject backend")
                                 (close channel))
 
 
@@ -215,54 +209,38 @@
 
                               ;; Command (request from uplink, ie remote-initiated RPC)
                               (= (:type raw-data) "CALL")
-                              (let [call-stack-id (:call-stack-id raw-data)
-                                    pending-response (get @pending-responses call-stack-id)
-                                    session-state (or (:session-state pending-response)
-                                                      default-session-state)
-                                    app (:app pending-response)
-                                    update-bypass! (when pending-response #(dispatcher/update! (:return-path pending-response) %))
-                                    this-environment (or (:environment pending-response) @environment)
-                                    change-session! (fn [new-session]
-                                                      (swap! pending-responses #(if (contains? % call-stack-id)
-                                                                                  (assoc-in % [call-stack-id :session-state] new-session)
-                                                                                  %)))]
-
-                                (ws-calls/process-call-from-ws channel @ds raw-data
-                                                               {:app                              app,
-                                                                :app-id                           @app-id,
-                                                                :environment                      this-environment,
-                                                                :app-origin                       @app-origin,
-                                                                :session-state                    session-state,
-                                                                :anvil.dispatcher/change-session! change-session!
-                                                                :origin                           @priv-level
-                                                                :call-stack                       (cons {:type (if (= :uplink @priv-level) :uplink :client-uplink)} (:call-stack pending-response))
-                                                                :thread-id                        (when call-stack-id
-                                                                                                    (str (when (not= @priv-level :uplink) "client-")
-                                                                                                         "uplink-" @app-id "-" call-stack-id))
-                                                                :use-quota?                       (not pending-response)} ;; If this is a call stack id we haven't heard of, it's a new call and we should use our quotas.
-
-                                                               {:prune-liveobjects? (>= @protocol-version 5)
-                                                                :update-bypass!     update-bypass!}))
+                              (let [call-id (:id raw-data)
+                                    call-stack-id (:call-stack-id raw-data)
+                                    pending-response (get-pending-response call-stack-id)
+                                    context (or (:context pending-response)
+                                                (ws-calls/new-call-context :uplink-call (:app-info @connection) (:environment @connection) nil default-session-state))
+                                    call-stack-info (STACK-FRAME-INFO (:server-privilege? @connection))
+                                    return-path {:update!  #(send! channel (util/write-json-str (assoc % :id call-id)))
+                                                 :respond! #(do (serialisation/serialise-to-websocket! (assoc % :id call-id) channel true nil)
+                                                                (swap! outstanding-incoming-call-ids disj call-id)
+                                                                (maybe-disconnect-if-idle!))}
+                                    request (serialisation/deserialise @ds raw-data)]
+                                (swap! outstanding-incoming-call-ids conj call-id)
+                                (dispatch-uplink-call! @connection-cookie context call-stack-info
+                                                       ;; If this is a call stack id we haven't heard of, it's a new call - we use our quotas and the user-supplied thread ID
+                                                       (when-not pending-response
+                                                         {:use-quota? true
+                                                          :thread-id (str thread-id-prefix call-stack-id)})
+                                                       (serialisation/getConfig @ds) request return-path))
 
                               ;; Response from uplink
                               (or (contains? raw-data :response) (contains? raw-data :error))
-                              (when (= @priv-level :uplink) ;; Defensive belt-and-braces
-                                (when-let [p (-> (@pending-responses (:id raw-data))
-                                                 (update-in [:session-state] #(or % default-session-state)))]
-                                  (let [resp (ws-calls/process-response-from-ws @ds (assoc (request-template-from-pending-response p)
-                                                                                      :origin :server)
-                                                                                (:return-path p) raw-data)]
-                                    (swap! pending-responses dissoc (:id raw-data))
-                                    resp)))
+                              (when (:server-privilege? @connection) ;; Defensive belt-and-braces
+                                (handle-response! (serialisation/deserialise @ds raw-data))
+                                (maybe-disconnect-if-idle!))
 
                               (contains? raw-data :output)
-                              (when (= @priv-level :uplink) ;; Belt and braces
-                                (when-let [p (@pending-responses (:id raw-data))]
-                                  (ws-calls/process-update-from-ws (:return-path p) raw-data))))))
+                              (when (:server-privilege? @connection) ;; Belt and braces
+                                (handle-update! raw-data)))))
 
                         (catch :anvil/server-error e
                           (send! channel (util/write-json-str {:error (:anvil/server-error e)}))
-                          (log/info "Closing uplink channel:" (:anvil/server-error e))
+                          (log/warn "Closing uplink channel:" (:anvil/server-error e))
                           (close channel))
                         (catch Exception e
                           (let [error-id (random/hex 6)]

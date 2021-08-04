@@ -30,7 +30,14 @@ from ._server import (register,
                       http_endpoint, 
                       api_request as request, 
                       HttpResponse, 
-                      cookies)
+                      cookies,
+                      raise_event,
+                      list_client_sessions,
+                      get_client_session,
+                      get_session_id,
+                      subscribe,
+                      unsubscribe,
+                      get_subscriptions)
 
 from . import _threaded_server, _server
 

@@ -23,10 +23,11 @@
 
 ;; You'll need one of these per incoming websocket
 (defprotocol Deserialiser
-  (deserialise [this payload request] "Returns a deserialised version of the payload map, with LiveObjects and Media reconstructed")
+  (deserialise [this payload] "Returns a deserialised version of the payload map, with LiveObjects and Media reconstructed")
   (processBlobHeader [this hdr] "Tells the deserialiser that the next blob is described by this header map")
   (processBlob [this blob] "A blob has arrived; deliver it to the appropriate Media object")
-  (loadLiveObject [this lo-map] "Load a LiveObject (or nil) and check for validity"))
+  (loadLiveObject [this lo-map] "Load a LiveObject (or nil) and check for validity")
+  (getConfig [this] "Returns the configuration map for this deserialiser"))
 
 
 (deftype InfiniteBuffer [^LinkedList buf]
@@ -89,7 +90,7 @@
      [data '()]
 
      (keyword? data)
-     [(name data) '()]
+     [(util/preserve-slashes data) '()]
 
      (instance? java.util.Date data)
      [nil [(-> (DateTime.
@@ -125,8 +126,9 @@
              (cons obj pruned-objects)))))
 
 
-(defn assemble-object [outstanding-media message-id {:keys [app-id app session-state origin] :as request} {:keys [permitted-live-object-backends session-liveobject-key] :as serialisation-config} known-liveobject-methods {:keys [type] :as obj}]
-  (let [mk-chunk-stream (fn [request-id {:keys [id name mime-type]}]
+(defn assemble-object [outstanding-media message-id {:keys [permitted-live-object-backends session-liveobject-key origin] :as serialisation-config} known-liveobject-methods {:keys [type] :as obj}]
+  (let [origin (or origin :client)                          ;; be conservative if not specified
+        mk-chunk-stream (fn [request-id {:keys [id name mime-type]}]
                           (let [c (chan (infinite-buffer))
                                 have-consumed? (atom false)]
                             (log/trace "Storing channel" c " for " (pr-str [request-id id]))
@@ -148,7 +150,7 @@
 
         handlers {"Primitive"  #(:value obj)
                   "DataMedia"  #(mk-chunk-stream message-id obj)
-                  "LazyMedia"  #(lazy-media/mk-LazyMedia obj request)
+                  "LazyMedia"  #(types/map->LazyMedia obj)
                   "LiveObject" (fn [] (let [o (if (not= origin :client)
                                                 obj
                                                 (dissoc obj :itemCache :iterItems))
@@ -162,12 +164,12 @@
                                             o (-> (dissoc o :path :type)
                                                   (update-in [:itemCache]
                                                              #(reduce (fn [cache [name val]]
-                                                                        (assoc cache name (assemble-object outstanding-media message-id request serialisation-config known-liveobject-methods val)))
+                                                                        (assoc cache name (assemble-object outstanding-media message-id serialisation-config known-liveobject-methods val)))
                                                                       {} %)))
 
                                             o (if (:iterItems o)
                                                 (update-in o [:iterItems :items] (fn [items]
-                                                                                   (doall (map #(assemble-object outstanding-media message-id request serialisation-config known-liveobject-methods %) items))))
+                                                                                   (doall (map #(assemble-object outstanding-media message-id serialisation-config known-liveobject-methods %) items))))
                                                 o)]
                                         (live-objects/load-LiveObjectProxy (dissoc o :path :type) serialisation-config)))
                   "Capability" (fn [] (let [{:keys [scope narrow mac]} obj]
@@ -190,7 +192,7 @@
 
     (if-let [handler (some handlers type)]
       (let [deserialised-obj (handler)]
-        (log/trace (:origin request))
+        (log/trace origin)
         (log/trace "Deserialised\n" (with-out-str (pprint obj)))
         (log/trace "into\n" (with-out-str (pprint deserialised-obj)))
         deserialised-obj)
@@ -202,7 +204,7 @@
   The payload map may contain LiveObjects and Media.
   send! will be called with one parameter for string-shaped things, and two parameters
   for string header + byte[] payload."
-  [payload send! serialise-errors? & [extra-liveobject-key no-live-object-pruning strip-item-caches? disallow-media?]]
+  [payload send! serialise-errors? & [extra-liveobject-key strip-item-caches? disallow-media?]]
 
   (log/trace "Serialising" payload)
 
@@ -218,7 +220,7 @@
                                        [{:id request-id, :error {:type "anvil.server.InternalError" :message (str "Internal server error: " error-id)}} []])
                                      (throw e))))
 
-        objects (if no-live-object-pruning objects (prune-liveobject-methods objects))
+        objects (prune-liveobject-methods objects)
         objects (if strip-item-caches? (map #(dissoc % :itemCache) objects) objects)
 
         payload-json (assoc payload-json :objects
@@ -257,12 +259,16 @@
                 (.close is)
                 (recur (inc idx))))))))))
 
-(defn serialise-to-websocket! [payload channel serialise-errors? session-liveobject-key prune-liveobjects?]
+(defn serialise-to-websocket-like! [payload lockable send-text-fn send-bytes-fn serialise-errors? session-liveobject-key]
   (serialise! payload (fn [json & [^bytes bytes]]
-                        (locking channel
-                          (ws/send! channel json)
+                        (locking lockable
+                          (send-text-fn json)
                           (when bytes
-                            (ws/send! channel bytes)))) serialise-errors? session-liveobject-key (not prune-liveobjects?)))
+                            (send-bytes-fn bytes))))
+              serialise-errors? session-liveobject-key))
+
+(defn serialise-to-websocket! [payload channel serialise-errors? session-liveobject-key]
+  (serialise-to-websocket-like! payload channel #(ws/send! channel %) #(ws/send! channel %) serialise-errors? session-liveobject-key))
 
 ;; Serialise something to a map for storage
 (defn serialise-to-map [payload]
@@ -278,41 +284,44 @@
 ;; TODO: Expire media streams we haven't heard anything from for a while
 
 ;; permitted-live-object-backends is an atom of backends we own, so we don't need to validate the MAC on deserialisation
-(defn mk-Deserialiser [& {:keys [permitted-live-object-backends session-liveobject-key] :as serialisation-config}]
-  ;; outstanding media is requestid -> mediaid -> channel
-  (let [serialisation-config (merge {:permitted-live-object-backends #{}} serialisation-config)
-        outstanding-media (atom {})
-        next-blob-header (atom nil)]
+(defn mk-Deserialiser
+  ([] (mk-Deserialiser {}))
+  ([{:keys [permitted-live-object-backends session-liveobject-key origin] :as serialisation-config}]
+   ;; outstanding media is requestid -> mediaid -> channel
+   (let [serialisation-config (merge {:permitted-live-object-backends #{}} serialisation-config)
+         outstanding-media (atom {})
+         next-blob-header (atom nil)]
 
-    (reify Deserialiser
-      (deserialise [_this payload {:keys [app-id app session-state origin] :as request}]
-        (let [known-liveobject-methods (atom {})]
-          (assert (:id payload) "Cannot deserialise payload without id")
-          (reduce (fn [json {:keys [path] :as obj}]
-                    (let [path (map #(if (string? %) (keyword %) %) path)
-                          deserialised-obj (assemble-object outstanding-media (:id payload) request serialisation-config known-liveobject-methods obj)]
-                      (if (= (:type obj) ["ValueType"])
-                        (assoc-in json path (SerializedPythonObject. deserialised-obj (get-in json path)) #_(with-meta (get-in json path) {:anvil/type deserialised-obj}))
-                        (assoc-in json path deserialised-obj))))
-                  (dissoc payload :objects)
-                  (:objects payload))))
-      (processBlobHeader [_this hdr]
-        (reset! next-blob-header hdr))
-      (processBlob [_this data]
-        (let [{:keys [requestId, mediaId] :as hdr} @next-blob-header]
-          (log/trace "Looking up channel for" (pr-str [requestId mediaId]) "(" (alength data) "bytes)")
-          (when-let [c (get-in @outstanding-media [requestId mediaId])]
-            (log/trace "Writing into channel" c)
-            (>!! c [(:chunkIndex hdr), (:lastChunk hdr), data])
-            (when (:lastChunk hdr)
-              (close! c)
-              (swap! outstanding-media update-in [requestId] dissoc mediaId)
-              (when (= (@outstanding-media requestId) {})
-                (swap! outstanding-media dissoc requestId))))))
-      (loadLiveObject [_this lo-map]
-        (when lo-map
-          (live-objects/load-LiveObjectProxy lo-map serialisation-config))))))
+     (reify Deserialiser
+       (deserialise [_this payload]
+         (let [known-liveobject-methods (atom {})]
+           (assert (:id payload) "Cannot deserialise payload without id")
+           (reduce (fn [json {:keys [path] :as obj}]
+                     (let [path (map #(if (string? %) (keyword %) %) path)
+                           deserialised-obj (assemble-object outstanding-media (:id payload) serialisation-config known-liveobject-methods obj)]
+                       (if (= (:type obj) ["ValueType"])
+                         (assoc-in json path (SerializedPythonObject. deserialised-obj (get-in json path)) #_(with-meta (get-in json path) {:anvil/type deserialised-obj}))
+                         (assoc-in json path deserialised-obj))))
+                   (dissoc payload :objects)
+                   (:objects payload))))
+       (processBlobHeader [_this hdr]
+         (reset! next-blob-header hdr))
+       (processBlob [_this data]
+         (let [{:keys [requestId, mediaId] :as hdr} @next-blob-header]
+           (log/trace "Looking up channel for" (pr-str [requestId mediaId]) "(" (alength data) "bytes)")
+           (when-let [c (get-in @outstanding-media [requestId mediaId])]
+             (log/trace "Writing into channel" c)
+             (>!! c [(:chunkIndex hdr), (:lastChunk hdr), data])
+             (when (:lastChunk hdr)
+               (close! c)
+               (swap! outstanding-media update-in [requestId] dissoc mediaId)
+               (when (= (@outstanding-media requestId) {})
+                 (swap! outstanding-media dissoc requestId))))))
+       (loadLiveObject [_this lo-map]
+         (when lo-map
+           (live-objects/load-LiveObjectProxy lo-map serialisation-config)))
+       (getConfig [_this] serialisation-config)))))
 
 
-(defn deserialise-from-map [json request]
-  (deserialise (mk-Deserialiser) (update-in json [:id] #(or % "DUMMY")) request))
+(defn deserialise-from-map [json]
+  (deserialise (mk-Deserialiser) (update-in json [:id] #(or % "DUMMY"))))

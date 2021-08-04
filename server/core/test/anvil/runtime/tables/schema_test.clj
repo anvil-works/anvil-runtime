@@ -118,12 +118,12 @@
                                               :table           "people"
                                               :column_name     "age"
                                               :new_column_name "how_old"}
-                                             {:type   :ADD_COLUMN,
-                                              :table  "people",
-                                              :column people-column-to-add}
                                              {:type        :DELETE_COLUMN
                                               :table       "people"
-                                              :column_name "to_remove"}]))
+                                              :column_name "to_remove"}
+                                             {:type   :ADD_COLUMN,
+                                              :table  "people",
+                                              :column people-column-to-add}]))
 
     ;; N.B. These updates are on the 'permissions' table, which was renamed from 'roles' in an action above.
     (is (= (get table-col-updates "permissions") [{:type   :ADD_COLUMN,

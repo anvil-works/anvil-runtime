@@ -37,7 +37,9 @@
             [anvil.metrics :as metrics]
             [anvil.core.worker-pool :as worker-pool]
             [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]
-            [anvil.runtime.util :as runtime-util])
+            [anvil.runtime.sessions :as sessions]
+            [anvil.runtime.util :as runtime-util]
+            [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks])
   (:import (java.io ByteArrayInputStream)
            (anvil.dispatcher.types Media MediaDescriptor InputStreamMedia ChunkedStream)
            (org.apache.commons.codec.binary Base64)
@@ -46,7 +48,7 @@
            (com.onelogin.saml2.settings SettingsBuilder Saml2Settings)
            (com.onelogin.saml2.util Constants)))
 
-(clj-logging-config.log4j/set-logger! :level :warn)
+(clj-logging-config.log4j/set-logger! :level :info)
 (clj-logging-config.log4j/set-logger! "com.onelogin.saml2" :level :debug)
 
 (defn app-500
@@ -55,8 +57,7 @@
    (log/debug "Couldn't load app" app-id ":" message)
    (-> (resp/response (-> (slurp (runtime-client-resource req "/500-app.html"))
                           (.replace "{{anvil-error}}" (hiccup-util/escape-html message))
-                          (clojure.string/replace #"\{\{cdn\-origin\}\}" conf/static-root-url)
-                          (clojure.string/replace #"\{\{ide\-origin\}\}" conf/static-root-url)))
+                          (clojure.string/replace #"\{\{cdn\-origin\}\}" (runtime-util/get-static-origin req))))
        (resp/content-type "text/html")
        (resp/set-cookie "anvil-test-cookie" true)
        (resp/status 500))))
@@ -68,8 +69,7 @@
    (-> (resp/response (-> (slurp (if app-exists-but-no-key? (runtime-client-resource req "/404-app-no-key.html")
                                                             (runtime-client-resource req "/404-app.html")))
                           (.replace "{{canonical-url}}" (hiccup-util/escape-html app-origin))
-                          (clojure.string/replace #"\{\{cdn\-origin\}\}" conf/static-root-url)
-                          (clojure.string/replace #"\{\{ide\-origin\}\}" conf/static-root-url)))
+                          (clojure.string/replace #"\{\{cdn\-origin\}\}" (runtime-util/get-static-origin req))))
        (resp/content-type "text/html")
        (resp/set-cookie "anvil-test-cookie" true)
        (resp/status (if app-exists-but-no-key? 403 404)))))
@@ -117,19 +117,31 @@
                 (hiccup-util/escape-html (:write_key segment-config)))))))
 
 (defn with-anvil-cookies [resp session]
-  (reduce (fn [resp type]
-            (assoc-in resp [:cookies (get conf/app-cookie-names type)]
-                      (merge {:value     (or (when-let [cookie @(get-in @session [:cookies type])] (cookies/serialise-cookie cookie)) "")
-                              :path      "/"
-                              :http-only true
-                              :max-age   2147483647}
-                             (when conf/force-secure-cookies?
-                               {:same-site :none
-                                :secure    true})
-                             (when (= type :shared)
-                               {:domain (:shared-cookie-domain @session)}))))
+  ;; Takes the current value of the anvil cookies from the session and puts them onto an HTTP response
+  (update-in resp [:cookies] #(into (or % {})
+                                (for [type [:local :shared]]
+                                  [(get conf/app-cookie-names type)
+                                   (merge {:value     (or (when-let [cookie-serialised (get-in @session [:cookies type])] cookie-serialised) "")
+                                           :path      "/"
+                                           :http-only true
+                                           :max-age   2147483647}
+                                          (when conf/force-secure-cookies?
+                                            {:same-site :none
+                                             :secure    true})
+                                          (when (= type :shared)
+                                            {:domain (:shared-cookie-domain @session)}))]))))
 
-          resp [:local :shared]))
+(defn render-app-description [description]
+  (hiccup-util/escape-html
+    (util/or-str description
+                 "This app is built with Anvil, the platform for building full-stack web apps quickly and robustly.")))
+
+(defn image-from-metadata [app-origin metadata key not-found]
+  (let [img-url (fn [url]
+                  (if-let [[_ n] (when url (re-matches #"asset:(.*)" url))]
+                    (str app-origin "/_/theme/" (util/real-actual-genuine-url-encoder n))
+                    url))]
+    (util/or-str (img-url (get metadata key)) (str conf/static-root-url not-found))))
 
 (defn serve-app [{:keys [app-id environment environment-from-url app-session] :as req} client-params {:keys [action print-id print-key]}]
   (utils/timeit "Serve app" [checkpoint!]
@@ -144,11 +156,6 @@
             meta (:metadata app-map)
             app-map (dissoc app-map :metadata)
             app-origin (:app-origin req)
-            img-url (fn [url]
-                      (if-let [[_ n] (when url (re-matches #"asset:(.*)" url))]
-                        (str app-origin "/_/theme/" (util/real-actual-genuine-url-encoder n))
-                        url))
-            img-from-meta #(util/or-str (img-url (%1 meta)) (str conf/static-root-url %2))
 
             app-services (:services app-map)
             get-service (fn [url] (first (filter #(= (:source %) url) app-services)))
@@ -171,30 +178,31 @@
         (reload-anvil-cookies! (:app-session req) req)
         (metrics/inc! :api/runtime-serve-app-total)
 
+        (sessions/persist! app-session)
+
         (-> (serve-templated-html req (runtime-client-resource req "/runner.html")
                                   {"{{body-class}}"         (or body-class "")
                                    "{{app-name}}"           (hiccup-util/escape-html
                                                               (util/or-str (:title meta) (:name app-info) (:name app-map)))
                                    "{{app-title}}"          (hiccup-util/escape-html
                                                               (util/or-str (:title meta) (:name app-info) (:name app-map)))
-                                   "{{ms-tile-image}}"      (img-from-meta :logo_img "/mstile-144x144.png")
-                                   "{{favicon}}"            (img-from-meta :logo_img "/favicon-96x96.png")
-                                   "{{social-image}}"       (img-from-meta :logo_img "/img/logo-square-padded.png")
-                                   "{{social-description}}" (hiccup-util/escape-html
-                                                              (util/or-str (:description meta)
-                                                                           "This app is built with Anvil, the platform for building full-stack web apps quickly and robustly."))
+                                   "{{ms-tile-image}}"      (image-from-metadata app-origin meta :logo_img "/mstile-144x144.png")
+                                   "{{favicon}}"            (image-from-metadata app-origin meta :logo_img "/favicon-96x96.png")
+                                   "{{social-image}}"       (image-from-metadata app-origin meta :logo_img "/img/logo-square-padded.png")
+                                   "{{social-description}}" (render-app-description (:description meta))
                                    "{{canonical-url}}"      (hiccup-util/escape-html app-origin)
                                    "{{anvil-version}}"      conf/anvil-version
                                    "{{google-api-key}}"     (or google-api-key "")
-                                   "{{session-token}}"      (or (:url-session-token req) (:url-token @app-session) "")
+                                   "{{session-token}}"      (or (:session-url-token req)
+                                                                (get-in @app-session [::sessions/tokens :url])
+                                                                "")
                                    "{{manifest-url}}"       (str (hiccup-util/escape-html app-origin) "/_/manifest.json")
                                    "{{theme-color}}"        (:primary-color style)
                                    "{{shim-css}}"           (:css-shims style)
                                    "{{theme-css}}"          (:css style)
                                    "{{head-html}}"          head-html
                                    "{{extra-snippets}}"     (get-extra-snippets app-map)
-                                   "{{app-info-object}}"    (util/write-json-str {:id          app-id, :branch (:branch environment)
-                                                                                  :environment (select-keys environment [:description :tags])})
+                                   "{{app-info-object}}"    (util/write-json-str (runtime-util/get-runtime-app-info environment))
                                    "{{load-app-code}}"      (str "\n$(function() {"
                                                                  (get-service-code app-map)
                                                                  "window.loadApp(" (util/write-json-str (merge {"app"       app-map
@@ -235,6 +243,7 @@
 
 (defn serve-api-request [path request]
   (log/trace "API hit" request)
+  (log/trace "Session:" (:app-session request))
   (app-log/record! request :new-session {:type "api"})
   (with-channel request channel
     (try+
@@ -255,12 +264,25 @@
                                                                                  (assoc-in resp [:headers "Content-Type"] v)
 
                                                                                  :else
-                                                                                 (update-in resp [:headers h] conj v)))) resp headers)]
+                                                                                 (update-in resp [:headers h] conj v))))
+                                                                           resp headers)]
                                         (if (and @anvil-cookies-updated? (not (:cross-origin request)))
                                           (-> resp-with-safe-headers
                                               (with-anvil-cookies (:app-session request))
                                               (ring.middleware.cookies/cookies-response))
                                           resp-with-safe-headers)))
+
+            _ (when (:new-session request)
+                (swap! (:app-session request) assoc-in [:client :type] :http))
+
+            session (:app-session request)
+            _ (reload-anvil-cookies! session request)
+            session (if (:cross-origin request)
+                      (sessions/new-session (assoc (blank-app-session-state request :http)
+                                              :alternate-session session))
+                      session)
+
+            dispatcher-request (promise)
 
             return-path {:update!
                          (fn [{:keys [output set-cookie] :as r}]
@@ -274,6 +296,10 @@
 
                          :respond!
                          (fn [{{:keys [status body headers] :or {headers []}} :response :keys [response error] :as r}]
+
+                           (when (get-in @(sessions/ephemeral-cache session) [::sessions/dirty])
+                             (sessions/notify-session-update! session))
+
                            (binding [rpc-util/*environment* (:environment request)]
                              (try+
                                (cond
@@ -298,16 +324,23 @@
                                                         (resp/status 500)
                                                         (resp/content-type "text/plain")))
                                      (when-not @responded?
-                                       (app-log/record! request "err" (if (and (= (:type error) "anvil.server.NoServerFunctionError")
-                                                                               (re-find #"http:" (:message error)))
-                                                                        (assoc error :message (str "API request routing failed. No @anvil.server.http_endpoint exists with path matching '" (subs path 0 (min (count path) 100)) (when (> (count path) 100) "...") "'"))
-                                                                        error)))))
+                                       (app-log/record! request "err" error))))
 
-                                 (instance? Media body)
-                                 (send! channel (-> {:body   (.getInputStream ^Media body)
-                                                     :status status}
-                                                    (resp/content-type (.getContentType ^MediaDescriptor body))
-                                                    (with-safe-anvil-cookies headers)))
+                                 (or (instance? Media body) (instance? anvil.dispatcher.types.LazyMedia body))
+                                 (worker-pool/run-task! {:type :task
+                                                         :name ::serve-api-lazy-media
+                                                         :tags (worker-pool/get-task-tags-for-http-request request)}
+                                   (try+
+                                     (send! channel (-> {:body   (blocking-hacks/?->InputStream @dispatcher-request body)
+                                                         :status status}
+                                                        (resp/content-type (.getContentType ^MediaDescriptor body))
+                                                        (with-safe-anvil-cookies headers)))
+                                     (catch Exception e
+                                       (let [error-id (random/hex 6)]
+                                         (log/error e "Error in app API Lazy Media response:" error-id)
+                                         (send! channel (-> {:body (str "Internal server error serving Lazy Media: " error-id)}
+                                                            (resp/status 500)
+                                                            (resp/content-type "text/plain")))))))
 
                                  (instance? ChunkedStream body)
                                  (do
@@ -358,72 +391,64 @@
                                  (log/trace _e)
                                  (send! channel (-> {:body   "This response cannot be transmitted over HTTP. You must return either Media, a string, or a JSON-compatible object (lists/dicts/strings/numbers/None)"
                                                      :status 500}
-                                                    (resp/content-type "text/plain"))))
-                               (finally
-                                 (when (and (:new-session request)
-                                            (not (-> request :app-session deref :lazy-media-secret)))
-                                   (delete-session! request))))))}]
+                                                    (resp/content-type "text/plain")))))))}
 
-        (let [body-media (when (:body request)
-                           ; For some reason, if there's no Content-Type header, the body has already been read. Reset it.
-                           (.reset (:body request))
-                           (InputStreamMedia. (get-in request [:headers "content-type"])
-                                              (:body request)
-                                              (second (re-matches #"attachment;\s*filename=\"(.*)\"\s*"
-                                                                  (get-in request [:headers "content-disposition"] "")))
-                                              (get-in request [:headers "content-length"])))
-              authorization (get-in request [:headers "authorization"] "")
-              [[_ username password]] (try
-                                        (when-let [m (re-matches #"\s*Basic\s+(.+)" authorization)]
-                                          (-> m
-                                              ^String second
-                                              (.getBytes "UTF-8")
-                                              Base64/decodeBase64
-                                              (String. "UTF-8")
-                                              (#(re-seq #"([^:]*):(.*)" %))))
-                                        (catch Exception e
-                                          (throw+ {::api-error (str "Invalid Authorization header for HTTP Basic auth: " authorization)})))
+            body-media (when (:body request)
+                         ; For some reason, if there's no Content-Type header, the body has already been read. Reset it.
+                         (.reset (:body request))
+                         (InputStreamMedia. (get-in request [:headers "content-type"])
+                                            (:body request)
+                                            (second (re-matches #"attachment;\s*filename=\"(.*)\"\s*"
+                                                                (get-in request [:headers "content-disposition"] "")))
+                                            (get-in request [:headers "content-length"])))
+            authorization (get-in request [:headers "authorization"] "")
+            [[_ username password]] (try
+                                      (when-let [m (re-matches #"\s*Basic\s+(.+)" authorization)]
+                                        (-> m
+                                            ^String second
+                                            (.getBytes "UTF-8")
+                                            Base64/decodeBase64
+                                            (String. "UTF-8")
+                                            (#(re-seq #"([^:]*):(.*)" %))))
+                                      (catch Exception e
+                                        (throw+ {::api-error (str "Invalid Authorization header for HTTP Basic auth: " authorization)})))
 
-              _ (when (:new-session request)
-                  (swap! (:app-session request) assoc-in [:client :type] :http))
 
-              session (reload-anvil-cookies! (:app-session request) request)
-              session (if (:cross-origin request)
-                        (atom (assoc (mk-temp-session request :http) :alternate-session session))
-                        session)
+            headers-without-app-cookies (update-in (:headers request) ["cookie"] (fn [cookies-header]
+                                                                                   (when cookies-header
+                                                                                     (apply str (interpose "; " (filter
+                                                                                                                  #(not ((set (vals conf/app-cookie-names)) (first (string/split % #"="))))
+                                                                                                                  (string/split cookies-header #"; ")))))))]
 
-              headers-without-app-cookies (update-in (:headers request) ["cookie"] (fn [cookies-header]
-                                                                                     (when cookies-header
-                                                                                       (apply str (interpose "; " (filter
-                                                                                                                    #(not ((set (vals conf/app-cookie-names)) (first (string/split % #"="))))
-                                                                                                                    (string/split cookies-header #"; ")))))))]
-          (metrics/inc! :api/runtime-serve-api-total)
-          (dispatcher/dispatch! {:call          {:func (str "http:" path),
-                                                 :args [] :kwargs {:method                    (.toUpperCase (name (:request-method request)))
-                                                                   :path                      path
-                                                                   :origin                    (get headers-without-app-cookies "origin")
-                                                                   :query_params              (:query-params request)
-                                                                   :form_params               (:form-params request)
-                                                                   :headers                   headers-without-app-cookies
-                                                                   :remote_address            (:remote-addr request)
-                                                                   :body                      body-media
-                                                                   :username                  username
-                                                                   :password                  password
-                                                                   :same_app_alternate_origin (:alternate-app-origin request)}}
-                                 :app-id        (:app-id request), :app-origin (:app-origin request)
-                                 :environment   (or (:environment-from-url request) (:environment request))
-                                 :session-state session
-                                 :origin        :http_endpoint
-                                 :call-stack    (list {:type :http})
-                                 :thread-id     (str "endpoint-" (:app-id request) "-" (random/hex 16))
-                                 :use-quota?    true}
-                                return-path)))
+        (deliver dispatcher-request {:call          {:func (str "http:" path),
+                                                     :args [] :kwargs {:method                    (.toUpperCase (name (:request-method request)))
+                                                                       :path                      path
+                                                                       :origin                    (get headers-without-app-cookies "origin")
+                                                                       :query_params              (:query-params request)
+                                                                       :form_params               (:form-params request)
+                                                                       :headers                   headers-without-app-cookies
+                                                                       :remote_address            (:remote-addr request)
+                                                                       :body                      body-media
+                                                                       :username                  username
+                                                                       :password                  password
+                                                                       :same_app_alternate_origin (:alternate-app-origin request)}}
+                                     :app-id        (:app-id request), :app-origin (:app-origin request)
+                                     :environment   (or (:environment-from-url request) (:environment request))
+                                     :session-state session
+                                     :origin        :http_endpoint
+                                     :call-stack    (list {:type :http})
+                                     :thread-id     (str "endpoint-" (:app-id request) "-" (random/hex 16))
+                                     :use-quota?    true})
+        (metrics/inc! :api/runtime-serve-api-total)
+        (dispatcher/dispatch! @dispatcher-request
+                              return-path))
 
       (catch ::api-error e
         (send! channel (-> {:body (::api-error e)}
                            (resp/status 400)
                            (resp/content-type "text/plain"))))
       (catch :anvil/server-error e
+        (log/trace "Serving error" e)
         (send! channel (-> {:body (:anvil/server-error e)}
                            (resp/status 500)
                            (resp/content-type "text/plain"))))
@@ -448,6 +473,8 @@
   ; TODO: We should use our quotas directly here. Currently, only user-lazy-media uses the dispatcher, so only that type of
   ;       lazy media has rate limiting. Google drive file downloads do not.
 
+  ;; TODO: Lazy media sessions should be loaded by ID (i.e. use an sid parameter rather than using the session from the
+  ;;       request, then load the app from the session rather than the request)
   (with-channel request channel
     (try+
       (let [app (get-app-from-request request false)]
@@ -476,6 +503,11 @@
             (catch :lm/rate-limited e
               (send! channel (-> {:body (str "Rate limit exceeded: " (:lm/rate-limited e))}
                                  (resp/status 429)
+                                 (resp/content-type "text/plain"))))
+
+            (catch :anvil/lazy-media-error e
+              (send! channel (-> {:body (str "Bad request: " (:anvil/lazy-media-error e))}
+                                 (resp/status 400)
                                  (resp/content-type "text/plain"))))
 
             (catch Exception e
@@ -510,7 +542,8 @@
   (GET ["/_/:path/:token" :path #"login|reset_password" :token #".*"] [token :as request]
     (when-let [app (get-app-from-request request)]
       (when (user-service/do-login-with-token app (request :environment) (request :app-session) (codec/url-decode token))
-        (resp/redirect (str (:app-origin request) "?s=" (get @(request :app-session) :url-token))))))
+        (sessions/persist! (request :app-session))
+        (resp/redirect (str (:app-origin request) "?s=" (sessions/url-token (request :app-session)))))))
 
   (POST "/_/email-pw-reset/:email/:email-key" [email email-key password :as request]
     (when-let [app (get-app-from-request request)]
@@ -528,9 +561,8 @@
       (serve-app request {} {:action :print, :print-id print-id, :print-key print-key})))
 
   (ANY "/_/logout" request
-    (delete-session! request)
-    (-> {:body            ""
-         :delete-session? true}
+    (sessions/delete! (:app-session request))
+    (-> {:body            ""}
         (resp/status 200)
         (resp/content-type "text/plain")
         (resp/header "Access-Control-Allow-Credentials" "true")))
@@ -539,7 +571,7 @@
     (when-let [asset (->> (get-in (get-app-from-request request) [:content :theme :assets])
                           (filter #(= (:name %) asset-name))
                           (first))]
-      (log/info "Serving an asset: " (:name asset))
+      (log/trace "Serving an asset: " (:name asset))
       (let [mime-type (mime-type/ext-mime-type asset-name)]
         (-> (Base64/decodeBase64 ^String (:content asset))
             (ByteArrayInputStream.)
@@ -554,7 +586,7 @@
   (ANY ["/_/api:path", :path #".*"] [path :as request]
     (serve-api-request path request))
 
-  (ANY ["/_/ws/:key" :key #".*"] [key :as request]
+  (ANY ["/_/ws:old-key" :old-key #".*"] request
     (if-let [other-origin (:cross-origin request)]
       (do (log/warn (str "Origin header mismatch on websocket connection to " (:app-origin request) ": " other-origin))
           (-> (resp/response "Invalid origin")
@@ -577,9 +609,8 @@
 
   (GET "/_/client_auth_redirect" request
     (if (:anvil.runtime/replacement-session @(:app-session request))
-      (resp/redirect (str conf/static-root-url "/runtime/client_auth_error.html#" (codec/url-encode "SESSION_EXPIRED")))
+      (resp/redirect (str conf/static-root-url "/runtime-new/runtime/client_auth_error.html#" (codec/url-encode "SESSION_EXPIRED")))
       (let [params (:params request)
-            redirect (str conf/runtime-common-url "/_/client_auth_callback")
             app (:content (get-app-from-request request))
 
             ;; Can only use this if we have added and configured the google service for our app.
@@ -588,23 +619,34 @@
             google-service (first (filter #(= (:source %) "/runtime/services/google.yml") (:services app)))
             google-client-id (or (get-in google-service [:server_config :client_id]) (and (:custom? conf/google-client-config) (:client-id conf/google-client-config)))
 
-            params (if (or (= "" google-client-id) (nil? google-client-id))
-                     (assoc params :scope "https://www.googleapis.com/auth/userinfo.email")
-                     params)
+            custom-google-config? (not-empty google-client-id)
+
+            params (if custom-google-config?
+                     params
+                     (assoc params :scope "https://www.googleapis.com/auth/userinfo.email"))
 
             offline-access (and (not= "" google-client-id) google-client-id)
 
-            google-client-id (if (or (= "" google-client-id) (nil? google-client-id))
-                               (:client-id conf/google-client-config)
-                               google-client-id)]
+            google-client-id (if custom-google-config?
+                               google-client-id
+                               (:client-id conf/google-client-config))
 
-        (if (or (= "" google-client-id) (nil? google-client-id))
+            redirect (str (if (and custom-google-config?
+                                   (not (get-in request [:environment :allow-debug?])) ;; When debugging, use the shared redirect regardless
+                                   (get-in google-service [:server_config :app_origin_redirect]))
+                            (:app-origin request)
+                            conf/runtime-common-url) "/_/client_auth_callback")]
 
-          (resp/redirect (str conf/static-root-url "/runtime/client_auth_error.html#" (codec/url-encode "No client ID specified in Google API service config.")))
+        (if (empty? google-client-id)
 
-          (let [login-response (oauth/get-login-response request (:id @(:app-session request)) google-client-id redirect (:scope params) offline-access)]
+          (resp/redirect (str conf/static-root-url "/runtime-new/runtime/client_auth_error.html#" (codec/url-encode "No client ID specified in Google API service config.")))
+
+          (let [login-response (oauth/get-login-response request (sessions/persistent-id (:app-session request)) google-client-id redirect (:scope params) offline-access)]
             ;; Need to get csrf-token out of the cookie session and into app-session
-            (swap! (:app-session request) assoc ::google-csrf-token (-> login-response :session :anvil.core.google-oauth2/csrf-token))
+            (swap! (:app-session request) assoc
+                   ::google-csrf-token (-> login-response :session :anvil.core.google-oauth2/csrf-token)
+                   ::google-redirect redirect)              ;; Saves working out the redirect again in the callback.
+            (sessions/notify-session-update! (:app-session request))
             login-response)))))
 
   (GET "/_/client_auth_id_token" request
@@ -612,7 +654,7 @@
 
   (GET "/_/facebook_auth_redirect" request
     (if (:anvil.runtime/replacement-session @(:app-session request))
-      (resp/redirect (str conf/static-root-url "/runtime/facebook_auth_error.html#" (codec/url-encode "SESSION_EXPIRED")))
+      (resp/redirect (str conf/static-root-url "/runtime-new/runtime/facebook_auth_error.html#" (codec/url-encode "SESSION_EXPIRED")))
       (let [csrf-token (random/hex 60)
 
             app (:content (get-app-from-request request))
@@ -636,13 +678,14 @@
         (if (and requested-scopes
                  (not= "" requested-scopes)
                  (not app-id-provided?))
-          (resp/redirect (str conf/static-root-url "/runtime/facebook_auth_error.html#" (codec/url-encode "To specify custom permissions, you must provide an app ID in the Facebook service config.")))
+          (resp/redirect (str conf/static-root-url "/runtime-new/runtime/facebook_auth_error.html#" (codec/url-encode "To specify custom permissions, you must provide an app ID in the Facebook service config.")))
 
           (do (swap! (:app-session request) assoc ::facebook-csrf-token csrf-token)
+              (sessions/notify-session-update! (:app-session request))
               (resp/redirect (str "https://www.facebook.com/v3.2/dialog/oauth?"
                                   "&client_id=" facebook-client-id
                                   "&redirect_uri=" (codec/url-encode (str conf/runtime-common-url "/_/facebook_auth_callback"))
-                                  "&state=" (get @(:app-session request) :id) "G" (codec/url-encode csrf-token)
+                                  "&state=" (sessions/persistent-id (:app-session request)) "G" (codec/url-encode csrf-token)
                                   "&scope=" (codec/url-encode scope)
                                   ;"&auth_type=reauthenticate" ; This causes Colette to land in an infinite loop being asked for her password.
                                   "&display=popup")))))))
@@ -654,9 +697,8 @@
     ;; To register an app, visit https://apps.dev.microsoft.com/#/appList
     ;; Set redirect_url to https://anvil.works/apps/_/microsoft_auth_callback
     ;; No need for an Application Secret if just using login.
-
     (if (:anvil.runtime/replacement-session @(:app-session request))
-      (resp/redirect (str conf/static-root-url "/runtime/microsoft_auth_error.html#" (codec/url-encode "SESSION_EXPIRED")))
+      (resp/redirect (str conf/static-root-url "/runtime-new/runtime/microsoft_auth_error.html#" (codec/url-encode "SESSION_EXPIRED")))
       (let [csrf-token (random/hex 60)
             nonce (random/hex 60)
 
@@ -693,16 +735,16 @@
                  (not-empty (-> request :params :scopes))
                  (or (not app-id-provided?)
                      (not app-secret-provided?)))
-          (resp/redirect (str conf/static-root-url "/runtime/microsoft_auth_error.html#" (codec/url-encode "To specify custom permissions (scopes), you must provide an Application ID and Application Secret in the Microsoft service config.")))
+          (resp/redirect (str conf/static-root-url "/runtime-new/runtime/microsoft_auth_error.html#" (codec/url-encode "To specify custom permissions (scopes), you must provide an Application ID and Application Secret in the Microsoft service config.")))
 
           (do (swap! (:app-session request) assoc ::microsoft-csrf-token csrf-token ::microsoft-nonce nonce)
-
+              (sessions/notify-session-update! (:app-session request))
               (resp/redirect (str "https://login.microsoftonline.com/" (URLEncoder/encode (util/or-str tenant-id "common")) "/oauth2/v2.0/authorize?"
                                   "&client_id=" application-id
                                   "&response_type=" (if app-id-provided? "code" "id_token")
                                   "&redirect_uri=" (codec/url-encode (str conf/runtime-common-url "/_/microsoft_auth_callback"))
                                   "&response_mode=form_post"
-                                  "&state=" (get @(:app-session request) :id) "G" (codec/url-encode csrf-token)
+                                  "&state=" (sessions/persistent-id (:app-session request)) "G" (codec/url-encode csrf-token)
                                   "&nonce=" (codec/url-encode nonce)
                                   "&scope=" (codec/url-encode scope))))))))
 
@@ -732,7 +774,7 @@
             saml-request (.getEncodedAuthnRequest authn-request)
             csrf-token (random/hex 60)
 
-            relay-state (str (get @(:app-session request) :id) "G" csrf-token)
+            relay-state (str (sessions/persistent-id (:app-session request)) "G" csrf-token)
 
             query-string (str "SAMLRequest=" (util/real-actual-genuine-url-encoder saml-request)
                               "&RelayState=" (util/real-actual-genuine-url-encoder relay-state)
@@ -744,6 +786,7 @@
                                  "?" query-string
                                  "&Signature=" (util/real-actual-genuine-url-encoder signature))]
         (swap! (:app-session request) assoc ::saml-csrf-token csrf-token)
+        (sessions/notify-session-update! (:app-session request))
         (resp/redirect redirect-target))
       (catch Exception e
         (-> (resp/response
@@ -765,15 +808,19 @@
   (GET "/_/validate-app" req
     (resp/response {:app-id (:app-id req)}))
 
-  (GET "/_/manifest.json" {:keys [app-info] :as req}
-    (let [[_ _ style] (app-data/sanitised-app-and-style-for-client (:app-id req) (app-data/get-version-spec-for-environment (:environment req)))]
+  (GET "/_/manifest.json" {:keys [app-origin] :as req}
+    (let [[app-info app-map style _head-html _commit-id] (app-data/sanitised-app-and-style-for-client (:app-id req) (app-data/get-version-spec-for-environment (:environment req)))]
       (-> (populate-template (runtime-client-resource req "/manifest.json")
-                             {"{{app-name}}"         (:name app-info)
-                              "{{theme-color}}"      (:primary-color style)
-                              "{{background-color}}" (if (and (:primary-color style)
-                                                              (= (.toLowerCase (:primary-color style)) "#2ab1eb"))
-                                                       "white"
-                                                       (:primary-color style))})
+                             {"{{app-name}}"           (:name app-info)
+                              "{{social-description}}" (render-app-description (get-in app-map [:metadata :description]))
+                              "{{canonical-url}}"      (hiccup-util/escape-html app-origin)
+                              "{{icon}}"               (image-from-metadata app-origin (:metadata app-map) :logo_img "/favicon-96x96.png")
+
+                              "{{theme-color}}"        (:primary-color style)
+                              "{{background-color}}"   (if (and (:primary-color style)
+                                                                (= (.toLowerCase (:primary-color style)) "#2ab1eb"))
+                                                         "white"
+                                                         (:primary-color style))})
           (resp/response)
           (resp/content-type "application/json"))))
 
@@ -789,63 +836,64 @@
   ;; These routes are unusual - they are accessible at /runtime/... on all origins!
   (GET "/_/client_auth_callback" req
     ;; in the Google developer console, so we must redirect back to the same place for every app.
-    (let [redirect (str conf/runtime-common-url "/_/client_auth_callback")
-          session-id (clojure.string/replace (-> req :params :state) #"G[^G]*$" "")
-          request (request-with-session-by-trusted-id req session-id)
-          app-session (:app-session request)
-          request (merge request (select-keys @app-session [:app-id :app-info :environment]))
-          app (:content (get-app-from-request request))]
+    (let [session-id (clojure.string/replace (-> req :params :state) #"G[^G]*$" "")
+          app-session (sessions/load-session-by-id-without-authentication session-id)]
 
-      (log/trace "CB: Session" session-id "->" (get request :app-id))
-
-      (if (:anvil.runtime/replacement-session @app-session)
-        (resp/redirect (str conf/static-root-url "/runtime/client_auth_error.html#" (codec/url-encode "SESSION_EXPIRED")))
-        (let [google-service (first (filter #(= (:source %) "/runtime/services/google.yml") (:services app)))
+      (if-not app-session
+        (resp/redirect (str conf/static-root-url "/runtime-new/runtime/client_auth_error.html#" (codec/url-encode "SESSION_EXPIRED")))
+        (let [session-state (sessions/deref-db app-session)
+              request (merge req {:app-session app-session} (select-keys session-state [:app-id :app-info :environment]))
+              app (:content (get-app-from-request request))
+              google-service (first (filter #(= (:source %) "/runtime/services/google.yml") (:services app)))
               google-client-id (or (get-in google-service [:server_config :client_id])
                                    (and (:custom? conf/google-client-config) (:client-id conf/google-client-config)))
 
-              google-client-secret (if (or (= "" google-client-id) (nil? google-client-id))
-                                     (:client-secret conf/google-client-config)
-                                     (or (get-in google-service [:server_config :client_secret])
-                                         (and (:custom? conf/google-client-config) (:client-secret conf/google-client-config))))
+              custom-google-config? (not-empty google-client-id)
 
-              google-client-id (if (or (= "" google-client-id) (nil? google-client-id))
-                                 (:client-id conf/google-client-config)
-                                 google-client-id)]
+              google-client-secret (if custom-google-config?
+                                     (or (get-in google-service [:server_config :client_secret])
+                                         (and (:custom? conf/google-client-config) (:client-secret conf/google-client-config)))
+                                     (:client-secret conf/google-client-config))
+
+              google-client-id (if custom-google-config?
+                                 google-client-id
+                                 (:client-id conf/google-client-config))]
+
+          (log/trace "Client auth callback in session" session-id (str "(app " (get request :app-id) ")"))
 
           (try
             (let [tokens (oauth/process-callback (-> req :params :code)
                                                  (-> req :params :state)
-                                                 (::google-csrf-token @app-session)
+                                                 (::google-csrf-token session-state)
                                                  google-client-id
                                                  google-client-secret
-                                                 redirect)]
+                                                 (::google-redirect session-state))]
 
               (log/debug "CLIENT AUTH COMPLETE")
               (log/trace (with-out-str (pprint tokens)))
 
-              (swap! (:app-session request) #(assoc-in % [:google :user-tokens] tokens))
+              (swap! app-session #(assoc-in % [:google :user-tokens] tokens))
+
+              (sessions/notify-session-update! app-session)
 
               (-> (resp/response (-> (slurp (runtime-client-resource request "/client_auth_success.html"))
-                                     (.replace "{{canonical-url}}" (hiccup-util/escape-html (:app-origin @app-session)))
-                                     (clojure.string/replace #"\{\{cdn\-origin\}\}" (runtime-util/get-static-origin request))))
+                                     (.replace "{{canonical-url}}" (hiccup-util/escape-html (:app-origin session-state)))))
                   (resp/content-type "text/html")
                   (resp/status 200)))
 
             (catch Exception e
               (log/error e "Error in Google auth callback")
-              (resp/redirect (str conf/static-root-url "/runtime/client_auth_error.html#" (codec/url-encode (.getMessage e))))))))))
+              (resp/redirect (str conf/static-root-url "/runtime-new/runtime/client_auth_error.html#" (codec/url-encode (.getMessage e))))))))))
 
   (GET "/_/facebook_auth_callback" req
     (let [redirect-uri (str conf/runtime-common-url "/_/facebook_auth_callback")
           session-id (clojure.string/replace (-> req :params :state) #"G[^G]*$" "")
-          request (request-with-session-by-trusted-id req session-id)
-          app-session (:app-session request)
-          request (merge request (select-keys @app-session [:app-id :app-info :environment]))
-          app (:content (get-app-from-request request))]
-      (if (:anvil.runtime/replacement-session @app-session)
-        (resp/redirect (str conf/static-root-url "/runtime/facebook_auth_error.html#" (codec/url-encode "SESSION_EXPIRED")))
-        (let [facebook-service (first (filter #(= (:source %) "/runtime/services/facebook.yml") (:services app)))
+          app-session (sessions/load-session-by-id-without-authentication session-id)]
+      (if-not app-session
+        (resp/redirect (str conf/static-root-url "/runtime-new/runtime/facebook_auth_error.html#" (codec/url-encode "SESSION_EXPIRED")))
+        (let [request (merge req {:app-session app-session} (select-keys @app-session [:app-id :app-info :environment]))
+              app (:content (get-app-from-request request))
+              facebook-service (first (filter #(= (:source %) "/runtime/services/facebook.yml") (:services app)))
               facebook-client-id (or (get-in facebook-service [:server_config :app_id])
                                      (and (:custom? conf/facebook-client-config) (:app-id conf/facebook-client-config)))
 
@@ -887,37 +935,37 @@
                                                        {:keepalive -1
                                                         :form-params {:access_token access-token}}))
                           body (json/read-str body-json :key-fn keyword)]
-                      (swap! (:app-session request) assoc :facebook (merge body {:access-token access-token}))
+
+                      (swap! app-session assoc :facebook (merge body {:access-token access-token}))
+                      (sessions/notify-session-update! app-session)
+
+
                       (-> (resp/response (-> (slurp (runtime-client-resource request "/facebook_auth_success.html"))
-                                             (.replace "{{canonical-url}}" (hiccup-util/escape-html (:app-origin @app-session)))
-                                             (clojure.string/replace #"\{\{cdn\-origin\}\}" (runtime-util/get-static-origin request))
-                                             (clojure.string/replace #"\{\{ide\-origin\}\}" conf/static-root-url)))
+                                             (.replace "{{canonical-url}}" (hiccup-util/escape-html (:app-origin @app-session)))))
                           (resp/content-type "text/html")
                           (resp/status 200)))))))
 
             (catch Exception e
               (log/error e "Error in Facebook auth callback")
-              (resp/redirect (str conf/static-root-url "/runtime/facebook_auth_error.html#" (codec/url-encode (.getMessage e))))))
+              (resp/redirect (str conf/static-root-url "/runtime-new/runtime/facebook_auth_error.html#" (codec/url-encode (.getMessage e))))))
           ))))
 
   (POST "/_/microsoft_auth_callback" req
     ;; Tokens reference: https://docs.microsoft.com/en-us/azure/active-directory/develop/active-directory-v2-tokens
-
     (let [redirect-uri (str conf/runtime-common-url "/_/microsoft_auth_callback")
           session-id (clojure.string/replace (-> req :params :state) #"G[^G]*$" "")
-          request (request-with-session-by-trusted-id req session-id)
-          app-session (:app-session request)
-          request (merge request (select-keys @app-session [:app-id :app-info :environment]))
-          app (:content (get-app-from-request request))
-          microsoft-service (first (filter #(= (:source %) "/runtime/services/anvil/microsoft.yml") (:services app)))]
+          app-session (sessions/load-session-by-id-without-authentication session-id)]
 
-      (if (:anvil.runtime/replacement-session @app-session)
-        (resp/redirect (str conf/static-root-url "/runtime/microsoft_auth_error.html#" (codec/url-encode "SESSION_EXPIRED")))
+      (if-not app-session
+        (resp/redirect (str conf/static-root-url "/runtime-new/runtime/microsoft_auth_error.html#" (codec/url-encode "SESSION_EXPIRED")))
         (if-let [error (-> req :params :error)]
-          (resp/redirect (str conf/static-root-url "/runtime/microsoft_auth_error.html#" (codec/url-encode (str error ": " (-> req :params :error_description)))))
+          (resp/redirect (str conf/static-root-url "/runtime-new/runtime/microsoft_auth_error.html#" (codec/url-encode (str error ": " (-> req :params :error_description)))))
 
           (try
-            (let [provided-csrf-token (last (.split ^String (-> req :params :state) "G"))
+            (let [request (merge req {:app-session app-session} (select-keys @app-session [:app-id :app-info :environment]))
+                  app (:content (get-app-from-request request))
+                  microsoft-service (first (filter #(= (:source %) "/runtime/services/anvil/microsoft.yml") (:services app)))
+                  provided-csrf-token (last (.split ^String (-> req :params :state) "G"))
                   load-id-token! (fn [id-token]
                                    (let [{:keys [kid alg]} (json/read-str (String. ^bytes (b64/decode (.getBytes ^String id-token))) :key-fn keyword)
 
@@ -938,7 +986,7 @@
 
                                      (if (not= (:nonce verified-claims) (::microsoft-nonce @app-session))
                                        (throw (Exception. "NONCE CHECK FAILED"))
-                                       (swap! (:app-session request) assoc-in [:microsoft :id-token] verified-claims))))]
+                                       (swap! app-session assoc-in [:microsoft :id-token] verified-claims))))]
 
               ;; First, check the CSRF token matches the one we put in the session
               (if (not= provided-csrf-token (::microsoft-csrf-token @app-session))
@@ -949,14 +997,16 @@
                 ;; CSRF matches. Choose either the OpenID flow, or the auth code flow.
                 (if-let [id-token (-> req :params :id_token)]
                   ; OpenID flow
-                  (load-id-token! id-token)
+                  (do
+                    (load-id-token! id-token)
+                    (sessions/notify-session-update! app-session))
 
                   ;; There was no ID token, so we must be using the full auth code flow.
                   (let [application-id (or (get-in microsoft-service [:server_config :application_id]) (and (:custom? conf/microsoft-client-config) (:application-id conf/microsoft-client-config)))
                         application-secret (or (get-in microsoft-service [:server_config :application_secret]) (and (:custom? conf/microsoft-client-config) (:application-secret conf/microsoft-client-config)))
                         tenant-id (or (get-in microsoft-service [:server_config :tenant_id]) (and (:custom? conf/microsoft-client-config) (:tenant-id conf/microsoft-client-config)))
                         body-json (:body @(http/post (str "https://login.microsoftonline.com/" (URLEncoder/encode (util/or-str tenant-id "common")) "/oauth2/v2.0/token")
-                                                     {:keepalive -1
+                                                     {:keepalive   -1
                                                       :form-params {:code          (-> req :params :code)
                                                                     :client_id     application-id
                                                                     :client_secret application-secret
@@ -972,74 +1022,73 @@
                       ;; There was no error, so we should be able to find the tokens
                       (do
                         (load-id-token! (:id_token body))
-                        (swap! (:app-session request) update-in [:microsoft] merge {:refresh-token  (:refresh_token body)
-                                                                                    :access-token   (:access_token body)
-                                                                                    :application-id application-id})))))))
+                        (swap! app-session update-in [:microsoft] merge {:refresh-token  (:refresh_token body)
+                                                                         :access-token   (:access_token body)
+                                                                         :application-id application-id})
+                        (sessions/notify-session-update! app-session))))))
 
-            (-> (resp/response (-> (slurp (runtime-client-resource req "/microsoft_auth_success.html"))
-                                   (.replace "{{canonical-url}}" (hiccup-util/escape-html (:app-origin @app-session)))
-                                   (clojure.string/replace #"\{\{cdn\-origin\}\}" (runtime-util/get-static-origin request))
-                                   (clojure.string/replace #"\{\{ide\-origin\}\}" conf/static-root-url)))
-                (resp/content-type "text/html")
-                (resp/status 200))
+              (-> (resp/response (-> (slurp (runtime-client-resource req "/microsoft_auth_success.html"))
+                                     (.replace "{{canonical-url}}" (hiccup-util/escape-html (:app-origin @app-session)))))
+                  (resp/content-type "text/html")
+                  (resp/status 200)))
 
             (catch Exception e
               (log/error e "Error in Microsoft auth callback")
-              (resp/redirect (str conf/static-root-url "/runtime/microsoft_auth_error.html#" (codec/url-encode (or (.getMessage e) (.toString e)))))))))))
+              (resp/redirect (str conf/static-root-url "/runtime-new/runtime/microsoft_auth_error.html#" (codec/url-encode (or (.getMessage e) (.toString e)))))))))))
 
   (POST "/_/saml_auth_login" req
     (let [{relay-state :RelayState saml-response :SAMLResponse} (:params req)
-          [_ session-id provided-csrf-token] (re-matches #"^([^G]*)G(.*)$" (codec/url-decode relay-state))
+          [_ session-id provided-csrf-token] (re-matches #"^([^G]*)G(.*)$" (codec/url-decode relay-state))]
 
-          request (request-with-session-by-trusted-id req session-id)
-          app-session (:app-session request)
+      (let [app-session (sessions/load-session-by-id-without-authentication session-id)
 
-          response-params {"{{canonical-url}}" (hiccup-util/escape-html (:app-origin @app-session))
-                           "{{callback-fn}}"   "samlAuthErrorCallback"}]
+            response-params {"{{canonical-url}}" (when app-session (hiccup-util/escape-html (:app-origin @app-session)))
+                             "{{callback-fn}}"   "samlAuthErrorCallback"}]
 
-      (-> (resp/response
-            (populate-template
-              (runtime-client-resource req "/auth_result.html")
-              (if-not (= provided-csrf-token (::saml-csrf-token @app-session))
-                (assoc response-params "{{args-json}}" (json/write-str {:message "Login failed: Invalid CSRF token"}))
+        (-> (resp/response
+              (populate-template
+                (runtime-client-resource req "/auth_result.html")
+                (if-not (and app-session (= provided-csrf-token (::saml-csrf-token @app-session)))
+                  (assoc response-params "{{args-json}}" (json/write-str {:message "Login failed: Invalid CSRF token"}))
 
-                ;; CSRF check passed
-                (let [request (merge request (select-keys @app-session [:app-id :app-info :environment]))
-                      app (:content (get-app-from-request request))
-                      saml-service (first (filter #(= (:source %) "/runtime/services/anvil/saml.yml") (:services app)))
-                      settings (saml/get-settings (:server_config saml-service) (:app-info request))
+                  ;; CSRF check passed
+                  (let [request (merge req (select-keys @app-session [:app-id :app-info :environment]))
+                        app (:content (get-app-from-request request))
+                        saml-service (first (filter #(= (:source %) "/runtime/services/anvil/saml.yml") (:services app)))
+                        settings (saml/get-settings (:server_config saml-service) (:app-info request))
 
-                      saml-response (doto (SamlResponse. settings nil)
-                                      (.loadXmlFromBase64 saml-response)
-                                      (.setDestinationUrl (str conf/runtime-common-url "/_/saml_auth_login")))]
+                        saml-response (doto (SamlResponse. settings nil)
+                                        (.loadXmlFromBase64 saml-response)
+                                        (.setDestinationUrl (str conf/runtime-common-url "/_/saml_auth_login")))]
 
-                  ;; Make sure we can't use this token again
-                  (swap! app-session dissoc ::saml-csrf-token)
+                    ;; Make sure we can't use this token again
+                    (swap! app-session dissoc ::saml-csrf-token)
 
-                  (if-not (.isValid saml-response)
-                    (assoc response-params "{{args-json}}" (json/write-str {:message "Login failed: Invalid SAML response"}))
+                    (if-not (.isValid saml-response)
+                      (assoc response-params "{{args-json}}" (json/write-str {:message "Login failed: Invalid SAML response"}))
 
-                    ;; SAML Response is valid
-                    (let [attributes (into {} (.getAttributes saml-response))
-                          name-id (.getNameId saml-response)
-                          name-id-format (.getNameIdFormat saml-response)
+                      ;; SAML Response is valid
+                      (let [attributes (into {} (.getAttributes saml-response))
+                            name-id (.getNameId saml-response)
+                            name-id-format (.getNameIdFormat saml-response)
 
-                          email (first (or (get attributes (get-in saml-service [:server_config :email_attribute]))
-                                           (and (= name-id-format Constants/NAMEID_EMAIL_ADDRESS)
-                                                [name-id])
-                                           (get attributes "urn:oid:0.9.2342.19200300.100.1.3")
-                                           (get attributes "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress")))]
+                            email (first (or (get attributes (get-in saml-service [:server_config :email_attribute]))
+                                             (and (= name-id-format Constants/NAMEID_EMAIL_ADDRESS)
+                                                  [name-id])
+                                             (get attributes "urn:oid:0.9.2342.19200300.100.1.3")
+                                             (get attributes "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress")))]
 
-                      (if-not email
-                        (assoc response-params "{{args-json}}" (json/write-str {:message (str "Login failed: SAML response did not contain a valid email address. NameID format was \"" name-id-format "\". You may need to configure the Email Attribute setting in the SAML Service configuration.")}))
-                        (do
-                          ;; Useful reference for SAML attributes: https://edx.readthedocs.io/projects/edx-installing-configuring-and-running/en/named-release-dogwood.rc/configuration/tpa/tpa_SAML_IdP.html
-                          (swap! app-session update-in [:saml] merge {:attributes (json/read-str (json/write-str attributes)) ;; This is silly, but gets rid of pesky ArrayLists that won't serialise.
-                                                                      :email      email})
-                          (log/trace "Successful SAML Login:" (with-out-str (pprint attributes)))
-                          (merge response-params {"{{callback-fn}}" "samlAuthSuccessCallback"
-                                                  "{{args-json}}"   "null"})))))))))
-          (resp/content-type "text/html")
-          (resp/status 200))))
+                        (if-not email
+                          (assoc response-params "{{args-json}}" (json/write-str {:message (str "Login failed: SAML response did not contain a valid email address. NameID format was \"" name-id-format "\". You may need to configure the Email Attribute setting in the SAML Service configuration.")}))
+                          (do
+                            ;; Useful reference for SAML attributes: https://edx.readthedocs.io/projects/edx-installing-configuring-and-running/en/named-release-dogwood.rc/configuration/tpa/tpa_SAML_IdP.html
+                            (swap! app-session update-in [:saml] merge {:attributes (json/read-str (json/write-str attributes)) ;; This is silly, but gets rid of pesky ArrayLists that won't serialise.
+                                                                        :email      email})
+                            (sessions/notify-session-update! app-session)
+                            (log/trace "Successful SAML Login:" (with-out-str (pprint attributes)))
+                            (merge response-params {"{{callback-fn}}" "samlAuthSuccessCallback"
+                                                    "{{args-json}}"   "null"})))))))))
+            (resp/content-type "text/html")
+            (resp/status 200)))))
 
   )

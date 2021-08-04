@@ -16,15 +16,15 @@ All you need to do to run your app locally is:
 
 ### Dependencies
 
-You will need to install the **Java virtual machine**. On Debian-based Linux systems (like Ubuntu and Raspbian), you can do:
+You will need to install the **Java virtual machine** and the Postgres libraries. On Debian-based Linux systems (like Ubuntu and Raspbian), you can do:
 
 ```bash
-$ sudo apt-get install openjdk-8-jdk
+$ sudo apt-get install openjdk-8-jdk libpq-dev
 ```
 
 On a Mac, you can use Homebrew:
 ```bash
-$ brew install openjdk
+$ brew install openjdk pgcli
 ```
 
 On Windows systems, you can install [Amazon Corretto](https://aws.amazon.com/corretto/). Any version is OK (Java 8 minimum).

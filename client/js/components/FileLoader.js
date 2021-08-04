@@ -113,7 +113,7 @@ module.exports = (pyModule) => {
                     if (isTrue(v)) {
                         updateStateText(s);
                     } else {
-                        s._anvil.setProp("text", self._anvil.props["text"]);
+                        s._anvil.setProp("text", s._anvil.props["text"]);
                     }
                 },
             },
@@ -150,7 +150,7 @@ module.exports = (pyModule) => {
                 pyVal: true,
                 defaultValue: Sk.builtin.none.none$,
                 set(s, e, v) {
-                    s._anvil.elements.input.accept = Sk.ffi.remapToJs(v);
+                    s._anvil.elements.input.accept = isTrue(v) ? Sk.ffi.remapToJs(v) : "";
                 },
             },
         }),
@@ -193,6 +193,7 @@ module.exports = (pyModule) => {
             if (!isTrue(enabled)) {
                 inputAttrs.disabled = "";
             }
+            file_types = isTrue(file_types) ? file_types.toString() : ""
             return (
                 <a refName="outer" className={"file-loader " + outerClass} href="javascript:void(0)" style={outerStyle} {...outerAttrs}>
                     <label refName="label" className="anvil-inlinable" style={labelStyle}>
@@ -202,7 +203,7 @@ module.exports = (pyModule) => {
                         </span>
                         <PyDefUtils.IconComponent side="right" icon={icon} icon_align={icon_align} />
                         <form refName="fileUpload" className="file-upload">
-                            <input refName="input" type="file" className="file-upload to-disable" style="display: none" accept={file_types.toString()} {...inputAttrs} />
+                            <input refName="input" type="file" className="file-upload to-disable" style="display: none" accept={file_types} {...inputAttrs} />
                         </form>
                     </label>
                 </a>

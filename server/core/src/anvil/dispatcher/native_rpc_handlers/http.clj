@@ -9,7 +9,8 @@
             [ring.util.codec :as codec]
             [anvil.util :as util]
             [anvil.dispatcher.types :as types]
-            [anvil.dispatcher.core :as dispatcher])
+            [anvil.dispatcher.core :as dispatcher]
+            [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks])
   (:import
     (org.apache.commons.codec.binary Base64)
     (java.io InputStream ByteArrayOutputStream)
@@ -53,7 +54,7 @@
                         (or (nil? data) (= data "")
                             (string? data)) [data]
 
-                        (instance? MediaDescriptor data) [(types/?->InputStream data)
+                        (instance? MediaDescriptor data) [(blocking-hacks/?->InputStream u/*req* data)
                                                                 (.getContentType ^MediaDescriptor data)]
 
                         (map? data) (if (headers "content-type")

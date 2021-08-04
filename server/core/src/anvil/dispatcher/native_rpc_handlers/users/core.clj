@@ -24,7 +24,8 @@
             [anvil.dispatcher.core :as dispatcher]
             [anvil.runtime.secrets :as secrets]
             [anvil.dispatcher.native-rpc-handlers.users.fido :as fido]
-            [anvil.dispatcher.native-rpc-handlers.users.totp :as totp])
+            [anvil.dispatcher.native-rpc-handlers.users.totp :as totp]
+            [anvil.runtime.sessions :as sessions])
   (:import (anvil.dispatcher.types DateTime LiveObjectProxy)
            (java.text SimpleDateFormat)
            (java.util Date)
@@ -161,8 +162,8 @@
   user-row)
 
 (defn force-login [{:keys [remember] :as _kwargs} user-row]
-  (when util/*client-request?*
-    (throw+ {:anvil/server-error "force_login() can only be used in server modules"}))
+  (util/require-server! "call force_login()")
+
   (cond
     (nil? user-row)
     (logout nil)
@@ -501,7 +502,7 @@
             util/*app* (:content app)
             util/*app-id* (:id app)
             util/*environment* environment
-            util/*session-state* (or util/*session-state* (atom nil))
+            util/*session-state* (or util/*session-state* (sessions/new-session {}))
             util/*rpc-print* #(log/info "Email confirmation table output:" %&)]
 
     (let [{:keys [user_table use_email] :as props} (get-props-with-named-user-table)]

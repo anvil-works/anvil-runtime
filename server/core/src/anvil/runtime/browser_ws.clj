@@ -11,7 +11,8 @@
             [anvil.runtime.app-log :as app-log]
             [anvil.metrics :as metrics]
             [anvil.core.worker-pool :as worker-pool]
-            [anvil.runtime.ws-util :as ws-util]))
+            [anvil.runtime.ws-util :as ws-util]
+            [anvil.runtime.sessions :as sessions]))
 
 (defn ws-handler [{:keys [app-id app-session environment] :as request} app-yaml]
   (ws-util/with-opening-channel request channel on-open
@@ -22,28 +23,27 @@
                                                          x)))
                                         (:liveobject-secret))
 
-          ds (serialisation/mk-Deserialiser :session-liveobject-key session-liveobject-secret)
+          ds (serialisation/mk-Deserialiser {:origin :client, :session-liveobject-key session-liveobject-secret})
 
           serial-responder (fn [request-id]
-                             #(serialisation/serialise-to-websocket! (assoc % :id request-id) channel true session-liveobject-secret true))]
+                             #(serialisation/serialise-to-websocket! (assoc % :id request-id) channel true session-liveobject-secret))
+
+          session-listener-registration (sessions/register-session-listener! app-session {:on-event! #(serialisation/serialise-to-websocket! {:id (str "evt" (random/base32 10)) :event %} channel true session-liveobject-secret)})]
 
       (log/debug "Client websocket connected for session" (:id @app-session))
-      (swap! app-session (fn [x] (assoc x ::runtime-ws channel)))
 
       (on-close channel
                 (fn [why]
                   (worker-pool/set-task-info! :websocket ::close)
+                  (sessions/unregister-session-listener! app-session session-listener-registration)
                   (log/debug "Client websocket closed: " (:id @app-session) (pr-str why))
-                  ;; A websocket closing constitutes 'activity' on this session,
-                  ;; so reset its expiry countdown.
-                  (touch-session! app-session)
-                  (swap! app-session (fn [x] (dissoc x ::runtime-ws)))))
+                  ;; TODO: A websocket closing constitutes 'activity' on this session, so reset its expiry countdown.
+                  ))
 
       (on-receive channel
                   (fn [json-or-binary]
                     (worker-pool/set-task-info! :websocket ::receive)
                     (log/trace "Got websocket data from client: " json-or-binary)
-                    (touch-session! app-session)
                     (try
 
                       (if-not (string? json-or-binary)
@@ -62,7 +62,7 @@
                                                     :session-state app-session
                                                     :use-quota?    true
                                                     :call-stack    (list {:type :browser})}
-                                  d (serialisation/deserialise ds data request-template)
+                                  d (serialisation/deserialise ds data)
                                   responder (serial-responder (:id d))
                                   return-path {:respond!
                                                responder
@@ -85,7 +85,8 @@
                                                         :message "Session expired"
                                                         :trace   [["<rpc>", 0]]}})
                                     (dispatcher/dispatch! (assoc request-template
-                                                            :call (assoc (select-keys d [:args :kwargs :vt_global])
+                                                            :vt_global (:vt_global d)
+                                                            :call (assoc (select-keys d [:args :kwargs])
                                                                     :func (or (:command d) (:method (:liveObjectCall d)))
                                                                     :live-object (serialisation/loadLiveObject ds (:liveObjectCall d))))
                                                           return-path)))
@@ -123,7 +124,4 @@
                         (log/error e "Error in client websocket handling")
                         (close channel)))))
 
-      (reset! on-open (fn []
-                        (swap! app-session assoc :default-return-path
-                               {:update!  #(try (send! channel (util/write-json-str %)) (catch Exception _e))
-                                :respond! (fn [_] (throw+ {:anvil/server-error "Cannot send a call result down the default return path"}))}))))))
+      (reset! on-open (fn [] )))))

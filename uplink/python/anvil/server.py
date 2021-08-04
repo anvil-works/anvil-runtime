@@ -1,5 +1,5 @@
 from __future__ import unicode_literals
-import threading, time, json, random, string, logging
+import threading, time, json, random, string, logging, collections
 
 from ws4py.client.threadedclient import WebSocketClient
 
@@ -36,7 +36,14 @@ from ._server import (register,
                       Capability,
                       unwrap_capability,
                       cookies,
-                      CallContext)
+                      CallContext,
+                      raise_event,
+                      list_client_sessions,
+                      get_client_session,
+                      get_session_id,
+                      subscribe,
+                      unsubscribe,
+                      get_subscriptions)
 
 _threaded_server.send_reqresp = lambda r, collect_capabilities=None: _get_connection().send_reqresp(r, collect_capabilities=collect_capabilities)
 
@@ -70,6 +77,53 @@ anvil.app = anvil._AppInfo(None,None)
 CallContext._DEFAULT_TYPE = "uplink"
 context.type = "uplink"
 
+class TaskState(threading.local, collections.MutableMapping):
+    def __init__(self):
+        self._is_valid = False # most threads aren't BG tasks
+        self.d = {}
+
+    def _set_valid(self):
+        self._is_valid = True
+
+    def _check_valid(self):
+        if not self._is_valid:
+            raise Exception("anvil.server.task_state is only accessible in background tasks")
+
+    def _get_dict(self):
+        return self.d
+
+    def __setitem__(self, k, v):
+        self._check_valid()
+        self.d[k] = v
+
+    def __getitem__(self, k):
+        self._check_valid()
+        return self.d[k]
+
+    def __iter__(self):
+        self._check_valid()
+        return iter(self.d)
+
+    def __len__(self):
+        return len(self.d)
+
+    def __repr__(self):
+        self._check_valid()
+        return repr(self.d)
+
+
+task_state = TaskState()
+
+_ongoing_tasks = {}
+
+def _setup_task_state(id, is_setup):
+    if is_setup:
+        task_state._set_valid()
+        _ongoing_tasks[id] = task_state._get_dict()
+    else:
+        _ongoing_tasks.pop(id, None)
+
+
 def reconnect(closed_connection):
     global _connection
     with _connection_lock:
@@ -82,7 +136,8 @@ def reconnect(closed_connection):
         # uplink scripts to fail immediately or not.
         while True:
             time.sleep(10 if _fatal_error else 1)
-            print("Reconnecting Anvil Uplink...")
+            if not _quiet:
+                print("Reconnecting Anvil Uplink...")
             try:
                 _get_connection()
                 break
@@ -195,6 +250,35 @@ class _Connection(WebSocketClient):
                 print("Anvil server output: " + data['output'].rstrip("\n"))
             elif type == "CALL":
                 _threaded_server.IncomingRequest(data)
+            elif type == "LAUNCH_BACKGROUND":
+                _threaded_server.IncomingRequest(data, dump_task_state=True, setup_task_state=_setup_task_state)
+            elif type == "GET_TASK_STATE":
+                task_state = _ongoing_tasks.get(data['task'])
+                if task_state is None:
+                    self.send_with_header({'id': data['id'], 'error': {'type': 'anvil.server.NotRunningTask', 'message': "No such task running"}})
+                else:
+                    def err(*args):
+                        raise _server.SerializationError("Cannot use BlobMedia objects in task state.")
+
+                    def send_reply(msg):
+                        msg['id'] = data['id']
+                        self.send_with_header(msg)
+
+                    try:
+                        sjson = _server.fill_out_media({'response': task_state}, err)
+                        json.dumps(sjson)
+                    except (TypeError, _server.SerializationError) as e:
+                        send_reply({'error': {'type': 'anvil.server.SerializationError', 'message': "Illegal value in a anvil.server.task_state. " + e.args[0]}})
+                    except Exception as e:
+                        send_reply({'id': data['id'], 'error': {'type': 'anvil.server.InternalError', 'message': "Could not get task state: " + e.args[0]}})
+                    else:
+                        send_reply(sjson)
+            elif type == "KILL_TASK":
+                if not _quiet:
+                    print("******************************************************************************")
+                    print("**** This app attempted to kill a background task running on this uplink. ****")
+                    print("**** Background tasks on the uplink cannot be killed.                     ****")
+                    print("******************************************************************************")
             elif type == "CHUNK_HEADER":
                 _serialise.process_blob_header(data)
             elif type is None and "id" in data and ("response" in data or "error" in data):
@@ -253,7 +337,7 @@ def _get_connection():
 def connect(key, url='wss://anvil.works/uplink', quiet=False, init_session=None, extra_headers={}):
     global _key, _url, _fatal_error, _quiet, _init_session, _get_extra_headers
     if _key is not None and _key != key:
-        if not quiet:
+        if not _quiet:
             print("Disconnecting from previous connection first...")
         disconnect()
 

@@ -31,7 +31,6 @@
                               (prometheus/gauge :api/jdbc-pool-active-connections-total {:labels #{:uri :pool}}) ;; TODO: Max, avg
                               (prometheus/counter :api/jdbc-pool-usage-seconds-total {:labels #{:uri :pool}})
 
-                              (prometheus/gauge :api/runtime-active-sessions-total)
                               (prometheus/gauge :api/runtime-connected-downlinks-total)
                               (prometheus/gauge :api/runtime-connected-uplinks-total)
                               (prometheus/counter :api/runtime-serve-app-total)

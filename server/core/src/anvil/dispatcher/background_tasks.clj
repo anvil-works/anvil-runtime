@@ -12,7 +12,9 @@
             [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]
             [anvil.dispatcher.types :as types]
             [anvil.runtime.app-data :as app-data]
-            [anvil.core.worker-pool :as worker-pool])
+            [anvil.core.worker-pool :as worker-pool]
+            [anvil.runtime.sessions :as sessions]
+            [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks])
   (:use     [slingshot.slingshot :only [throw+ try+]])
   (:import (anvil.dispatcher.types DateTime)
            (java.util Date)
@@ -23,6 +25,9 @@
 (defonce implementations (atom {}))
 
 (defrecord BackgroundTask [app_id env_id id task_name routing completion_status final_state start_time last_seen_alive])
+
+(defn mk-BackgroundTaskLiveObject [id]
+  (types/mk-LiveObjectProxy "anvil.private.BackgroundTask" (util/write-json-str id) [] ["get_id" "get_termination_status" "get_error" "get_state" "get_return_value" "get_task_name" "get_start_time" "is_completed" "is_running" "kill"]) )
 
 ;; Background task management and routing hooks
 
@@ -75,14 +80,13 @@
   {:response (nil? completion-status)})
 
 (defn get-state
-  ([task request-context return-path]
-    (get-state task request-context return-path vector))
-  ([task request-context return-path render-resp]
+  ([task return-path]
+    (get-state task return-path vector))
+  ([task return-path render-resp]
    (dispatcher/report-exceptions-to-return-path return-path
      (if-not task
        (dispatcher/respond! return-path (render-resp "mia" nil))
-       (let [{:keys [app_id]} (get-environment-for-background-task task)
-             deserialise #(serialiser/deserialise-from-map % request-context)]
+       (let [deserialise #(serialiser/deserialise-from-map %)]
          (if (:completion_status task)
            (let [full-task (load-background-task-by-id util/db (:id task))]
              (dispatcher/respond! return-path (render-resp (:completion_status task) (deserialise (:final_state full-task)))))
@@ -169,7 +173,7 @@
       (when task
         ;; Env can be nil here when the app has been deleted (this happens during tests)
         (when-let [env (get-environment-for-background-task task)]
-          (app-log/record-raw! session (get-environment-for-background-task task) "session_ended" {:type "background_task" :state nil}))))))
+          (app-log/record-raw! session env "session_ended" {:type "background_task" :state nil}))))))
 
 
 ;; When we send Media into a background task, we need to ensure that it has all arrived
@@ -199,7 +203,7 @@
                                        (find-chunked-streams (:kwargs (:call req)) [:call :kwargs])))]
 
     (reduce (fn [req [obj path]]
-              (assoc-in req path (types/ChunkedStream->Media obj)))
+              (assoc-in req path (blocking-hacks/ChunkedStream->Media obj)))
             req chunked-streams)))
 
 
@@ -244,7 +248,7 @@
 
                                                                                    ;; We probably have too many tasks running, so check whether they're still alive by swapping their completion statuses into an atom.
                                                                                    (doseq [task potentially-running-tasks]
-                                                                                     (get-state task request
+                                                                                     (get-state task
                                                                                                 {:update!  (partial dispatcher/update! return-path)
                                                                                                  :respond! (fn [{data :response}]
                                                                                                              (let [updated-state-responses (swap! state-responses assoc (:id task) data)]
@@ -260,7 +264,7 @@
                                                                   (when rpc-util/*client-request?*
                                                                     (throw+ {:anvil/server-error "Can't manage background tasks from the client" :type "anvil.server.BackgroundTaskError"}))
                                                                   (if (load-background-task-in-environment rpc-util/*environment* id)
-                                                                    (dispatcher/mk-BackgroundTaskLiveObject id)
+                                                                    (mk-BackgroundTaskLiveObject id)
                                                                     (throw+ {:anvil/server-error (str "Background Task not found: " id)
                                                                              :type               "anvil.server.BackgroundTaskNotFound"}))))
 
@@ -271,13 +275,13 @@
                                                                   (doall
                                                                     (for [bt (list-background-tasks rpc-util/*environment* all_environments)
                                                                           :let [id (:id bt)]]
-                                                                      (dispatcher/mk-BackgroundTaskLiveObject id)))))})
+                                                                      (mk-BackgroundTaskLiveObject id)))))})
 
 (def live-object-backends {"anvil.private.BackgroundTask" {:fn (fn [{{func :func {:keys [id]} :live-object} :call :keys [origin environment] :as request} return-path]
                                                                  (dispatcher/report-exceptions-to-return-path return-path
                                                                    (let [id (json/read-str id :key-fn keyword)
                                                                          task (load-background-task-in-environment environment id)
-                                                                         get-state (partial get-state task request return-path)]
+                                                                         get-state (partial get-state task return-path)]
                                                                      (condp = func
                                                                        "get_id" (dispatcher/respond! return-path {:response id})
                                                                        "is_completed" (get-state (fn [status {:keys [error]}]
@@ -327,9 +331,12 @@
 ;; A utility function, for use in pypy and local wrapper. It sets up a new background task record,
 ;; a new session, and a return path pointing to that task. The return value of the function is (optionally) used
 ;; as the final state.
-(defn setup-background-task-context [{:keys [app-id app-origin environment session-state scheduled-task-id] {func :func} :call :as request} impl cleanup-fn]
-  (let [log-ctx (merge {:app-session (atom {:app-origin app-origin
-                                            :client     {:type :background_task}})}
+(defn setup-background-task-context [{:keys [app-id app-origin environment scheduled-task-id] {func :func} :call :as request} impl cleanup-fn]
+  (let [new-session (sessions/new-session {:app-id app-id
+                                           :app-origin  app-origin
+                                           :client      {:type :background_task}
+                                           :environment environment})
+        log-ctx (merge {:app-session new-session}
                        (select-keys request [:app-id :environment]))
         _ (app-log/record! log-ctx :new-session (merge {:type "background-task" :func func}
                                                        (when scheduled-task-id
@@ -347,35 +354,39 @@
                                  (when cleanup-fn
                                    (cleanup-fn task)))}]
 
-    [task return-path]))
+    [task (assoc request :session-state new-session) return-path]))
 
 
 ;; Special background things
 (defonce local-background-tasks (atom {}))
 
 (def respond!)
-(defn launch-local-background-task! [executor {:keys [app-id app-origin func] :as request}]
-  ;; Launch an background task on a non-async-aware executor, using return value as final state
-  (let [[bt return-path] (setup-background-task-context request :local-wrapper #(swap! local-background-tasks dissoc (:id %)))
-        task-state (atom {})]
+(defn launch-local-background-task!
+  ([executor request]
+   ;; Launch an background task on a non-async-aware executor, using return value as final state
+   (let [[bt request return-path] (setup-background-task-context request :local-wrapper #(swap! local-background-tasks dissoc (:id %)))
+         task-state (atom {})]
 
-    (swap! local-background-tasks assoc (:id bt) {:task-state task-state})
+     (swap! local-background-tasks assoc (:id bt) {:task-state task-state})
 
-    (try+
-      ((:fn executor) (-> request
-                          (assoc ::task bt)
-                          (assoc ::task-state task-state)
-                          (dissoc :background?))
-       return-path)
-      (catch :anvil/server-error e
-        (record-final-state! bt {:error {:message (:anvil/server-error e) :type (:type e)}} true)
-        (swap! local-background-tasks dissoc (:id bt)))
-      (catch Exception e
-        (record-final-state! bt {:error {:message "Internal error launching task"}} true)
-        (swap! local-background-tasks dissoc (:id bt))
-        (throw e)))
+     (try+
+       ((:fn executor) (-> request
+                           (assoc ::task bt)
+                           (assoc ::task-state task-state)
+                           (dissoc :background?))
+        return-path)
+       (catch :anvil/server-error e
+         (record-final-state! bt {:error {:message (:anvil/server-error e) :type (:type e)}} true)
+         (swap! local-background-tasks dissoc (:id bt)))
+       (catch Exception e
+         (record-final-state! bt {:error {:message "Internal error launching task"}} true)
+         (swap! local-background-tasks dissoc (:id bt))
+         (throw e)))
 
-    (:id bt)))
+     (mk-BackgroundTaskLiveObject (:id bt))))
+  ([executor request return-path]
+   (dispatcher/synchronous-return-path return-path
+     (launch-local-background-task! executor request))))
 
 (swap! implementations assoc :local-wrapper
        {:get-state (fn [{:keys [id]} return-path]
@@ -397,24 +408,22 @@
   (when-not rpc-util/*req*
     (throw (Exception. "Tried to launch native BG task without a request")))
 
-  (-> (launch-local-background-task! {:fn (fn [request return-path]
-                                            (let [t (worker-pool/spawn-thread! :native-bg-task
-                                                      (let [return-path {:respond! #(dispatcher/respond! return-path (assoc % :taskState @(::task-state request)))
-                                                                         :update!  #(dispatcher/update! return-path %)}]
-                                                        (dispatcher/report-exceptions-to-return-path return-path
-                                                          (try+
-                                                            (rpc-util/with-native-bindings-from-request request return-path
-                                                                                                        (binding [*native-bg-task-state* (::task-state rpc-util/*req*)]
-                                                                                                          (dispatcher/respond! return-path {:response (f)})))
-                                                            (catch InterruptedException e
-                                                              (record-final-state! (::task request) {:taskState @(::task-state request)} :killed))))))]
-                                              (swap! local-background-tasks (fn [ts]
-                                                                              (if (contains? ts (:id (::task request)))
-                                                                                (assoc-in ts [(:id (::task request)) :thread] t)
-                                                                                ts)))))}
-                                     rpc-util/*req*)
-
-      (dispatcher/mk-BackgroundTaskLiveObject)))
+  (launch-local-background-task! {:fn (fn [request return-path]
+                                        (let [t (worker-pool/spawn-thread! :native-bg-task
+                                                  (let [return-path {:respond! #(dispatcher/respond! return-path (assoc % :taskState @(::task-state request)))
+                                                                     :update!  #(dispatcher/update! return-path %)}]
+                                                    (dispatcher/report-exceptions-to-return-path return-path
+                                                      (try+
+                                                        (rpc-util/with-native-bindings-from-request request return-path
+                                                                                                    (binding [*native-bg-task-state* (::task-state rpc-util/*req*)]
+                                                                                                      (dispatcher/respond! return-path {:response (f)})))
+                                                        (catch InterruptedException e
+                                                          (record-final-state! (::task request) {:taskState @(::task-state request)} :killed))))))]
+                                          (swap! local-background-tasks (fn [ts]
+                                                                          (if (contains? ts (:id (::task request)))
+                                                                            (assoc-in ts [(:id (::task request)) :thread] t)
+                                                                            ts)))))}
+                                 rpc-util/*req*))
 
 (defmacro launch-native-background-task! [& body]
   `(launch-native-background-task!* (fn [] ~@body)))

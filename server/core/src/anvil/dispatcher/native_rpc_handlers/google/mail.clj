@@ -18,8 +18,7 @@
 (def jm-session (Session/getInstance (Properties.)))
 
 (defn send-mail [{:keys [to from_address cc bcc subject text html draft _attachments]}]
-  (when *client-request?*
-    (throw+ {:anvil/server-error "Only server modules can send email"}))
+  (require-server! "send email")
   (let [msg (MimeMessage. ^Session jm-session)
         multipart (MimeMultipart. "alternative")
         baos (ByteArrayOutputStream.)

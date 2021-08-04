@@ -16,6 +16,8 @@ module.exports = function(appId, appOrigin) {
     let pyValueTypes = {};
     var pyNamedExceptions = {};
 
+    const pyServerEventHandlers = {}; // {[event_name: string]: pyHandler[]}
+
     var websocket = null; // Promise of a WebSocket
     // requestId->{promise: promise, response: resp, media: {id -> {path: path, mime_type: mime_type, content: [Blob, Blob, Blob], complete: true/false}, ...}}
     var outstandingRequests = {};
@@ -478,7 +480,13 @@ module.exports = function(appId, appOrigin) {
                     maybeHandleResponse(d.id);
 
                 } else if (d.event) {
-                    console.log("Server event: ", d.event);
+                    // TODO: Deserialise response.
+                    console.log("Server event: ", d);
+                    let handlers = pyServerEventHandlers[d.event.name];
+                    if (handlers) {
+                        let chainFns = handlers.map((pyHandler) => () => PyDefUtils.pyCallOrSuspend(pyHandler, [Sk.ffi.remapToPy(d.event.payload)], []));
+                        PyDefUtils.asyncToPromise(() => Sk.misceval.chain(Sk.builtin.none.none$, ...chainFns));
+                    }
                 } else if (d.output) {
                     Sk.output(d.output, true); // The "true" is a Anvil-proprietary thing to mark this as from the server
                 } else if (d['set-cookie']) { 
@@ -756,7 +764,7 @@ module.exports = function(appId, appOrigin) {
             var mapping = mappings[i];
 
             var is = function(pyV, pyType) {
-                return pyV.$d && Sk.builtin.isinstance(pyV, pyType).v;
+                return pyV && pyV.sk$object && Sk.builtin.isinstance(pyV, pyType).v;
             }
 
             if (mapping.value.$anvil_isLazyMedia) {
@@ -1293,11 +1301,72 @@ module.exports = function(appId, appOrigin) {
     /*!defFunction(anvil.server,!_)!2*/ "Reset the current session to prevent further SessionExpiredErrors."
     pyMod["reset_session"] = new Sk.builtin.func(function() {
         // Prevent the session from complaining about expiry. 
-        return PyDefUtils.suspensionFromPromise(PyDefUtils.callAsync(pyMod["call_s"], undefined, undefined, undefined, Sk.ffi.remapToPy("anvil.private.reset_session")).then(r => {
+        return PyDefUtils.suspensionFromPromise(PyDefUtils.callAsync(pyMod["call_s"], undefined, undefined, undefined, Sk.ffi.toPy("anvil.private.reset_session")).then(r => {
             window.anvilSessionToken = Sk.ffi.remapToJs(r);
         }));
     });
 
+    function add_event_handler(pyEventName, pyHandler) {
+        Sk.builtin.pyCheckType("event_name", "str", Sk.builtin.checkString(pyEventName));
+        Sk.builtin.pyCheckType("event_handler", "callable function", Sk.builtin.checkCallable(pyHandler));
+        const eventName = pyEventName.toString();
+        const handlers = pyServerEventHandlers[eventName] || (pyServerEventHandlers[eventName] = []);
+        handlers.push(pyHandler);
+        return Sk.builtin.none.none$;
+    }
+
+    function remove_event_handler(pyEventName, pyHandler) {
+        Sk.builtin.pyCheckType("event_name", "str", Sk.builtin.checkString(pyEventName));
+        Sk.builtin.pyCheckType("event_handler", "callable function", Sk.builtin.checkCallable(pyHandler));
+        const eventName = pyEventName.toString();
+        const prevHandlers = pyServerEventHandlers[eventName];
+        if (prevHandlers === undefined) {
+            throw new Sk.builtin.LookupError(`'${pyHandler}' was not found in '${eventName}' event handlers for server events`);
+        }
+        const newHandlers = prevHandlers.filter(
+            (handler) => handler !== pyHandler && Sk.misceval.richCompareBool(handler, pyHandler, "NotEq")
+        );
+        if (prevHandlers.length === newHandlers.length) {
+            throw new Sk.builtin.LookupError(`'${pyHandler}' was not found in '${eventName}' event handlers for server events`);
+        } else {
+            pyServerEventHandlers[eventName] = newHandlers;
+        }
+        return Sk.builtin.none.none$;
+    }
+
+    function event_handler(pyEventName) {
+        if (!Sk.builtin.checkString(pyEventName)) {
+            throw new Sk.builtin.TypeError("event_handler decorator requires an event_name as the first argument");
+        }
+        return new Sk.builtin.func(function (pyHandler) {
+            add_event_handler(pyEventName, pyHandler)
+            return pyHandler;
+        });
+    }
+
+    Sk.abstr.setUpModuleMethods("anvil.server", pyMod, {
+        /* ! defBuiltinFunction(anvil.server,!_,event_name, event_handler)!1*/
+        add_event_handler: {
+            $name: "add_event_handler",
+            $meth: add_event_handler,
+            $doc: "add an event handler for a server event",
+            $flags: { MinArgs: 2, MaxArgs: 2 },
+        },
+        /* ! defBuiltinFunction(anvil.server,!_,event_name, event_handler)!1*/
+        remove_event_handler: {
+            $name: "remove_event_handler",
+            $meth: remove_event_handler,
+            $doc: "remove an event handler for a server event",
+            $flags: { MinArgs: 2, MaxArgs: 2 },
+        },
+        /* ! defBuiltinFunction(anvil.server,!_,event_name)!1*/
+        event_handler: {
+            $name: "event_handler",
+            $meth: event_handler,
+            $doc: "decorator for marking a function as an event handler.",
+            $flags: { OneArg: true },
+        },
+    });
 
     pyMod["get_app_origin"] = new Sk.builtin.func(function(pyBranch) {
         return PyDefUtils.suspensionFromPromise(PyDefUtils.callAsync(pyMod["call_s"], undefined, undefined, undefined, Sk.ffi.remapToPy("anvil.private.get_app_origin"), pyBranch || Sk.builtin.none.none$));
@@ -1308,6 +1377,11 @@ module.exports = function(appId, appOrigin) {
 
     pyMod["get_api_origin"] = new Sk.builtin.func(function(pyBranch) {
         return PyDefUtils.suspensionFromPromise(PyDefUtils.callAsync(pyMod["call_s"], undefined, undefined, undefined, Sk.ffi.remapToPy("anvil.private.get_api_origin"), pyBranch || Sk.builtin.none.none$));
+    });
+
+    /*!defFunction(anvil.server,!_)!2*/ "Returns `True` if this app is online and `False` otherwise.\nIf `anvil.server.is_app_online()` returns `False` we expect `anvil.server.call()` to throw an `anvil.server.AppOfflineError`"
+    pyMod["is_app_online"] = new Sk.builtin.func(function() {
+        return Sk.ffi.toPy(window.navigator.onLine);
     });
 
     let setupObjectWithClass = (className, vals) => {
@@ -1334,7 +1408,7 @@ module.exports = function(appId, appOrigin) {
     });
 
     // Register the component types (and ComponentTag) as serializable
-    for (let componentName of ['Button','Canvas','CheckBox','ColumnPanel','Component','DataGrid','DataRowPanel','DatePicker','DropDown','FileLoader','FlowPanel','GridPanel','HtmlPanel','Image','Label','LinearPanel','Link','Plot','RadioButton','RepeatingPanel','SimpleCanvas','Spacer','TextArea','TextBox','Timer','XYPanel','YouTubeVideo','ComponentTag']) {
+    for (let componentName of ['Button','Canvas','CheckBox','ColumnPanel','Component','DataGrid','DataRowPanel','DatePicker','DropDown','FileLoader','FlowPanel','GridPanel','HtmlPanel','Image','Label','LinearPanel','Link','Plot','RadioButton','RepeatingPanel','RichText','SimpleCanvas','Spacer','TextArea','TextBox','Timer','XYPanel','YouTubeVideo','ComponentTag']) {
         let pyClass = anvil.$d[componentName];
         pyClass.anvil$serializableName = "anvil."+componentName;
         pyValueTypes["anvil."+componentName] = pyClass;

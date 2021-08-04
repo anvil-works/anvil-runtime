@@ -27,6 +27,16 @@ CREATE TABLE background_tasks (id text not null,
                                debug boolean default false);
 CREATE INDEX background_tasks_idx ON background_tasks (id);
 
+-- Session records
+
+-- TODO this should really be called 'app_sessions' but that name is taken until we do the Log Reorganise
+CREATE TABLE runtime_sessions (
+  session_id text primary key, -- Yes this is not the same thing as the "session_id" in the app_sessions table which should really be called app_log_sessions, I apologise to all of you
+  state text,
+  last_seen timestamp without time zone
+);
+
+
 -- This central sequence is used to get IDs for all app tables on all DBs
 
 CREATE SEQUENCE app_storage_tables_id_seq;
@@ -40,6 +50,6 @@ ALTER SCHEMA data_tables OWNER TO $ANVIL_USER;
 GRANT CREATE ON DATABASE $ANVIL_DATABASE TO $ANVIL_USER;
 ALTER USER $ANVIL_USER WITH CREATEROLE;
 
-GRANT ALL ON background_tasks, scheduled_tasks TO $ANVIL_USER;
+GRANT ALL ON background_tasks, scheduled_tasks, runtime_sessions TO $ANVIL_USER;
 GRANT USAGE ON app_storage_tables_id_seq TO $ANVIL_USER;
 --[/GRANTS]--

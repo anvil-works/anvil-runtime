@@ -70,8 +70,9 @@
 (defn get-app-content-with-dependencies [app-info version-spec]
   ;; Do a recursive dependency lookup on the app
   (let [app (get-app-content app-info version-spec)
-        is-dev? (fn [version-spec] (or (nil? version-spec) (:dev version-spec)))]
+        is-dev? (fn [dep-version-spec] (or (nil? dep-version-spec) (:dev dep-version-spec)))]
     (loop [loaded-deps {}
+           dependency-versions {}
            dep-order '()
            [{:keys [depending-app app_id version]} & more-deps-to-process :as deps-to-process]
            (->> (:dependencies (:content app))
@@ -80,15 +81,16 @@
         ;; Done?
         (empty? deps-to-process)
         (-> app
-          (assoc-in [:content :dependency_code] loaded-deps)
-          (assoc-in [:content :dependency_order] dep-order))
+            (assoc-in [:content :dependency_code] loaded-deps)
+            (assoc-in [:content :dependency_order] dep-order)
+            (assoc :dependency-versions dependency-versions))
 
         :else
         (let [dep-info (get-app-info-with-can-depend depending-app app_id)]
           (cond
             ;; App doesn't exist?
             (not dep-info)
-            (recur (assoc loaded-deps app_id {:error "App dependency not found"}) dep-order more-deps-to-process)
+            (recur (assoc loaded-deps app_id {:error "App dependency not found"}) dependency-versions dep-order more-deps-to-process)
 
             ;; Already loaded a different version of this app?
             (when-let [prev (get loaded-deps app_id)]
@@ -106,20 +108,22 @@
                                         {:error (str "Dependency version mismatch: This app depends on more than one version of the same dependency."
                                                      " (\"" (:name depending) "\" (" depending-app ") depends on the " (if (is-dev? version) "Development" "Published") " version of \"" (:name dep-info) "\" (" app_id "), but"
                                                      " \"" (:name prev-depending) "\" (" (:depending_app prev) ") depends on the " (if (:dev-version? prev) "Published" "Development") " version)")})
-                     dep-order more-deps-to-process))
+                     dependency-versions dep-order more-deps-to-process))
 
             ;; Already loaded the same version of this app?
             (or (get loaded-deps app_id) (= app_id (:id app-info)))
-            (recur loaded-deps dep-order more-deps-to-process)
+            (recur loaded-deps dependency-versions dep-order more-deps-to-process)
 
             ;; Not allowed to see this app?
             (not (:can_depend dep-info))
-            (recur (assoc loaded-deps app_id {:error "Permission denied when loading app dependency"}) dep-order more-deps-to-process)
+            (recur (assoc loaded-deps app_id {:error "Permission denied when loading app dependency"}) dependency-versions dep-order more-deps-to-process)
 
             ;; All good - load the app!
             :else
-            (let [full-app (get-app-content dep-info (if (is-dev? version) {:branch "master"}
-                                                                           {:branch "published", :fallback-branch "master"}))
+            (let [full-app (get-app-content dep-info (if-let [commit-id (get-in version-spec [:dependency-commit-ids app_id])]
+                                                       {:commit-id commit-id}
+                                                       (if (is-dev? version) {:branch "master"}
+                                                                             {:branch "published", :fallback-branch "master"})))
                   dep-content (:content full-app)]
               ;;(println depending-app "(" (:name dep-info) ") -> " (:id dep-info) " (" (:name dep-info) ") version " version " / " version-sha "/" (:version full-app))
               (recur (assoc loaded-deps app_id
@@ -128,6 +132,7 @@
                                                    :commit-id (:version full-app)
                                                    :depending_app depending-app
                                                    :name (:name dep-info))))
+                     (assoc dependency-versions app_id (:version full-app))
                      (cons app_id dep-order)
                      (concat more-deps-to-process (map #(assoc % :depending-app app_id) (:dependencies dep-content)))))))))))
 

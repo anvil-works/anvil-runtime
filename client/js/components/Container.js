@@ -147,7 +147,7 @@ module.exports = function(pyModule) {
 			throw new Sk.builtin.TypeError("Argument to add_component must be a component");
 		}
 		if (pyComponent._anvil.parent !== null) {
-			throw new Sk.builtin.ValueError("This component is already added to a container; call remove_from_parent() first");
+			throw new Sk.builtin.ValueError("This component is already added to a container, call remove_from_parent() first");
 		}
 		return Sk.builtin.none.none$;
 	}

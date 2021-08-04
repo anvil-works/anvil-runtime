@@ -63,7 +63,7 @@ var $builtinmodule = window.memoise('stripe.checkout', function() {
 		};
 
 		var helpers = StripeCheckout.require("lib/helpers");
-		var stripeWillPopup = helpers.isFallback() || (helpers.isSupportedMobileOS() && !(helpers.isNativeWebContainer() || helpers.isAndroidWebapp() || helpers.isiOSWebView() || helpers.isiOSBroken()));
+		var stripeWillPopup = (helpers.isSupportedMobileOS() && !(helpers.isNativeWebContainer() || helpers.isAndroidWebapp() || helpers.isiOSWebView() || helpers.isiOSBroken()));
 
 		// TODO: Work out whether we have actually suspended before this point.
 		// For now, be conservative and assume that we have.

@@ -7,7 +7,8 @@
             [anvil.dispatcher.background-tasks :as background-tasks]
             [clojure.tools.logging :as log]
             [anvil.dispatcher.core :as dispatcher]
-            [clojure.data.json :as json]))
+            [clojure.data.json :as json]
+            [anvil.runtime.sessions :as sessions]))
 
 (defn get-cal-utc []
   (doto (Calendar/getInstance (TimeZone/getTimeZone "UTC"))
@@ -121,8 +122,8 @@
                             :scheduled-task-id job_id
                             :app-id            app_id
                             :environment       environment
-                            :session-state     (atom {:app-id app_id, :environment environment})
-                            :origin            :server}
+                            :session-state     (sessions/mk-session environment)
+                                               :origin :server}
                            ;; Return path
                            {:update!  (constantly nil)
                             :respond! (fn [{:keys [error response]}]
@@ -133,12 +134,11 @@
            (if (nil? last_bg_task_id)
              (launch!)
              (background-tasks/get-state (background-tasks/load-background-task-by-id util/db last_bg_task_id)
-                                         {:app-id app_id, :environment environment, :session-state (atom {}), :origin :server}
                                          {:update!  (constantly nil)
                                           :respond! (fn [{:keys [error response] :as r}]
                                                       (cond
                                                         error
-                                                        (log/error "Failed to retrieve last BG task:" error)
+                                                        (log/error (str "Failed to retrieve last BG task " last_bg_task_id " for job " job_id " in app " app_id ":") error)
 
                                                         response
                                                         (log/info "Not running BG task " job_id "for app" app_id "because background task" last_bg_task_id "is still running")

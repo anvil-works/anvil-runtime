@@ -6,7 +6,7 @@
             [anvil.runtime.conf :as conf]
             [anvil.runtime.app-data :as app-data]
             [anvil.runtime.quota :as quota]
-            [anvil.dispatcher.types :as types]
+            [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks]
             [anvil.runtime.secrets :as secrets]
             [anvil.dispatcher.core :as dispatcher]
             [anvil.util :as util]
@@ -187,14 +187,14 @@
                                   :attachments        (for [[idx ^Media media] (map-indexed vector attachments)
                                                             :when media]
                                                         (doto (MimeBodyPart.)
-                                                          (.setDataHandler (DataHandler. (ByteArrayDataSource. ^InputStream (types/?->InputStream media) ^String (anvil.util/or-str (.getContentType ^MediaDescriptor media) "application/octet-stream"))))
+                                                          (.setDataHandler (DataHandler. (ByteArrayDataSource. ^InputStream (blocking-hacks/?->InputStream rpc-util/*req* media) ^String (anvil.util/or-str (.getContentType ^MediaDescriptor media) "application/octet-stream"))))
                                                           (.setFileName (or (.getName ^MediaDescriptor media) (str "Attachment " (inc idx))))
                                                           (.setDisposition "attachment")))
 
                                   :inline-attachments (for [[idx [content-id ^Media media]] (map-indexed vector inline_attachments)
                                                             :when (and content-id media)]
                                                         (doto (MimeBodyPart.)
-                                                          (.setDataHandler (DataHandler. (ByteArrayDataSource. ^InputStream (types/?->InputStream media) ^String (anvil.util/or-str (.getContentType ^MediaDescriptor media) "application/octet-stream"))))
+                                                          (.setDataHandler (DataHandler. (ByteArrayDataSource. ^InputStream (blocking-hacks/?->InputStream rpc-util/*req* media) ^String (anvil.util/or-str (.getContentType ^MediaDescriptor media) "application/octet-stream"))))
                                                           (.setFileName (or (.getName ^MediaDescriptor media) (str "Attachment " (inc idx))))
                                                           (.setDisposition "inline")
                                                           (.setContentID (str "<" (name content-id) ">"))))

@@ -22,17 +22,12 @@
    :ip       (:remote-addr req)
    :location (util/get-ip-location (:remote-addr req))})
 
-;; id -> {:url-token token, :temporary-url-tokens #{...},  ...session}
-(defonce app-sessions (atom {}))
 (defonce session-setup-hooks (atom {}))
-(defn- mk-app-session
-  ([new-session-id req] (mk-app-session new-session-id req :browser))
-  ([new-session-id req client-type]
+(defn blank-app-session-state
+  ([req] (blank-app-session-state req :browser))
+  ([req client-type]
    (apply merge
-          {:id                   new-session-id
-           :url-token            (when (or conf/permit-url-session-tokens? (:allow-debug? (:environment req)))
-                                   (str new-session-id "=" (random/base32 30)))
-           :app-origin           (:app-origin req)
+          {:app-origin           (:app-origin req)
            :app-id               (:app-id req)
            :app-info             (:app-info req)
            :environment          (:environment req)
@@ -43,11 +38,11 @@
                                    (let [[_ host] (re-find #"//([^/:]*)" (:app-origin req))
                                          idn (try (InternetDomainName/from host) (catch IllegalArgumentException e nil))]
                                      (if (and idn (.isUnderPublicSuffix idn))
-                                       (.topPrivateDomain idn)
+                                       (str (.topPrivateDomain idn))
                                        host)))
 
-           :cookies              {:local  (atom nil)
-                                  :shared (atom nil)}
+           :cookies              {:local  {}
+                                  :shared {}}
 
            :client               (client-info-from-request client-type req)
 
@@ -59,102 +54,21 @@
             (hook req)))))
 
 (defn reload-anvil-cookies! [into-session req]
-  (when (:cookies @into-session)
-    (when-let [local-cookie (get-in req [:cookies (:local conf/app-cookie-names)])]
-      (swap! (-> @into-session :cookies :local) (fn [_] (cookies/deserialise-cookie local-cookie))))
-    (when-let [shared-cookie (get-in req [:cookies (:shared conf/app-cookie-names)])]
-      (swap! (-> @into-session :cookies :shared) (fn [_] (cookies/deserialise-cookie shared-cookie)))))
-  into-session)
+  ;; When a request comes in, we have some stuff on the actual cookies coming into the request. It might be
+  ;; different to what the session thinks - if so, the request wins
+  (when-let [current-cookies-serialised (:cookies @into-session)]
+    (let [session-current-local (cookies/deserialise-cookie (:local current-cookies-serialised))
+          session-current-shared (cookies/deserialise-cookie (:shared current-cookies-serialised))
+          req-local-serialised (get-in req [:cookies (:local conf/app-cookie-names) :value])
+          req-shared-serialised (get-in req [:cookies (:shared conf/app-cookie-names) :value])
+          req-local (cookies/deserialise-cookie req-local-serialised)
+          req-shared (cookies/deserialise-cookie req-shared-serialised)]
 
-(defn delete-session! [request]
-  (swap! app-sessions dissoc (:id @(:app-session request))))
-
-; TODO: Run this on a timer when the runtime starts. Don't rely on the user of the runtime library running it every so often.
-(defn cleanup-sessions! []
-  (swap! app-sessions #(into {} (filter (fn [[_ s]] (or (< (- (System/currentTimeMillis) (* conf/runtime-session-expire-seconds 1000))
-                                                           (::last-accessed @s))
-                                                        (:anvil.runtime.ws/runtime-ws @s)))
-                                        %))))
-
-(defn touch-session! [s]
-  (swap! s assoc ::last-accessed (System/currentTimeMillis)))
-
-
-(defn- session-matches? [{:keys [environment] :as req} existing-session]
-  (log/trace "Session match?"
-             [(:app-id @existing-session)
-              (:app-id req)
-              (= (:app-id req) (:app-id @existing-session))]
-             "second set"
-             [(not environment)                             ; Some requests allegedly don't have an environment, e.g. OAuth callbacks
-              (:env_id environment)
-              (:env_id (:environment @existing-session))])
-  (and existing-session
-       ; If we're using an existing session, make sure its app-id matches this request.
-       (or (not (:app-id @existing-session))
-           (not (:app-id req))
-           (= (:app-id req) (:app-id @existing-session)))
-       ; Also make sure we don't share debug and production sessions.
-       (or (not environment) ; Some requests allegedly don't have an environment, e.g. OAuth callbacks
-           (= (:env_id environment) (:env_id (:environment @existing-session))))))
-
-(defn- request-with-new-session [{:keys [environment] :as req} replaced-session-id]
-  (let [new-session-id (.toLowerCase (random/hex 32))]
-    (log/trace (str "Creating new session") new-session-id "for app" (:app-id req) " + environment " (:env_id environment) "), replacing" (or replaced-session-id "NONE (new session)"))
-    (swap! app-sessions #(assoc % new-session-id (atom (-> (mk-app-session new-session-id req)
-                                                           (assoc :anvil.runtime/replacement-session (boolean replaced-session-id))))))
-    (metrics/set! :api/runtime-active-sessions-total (count @app-sessions))
-    (assoc req :app-session (get @app-sessions new-session-id) :new-session true)))
-
-(defn request-with-session [{:keys [environment] :as req} app-session]
-  (do
-    (log/trace (str "Using existing session " (:id @app-session) " (last accessed " (::last-accessed @app-session) ", app id " (:app-id req) " + environment " (:env_id environment) ")"))
-    (touch-session! app-session)
-    (metrics/set! :api/runtime-active-sessions-total (count @app-sessions))
-    (assoc req :app-session app-session
-               :environment-from-url environment
-               :environment (merge environment (:environment @app-session)))))
-
-(defn request-with-session-by-trusted-id-when-valid [req session-id]
-  (when-let [existing-session (get @app-sessions session-id)]
-    (when (session-matches? req existing-session)
-      (log/trace "Session matched by trusted ID")
-      (request-with-session req existing-session))))
-
-(defn request-with-session-by-trusted-id [req try-session-id]
-  (or (request-with-session-by-trusted-id-when-valid req try-session-id)
-      (request-with-new-session req try-session-id)))
-
-(defn request-with-session-by-url-token-when-valid [req session-id supplied-token]
-  (when-let [app-session (and session-id supplied-token (get @app-sessions session-id))]
-    (let [{:keys [url-token temporary-url-tokens]} @app-session]
-      (log/trace "Checking URL token" supplied-token "against possibilities:" url-token temporary-url-tokens)
-      (log/trace [(and url-token (= (util/sha-256 url-token) (util/sha-256 supplied-token)))
-                  (some #(= (util/sha-256 %) (util/sha-256 supplied-token)) temporary-url-tokens)]
-                 "match?" (session-matches? req app-session))
-      (when (and (or (and url-token (= (util/sha-256 url-token) (util/sha-256 supplied-token)))
-                     (some #(= (util/sha-256 %) (util/sha-256 supplied-token)) temporary-url-tokens))
-                 (session-matches? req app-session))
-        (log/trace "Session matched by URL token")
-        (-> (request-with-session req app-session)
-            (assoc :url-session-token supplied-token
-                   :temporary-url-session-token? (not= url-token supplied-token)))))))
-
-(defn generate-tmp-url-token! [app-session]
-  (when-not (:id @app-session)
-    (swap! app-session update-in [:id] #(or % (random/hex 32)))
-    (touch-session! app-session)
-    (swap! app-sessions assoc (:id @app-session) app-session))
-  (let [token (str (:id @app-session) "=" (random/base32 30))]
-    (swap! app-session update-in [:temporary-url-tokens] #(conj (or % #{}) token))
-    token))
-
-(defn clear-temporary-url-token! [app-session combined-token]
-  (when-let [[_ _id token] (re-matches #"(.*?)=(.*)" combined-token)]
-    (swap! app-session update-in [:temporary-url-tokens] disj token)))
-
-(defn mk-temp-session [req client-type]
-  (mk-app-session "temp" req client-type))
+      (when (or (not= session-current-local req-local)
+                (not= session-current-shared req-shared))
+        (swap! into-session update-in [:cookies] merge
+               (when req-local {:local req-local-serialised})
+               (when req-shared {:shared req-shared-serialised}))))))
 
 (defn with-identify-cross-origin [handler]
   (fn [request]
@@ -201,51 +115,6 @@
       (handler (if cross-origin?
                  (assoc request :cross-origin foreign-origin)
                  (assoc request :alternate-app-origin foreign-origin))))))
-
-(defn with-app-session [handler]
-  (fn [req]
-    (let [env-id (get-in req [:environment :env_id])
-
-          session-token-from-url (or (-> req :params :s))
-          [_ session-id-from-url] (when session-token-from-url
-                                    (re-matches #"(.+?)=.*" session-token-from-url))
-
-          ;; To prevent PDF rendering from clobbering URL tokens, we treat their cookies differently.
-          ;; Specifically, we special -case "app session ID from cookies that were themselves set because
-          ;; of a *temporary* URL token", and don't clobber the session's URL token in that case.
-          r-s (get-in req [:session (:app-id req) env-id])
-          session-id-from-cookie (or (:session-id r-s) (:tmp-session-id r-s))
-          ;_ (log/trace "Request for" (:app-id req) "/" env-id " to " (:path-info req))
-          ;_ (log/trace "Cookie says" session-id-from-cookie "; URL says" session-id-from-url)
-          {:keys [app-session temporary-url-session-token?] :as req-with-session}
-          (or
-            (request-with-session-by-url-token-when-valid req session-id-from-url session-token-from-url)
-
-            (request-with-session-by-trusted-id-when-valid req session-id-from-cookie)
-
-            (request-with-new-session req (or session-id-from-url session-id-from-cookie)))]
-
-      ;; If the main client for this session can use cookies, disable URL tokens for this session
-      ;; (but only when using HTTPS, because Chrome is madly inconsistent about cookies and iframes on HTTP,
-      ;; and if you're running in an HTTP configuration outside a dev environment, you've got bigger problems.)
-      (when (and (contains? r-s :session-id) (:url-token @app-session) (.startsWith "https://" (:app-origin req)))
-        (swap! app-session dissoc :url-token))
-
-      ;; Callback used for caching purposes
-      (when-let [callback (::call-when-app-session-loaded! req)]
-        (callback app-session))
-
-      (when-let [r (handler req-with-session)]
-        ;; This will explicitly nuke any Ring session state the handler set, stopping us from accidentally using it.
-        (-> r
-            (assoc :session (assoc-in (:session req)
-                                      [(:app-id req) env-id (if temporary-url-session-token? :tmp-session-id :session-id)]
-                                      (when-not (:delete-session? r)
-                                        ;; This (or) allows us to use temporary session IDs
-                                        ;; we use for print sessions, when using a browser to access sessions
-                                        ;; that don't normally have IDs (eg HTTP endpoints, uplink, etc)
-                                        (:id @app-session))))
-            (dissoc :delete-session?))))))
 
 
 
@@ -299,4 +168,6 @@
       (resp/response)
       (resp/content-type "text/html")))
 
-(def set-hooks! (util/hook-setter #{runtime-client-resource get-static-origin}))
+(defonce get-runtime-app-info (fn [environment] {:id "" :branch nil :environment (select-keys environment [:description :tags])}))
+
+(def set-hooks! (util/hook-setter #{runtime-client-resource get-static-origin get-runtime-app-info}))

@@ -138,7 +138,6 @@ class Connection(WebSocketClient):
 
         else:
             data = json.loads(message.data.decode())
-            #print "Received: " + repr(data)
 
             type = data["type"] if 'type' in data else None
             id = data["id"] if 'id' in data else None
@@ -236,7 +235,7 @@ class Connection(WebSocketClient):
                 elif id.startswith("downlink-keepalive"):
                     pass # We don't care about these
                 else:
-                    print("Bogus reply: " + repr(data)[:100])
+                    print("Bogus reply for " + id +": " + repr(data)[:120])
 
             elif type is None and "error" in data:
                 print("Fatal error from Anvil server: " + str(data["error"]))
@@ -420,13 +419,17 @@ else:
 
 def signal_drain(_signum, _frame):
     global draining_start_time
-    connection.send_with_header({
-        "type": "DRAIN"
-    })
-    print("Draining downlink. %s call(s) remaining:" % len(workers_by_id))
-    print(list(workers_by_id.keys()))
-    draining_start_time = time.time()
-    maybe_quit_if_draining_and_done()
+    if draining_start_time:
+        print("Downlink has already been draining for %s seconds. %s call(s) remaining:" % (int(time.time() - draining_start_time), len(workers_by_id)))
+        print(list(workers_by_id.keys()))
+    else:
+        connection.send_with_header({
+            "type": "DRAIN"
+        })
+        print("Draining downlink. %s call(s) remaining:" % len(workers_by_id))
+        print(list(workers_by_id.keys()))
+        draining_start_time = time.time()
+        maybe_quit_if_draining_and_done()
 
 
 def report_stats():
@@ -449,7 +452,7 @@ def report_stats():
 def run_downlink_host():
     global connection
 
-    url = os.environ.get("DOWNLINK_SERVER", "ws://127.0.0.1:3000/downlink")
+    url = os.environ.get("DOWNLINK_SERVER", "ws://localhost:3000/downlink")
     key = os.environ.get("DOWNLINK_KEY", "ZeXiedeaceimahm1ePhaguvu5Ush9E")
     os.environ['TZ'] = 'UTC'
 

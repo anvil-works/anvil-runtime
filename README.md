@@ -77,6 +77,7 @@ The standalone app server supports the following options:
       --smtp-server-port PORT               Accept SMTP email on the specified port
       --origin URL                          Set the home URL of this app (eg https://my-app.com)
       --disable-tls                         Don't terminate TLS connections, regardless of the origin scheme
+      --forward-headers-insecure            When running embedded TLS termination, pass through the X-Forwarded-* headers (off by default)
       --letsencrypt-storage PATH            Path to a JSON file to store LetsEncrypt certificates
                                             (default: <data-dir>/letsencrypt-certs.json)
       --letsencrypt-staging                 Use the LetsEncrypt staging server
@@ -242,6 +243,10 @@ If you want to supply your own TLS certificates, see the `manual-cert-file` opti
 #### disable-tls
 
 If this option is specified, the Anvil app server will not run a TLS server, even if an HTTPS `origin` is provided. It will open an HTTP server as controlled by the `ip` and `port` options.
+
+#### forward-headers-insecure
+
+When running embedded TLS termination, trust incoming `X-Forwarded-*` headers and forward them to the Anvil App Server. You should only enable this option when running behind a trusted reverse proxy which sets these headers.
 
 #### letsencrypt-storage
 

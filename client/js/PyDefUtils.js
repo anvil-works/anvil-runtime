@@ -627,18 +627,8 @@ PyDefUtils.getOuterClass = function getOuterClass({
         classList.push("visible-false");
     }
     if (isTrue(role)) {
-        role = Sk.ffi.remapToJs(role);
-        if (typeof role === "string") {
-            classList.push("anvil-role-" + role.replace(/[^A-Za-z0-9_\-]/g, ""))
-        } else if (Array.isArray(role)) {
-            role.forEach((r) => {
-                if (typeof r !== "string") {
-                    throw new Sk.builtin.TypeError("role must be None, a string, or a list of strings");
-                }
-               classList.push("anvil-role-" + r.replace(/[^A-Za-z0-9_\-]/g, ""));
-            });
-        } else {
-            throw new Sk.builtin.TypeError("role must be None, a string, or a list of strings"); 
+        for (let r of PyDefUtils.applyRole(role)) {
+            classList.push("anvil-role-" + r);
         }
     }
     if (isTrue(text)) {
@@ -649,6 +639,55 @@ PyDefUtils.getOuterClass = function getOuterClass({
 
 const hasUnits = /[a-zA-Z%]/g
 PyDefUtils.cssLength = (len) => (len === "default" || !len ? "" : ("" + len).match(hasUnits) ? len : len + "px");
+
+const ROLE_REGEX = /[^A-Za-z0-9_\-]/g
+
+/** Cleans roles for css and returns the roles as list of strings. If a domNode is provided the classList and anvil-role attribute is updated. */
+PyDefUtils.applyRole = (role, domNode = null) => {
+    // get all the classes that that are not anvil-roles
+    role = Sk.ffi.toJs(role);
+
+    const newRoles = [];
+
+    if (role === null) {
+        // pass
+    } else if (Array.isArray(role)) {
+        for (let r of role) {
+            if (!typeof r === "string") {
+                throw new Sk.builtin.TypeError("role must be None, a string, or a list of strings");
+            }
+            newRoles.push(r.replace(ROLE_REGEX, ""));
+        }
+    } else if (typeof role === "string") {
+        newRoles.push(role.replace(ROLE_REGEX, ""));
+    } else {
+        throw new Sk.builtin.TypeError("role must be None, a string, or a list of strings");
+    }
+
+    if (domNode !== null) {
+        const hasPrevRoles = domNode.getAttribute("anvil-role") !== null;
+        const hasNewRoles = newRoles.length !== 0;
+        if (hasNewRoles && !hasPrevRoles) {
+            domNode.setAttribute("anvil-role", newRoles.join(" "));
+            domNode.className = domNode.className + " anvil-role-" + newRoles.join(" anvil-role-");
+        } else if (hasNewRoles) {
+            domNode.setAttribute("anvil-role", newRoles.join(" "));
+            domNode.className =
+                Array.prototype.filter.call(domNode.classList, (c) => !c.startsWith("anvil-role-")).join(" ") +
+                " anvil-role-" +
+                newRoles.join(" anvil-role-");
+        } else if (hasPrevRoles) {
+            domNode.removeAttribute("anvil-role");
+            domNode.className = Array.prototype.filter
+                .call(domNode.classList, (c) => !c.startsWith("anvil-role-"))
+                .join(" ");
+        } else {
+            // nothing to do - no roles to add and no roles to remove;
+        }
+    }
+
+    return newRoles;
+};
 
 PyDefUtils.getColor = (v) => {
     v = Sk.builtin.checkNone(v) ? "" : v.toString();
@@ -703,7 +742,6 @@ PyDefUtils.getOuterStyle = function getOuterStyle({ align, font_size, font, bold
 
 }
 
-const role_regex = /[^A-Za-z0-9_\-]/g;
 PyDefUtils.getOuterAttrs = function getOuterAttrs ({tooltip, source, role, enabled}) {
     const attrs = {};
     if (isTrue(tooltip)) {
@@ -713,18 +751,7 @@ PyDefUtils.getOuterAttrs = function getOuterAttrs ({tooltip, source, role, enabl
         attrs["src"] = source.toString();
     }
     if (isTrue(role)) {
-        const roles = [];
-        role = Sk.ffi.remapToJs(role);
-        if (typeof role === "string") {
-            roles.push(role.replace(role_regex, ""))
-        } else if (Array.isArray(role)) {
-            role.forEach((r) => {
-                if (typeof r !== "string") {
-                    throw new Sk.builtin.TypeError("role must be None, a string, or a list of strings");
-                }
-               roles.push(r.replace(role_regex, ""));
-            });
-        }
+        const roles = PyDefUtils.applyRole(role);
         attrs["anvil-role"] = roles.join(" ");
     }
     if (enabled !== undefined && !isTrue(enabled)) {
@@ -1016,34 +1043,7 @@ var propertyGroups = {
             pyVal: true,
             exampleValue: "title",
             set(s, e, v) {
-                var classes = e.attr("class").split(/\s+/);
-                for (let cls of classes) {
-                    if (/^anvil-role-/.test(cls)) {
-                        e.removeClass(cls);
-                    }
-                }
-                let role = null;
-                if (isTrue(v)) {
-                    v = Sk.ffi.remapToJs(v);
-                    if (typeof v === "string") {
-                        v = [v];
-                    }
-                    if (!(Array.isArray(v))) {
-                        throw new Sk.builtin.TypeError("role must be None, a string, or a list of strings");
-                    }
-
-                    for (let i = 0; i < v.length; i++) {
-                        let r = v[i];
-                        if (typeof r !== "string") {
-                            throw new Sk.builtin.TypeError("role must be a list of strings");
-                        }
-                        r = ("" + r).replace(/[^A-Za-z0-9_\-]/g, "");
-                        role = role ? role + " " + r : r;
-                        e.addClass("anvil-role-" + r);
-                    }
-                }
-
-                e.attr("anvil-role", role);
+                PyDefUtils.applyRole(v, s._anvil.domNode);
             },
         },
     },

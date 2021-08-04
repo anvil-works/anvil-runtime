@@ -1,7 +1,7 @@
 (ns anvil.app-server.run
   (:use [org.httpkit.server :only [run-server]]
-        [compojure.handler :only [site]]
         [slingshot.slingshot]
+        [ring.middleware.defaults :refer [wrap-defaults site-defaults]]
         [ring.middleware.session.memory :only [memory-store]]
         [clojure.pprint])
   (:require [anvil.app-server.conf :as conf]
@@ -16,6 +16,7 @@
             [anvil.runtime.cron :as cron]
             [clojure.tools.logging :as log]
             [anvil.runtime.tables.util :as tables-util]
+            [anvil.runtime.sessions :as runtime-sessions]
             [anvil.util :as util]
             [ring.util.response :as resp]
             [anvil.core.server :as anvil-server]
@@ -139,7 +140,7 @@
                 (log/error e "Failed to load app %s: %s" main-app-id)
                 (System/exit 1)))]
     (update-cron-jobs! (:content app))
-    (tables/validate-app-tables-schema (-> app :content :db_schema) main-app-id auto-migrate-tables? ignore-invalid-schema?)))
+    (tables/validate-app-tables-schema (-> app :content :db_schema) (-> app :content :table_id_hints) main-app-id auto-migrate-tables? ignore-invalid-schema?)))
 
 (defn wrap-cors [f origin]
   (fn [x]
@@ -210,14 +211,15 @@
     "*")
   runtime/runtime-common-routes
   (wrap-constant-app
-    (runtime-util/with-app-session
+    (runtime-sessions/with-app-session
       (routes
         (GET "/" request
           (runtime/serve-app request
                              {:consoleMessage (format "***********\nThis application is served with the Anvil App Server, which is open-source software.\nYou can find the source code at:\n%s\n**********"
                                                       @source-link)}
                              {:action :run-app}))
-        runtime/app-routes)))
+        runtime/app-routes)
+      (constantly "anvil-session")))
   runtime/app-404)
 
 
@@ -290,6 +292,7 @@
                                :validate [#(re-matches #"[0-9]+" %) "Expected a port number"]]
                               [nil "--origin URL" "Set the home URL of this app (eg https://my-app.com)"]
                               [nil "--disable-tls" "Don't terminate TLS connections, regardless of the origin scheme"]
+                              [nil "--forward-headers-insecure" "When running embedded TLS termination, pass through the X-Forwarded-* headers. Default: false"]
                               [nil "--letsencrypt-storage PATH" "Path to a JSON file to store LetsEncrypt certificates (default: <data-dir>/letsencrypt-certs.json)"]
                               [nil "--letsencrypt-staging" "Use the LetsEncrypt staging server"]
                               [nil "--manual-cert-file PATH" "Path to an external TLS certificate in PEM format"]
@@ -438,6 +441,7 @@
                                                    :listen-ip         (:ip options)
                                                    :http-listen-port  (:http-redirect-port options)
                                                    :https-listen-port https-port
+                                                   :forward-headers-insecure  (:forward-headers-insecure options)
 
                                                    :dashboard-port    traefik-dashboard-port}
 
@@ -467,18 +471,22 @@
     (load-main-app (:auto-migrate options) (:ignore-invalid-schema options))
 
     ;; TODO: Check Same-Site cookie defaults. May need to be set to :none rather than :strict.
-    (anvil-server/run-server (:ip options) http-port
-                             (site
-                               (ring-json/wrap-json-response
-                                 (wrap-provide-source
-                                   (wrap-with-origin-scheme-and-port
-                                     (if (or use-reverse-proxy? (:disable-tls options))
-                                       #'app
-                                       (wrap-retrieve-original-remote-address #'app))
-                                     (.getScheme origin-uri)
-                                     (if (= (.getScheme origin-uri) "https")
-                                       (or (get-port (:origin options)) 443)
-                                       (or (get-port (:origin options)) 80)))))))
+    (let [handler (wrap-defaults
+                    (ring-json/wrap-json-response
+                      (wrap-provide-source
+                        (wrap-with-origin-scheme-and-port
+                          #'app
+                          (.getScheme origin-uri)
+                          (if (= (.getScheme origin-uri) "https")
+                            (or (get-port (:origin options)) 443)
+                            (or (get-port (:origin options)) 80)))))
+                    site-defaults)]
+      (anvil-server/run-server (:ip options) http-port
+                               (wrap-retrieve-original-remote-address ;; We'll deal with X-Forwarded-For headers ourselves.
+                                 (if (or use-reverse-proxy? (:disable-tls options) (:forward-headers-insecure options))
+                                   ;; Only trust X-Forwarded-For headers if behind a proxy
+                                   (util/wrap-correct-forwarded-remote-addr handler)
+                                   handler))))
 
     (log/info "App URL: " (:origin options))
 
@@ -506,6 +514,14 @@
 
 
     (tables-util/start-transaction-tidy-timer)
+
+    (future
+      (while true
+        (try
+          (runtime-sessions/cleanup-sessions!)
+          (catch Exception e
+            (util/report-uncaught-exception "runtime-util/cleanup-sessions!" e)))
+        (Thread/sleep (* 5 60 1000))))
 
     (future
       (Thread/sleep 5000)

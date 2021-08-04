@@ -5,15 +5,18 @@
             [anvil.dispatcher.native-rpc-handlers.util :as nrpc-util]
             [anvil.dispatcher.core :as dispatcher]
             [clojure.tools.logging :as log]
-            [anvil.dispatcher.types :as types])
+            [anvil.dispatcher.types :as types]
+            [anvil.runtime.app-log :as app-log]
+            [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks])
   (:import (anvil.dispatcher.types Media SerialisableForRpc ChunkedStream)))
 
 (defn serve-lazy-media [media-id]
   (let [[func args kwargs] (json/read-str media-id)
         trigger (promise)
-        return-path (-> (or (:default-return-path @nrpc-util/*session-state*)
-                            {:update! (constantly nil) :respond! (constantly nil)})
-                        (assoc :respond! #(do (log/trace "Response:" %) (deliver trigger %))))]
+        return-path {:update!  (fn [{:keys [output]}]
+                                 (when (string? output)
+                                   (app-log/record! (nrpc-util/log-ctx) "print" [{:t (System/currentTimeMillis) :s output}])))
+                     :respond! #(do (log/trace "Response:" %) (deliver trigger %))}]
 
     (log/trace "Dispatching call")
     (dispatcher/dispatch! {:call          {:func func, :args (or args []), :kwargs (or kwargs {})},
@@ -47,7 +50,7 @@
             (throw+ {:anvil/server-error (str "Server function '" func "' did not return Media data; cannot download")})))
 
         (instance? ChunkedStream response)
-        (types/ChunkedStream->Media response)
+        (blocking-hacks/ChunkedStream->Media response)
 
         :else
         (do

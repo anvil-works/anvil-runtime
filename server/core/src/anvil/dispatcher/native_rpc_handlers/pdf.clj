@@ -3,11 +3,12 @@
   (:require [anvil.dispatcher.core :as dispatcher]
             [crypto.random :as random]
             [anvil.util :as util]
-            [anvil.runtime.util :as runtime-util]
             [anvil.runtime.app-data :as app-data]
-            [clojure.tools.logging :as log]))
+            [clojure.tools.logging :as log]
+            [anvil.runtime.sessions :as sessions]
+            [anvil.executors.downlink :as downlink]))
 
-;;(clj-logging-config.log4j/set-logger! :level :info)
+(clj-logging-config.log4j/set-logger! :level :trace)
 
 (defonce get-pdf-renderer (constantly nil))
 
@@ -25,23 +26,23 @@
                                                    (when-not (= :server_module (:type (first (:call-stack req))))
                                                      (throw+ {:anvil/server-error "Permission denied to private function"}))
 
-                                                   (let [same-server-executor (:anvil.dispatcher/same-server-executor req)
+                                                   (let [downlink-spec (:anvil.executors.downlink/same-downlink-spec req)
                                                          ;; Even within a session, the client shouldn't be able to guess a print key (the PDF's contents might be secret), so
                                                          print-id (random/base32 16)
                                                          print-key (random/base32 32)
-                                                         tmp-url-token (runtime-util/generate-tmp-url-token! session-state)
+                                                         tmp-url-token (sessions/generate-tmp-url-token! session-state)
                                                          new-return-path {:respond! #(do
                                                                                        (swap! (:session-state req) update-in [:print-sessions] dissoc print-id)
-                                                                                       (runtime-util/clear-temporary-url-token! session-state tmp-url-token)
+                                                                                       (sessions/clear-temporary-url-token! session-state tmp-url-token)
                                                                                        (dispatcher/respond! return-path %))
                                                                           :update!  #(dispatcher/update! return-path %)}]
 
-                                                     (when-not same-server-executor
+                                                     (when-not downlink-spec
                                                        (throw+ {:anvil/server-error "No executor return trace available: Probably called from wrong environment"}))
 
                                                      (swap! session-state
                                                             assoc-in [:print-sessions print-id]
-                                                            {:key print-key :executor same-server-executor, :ref (first (:args (:call req)))})
+                                                            {:key print-key :downlink downlink-spec, :ref (first (:args (:call req)))})
 
 
                                                      (dispatcher/report-exceptions-to-return-path new-return-path
@@ -52,6 +53,7 @@
                                                              options (second (:args (:call req)))
                                                              load-timeout (get-pdf-render-timeout (:app-id req))
                                                              req (assoc-in req [:call :args] [url options load-timeout])]
+                                                         (log/trace "URL for PDF renderer:" url)
                                                          (if-let [executor (get-pdf-renderer (:app-id req) (:session-state req))]
                                                            ((:fn executor) req new-return-path)
                                                            (throw+ {:anvil/server-error "PDF rendering service not available"})))))))}
@@ -63,9 +65,9 @@
                                                    ;; We're being called from the renderer's browser, and we want to steer this
                                                    ;; request back to the downlink that's triggering this render.
                                                    (log/trace "Retrieving print session from" (get @session-state :print-sessions) "for session id" (:id @session-state))
-                                                   (if-let [[executor ref] (when-let [{:keys [key executor ref]} (get-in @session-state [:print-sessions print-id])]
+                                                   (if-let [[downlink ref] (when-let [{:keys [key downlink ref]} (get-in @session-state [:print-sessions print-id])]
                                                                              (when (= (util/sha-256 key) (util/sha-256 print-key))
-                                                                               [executor ref]))]
-                                                     ((:fn executor) (assoc-in req [:call :args] [ref]) return-path)
+                                                                               [downlink ref]))]
+                                                     ((:fn (downlink/get-downlink-executor downlink)) (assoc-in req [:call :args] [ref]) return-path)
 
                                                      (throw+ {:anvil/server-error "Invalid print session"}))))}})
