@@ -8,7 +8,9 @@
             [clojure.data.json :as json]
             [clojure.data.xml :as xml]
             [clojure.tools.logging :as log]
-            [anvil.util :as util])
+            [anvil.util :as util]
+            [anvil.runtime.secrets :as secrets]
+            [anvil.dispatcher.native-rpc-handlers.util :as rpc-util])
   (:import (java.util Date)))
 
 (defn get-google-service-props []
@@ -28,10 +30,13 @@
                          (when (or (not (-> @*session-state* :google :delegation-access-token))
                                    ;; Refresh access token if it's about to expire.
                                    (> (.getTime (Date.)) (+ 60000 (.getTime (-> @*session-state* :google :delegation-access-token :expires_at)))))
-                           (swap! *session-state* #(assoc-in % [:google :delegation-access-token]
-                                                             (oauth/refresh-access-token (-> (get-google-service-props) :server_config :delegation_refresh_token)
-                                                                                         (:client-id conf/google-client-config)
-                                                                                         (:client-secret conf/google-client-config))))
+                           (let [{:keys [delegation_refresh_token enc_delegation_refresh_token]} (:server_config (get-google-service-props))
+                                 refresh-token (or delegation_refresh_token
+                                                   (:value (secrets/get-global-app-secret-value rpc-util/*app-info* "google-service/delegation-refresh-token" enc_delegation_refresh_token)))]
+                             (swap! *session-state* #(assoc-in % [:google :delegation-access-token]
+                                                               (oauth/refresh-access-token refresh-token
+                                                                                           (:client-id conf/google-client-config)
+                                                                                           (:client-secret conf/google-client-config)))))
                            (log/debug "Access token updated:" (-> @*session-state* :google :delegation-access-token)))
 
                          (assoc-in httpkit-map [:headers "Authorization"]

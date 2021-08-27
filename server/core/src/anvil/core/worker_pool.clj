@@ -3,7 +3,8 @@
             [clojure.tools.logging :as log]
             [anvil.util :as util]
             [anvil.core.hrr-queue :as hrr-queue]
-            [clojure.pprint :refer [pprint]])
+            [clojure.pprint :refer [pprint]]
+            [anvil.runtime.conf :as runtime-conf])
   (:import (java.util.concurrent ArrayBlockingQueue TimeUnit ThreadPoolExecutor RejectedExecutionException AbstractExecutorService)
            (org.httpkit PrefixThreadFactory)
            (java.util Timer TimerTask)
@@ -11,7 +12,7 @@
 
 ;;(clj-logging-config.log4j/set-logger! :level :trace)
 
-(def INITIAL-WORKERS (* 2 (.availableProcessors (Runtime/getRuntime))))
+
 (def SLOW-HANDLER-TIME-MS 500)
 (def MAX-QUEUE-SIZE 20480)
 
@@ -74,7 +75,7 @@
 
 
 (defonce thread-pool (atom #{}))
-(defonce largest-pool-size (atom INITIAL-WORKERS))
+(defonce largest-pool-size (atom runtime-conf/initial-worker-pool-size))
 (defonce thread-factory (PrefixThreadFactory. "anvil-worker-"))
 (defonce extra-thread-factory (PrefixThreadFactory. "anvil-extra-worker-"))
 
@@ -87,7 +88,7 @@
     (swap! largest-pool-size max (count @thread-pool))
     (.start t)))
 
-(defonce pool-started (dotimes [_ INITIAL-WORKERS] (launch-thread!)))
+(defonce pool-started (dotimes [_ runtime-conf/initial-worker-pool-size] (launch-thread!)))
 
 (defn get-worker-pool-size []
   (count @thread-pool))

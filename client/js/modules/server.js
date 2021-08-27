@@ -299,9 +299,11 @@ module.exports = function(appId, appOrigin) {
                 if (websocket == deferred.promise) { websocket = null; }
                 deferred.reject.apply(deferred, arguments);
 
-                // Let all outstanding requests know that they should either retry or fail
+                // Let all outstanding requests (on the closed websocket) know that they should either retry or fail
                 for (var i in outstandingRequests) {
-                    outstandingRequests[i].onerror(evt);
+                    if (outstandingRequests[i].ws == evt.target || outstandingRequests[i].ws == null) {
+                        outstandingRequests[i].onerror(evt);
+                    }
                 }
             };
             ws.onclose = function(evt) { diagnosticEvent("closed"); console.log("WebSocket closed", arguments); onclose.apply(null, arguments); }
@@ -502,9 +504,12 @@ module.exports = function(appId, appOrigin) {
         return websocket;
     };
 
-    var trySend = function(jsonData, blobData, profile) {
+    var trySend = function(jsonData, blobData, profile, outstandingRequest) {
         return new Promise(function(resolve, reject) {
             connect(profile).then(function(ws) {
+                if (outstandingRequest) {
+                    outstandingRequest.ws = ws;
+                }
                 if (profile) var w = profile.append("Send to websocket");
 
                 if (profile) var p = w.append("Send JSON Data");
@@ -1018,7 +1023,7 @@ module.exports = function(appId, appOrigin) {
                     sendPromise = sendPromise.then(() => waitingProfile.end());
                 }
 
-                sendPromise = sendPromise.then(trySend.bind(null, call, null, sendProfile)).then(function() {
+                sendPromise = sendPromise.then(trySend.bind(null, call, null, sendProfile, outstandingRequests[requestId])).then(function() {
 
                     sendProfile.end();
                     if (blobContent.length > 0) {
@@ -1048,7 +1053,7 @@ module.exports = function(appId, appOrigin) {
 
                 for (let contentChunks of blobContent) {
                     for (let chunk of contentChunks) {
-                        sendPromise = sendPromise.then(trySend.bind(null, chunk.json, chunk.data, sendProfile));
+                        sendPromise = sendPromise.then(trySend.bind(null, chunk.json, chunk.data, sendProfile, outstandingRequests[requestId]));
                     }
                 }
 

@@ -1,9 +1,10 @@
 (ns anvil.dispatcher.types
-  (:use [slingshot.slingshot])
+  (:use [slingshot.slingshot :only [throw+ try+]])
   (:require [anvil.runtime.conf :as conf]
             [crypto.random :as random]
             [anvil.util :as util]
-            [anvil.core.worker-pool :as worker-pool])
+            [anvil.core.worker-pool :as worker-pool]
+            )
   (:import (java.io File FileOutputStream ByteArrayInputStream ByteArrayOutputStream)))
 
 (defprotocol SerialisableForRpc
@@ -54,6 +55,19 @@
     {:type ["Capability"]
      :scope scope
      :mac (gen-cap-mac this extra-liveobject-key)}))
+
+(defn unwrap-capability [capability require-scope-prefix max-specialisation-depth]
+  (when-not (instance? anvil.dispatcher.types.Capability capability)
+    (throw+ {:anvil/server-error "Invalid capability"}))
+
+  (let [scope (:scope capability)
+        [scope-prefix scope-rest] (split-at (count require-scope-prefix) scope)]
+    (when-not (= scope-prefix require-scope-prefix)
+      (throw+ {:anvil/server-error (str "Invalid capability scope. Required prefix: " (pr-str require-scope-prefix) ", got prefix: " (pr-str scope-prefix))}))
+    (when-not (<= (count scope-rest) max-specialisation-depth)
+      (throw+ {:anvil/server-error (str "Invalid capability scope. Provided capability scope is too narrow.")}))
+
+    (drop (count scope-prefix) scope)))
 
 (defn serialise-for-item-cache [val extra-liveobject-key]
   (cond

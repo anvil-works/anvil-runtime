@@ -644,6 +644,18 @@ input[type=number]::-webkit-outer-spin-button {
     padding: 0px 7px;
 }
 
+@media screen and (max-width: 768px) {
+	.runner .anvil-data-grid.wrap-mobile .anvil-data-row-panel>.data-row-col  {
+		min-width: 100%;
+	}
+}
+
+@media screen and (max-width: 992px) {
+	.runner .anvil-data-grid.wrap-tablet .anvil-data-row-panel>.data-row-col {
+		min-width: 100%;
+	}
+}
+
 .anvil-data-row-panel>.data-row-col.extra-column {
     width:100%;
 }

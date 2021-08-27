@@ -7,7 +7,8 @@
             [anvil.runtime.util :as runtime-util]
             [clojure.tools.logging :as log]
             [anvil.core.cache :as cache]
-            [anvil.runtime.conf :as conf])
+            [anvil.runtime.conf :as conf]
+            [anvil.metrics :as metrics])
   (:import (clojure.lang IDeref IAtom Atom IAtom2)
            (java.sql SQLException)
            (java.util Date)
@@ -105,10 +106,14 @@
 
           ;; TODO actually use last_seen to make this decision. Also below.
           (> age SESSION-TOUCH-AFTER)
-          (reload! ["UPDATE runtime_sessions SET last_seen=NOW() WHERE session_id=? RETURNING state, last_seen" id])
+          (do
+            (metrics/inc! :api/runtime-session-deref-update-total)
+            (reload! ["UPDATE runtime_sessions SET last_seen=NOW() WHERE session_id=? RETURNING state, last_seen" id]))
 
           :else
-          (reload! ["SELECT state, last_seen FROM runtime_sessions WHERE session_id=?" id])))))
+          (do
+            (metrics/inc! :api/runtime-session-deref-select-total)
+            (reload! ["SELECT state, last_seen FROM runtime_sessions WHERE session_id=?" id]))))))
 
   IDeref
   (deref [this]
@@ -123,12 +128,15 @@
         (deref-db this)
 
         :else
-        val)))
+        (do
+          (metrics/inc! :api/runtime-session-deref-cache-total)
+          val))))
 
   IAtom
   (swap [this f]
     (locking this
       (when-not (:deleted? cached-state)
+        (metrics/inc! :api/runtime-session-swap-total)
         (loop []
           (or (try+
                 (jdbc/with-db-transaction [db-c util/db {:isolation :repeatable-read}]
@@ -142,6 +150,7 @@
                                   (= new-v ::no-change))
                       ;; Check it's still round-trippable *before* we write it back to the DB
                       (assert (-edn-roundtrip-ok? new-v new-v-str))
+                      (metrics/inc! :api/runtime-session-update-total)
                       (when-not (seq (jdbc/query db-c ["UPDATE runtime_sessions SET state=?, last_seen=NOW() WHERE session_id=? RETURNING 1" new-v-str id]))
                         (jdbc/execute! db-c ["INSERT INTO runtime_sessions (session_id,state,last_seen) VALUES (?,?,NOW())" id new-v-str]))
                       (reset! cached-state {:db-last-seen now, :last-read now, :val new-v})
@@ -164,6 +173,7 @@
   (reset [this val] (.swap this (constantly val))))
 
 (defn- -edn-roundtrip-ok? [value stringified]
+  (metrics/inc! :api/runtime-session-edn-roundtrip-total)
   (let [check (fn check [v1 v2 path]
                 (or
                   (cond

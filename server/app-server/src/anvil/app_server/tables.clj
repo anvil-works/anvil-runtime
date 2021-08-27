@@ -36,7 +36,7 @@
     ; Find all the tables that don't exist in the DB. Create them.
     (let [desired-schema (if (map? desired-schema) desired-schema (schema/yaml-schema-from-old-yaml-schema desired-schema))
 
-          current-tables (jdbc/query util/db ["SELECT * FROM app_storage_access NATURAL JOIN app_storage_tables"])
+          current-tables (jdbc/query util/db ["SELECT * FROM app_storage_access JOIN app_storage_tables ON table_id=id"])
 
           _ (log/trace (pps current-tables))
 
@@ -53,8 +53,9 @@
           auto-migrate? (or auto-migrate? (empty? current-tables))]
 
       (when (not-empty updates)
-        (if (and auto-migrate?
-                 (not ignore-invalid?))
+        (if (or (= {} current-schema)
+                (and auto-migrate?
+                     (not ignore-invalid?)))
           (do
             (log/info "Data tables schema out of date. Applying migrations:\n" (with-out-str (pprint updates)))
             (log/info "Migrating automatically...")
@@ -66,7 +67,7 @@
             (log/info (with-out-str (pprint updates)))
             (if ignore-invalid?
               (do
-                (log/info "Ignoring invalid data tables schema."))
+                (log/info "Ignoring non-matching data tables schema."))
               (do
                 (log/info "Anvil will now exit. Run with --ignore-invalid-schema to startup anyway, or --auto-migrate to apply the changes above.")
                 (System/exit 1)))))))))

@@ -230,15 +230,25 @@ function loadApp(app, appId, appOrigin, preloadModules) {
         const file = Sk.builtinFiles?.files[x];
         if (file === undefined) {
             throw "File not found: '" + x + "'";
-        } else if (file === 1 || file === 2) {
+        } else if (file === 1 || file === 2 || file === 3) {
             // slow path we need to do a fetch
             return Sk.misceval.promiseToSuspension(
-                fetch(window.anvilCDNOrigin + `/runtime/js/lib/skulpt-stdlib-${file}.json?buildTime=0`)
-                    .then((res) => res.json())
-                    .then((newFiles) => {
+                new Promise((resolve, reject) => {
+                    // while we support IE don't use fetch since fetch is not polyfilled by core-js
+                    const xhr = new XMLHttpRequest();
+                    xhr.open(
+                        "GET",
+                        window.anvilCDNOrigin + `/runtime/js/lib/skulpt-stdlib-${file}.json?buildTime=0`,
+                        true
+                    );
+                    xhr.onload = function () {
+                        const newFiles = JSON.parse(this.responseText);
                         Object.assign(Sk.builtinFiles.files, newFiles);
-                        return newFiles[x];
-                    })
+                        resolve(newFiles[x]);
+                    };
+                    xhr.onerror = reject;
+                    xhr.send();
+                })
             );
         } else {
             return file;

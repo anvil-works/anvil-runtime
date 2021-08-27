@@ -2,32 +2,15 @@ import anvil.google.auth
 import anvil.regex
 import anvil.server as rpc
 
-add_missing_fields = True
+add_missing_fields = False
 
-def _list_gen(request_page_fn):
-    queue = []
-    start_index = 1
-    total_results = None
-
-    while True:
-
-        if len(queue) > 0:
-            yield queue.pop(0)
-        elif total_results == None or start_index <= total_results:
-            result = request_page_fn(start_index)
-
-            total_results = result["total_results"]
-            start_index += len(result["items"])
-
-            if "items" in result and len(result["items"]) > 0:
-                queue.extend(result["items"])
-        else:
-            break
-
-
-def wrap_gen(items, item_class, creds):
-    for i in items:
-        yield item_class(i, creds)
+def index_to_col(idx):
+    idx -= 1
+    if idx < 26:
+        return chr(65 + (idx % 26))
+    else:
+        idx -= 26
+        return chr(65 + (idx // 26)) + chr(65 + (idx % 26))
 
 class ApiItem(object):
 
@@ -36,54 +19,134 @@ class ApiItem(object):
         if item_name in self._obj:
             return self._obj[item_name]
         else:
-            raise AttributeError("Could not find item: %s" % item_name)
+            raise KeyError(item_name)
 
     def __getattr__(self, attr_name):
-        if attr_name == "id":
+        if attr_name in self._obj:
+            return self._obj[attr_name]
+        elif attr_name == "id":
             return self._obj["id"]
         else:
             raise AttributeError("Could not find attribute: %s" % attr_name)
 
-    def __init__(self, dict, creds):
-        self._obj = dict
-        self.creds = creds
+    def __init__(self, obj, other):
+        self._obj = obj
+        self._other = other
 
+@anvil.server.serializable_type
 class Cell(ApiItem):
 
-    def __init__(self, obj, creds):
-        ApiItem.__init__(self, obj, creds)
-
-        # These won't change, so set them here.
-
-        self.row = self._obj["row"]
-        self.col = self._obj["col"]
-
-
+    #!defAttr()!1: {name:"row",type:"number",description:"This cell's row index (starting from 1)"}
+    #!defAttr()!1: {name:"col",type:"number",description:"This cell's column index (starting from 1)"}
+    #!defAttr()!1: {name:"value",type:"string",description:"The value in this cell"}
     def __getattr__(self, name):
-        if name == "value":
-            # Return the calculated value of the cell
+        if name == "input_value":
+            # This used to be different. In v4 we just return the value, because it would take two API calls to get the input_value too.
             return self["value"]
-        elif name == "input_value":
-            # Return the input value of the cell
-            return self["input_value"]
+        else:
+            return ApiItem.__getattr__(self, name)
 
     def __setattr__(self, name, value):
         if name == "value" or name == "inputValue":
-            url = self._obj["edit_url"]
 
-            r = rpc.call("anvil.private.google.sheets.update_cell", self._obj["id"], url, self.row, self.col, value, self.creds)
+            rpc.call("anvil.private.google.sheets.v4.update_cell", self._other["capability"], value)
 
-            self._obj = r
+            self._obj['value'] = value
 
             return value
         else:
             object.__setattr__(self, name, value)
 
-    def __str__(self):
-        return "<Google Worksheet Cell: %s>" % self._obj["value"]
+    def __repr__(self):
+        return "<Google Worksheet Cell: %s>" % self.value
+#!defClass(anvil.google.sheets,#Cell)!:
 
+
+def old_field_transform(new_field_name):
+    return anvil.regex.replace(new_field_name, "[^A-Za-z0-9\\-]", "").lower()
+
+@anvil.server.serializable_type
+class Row(ApiItem):
+    def __getitem__(self, key):
+        return self._other["data"][self._other['fields_old'].get(key, key)]
+
+    def __setitem__(self, key, value):
+        key = self._other['fields_old'].get(key, key)
+        if key in self._other['data']:
+            rpc.call("anvil.private.google.sheets.v4.update_cell", self._other["capability"].narrow([index_to_col(self._other['fields'].index(key)+1)]), value)
+        else:
+            raise KeyError(key)
+
+    #!defMethod(_)!2: "Delete this row from the worksheet. (This will cause data in subsequent rows to shift up)" ["delete"]
+    def delete(self):
+        rpc.call("anvil.private.google.sheets.v4.delete_row", self._other["capability"])
+
+    def __iter__(self):
+        return iter(self._other['data'])
+
+    def __repr__(self):
+        return "<Google Worksheet Row: %s>" % self._other['data']
+#!defClass(anvil.google.sheets,#Row)!:
+
+
+class RowIterator(object):
+
+    def __init__(self, cap, query_dict):
+        self.cap = cap
+
+        self.fields, rows, self.next_start, self.done = rpc.call("anvil.private.google.sheets.v4.list_initial_rows", cap, query_dict)
+        self.query_list = [query_dict.get(f) for f in self.fields]
+        self.fields_old = {old_field_transform(f): f for f in self.fields}
+        self.iterator = iter(rows)
+
+    def _load_next_page(self):
+        rows, self.next_start, self.done = rpc.call("anvil.private.google.sheets.v4.list_more_rows", self.cap, self.query_list, self.next_start)
+        self.iterator = iter(rows)
+
+    def __next__(self):
+        while True:
+            try:
+                r = next(self.iterator)
+                return Row({}, {
+                    "data": {self.fields[i]: (r['data'][i] if i < len(r['data']) else "") for i in range(len(self.fields))},
+                    "capability": self.cap.narrow([r['row']]),
+                    "fields": self.fields,
+                    "fields_old": self.fields_old
+                })
+            except StopIteration:
+                if self.done:
+                    raise
+                else:
+                    self._load_next_page()
+
+    next = __next__
+
+
+class RowList(object):
+
+    def __init__(self, cap, query_dict):
+        self.cap = cap
+        self.query_dict = query_dict
+        self.it = RowIterator(cap, query_dict)
+
+    def __iter__(self):
+        if not self.it:
+            return RowIterator(self.cap, self.query_dict)
+        try:
+            return self.it
+        finally:
+            self.it = None
+
+
+@anvil.server.serializable_type
 class Worksheet(ApiItem):
 
+    #!defAttr()!1: {name:"title",type:"string",description:"The title of this worksheet"}
+    #!defAttr()!1: {name:"row_count",type:"number",description:"The number of rows in this worksheet"}
+    #!defAttr()!1: {name:"column_count",type:"number",description:"The number of columns in this worksheet"}
+    #!defAttr()!1: {name:"fields",type:"list",description:"The fields in this worksheet (ie the column headers, or the values in the first row)"}
+    #!defAttr()!1: {name:"rows",pyType:"list(anvil.google.sheets.Row instance)",description:"The rows in this worksheet (excluding the header)"}
+    #!defAttr()!1: {name:"cells",pyType:"list(anvil.google.sheets.Cell instance)",description:"A list of all the cells in this worksheet"}
     def __getattr__(self, name):
         if name == "fields":
             return self.get_fields()
@@ -92,137 +155,93 @@ class Worksheet(ApiItem):
         elif name == "cells":
             return list(self.list_cells())
         else:
-            raise AttributeError("Could not find attribute: %s" % name)
+            return ApiItem.__getattr__(self, name)
 
+    #!setItemType(anvil.google.sheets.Cell instance)!:
     def __getitem__(self, cell_tuple):
         row, col = cell_tuple
 
         return self.get_cell(row, col)
 
     def get_fields(self):
-        cs = self._obj["col_count"]
+        cs = self.column_count
 
-        return [anvil.regex.replace(c.value, "[^A-Za-z0-9\\-]", "").lower() for c in self.list_cells(1,1,1,cs)]
+        return [c.value for c in self.list_cells(1,1,1,cs)]
 
-    def list_rows(self, limit=100, **kwargs):
+    #!defMethod(list[anvil.google.sheets.Row instance],**query)!2: "List rows in this worksheet, optionally restricting to rows with the specified column values specified as keyword arguments" ["list_rows"]
+    def list_rows(self, **query):
+        return RowList(self._other['capability'], query)
 
-        url = self._obj["list_feed_url"]
-
-        query = ""
-        if (len(kwargs) > 0):
-
-            for k in kwargs.keys():
-                if (len(query) > 0):
-                    query += " and "
-                if isinstance(kwargs[k], int) or isinstance(kwargs[k], float):
-                  query += k + "=" + str(kwargs[k])
-                else:
-                  query += k + "=\"" + str(kwargs[k]) + "\""
-
-        def next_page_fn(start_index):
-          return rpc.call("anvil.private.google.sheets.list_rows", url, query, limit, self.creds, start_index=start_index)
-        
-        return _list_gen(next_page_fn)
-
+    #!defMethod(anvil.google.sheets.Row instance,**fields)!2: "Add a row to the end of the worksheet, specifying values for columns as keywords arguments" ["add_row"]
     def add_row(self, **kwargs):
 
+        fields = self.get_fields()
+        fields_old = {old_field_transform(f): f for f in fields}
+
         values = {}
- 
-        count = 0
-        for f in [k for k in kwargs if kwargs[k]!=""]:
-            field_name = anvil.regex.replace(f, "[^A-Za-z0-9\\-]", "").lower()
-            values[field_name] = str(kwargs[f])
-            count += 1
 
-        if count == 0:
-            print("[WARNING: Skipping adding empty row to worksheet]")
-            return None
+        for [k,v] in kwargs.items():
+            key = fields_old.get(k,k)
+            values[key] = v
 
-        try:
-          added_row = rpc.call("anvil.private.google.sheets.add_row", self._obj["list_feed_url"], values, self.creds)
-        except Exception:
-          added_row = None
+        data = []
+        for i in range(len(fields)):
+            data.append(values.get(fields[i],""))
 
-        # The returned row will only contain fields that already exist in the sheet.
-        # If we didn't specify any existing fields, no row will be returned at all.
+        added_row_index = rpc.call("anvil.private.google.sheets.v4.add_row", self._other['capability'], data)
 
-        existing_fields = self.fields
+        return Row({}, {
+            "data": {fields[i]: data[i] for i in range(len(fields))},
+            "capability": self._other["capability"].narrow([added_row_index]),
+            "fields": fields,
+            "fields_old": fields_old
+        })
 
-        missing_fields = [k for k in values if not k in existing_fields]
-
-        if len(missing_fields) > 0:
-
-          if not add_missing_fields:
-            if added_row:
-              added_row.delete()
-            raise Exception("Field(s) not found: %s" % ",".join(missing_fields))
-
-          print("[WARNING: Adding missing fields to worksheet: %s]" % ",".join(missing_fields))
-
-          # Create the field headers
-
-          for i in range(len(missing_fields)):
-            h = self.get_cell(1, len(existing_fields) + i + 1)
-            h.value = missing_fields[i]
-
-
-
-          if added_row:
-            # If we previously added the row, we need to set the newly-added fields
-
-            for f in missing_fields:
-              added_row[f] = values[f]
-
-          else:
-            # Otherwise, we never added the row in the first place, 
-            # so we just add it now directly.
-            r = rpc.call("anvil.private.google.sheets.add_row", self._obj["list_feed_url"], values, self.creds)
-
-            added_row = r
-
-        return added_row
-
+    #!defMethod(list[anvil.google.sheets.Cell instance],[min_row=],[max_row=],[min_col=],[max_col=])!2: "List cells in the worksheet, optionally specifying a region" ["list_cells"]
     def list_cells(self, min_row=None, max_row=None, min_col=None, max_col=None):
-        url = self._obj["cells_feed_url"]
 
-        query = ""
+        min_col_str = index_to_col(min_col)
+        max_col_str = index_to_col(max_col)
 
-        if min_row:
-            query += "&min-row=%d" % min_row
-        if max_row:
-            query += "&max-row=%d" % max_row
-        if min_col:
-            query += "&min-col=%d" % min_col
-        if max_col:
-            query += "&max-col=%d" % max_col
+        range = min_col_str + str(min_row) + ":" + max_col_str + str(max_row)
 
+        cells = rpc.call("anvil.private.google.sheets.v4.list_cells", self._other['capability'], range)
+        return [Cell(c,{
+            "capability": self._other['capability'].narrow([c['row'], index_to_col(c['col'])])
+        }) for c in cells]
 
-        def next_page_fn(start_index):
-          return rpc.call("anvil.private.google.sheets.list_cells", url, query, self.creds, start_index=start_index)
-        return wrap_gen(_list_gen(next_page_fn), Cell, self.creds)
-
+    #!defMethod(anvil.google.sheets.Cell instance,row,col)!2: "Get a particular cell from the spreadsheet" ["get_cell"]
     def get_cell(self, row, col):
-
-        return Cell(rpc.call("anvil.private.google.sheets.get_cell", self._obj["cells_feed_url"], row, col, self.creds), self.creds)
-
-
-    def __str__(self):
-        return "<Google Worksheet: %s>" % self._obj["title"]
+        cells = self.list_cells(row, row, col, col)
+        if len(cells) > 0:
+            return cells[0]
+        return None
 
 
-class Sheet(ApiItem):
+    def __repr__(self):
+        return "<Google Worksheet: %s>" % self._obj['title']
+#!defClass(anvil.google.sheets,#Worksheet)!:
 
+
+@anvil.server.serializable_type
+class Spreadsheet(ApiItem):
+    #!setItemType(anvil.google.sheets.Worksheet instance)!:
     def __getitem__(self, name):
       if isinstance(name, str):
         for w in self.list_worksheets():
-          if w._obj["title"] == name:
+          if w.title == name:
             return w
         raise KeyError("Spreadsheet contains no worksheet '%s'" % name)
       else:
         return list(self.list_worksheets())[name]
 
+    #!defAttr()!1: {name:"worksheets",pyType:"list(anvil.google.sheets.Worksheet instance)",description:"The worksheets in this spreadsheet."}
+    #!defAttr()!1: {name:"title",type:"string",description:"The title of this spreadsheet."}
+    #!defAttr()!1: {name:"id",type:"string",description:"The ID of this spreadsheet in Google Drive"}
     def __getattr__(self, name):
-        if name == "worksheets":
+        if name in self._obj:
+            return self._obj[name]
+        elif name == "worksheets":
             return self
         else:
             raise AttributeError("Could not find attribute: %s" % name)
@@ -233,33 +252,33 @@ class Sheet(ApiItem):
     def __len__(self):
         return len(list(self.list_worksheets()))
 
+    #!defMethod(list[anvil.google.sheets.Worksheet instance])!2: "Get a list of all worksheets in this spreadsheet" ["list_worksheets"]
     def list_worksheets(self):
+        return [Worksheet({
+            "title": w['title'],
+            "row_count": w['gridProperties']['rowCount'],
+            "column_count": w['gridProperties']['columnCount']
+        }, {
+            "capability": self._other['capability'].narrow([[w['title'], w['sheetId']]])
+        }) for w in self._other['worksheets']]
 
-        def request_page_fn(start_index):
-            return rpc.call("anvil.private.google.sheets.list_worksheets", self._obj["worksheets_feed_url"], self.creds, start_index=start_index)
 
-        return wrap_gen(_list_gen(request_page_fn), Worksheet, self.creds)
-
-
-    def __str__(self):
+    def __repr__(self):
         return "<Google Sheet: %s>" % self._obj["title"]
+#!defClass(anvil.google.sheets,#Spreadsheet)!:
 
 
+
+Sheet = Spreadsheet # Alias for backwards-compatibility
 
 
 def login():
-    return anvil.google.auth.login(['http://spreadsheets.google.com/feeds/'])
+    return anvil.google.auth.login(['https://www.googleapis.com/auth/spreadsheets'])
 
-# This is so rarely used, and never documented, it was never ported to native modules.
-#
-# def list_sheets():
-#     return wrap_gen(google.utils.feed_list_generator({
-#         "url": "https://spreadsheets.google.com/feeds/spreadsheets/private/full",
-#         "creds": "google-user"
-#     }), Sheet)
 
 def get_sheet(id, creds):
-    return Sheet(rpc.call("anvil.private.google.sheets.get_sheet", id, creds), creds)
+    s = Spreadsheet(**rpc.call("anvil.private.google.sheets.v4.get_sheet", id, creds))
+    return s
 
 
 """
@@ -315,8 +334,7 @@ description: |
   (Note: `add_row()` normally returns the new created row. However, if you
   attempt to insert an empty row, it will return `None`.)
 
-  If you try to add a row containing a field that does not exist in the sheet, the field will be created automatically.
-  You can change this behaviour by setting `anvil.google.sheets.add_missing_fields` to `False`, in which case an Exception will be raised if you try to set a non-existent field.
+  An Exception will be raised if you try to set a non-existent field.
 
   ```python
   row.delete()

@@ -14,7 +14,17 @@
             [anvil.runtime.ws-util :as ws-util]
             [anvil.runtime.sessions :as sessions]))
 
-(defn ws-handler [{:keys [app-id app-session environment] :as request} app-yaml]
+;; Hookable functions
+
+(defonce on-client-connect (fn [connection] nil))
+(defonce on-client-disconnect (fn [connection] nil))
+
+(def set-browser-ws-hooks! (util/hook-setter [on-client-connect on-client-disconnect]))
+
+(defonce connected-client-count (atom 0))
+
+(defn ws-handler [{:keys [app-id app-session environment app-origin] :as request} app-yaml]
+
   (ws-util/with-opening-channel request channel on-open
 
     (let [session-liveobject-secret (-> (swap! app-session
@@ -25,16 +35,39 @@
 
           ds (serialisation/mk-Deserialiser {:origin :client, :session-liveobject-key session-liveobject-secret})
 
+          outstanding-incoming-request-ids (atom {})
+
+          disconnect-on-idle? (atom false)
+          maybe-disconnect-if-idle! (fn []
+                                      (when (and @disconnect-on-idle? (empty? @outstanding-incoming-request-ids))
+                                        (close channel)))
+          disconnect-on-idle! (fn []
+                                (reset! disconnect-on-idle? true)
+                                (maybe-disconnect-if-idle!))
+
+          connection {:environment environment
+                      :app-info (:app-info @app-session)
+                      ::disconnect-on-idle! disconnect-on-idle!
+                      ::get-pending-responses (fn [] @outstanding-incoming-request-ids)}
+
           serial-responder (fn [request-id]
-                             #(serialisation/serialise-to-websocket! (assoc % :id request-id) channel true session-liveobject-secret))
+                             (fn [resp call-finished?]
+                               (serialisation/serialise-to-websocket! (assoc resp :id request-id) channel true session-liveobject-secret)
+                               (when call-finished?
+                                 (swap! outstanding-incoming-request-ids dissoc request-id)
+                                 (maybe-disconnect-if-idle!))))
 
           session-listener-registration (sessions/register-session-listener! app-session {:on-event! #(serialisation/serialise-to-websocket! {:id (str "evt" (random/base32 10)) :event %} channel true session-liveobject-secret)})]
 
       (log/debug "Client websocket connected for session" (:id @app-session))
+      (on-client-connect connection)
+      (metrics/set! :api/runtime-connected-clients-total (swap! connected-client-count inc))
 
       (on-close channel
                 (fn [why]
                   (worker-pool/set-task-info! :websocket ::close)
+                  (on-client-disconnect connection)
+                  (metrics/set! :api/runtime-connected-clients-total (swap! connected-client-count dec))
                   (sessions/unregister-session-listener! app-session session-listener-registration)
                   (log/debug "Client websocket closed: " (:id @app-session) (pr-str why))
                   ;; TODO: A websocket closing constitutes 'activity' on this session, so reset its expiry countdown.
@@ -55,35 +88,39 @@
 
                             (= type "CALL")
                             (let [request-template {:app           app-yaml
-                                                    :app-id        (:app-id request)
+                                                    :app-id        app-id
                                                     :environment   environment
-                                                    :app-origin    (:app-origin request)
+                                                    :app-origin    app-origin
                                                     :origin        :client
                                                     :session-state app-session
                                                     :use-quota?    true
                                                     :call-stack    (list {:type :browser})}
                                   d (serialisation/deserialise ds data)
-                                  responder (serial-responder (:id d))
+                                  request-id (:id d)
+                                  responder (serial-responder request-id)
                                   return-path {:respond!
-                                               responder
+                                               #(responder % true)
                                                :update!
                                                (fn [{:keys [output] :as r}]
                                                  (when (string? output)
                                                    (app-log/record! request "print"
                                                                     [{:t (System/currentTimeMillis) :s output}]))
-                                                 (responder r))}]
-
+                                                 (responder r false))}]
+                              (swap! outstanding-incoming-request-ids assoc request-id {:context {:func (or (:command d) (:method (:liveObjectCall d)))}
+                                                                                        :start-time (System/currentTimeMillis)})
                               (log/trace "Calling with replacement session?" (:anvil.runtime/replacement-session @app-session))
                               (try+
                                 (if (= (:command d) "anvil.private.reset_session")
                                   (do
                                     (swap! app-session assoc :anvil.runtime/replacement-session false)
                                     (reload-anvil-cookies! app-session request)
-                                    (responder {:response (:id @app-session)}))
+                                    (responder {:response (:id @app-session)}
+                                               true))
                                   (if (:anvil.runtime/replacement-session @app-session)
                                     (responder {:error {:type    "anvil.server.SessionExpiredError"
                                                         :message "Session expired"
-                                                        :trace   [["<rpc>", 0]]}})
+                                                        :trace   [["<rpc>", 0]]}}
+                                               true)
                                     (dispatcher/dispatch! (assoc request-template
                                                             :vt_global (:vt_global d)
                                                             :call (assoc (select-keys d [:args :kwargs])
@@ -97,7 +134,8 @@
                                 (catch Exception e
                                   (let [error-id (random/hex 6)]
                                     (log/error e "Error in function dispatch for '" (:command d) "/" (:method (:liveObjectCall d)) "':" error-id)
-                                    (responder {:error {:message (str "Internal server error: " error-id)}})))))
+                                    (responder {:error {:message (str "Internal server error: " error-id)}}
+                                               true)))))
 
                             (= type "LOG")
                             (try

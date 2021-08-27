@@ -115,22 +115,25 @@
       (let [{:keys [app_id] :as environment} (get-environment-for-job job)]
        (when-not (app-data/abuse-caution? nil app_id)
          (let [launch! (fn []
-                         (dispatcher/dispatch!
-                           {:call              {:func   "anvil.private.background_tasks.launch"
-                                                :args   [task_name]
-                                                :kwargs {}}
-                            :scheduled-task-id job_id
-                            :app-id            app_id
-                            :environment       environment
-                            :session-state     (sessions/mk-session environment)
-                                               :origin :server}
-                           ;; Return path
-                           {:update!  (constantly nil)
-                            :respond! (fn [{:keys [error response]}]
-                                        (if error
-                                          ;; TODO log this somewhere the app can see it
-                                          (log/error "Failed to launch BG task for" job_id "for app" app_id ":" error)
-                                          (update-job! util/db job {:last_bg_task_id (json/read-str (:id response))})))}))]
+                         (try
+                           (dispatcher/dispatch!
+                             {:call              {:func   "anvil.private.background_tasks.launch"
+                                                  :args   [task_name]
+                                                  :kwargs {}}
+                              :scheduled-task-id job_id
+                              :app-id            app_id
+                              :environment       environment
+                              :session-state     (sessions/mk-session environment)
+                              :origin            :server}
+                             ;; Return path
+                             {:update!  (constantly nil)
+                              :respond! (fn [{:keys [error response]}]
+                                          (if error
+                                            ;; TODO log this somewhere the app can see it
+                                            (log/error "Failed to launch BG task for" job_id "for app" app_id ":" error)
+                                            (update-job! util/db job {:last_bg_task_id (json/read-str (:id response))})))})
+                           (catch Exception e
+                             (log/error e (str "Failed to launch scheduled task " job_id " for app " app_id)))))]
            (if (nil? last_bg_task_id)
              (launch!)
              (background-tasks/get-state (background-tasks/load-background-task-by-id util/db last_bg_task_id)
@@ -141,7 +144,7 @@
                                                         (log/error (str "Failed to retrieve last BG task " last_bg_task_id " for job " job_id " in app " app_id ":") error)
 
                                                         response
-                                                        (log/info "Not running BG task " job_id "for app" app_id "because background task" last_bg_task_id "is still running")
+                                                        (log/info "Not running scheduled task" job_id "for app" app_id "because background task" last_bg_task_id "is still running")
 
                                                         :else
                                                         (launch!)))}

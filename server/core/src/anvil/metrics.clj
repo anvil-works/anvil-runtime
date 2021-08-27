@@ -27,17 +27,26 @@
                               (prometheus/counter :api/uncaught-exceptions-total)
                               (prometheus/counter :api/jdbc-query-timeouts)
                               (prometheus/counter :api/jdbc-pool-checkouts-total {:labels #{:uri :pool}})
+                              (prometheus/counter :api/jdbc-pool-checkout-wait-time-total {:labels #{:uri :pool}})
                               (prometheus/gauge :api/jdbc-pool-checkouts-max {:labels #{:uri :pool}}) ;; TODO: Remove
                               (prometheus/gauge :api/jdbc-pool-active-connections-total {:labels #{:uri :pool}}) ;; TODO: Max, avg
                               (prometheus/counter :api/jdbc-pool-usage-seconds-total {:labels #{:uri :pool}})
 
                               (prometheus/gauge :api/runtime-connected-downlinks-total)
                               (prometheus/gauge :api/runtime-connected-uplinks-total)
+                              (prometheus/gauge :api/runtime-connected-clients-total)
                               (prometheus/counter :api/runtime-serve-app-total)
                               (prometheus/counter :api/runtime-serve-api-total)
                               (prometheus/counter :api/runtime-errors-total)
                               (prometheus/histogram :api/runtime-dispatch-duration-seconds {:buckets DEFAULT-BUCKETS
-                                                                                            :labels  #{:executor :type :version :native-fn}})))))
+                                                                                            :labels  #{:executor :type :version :native-fn}})
+
+                              (prometheus/counter :api/runtime-session-deref-cache-total)
+                              (prometheus/counter :api/runtime-session-deref-update-total)
+                              (prometheus/counter :api/runtime-session-deref-select-total)
+                              (prometheus/counter :api/runtime-session-swap-total)
+                              (prometheus/counter :api/runtime-session-update-total)
+                              (prometheus/counter :api/runtime-session-edn-roundtrip-total)))))
 
 (defn start-server [port]
   (standalone/metrics-server @registry {:port port}))

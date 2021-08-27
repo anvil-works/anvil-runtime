@@ -80,12 +80,12 @@
 
           outstanding-incoming-call-ids (atom #{})
 
-          {:keys [get-pending-response is-closed? send-close-errors! send-request! handle-response! handle-update! is-idle?]}
+          {:keys [get-pending-response is-closed? send-close-errors! send-request! handle-response! handle-update! is-idle? get-pending-responses]}
           (ws-server/setup-request-handlers WS-SERVER-PARAMS channel)
 
           disconnect-on-idle? (atom false)
           maybe-disconnect-if-idle! (fn []
-                                     (when (and @disconnect-on-idle? (is-idle?) (empty? outstanding-incoming-call-ids))
+                                     (when (and @disconnect-on-idle? (is-idle?) (empty? @outstanding-incoming-call-ids))
                                        (close channel)))
           disconnect-on-idle! (fn []
                                 (reset! disconnect-on-idle? true)
@@ -180,7 +180,8 @@
                                     (reset! connection-cookie (on-uplink-connect (assoc @connection
                                                                                    :send-request! send-request!
                                                                                    ::ws-server/send-raw! #(send! channel %)
-                                                                                   ::disconnect-on-idle! disconnect-on-idle!))))))
+                                                                                   ::disconnect-on-idle! disconnect-on-idle!
+                                                                                   ::get-pending-responses get-pending-responses))))))
 
                               (= (:type raw-data) "REGISTER")
                               (if-not (:server-privilege? @connection)

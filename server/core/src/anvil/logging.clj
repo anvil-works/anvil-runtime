@@ -19,6 +19,12 @@
                :out :console
                :pattern "[%-5p %c] %m%n")
 
+  (set-logger! "marshal-py"
+               :level :info
+               :name "_default_marshal"
+               :out :console
+               :pattern "[%-5p %c] %m%n")
+
   ; Add an appender which will write messages at level :error and above to a file.
   (when conf/error-log-path
     (set-logger! "anvil"

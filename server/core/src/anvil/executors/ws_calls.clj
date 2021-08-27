@@ -15,6 +15,10 @@
 
 (clj-logging-config.log4j/set-logger! :level :info)
 
+;; Hookable function to add metadata for this request that can be used to attribute it to an app/environment/etc.
+;; This will be put on the call context as ::accounting-info
+(defonce get-accounting-info (fn [request] nil))
+
 ;; Centralise translation between the `request` object (contains Atoms, pretty chunky)
 ;; and a "serialisable request" object suitable for putting on the wire
 
@@ -57,6 +61,7 @@
                                      (reset! python-session-state-at-send (:update-python-session update)))))}
 
         call-context {::request request
+                      ::accounting-info (get-accounting-info request)
                       ::current-session current-session
                       ::change-session! #(reset! current-session %)
                       ::upstream-return-path return-path}
@@ -198,3 +203,5 @@
   (log/debug "Update from server call")
   (log/trace "Update:" (pr-str raw-data))
   (dispatcher/update! return-path raw-data))
+
+(def set-ws-calls-hooks! (util/hook-setter [get-accounting-info]))

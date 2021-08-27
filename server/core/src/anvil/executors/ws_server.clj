@@ -62,54 +62,55 @@
 (defn setup-request-handlers [{:keys [link-name disconnection-error]} channel]
   (let [pending-responses (atom {})
         closed? (atom false)]
-    {:get-pending-response #(get @pending-responses %)
-     :is-idle?             #(empty? @pending-responses)
-     :get-bg-task          #(when-let [id (get-in @pending-responses [% ::task-id])]
-                              {:id id})                     ;; fake it!
-     :is-closed?           (fn [] @closed?)
-     :send-request!        (fn send-request! [context {:keys [type id] :as _envelope} serialisable-request return-path]
-                             (let [call-id (or id
-                                               (str (if (= (:origin serialisable-request) :client) "client-" "server-")
-                                                    (random/base64 10)))]
-                               (log/trace "Sending" link-name "request" call-id ":" serialisable-request)
+    {:get-pending-response  #(get @pending-responses %)
+     :is-idle?              #(empty? @pending-responses)
+     :get-pending-responses (fn [] @pending-responses)
+     :get-bg-task           #(when-let [id (get-in @pending-responses [% ::task-id])]
+                               {:id id})                    ;; fake it!
+     :is-closed?            (fn [] @closed?)
+     :send-request!         (fn send-request! [context {:keys [type id] :as _envelope} serialisable-request return-path]
+                              (let [call-id (or id
+                                                (str (if (= (:origin serialisable-request) :client) "client-" "server-")
+                                                     (random/base64 10)))]
+                                (log/trace "Sending" link-name "request" call-id ":" serialisable-request)
 
-                               (try
-                                 (swap! pending-responses assoc call-id {:context context :return-path return-path})
-                                 (serialisation/serialise-to-websocket!
-                                   (-> serialisable-request
-                                       (assoc :type (or type "CALL")
-                                              :id call-id
-                                              :call-stack-id call-id))
-                                   channel false nil)
-                                 (catch Exception e
-                                   (log/error e "Error serialising uplink request")
-                                   (swap! pending-responses dissoc call-id)
-                                   (dispatcher/respond! return-path {:error {:type "anvil.server.SerializationError" :message (str e)}})))
-                               (when @closed?
-                                 ;; Avoid a race condition. If we were invoked as the connection was closing and we
-                                 ;; added ourselves to pending-responses too late, our message could get lost without
-                                 ;; an error because disconnection notices were already sent. But @closed is set _before_
-                                 ;; disconnection errors go out, which means that if there's any danger that we didn't
-                                 ;; safely record ourselves in pending-responses, we'll hit this code path.
-                                 ;; (This might issue duplicate errors, but that's not a problem.)
-                                 (dispatcher/respond! return-path
-                                                      {:error {:type disconnection-error, :message (str link-name " disconnected")}}))))
-     :send-close-errors!   (fn closed! [error-to-send]
-                             (reset! closed? true)
-                             (doseq [[_ p] @pending-responses]
-                               (dispatcher/respond! (:return-path p) {:error error-to-send})))
+                                (try
+                                  (swap! pending-responses assoc call-id {:context context :return-path return-path})
+                                  (serialisation/serialise-to-websocket!
+                                    (-> serialisable-request
+                                        (assoc :type (or type "CALL")
+                                               :id call-id
+                                               :call-stack-id call-id))
+                                    channel false nil)
+                                  (catch Exception e
+                                    (log/error e "Error serialising uplink request")
+                                    (swap! pending-responses dissoc call-id)
+                                    (dispatcher/respond! return-path {:error {:type "anvil.server.SerializationError" :message (str e)}})))
+                                (when @closed?
+                                  ;; Avoid a race condition. If we were invoked as the connection was closing and we
+                                  ;; added ourselves to pending-responses too late, our message could get lost without
+                                  ;; an error because disconnection notices were already sent. But @closed is set _before_
+                                  ;; disconnection errors go out, which means that if there's any danger that we didn't
+                                  ;; safely record ourselves in pending-responses, we'll hit this code path.
+                                  ;; (This might issue duplicate errors, but that's not a problem.)
+                                  (dispatcher/respond! return-path
+                                                       {:error {:type disconnection-error, :message (str link-name " disconnected")}}))))
+     :send-close-errors!    (fn closed! [error-to-send]
+                              (reset! closed? true)
+                              (doseq [[_ p] @pending-responses]
+                                (dispatcher/respond! (:return-path p) {:error error-to-send})))
 
-     :handle-response!     (fn handle-response! [response]
-                             (when-let [{:keys [return-path]} (-> (@pending-responses (:id response)))]
-                               (log/trace "Handling response:" response)
-                               (when-let [pymods (:sessionData response)]
-                                 (log/trace "Got session data")
-                                 (dispatcher/update! return-path {:update-python-session pymods}))
-                               (dispatcher/respond! return-path response)
-                               (swap! pending-responses dissoc (:id response))))
+     :handle-response!      (fn handle-response! [response]
+                              (when-let [{:keys [return-path]} (-> (@pending-responses (:id response)))]
+                                (log/trace "Handling response:" response)
+                                (when-let [pymods (:sessionData response)]
+                                  (log/trace "Got session data")
+                                  (dispatcher/update! return-path {:update-python-session pymods}))
+                                (dispatcher/respond! return-path response)
+                                (swap! pending-responses dissoc (:id response))))
 
-     :handle-update!       (fn handle-update! [update]
-                             (when-let [p (@pending-responses (:id update))]
-                               (ws-calls/process-update-from-ws (:return-path p) update)))}))
+     :handle-update!        (fn handle-update! [update]
+                              (when-let [p (@pending-responses (:id update))]
+                                (ws-calls/process-update-from-ws (:return-path p) update)))}))
 
 

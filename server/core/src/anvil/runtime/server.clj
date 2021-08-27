@@ -814,7 +814,7 @@
                              {"{{app-name}}"           (:name app-info)
                               "{{social-description}}" (render-app-description (get-in app-map [:metadata :description]))
                               "{{canonical-url}}"      (hiccup-util/escape-html app-origin)
-                              "{{icon}}"               (image-from-metadata app-origin (:metadata app-map) :logo_img "/favicon-96x96.png")
+                              "{{icon}}"               (image-from-metadata app-origin (:metadata app-map) :logo_img "/icon-512x512.png")
 
                               "{{theme-color}}"        (:primary-color style)
                               "{{background-color}}"   (if (and (:primary-color style)

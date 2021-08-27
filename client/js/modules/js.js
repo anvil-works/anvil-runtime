@@ -158,6 +158,20 @@ module.exports = function () {
         description: "The Javascript global 'window' object, wrapped and accessible from Python.",
     });
     pyMod.window = Sk.ffi.proxy(window);
+    const oldLookup = pyMod.window.$lookup;
+    const strParent = new Sk.builtin.str("parent");
+    // override the internal method $lookup
+    // it's a bit of a hack but accessing window.parent throws cross origin errors 
+    // since the default implementation of $lookup uses toPy
+    // which accesses attributes that end up getting blocked
+    pyMod.window.$lookup = function (pyName) {
+        if (pyName === strParent) {
+            const parent = Sk.ffi.proxy(this.js$wrapped.parent, { name: "ParentWindow" });
+            parent.$lookup = pyMod.window.$lookup;
+            return parent;
+        }
+        return oldLookup.call(this, pyName);
+    };
     Sk.abstr.objectSetItem(Sk.sysmodules, new Sk.builtin.str("anvil.js.window"), pyMod.window);
     const anvil = {
         get BlobMedia() {

@@ -42,6 +42,7 @@ module.exports = (pyModule) => {
                             s._anvil.elements.button.style.width = "";
                             s._anvil.elements.outer.style.textAlign = v;
                         }
+                        s._anvil.domNode.classList.toggle("anvil-inlinable", v !== "full");
                     },
                     description: "The position of this button in the available space.",
                     important: true,
@@ -114,11 +115,13 @@ module.exports = (pyModule) => {
         }),
 
         element({ font, font_size, bold, italic, underline, background, foreground, ...props }) {
-            const alignStyle = props.align.toString() === "full" ? " width: 100%;" : "";
+            const align = props.align.toString();
+            const alignStyle = align === "full" ? " width: 100%;" : "";
             const buttonStyle = PyDefUtils.getOuterStyle({ font, font_size, bold, italic, underline, background, foreground });
             const buttonAttrs = !isTrue(props.enabled) ? {disabled: ""} : {};
+            const inlinable = align !== "full" ? "anvil-inlinable " : ""
             return (
-                <PyDefUtils.OuterElement className="anvil-inlinable anvil-button" {...props}>
+                <PyDefUtils.OuterElement className= {inlinable + "anvil-button"} {...props}>
                     <button
                         refName="button"
                         ontouchstart=""

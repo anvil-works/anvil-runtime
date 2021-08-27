@@ -92,7 +92,15 @@ module.exports = (pyModule) => {
                 description: "The width for an element that is not horizontally self-sizing",
                 defaultValue: null,
                 priority: 0,
+                nullable: true,
             },
+            {
+                name: "expand",
+                type: "boolean",
+                description: "Expand the component",
+                defaultValue: false,
+                priority: 0,
+            }
         ],
 
         element({ align, spacing, ...props }) {
@@ -114,16 +122,22 @@ module.exports = (pyModule) => {
         },
 
         locals($loc) {
-            const ContainerElement = ({ visible, width }) => {
+            const ContainerElement = ({ visible, width, expand }) => {
                 visible = !Sk.misceval.isTrue(visible) ? " visisble-false" : "";
-                width = width && "width: " + PyDefUtils.cssLength(width.toString()) + ";";
-                return <div className={"flow-panel-item anvil-always-inline-container hide-with-component" + visible} style={width}></div>;
+                let style = "";
+                if (width) {
+                    style += "width: " + PyDefUtils.cssLength(width.toString()) + ";";
+                }
+                if (expand) {
+                    style += "flex: 1;";
+                }
+                return <div className={"flow-panel-item anvil-always-inline-container hide-with-component" + visible} style={style}></div>;
             };
 
-            /*!defMethod(_,component,[index=],[width=])!2*/ "Add a component to this panel. Optionally specify the position in the panel to add it, or the width to apply to components that can't self-size width-wise."
+            /*!defMethod(_,component,[index=],[width=],[expand=])!2*/ "Add a component to this panel. Optionally specify the position in the panel to add it, or the width to apply to components that can't self-size width-wise."
             $loc["add_component"] = PyDefUtils.funcWithKwargs(function (kwargs, self, component) {
                 pyModule["Container"]._check_no_parent(component);
-                const idx = kwargs["index"];
+                const { idx, expand = false } = kwargs;
                 let containerElement;
 
                 return Sk.misceval.chain(
@@ -136,7 +150,7 @@ module.exports = (pyModule) => {
                         const domNode = component._anvil.domNode;
                         const visible = "visible" in component._anvil.propMap ? component._anvil.getProp("visible") : Sk.builtin.bool.true$;
                         const width = domNode.classList.contains("anvil-inlinable") ? "" : kwargs["width"] || "auto";
-                        [containerElement] = <ContainerElement visible={visible} width={width} />;
+                        [containerElement] = <ContainerElement visible={visible} width={width} expand={expand} />;
                         containerElement.appendChild(domNode);
                         if (typeof idx === "number") {
                             if (idx < gutter.children.length) {

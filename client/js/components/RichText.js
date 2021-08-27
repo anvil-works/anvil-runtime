@@ -310,6 +310,7 @@ module.exports = (pyModule) => {
                 }
             }
         } else if (!(Sk.builtin.checkNone(data))) {
+            self._anvil.populatedDataSlots = slotsToClearOrReplace; // we didn't clear any slots so put the populated slots back on ._anvil
             throw new Sk.builtin.TypeError(`data must be a dict or None, not '${Sk.abstr.typeName(data)}'`);
         }
 
@@ -369,7 +370,7 @@ module.exports = (pyModule) => {
                 pyVal: true,
                 priority: 12,
                 set(self, e, data) {
-                    setData(self, e, data);
+                    return setData(self, e, data);
                 },
             },
             enable_slots: /*!componentProp(RichText)!1*/ {

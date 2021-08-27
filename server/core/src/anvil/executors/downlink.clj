@@ -175,7 +175,7 @@
           ds (serialisation/mk-Deserialiser {:origin :server, :permitted-live-object-backends #{}})
           internal-error (atom nil)
 
-          {:keys [get-pending-response get-bg-task get-app-info-and-env is-closed? send-close-errors! send-request! handle-response! handle-update! is-idle?]}
+          {:keys [get-pending-response get-bg-task get-app-info-and-env is-closed? send-close-errors! send-request! handle-response! handle-update! is-idle? get-pending-responses]}
           (ws-server/setup-request-handlers WS-SERVER-PARAMS channel)
 
           disconnect-on-idle? (atom false)
@@ -184,7 +184,7 @@
                                 (when (is-idle?)
                                   (close channel)))
 
-          connection {:send-request! send-request!, ::ws-server/send-raw! #(send! channel %), ::tag-channel! (partial ws-util/tag-channel! channel) ::disconnect-on-idle! disconnect-on-idle!}]
+          connection {:send-request! send-request!, ::ws-server/send-raw! #(send! channel %), ::tag-channel! (partial ws-util/tag-channel! channel) ::disconnect-on-idle! disconnect-on-idle! ::get-pending-responses get-pending-responses}]
 
       (on-close channel
                 (fn [why]

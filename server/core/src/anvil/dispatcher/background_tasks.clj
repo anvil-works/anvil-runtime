@@ -103,7 +103,7 @@
                                                         (:id task)])
                                 (dispatcher/respond! return-path (render-resp nil {:state response})))
 
-                              (#{"anvil.server.NotRunningTask" "anvil.server.ExecutionTerminatedError" "anvil.server.TimeoutError" "anvil.server.InternalError"} (:type error))
+                              (#{"anvil.server.NotRunningTask" "anvil.server.ExecutionTerminatedError" "anvil.server.TimeoutError" "anvil.server.InternalError" "anvil.server.RuntimeUnavailableError"} (:type error))
                               ;; TODO: We don't necessarily want to set the status to MIA here, but it's much less wrong than propagating other internal errors back to the result of get-state
                               (let [bt (util/with-db-transaction [db-c util/db]
                                          (let [bt (load-background-task-by-id db-c (:id task))]
@@ -131,7 +131,7 @@
                      (not error)
                      (dispatcher/respond! return-path {:response nil})
 
-                     (= (:type error) "anvil.server.NotRunningTask")
+                     (#{"anvil.server.NotRunningTask" "anvil.server.RuntimeUnavailableError"} (:type error))
                      (do
                        (jdbc/execute! util/db ["UPDATE background_tasks SET completion_status='mia'::background_task_status WHERE id=? AND completion_status IS NULL" (:id task)])
                        (dispatcher/respond! return-path {:response nil}))

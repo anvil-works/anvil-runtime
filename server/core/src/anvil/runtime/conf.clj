@@ -23,9 +23,11 @@
 
 (defonce db nil)
 
+(defonce initial-worker-pool-size (* 2 (.availableProcessors (Runtime/getRuntime))))
+
 (defonce db-pool-params {:driverClass              "org.postgresql.Driver"
                          :minPoolSize              0
-                         :maxPoolSize              10
+                         :maxPoolSize              initial-worker-pool-size
                          :maxConnectionAge         3600
                          :checkoutTimeout          5000
                          :maxIdleTime              3600

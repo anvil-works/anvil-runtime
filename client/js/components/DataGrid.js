@@ -124,6 +124,21 @@ module.exports = function(pyModule) {
                 description: "The maximum number of rows to display at one time.",
                 set: (s, e, v) => PyDefUtils.pyCallOrSuspend(s.tp$getattr(new Sk.builtin.str("jump_to_first_page"))),
             },
+            wrap_on: /*!componentProp(DataGrid)!1*/ {
+                name: "wrap_on",
+                type: "string",
+                enum: ["never", "mobile", "tablet"],
+                description: "The largest display on which to wrap columns in this DataGrid",
+                defaultValue: new Sk.builtin.str("never"),
+                pyVal: true,
+                important: true,
+                set(self, e, v) {
+                    v = v.toString();
+                    e[0].classList.remove("wrap-never", "wrap-mobile", "wrap-tablet");
+                    e[0].classList.add("wrap-" + v);
+                },
+            },
+
         }),
 
         events: PyDefUtils.assembleGroupEvents("data grid", /*!componentEvents(DataGrid)!1*/ ["universal"]),
@@ -139,8 +154,8 @@ module.exports = function(pyModule) {
             },
         ],
 
-        element: ({ show_page_controls, ...props }) => (
-            <PyDefUtils.OuterElement className="anvil-container anvil-data-grid anvil-paginator" {...props}>
+        element: ({ show_page_controls, wrap_on, ...props }) => (
+            <PyDefUtils.OuterElement className={`anvil-container anvil-data-grid anvil-paginator wrap-${wrap_on}`} {...props}>
                 <div refName="childPanel" className="data-grid-child-panel"></div>
                 <div refName="footerPanel" className="data-grid-footer-panel">
                     <div refName="footerSlot" className="footer-slot"></div>

@@ -2,7 +2,7 @@
   (:use [slingshot.slingshot])
   (:require [anvil.dispatcher.native-rpc-handlers.http :as native-http]
             [anvil.dispatcher.native-rpc-handlers.google.drive :as native-google-drive]
-            [anvil.dispatcher.native-rpc-handlers.google.sheets :as native-google-sheets]
+            [anvil.dispatcher.native-rpc-handlers.google.sheets]
             [anvil.dispatcher.native-rpc-handlers.google.auth :as native-google-auth]
             [anvil.dispatcher.native-rpc-handlers.google.mail :as native-google-mail]
             [anvil.dispatcher.native-rpc-handlers.airtable :as native-airtable]
@@ -242,7 +242,6 @@
 (swap! dispatcher/native-rpc-handlers merge
        debug-rpc-handlers
        native-google-drive/handlers
-       native-google-sheets/handlers
        native-google-auth/handlers
        native-google-mail/handlers
        native-airtable/handlers
@@ -255,6 +254,5 @@
 
 (swap! dispatcher/native-live-object-backends merge
        debug-live-object-backends
-       native-google-sheets/live-object-backends
        native-airtable/live-object-backends
        native-stripe/live-object-backends)
