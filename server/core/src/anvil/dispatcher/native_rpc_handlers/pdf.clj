@@ -34,6 +34,7 @@
                                                          new-return-path {:respond! #(do
                                                                                        (swap! (:session-state req) update-in [:print-sessions] dissoc print-id)
                                                                                        (sessions/clear-temporary-url-token! session-state tmp-url-token)
+                                                                                       (sessions/notify-session-update! (:session-state req))
                                                                                        (dispatcher/respond! return-path %))
                                                                           :update!  #(dispatcher/update! return-path %)}]
 
@@ -43,7 +44,7 @@
                                                      (swap! session-state
                                                             assoc-in [:print-sessions print-id]
                                                             {:key print-key :downlink downlink-spec, :ref (first (:args (:call req)))})
-
+                                                     (sessions/notify-session-update! session-state)
 
                                                      (dispatcher/report-exceptions-to-return-path new-return-path
                                                        ;; The downlink calls do_print(ref); the renderer gets do_print(url)
@@ -53,7 +54,7 @@
                                                              options (second (:args (:call req)))
                                                              load-timeout (get-pdf-render-timeout (:app-id req))
                                                              req (assoc-in req [:call :args] [url options load-timeout])]
-                                                         (log/trace "URL for PDF renderer:" url)
+                                                         (log/trace "URL for PDF renderer in session" (sessions/persistent-id (:session-state req)) " :" url)
                                                          (if-let [executor (get-pdf-renderer (:app-id req) (:session-state req))]
                                                            ((:fn executor) req new-return-path)
                                                            (throw+ {:anvil/server-error "PDF rendering service not available"})))))))}
@@ -64,7 +65,7 @@
                                                  (dispatcher/report-exceptions-to-return-path return-path
                                                    ;; We're being called from the renderer's browser, and we want to steer this
                                                    ;; request back to the downlink that's triggering this render.
-                                                   (log/trace "Retrieving print session from" (get @session-state :print-sessions) "for session id" (:id @session-state))
+                                                   (log/trace "Retrieving print session from" (get @session-state :print-sessions) "for session id" (sessions/persistent-id session-state))
                                                    (if-let [[downlink ref] (when-let [{:keys [key downlink ref]} (get-in @session-state [:print-sessions print-id])]
                                                                              (when (= (util/sha-256 key) (util/sha-256 print-key))
                                                                                [downlink ref]))]

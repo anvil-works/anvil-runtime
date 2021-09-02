@@ -78,6 +78,7 @@ The standalone app server supports the following options:
       --origin URL                          Set the home URL of this app (eg https://my-app.com)
       --disable-tls                         Don't terminate TLS connections, regardless of the origin scheme
       --forward-headers-insecure            When running embedded TLS termination, pass through the X-Forwarded-* headers (off by default)
+      --add-hsts-headers                    Enable HSTS headers when origin URL uses https. Default: false
       --letsencrypt-storage PATH            Path to a JSON file to store LetsEncrypt certificates
                                             (default: <data-dir>/letsencrypt-certs.json)
       --letsencrypt-staging                 Use the LetsEncrypt staging server

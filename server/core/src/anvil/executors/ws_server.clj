@@ -53,7 +53,7 @@
                                                                               (if (= (get-in % [:error :type]) disconnection-error)
                                                                                 (assoc-in % [:error :type] "anvil.server.NotRunningTask")
                                                                                 %))}]
-                             (send-request! (ws-calls/new-call-context :bg-task-get-state app-info environment nil (atom {}))
+                             (send-request! (ws-calls/new-call-context :bg-task-get-state app-info environment nil nil (atom {}))
                                             {:type "GET_TASK_STATE", :id req-id}
                                             {:task call-id}
                                             return-path))

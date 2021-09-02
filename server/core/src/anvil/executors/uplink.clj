@@ -214,7 +214,7 @@
                                     call-stack-id (:call-stack-id raw-data)
                                     pending-response (get-pending-response call-stack-id)
                                     context (or (:context pending-response)
-                                                (ws-calls/new-call-context :uplink-call (:app-info @connection) (:environment @connection) nil default-session-state))
+                                                (ws-calls/new-call-context :uplink-call (:app-info @connection) (:environment @connection) nil nil default-session-state))
                                     call-stack-info (STACK-FRAME-INFO (:server-privilege? @connection))
                                     return-path {:update!  #(send! channel (util/write-json-str (assoc % :id call-id)))
                                                  :respond! #(do (serialisation/serialise-to-websocket! (assoc % :id call-id) channel true nil)

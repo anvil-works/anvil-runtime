@@ -99,10 +99,11 @@
 ;; If we need to reinflate a request, but not already inside a dispatch context, you'll need one of these.
 ;; For example, BG task launches, calls from uplink code, etc.
 ;; Origin argument is only used to generate thread id.
-(defn new-call-context [origin app-info environment app session-state]
+(defn new-call-context [origin app-info environment app-origin app session-state]
   (let [current-session (atom (or session-state (sessions/new-session {})))]
     {::request              {:app-id      (:id app-info)
                              :app-info    app-info
+                             :app-origin  app-origin
                              :environment environment
                              :app         app
                              :thread-id (str (name origin) "-" (random/base64 18))}

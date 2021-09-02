@@ -140,7 +140,8 @@
                 (log/error e "Failed to load app %s: %s" main-app-id)
                 (System/exit 1)))]
     (update-cron-jobs! (:content app))
-    (tables/validate-app-tables-schema (-> app :content :db_schema) (-> app :content :table_id_hints) main-app-id auto-migrate-tables? ignore-invalid-schema?)))
+    (tables/validate-app-tables-schema (-> app :content :db_schema) (-> app :content :table_id_hints) main-app-id auto-migrate-tables? ignore-invalid-schema?)
+    app))
 
 (defn wrap-cors [f origin]
   (fn [x]
@@ -293,6 +294,7 @@
                               [nil "--origin URL" "Set the home URL of this app (eg https://my-app.com)"]
                               [nil "--disable-tls" "Don't terminate TLS connections, regardless of the origin scheme"]
                               [nil "--forward-headers-insecure" "When running embedded TLS termination, pass through the X-Forwarded-* headers. Default: false"]
+                              [nil "--add-hsts-headers" "Enable HSTS headers when origin URL uses https. Default: false"]
                               [nil "--letsencrypt-storage PATH" "Path to a JSON file to store LetsEncrypt certificates (default: <data-dir>/letsencrypt-certs.json)"]
                               [nil "--letsencrypt-staging" "Use the LetsEncrypt staging server"]
                               [nil "--manual-cert-file PATH" "Path to an external TLS certificate in PEM format"]
@@ -382,8 +384,10 @@
 
         origin-uri (URI. (:origin options))
 
+        https-origin? (= (.getScheme origin-uri) "https")
+
         use-reverse-proxy? (and (not (:disable-tls options))
-                                (= (.getScheme origin-uri) "https"))
+                                https-origin?)
 
         manual-tls? (and use-reverse-proxy?
                          (:manual-cert-file options)
@@ -468,19 +472,26 @@
         (println "Database migration failed:" (name (::migrator-core/migration-failure e)))
         (System/exit 1)))
 
-    (load-main-app (:auto-migrate options) (:ignore-invalid-schema options))
+
 
     ;; TODO: Check Same-Site cookie defaults. May need to be set to :none rather than :strict.
-    (let [handler (wrap-defaults
+    (let [app (load-main-app (:auto-migrate options) (:ignore-invalid-schema options))
+
+          ring-config (-> site-defaults
+                          (assoc-in [:session :cookie-attrs :secure] https-origin?)
+                          (assoc-in [:security :hsts] (and https-origin? (get options :add-hsts-headers false)))
+                          (assoc-in [:security :frame-options] (if (get-in app [:content :allow_embedding])
+                                                                 false ;; Don't set the X-Frame-Options header - allow embedding
+                                                                 :deny)))
+
+          handler (wrap-defaults
                     (ring-json/wrap-json-response
                       (wrap-provide-source
                         (wrap-with-origin-scheme-and-port
                           #'app
                           (.getScheme origin-uri)
-                          (if (= (.getScheme origin-uri) "https")
-                            (or (get-port (:origin options)) 443)
-                            (or (get-port (:origin options)) 80)))))
-                    site-defaults)]
+                          (or (get-port (:origin options)) (if https-origin? 443 80)))))
+                    ring-config)]
       (anvil-server/run-server (:ip options) http-port
                                (wrap-retrieve-original-remote-address ;; We'll deal with X-Forwarded-For headers ourselves.
                                  (if (or use-reverse-proxy? (:disable-tls options) (:forward-headers-insecure options))
