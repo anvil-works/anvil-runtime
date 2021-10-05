@@ -174,29 +174,34 @@ module.exports = (pyModule) => {
             });
     
             $loc["set_page"] = new Sk.builtin.func((self, page) => {
-                page = parseInt(Sk.ffi.remapToJs(page));
+                page = Sk.misceval.asIndexOrThrow(page);
+                if (page < 0) {
+                    throw new Sk.builtin.IndexError("Cannot use a negative index to set the page");
+                }
     
-                let closestPageBefore = self._anvil.paginatorPages && self._anvil.paginatorPages[Math.min(page, self._anvil.paginatorPages.length-1)];
-                let fns = [];
+                const closestPageBefore =
+                    self._anvil.paginatorPages &&
+                    self._anvil.paginatorPages[Math.min(page, self._anvil.paginatorPages.length - 1)];
+                const fns = [];
                 let startPage = 0;
-                if (closestPageBefore) {
+                if (closestPageBefore != null) {
                     startPage = closestPageBefore.currentPage;
-                    self._anvil.paginatorPages = self._anvil.paginatorPages.slice(0,startPage+1);
-    
+                    self._anvil.paginatorPages = self._anvil.paginatorPages.slice(0, startPage + 1);
+
                     fns.push(() => {
                         self._anvil.pagination = {
                             startAfter: closestPageBefore.startedAfter,
                             rowQuota: getRowQuota(self),
-                        }
-                        return self._anvil.paginate()
+                        };
+                        return self._anvil.paginate();
                     });
                 }
-    
+                const nextPageMeth = self.tp$getattr(new Sk.builtin.str("next_page"));
                 for (let p = startPage; p < page; p++) {
-                    fns.push(() => Sk.misceval.callsimOrSuspend(self.tp$getattr(new Sk.builtin.str("next_page"))))
+                    fns.push(() => Sk.misceval.callsimOrSuspend(nextPageMeth));
                 }
-    
-                return Sk.misceval.chain(...fns);
+
+                return Sk.misceval.chain(null, ...fns, () => Sk.builtin.none.none$);
             });
     
             $loc["repaginate"] = new Sk.builtin.func(self => {

@@ -112,6 +112,38 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         throw {internal: "error"};
     });
 
+    const _environmentClass = Sk.abstr.buildNativeClass("anvil.AppInfo.Environment", {
+        constructor: function Environment(data) {
+            this.data = window.anvilAppInfo.environment;
+        },
+        slots: {
+            $r() {
+                let {description: name, tags} = this.data;
+                name = Sk.ffi.toPy(name);
+                tags = Sk.ffi.toPy(tags || []);
+                return new Sk.builtin.str(`Environment(name=${Sk.misceval.objectRepr(name)}, tags=${Sk.misceval.objectRepr(tags)})`);
+            }
+        },
+        getsets: {
+            name: {
+                $get() { return Sk.ffi.toPy(this.data.description); }
+            },
+            tags: {
+                $get() { return Sk.ffi.toPy(this.data.tags || []); }
+            },
+        }
+    });
+    [/*!defAttr()!1*/ {
+        name: "name",
+        type: "string",
+        description: "The name of the current environment"
+    },/*!defAttr()!1*/ {
+        name: "tags",
+        type: "list",
+        description: "tags associated with the current environment"
+    }];
+    /*!defClass(anvil,#AppEnvironment)!*/
+
 
     var appInfoClass = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
         $loc["__getattr__"] = new Sk.builtin.func(function(self, pyAttrName) {
@@ -128,6 +160,11 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         $loc["theme_colors"] = new Sk.builtin.property(new Sk.builtin.func(function(self) {
             return PyDefUtils.pyCallOrSuspend(Sk.builtin.mappingproxy, [Sk.ffi.toPy(window.anvilThemeColors || {})]);
         }));
+        /*!defAttr()!1*/ ({name: "environment", type: "anvil.AppEnvironment instance", description: "The environment in which the current app is being run."});
+        $loc["environment"] = new Sk.builtin.property(new Sk.builtin.func(function(self) {
+            return self._environment || (self._environment = new _environmentClass());
+        }));
+
         [/*!defAttr()!1*/ {
             name: "id",
             type: "string",
@@ -136,14 +173,14 @@ module.exports = function(appOrigin, uncaughtExceptions) {
             name: "branch",
             type: "string",
             description: "The Git branch from which the current app is being run.\n\nThis is 'master' for development apps or apps without a published version, and 'published' if this app is being run from its published version.",
-        }];
-        /*!defClass(anvil.,AppInfo)!*/
+        },];
+        /*!defClass(anvil,#AppInfo)!*/
 
     }, "AnvilAppInfo", []);
     [/*!defModuleAttr(anvil)!1*/{
         name: "app",
-        pyType: "anvil..AppInfo instance",
-        description: "Information about the current app",
+        pyType: "anvil.AppInfo instance",
+        description: "Information about the current app, as an instance of anvil.AppInfo",
     }];
     pyModule["app"] = PyDefUtils.pyCall(appInfoClass);
 
@@ -876,7 +913,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                                 var style = b.v[2] ? b.v[2].v : "";
                             }
                             footer.append(
-                                $("<button type=button class=btn data-dismiss=modal/>")
+                                $("<button type=button class=btn data-dismiss=modal />")
                                     .addClass("btn-" + (style || "default"))
                                     .text(txt)
                                     .on(
@@ -1015,7 +1052,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         return modal(kwargs);
     }));
 
-    /*!defFunction(anvil,_,content,[title=""],[buttons=],[large=False],[dismissible=False])!2*/ "Pop up a confirmation box. By default, it will have \"Yes\" and \"No\" buttons which will return True and False respectively when clicked."
+    /*!defFunction(anvil,_,content,[title=""],[buttons=],[large=False],[dismissible=False], [role=])!2*/ "Pop up a confirmation box. By default, it will have \"Yes\" and \"No\" buttons which will return True and False respectively when clicked."
     pyModule["confirm"] = new Sk.builtin.func(PyDefUtils.withRawKwargs(function(pyKwarray, pyContent) {
         var kwargs = {}
         for(var i = 0; i < pyKwarray.length - 1; i+=2)

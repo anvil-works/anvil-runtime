@@ -40,7 +40,7 @@ class StreamingMedia(anvil.Media):
         return self._content
 
     def get_url(self):
-        raise None
+        return None
 
     def get_name(self):
         return self._name

@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 
 rm -rf python-package-build
 mkdir python-package-build
-cp -aL ../../downlink/python/anvil_downlink_{worker,host} python-package-build/
+cp -aL ../../downlink/python/anvil_downlink_{worker,host,util} python-package-build/
 cp -aL ../../downlink/python/anvil python-package-build/anvil_downlink_worker
 cp -aL anvil_app_server python-package-build/
 cp setup.py python-package-build/

@@ -1,16 +1,15 @@
-# Run this file, using a marshalled version of the RPC protocol on file descriptor #3.
-# Kill it when done.
+# Run this file, using a serialised version of the RPC protocol on stdin + stdout
 from __future__ import absolute_import
-import os, sys, marshal, threading, json, importlib
+import os, sys, threading, json, importlib
 from anvil_downlink_worker import handle_incoming_call, load_app
+from anvil_downlink_util.pipes import MessagePipe
 from anvil import _serialise, _server, _threaded_server
 import anvil.server
 import anvil.pdf
 
-PIPE_IN = os.fdopen(os.dup(0), 'rb')
-PIPE_OUT = os.fdopen(os.dup(1), 'wb')
+PIPE_IN = MessagePipe(os.fdopen(os.dup(0), 'rb'))
+PIPE_OUT = MessagePipe(os.fdopen(os.dup(1), 'wb'))
 OLD_STDERR = os.fdopen(os.dup(2), 'wb')
-WRITE_LOCK = threading.RLock()
 
 _threaded_server.console_output = OLD_STDERR
 
@@ -23,17 +22,12 @@ os.dup2(new_stdout, 0)
 os.dup2(new_stdout, 1)
 #os.dup2(new_stdout, 2)
 
-def write_pipe(data, bin=None):
-    with WRITE_LOCK:
-        try:
-            s = b'X' + marshal.dumps(data)
-            if bin is not None:
-                s += marshal.dumps(bin)
-        except ValueError:
-            raise _server.SerializationError("You can only pass strings, numbers, arrays, lists, LiveObjects and Media to or from server functions")
 
-        PIPE_OUT.write(s)
-        PIPE_OUT.flush()
+def write_pipe(data, bin=None):
+    try:
+        PIPE_OUT.send(data, bin)
+    except ValueError:
+        raise _server.SerializationError("You can only pass strings, numbers, arrays, lists, LiveObjects and Media to or from server functions")
 
 
 class DummyStdout:
@@ -59,8 +53,7 @@ _threaded_server.send_reqresp = send_reqresp
 
 def run():
     while True:
-        PIPE_IN.read(1) # signal byte to wake us up
-        msg = marshal.load(PIPE_IN)
+        msg, bindata = PIPE_IN.receive()
         type = msg.get("type", None)
         if type in ["CALL_WITH_APP", "LAUNCH_BACKGROUND_WITH_APP", "CALL", "LAUNCH_BACKGROUND",
                     "LAUNCH_REPL", "REPL_COMMAND", "TERMINATE_REPL"]:
@@ -85,7 +78,7 @@ def run():
 
         elif type == "CHUNK_HEADER":
             _serialise.process_blob_header(msg)
-            _serialise.process_blob(marshal.load(PIPE_IN))
+            _serialise.process_blob(bindata)
         elif type is None and ("response" in msg or "error" in msg):
             _threaded_server.IncomingResponse(msg)
         else:

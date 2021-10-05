@@ -345,7 +345,7 @@ module.exports = (pyModule) => {
  */
 
 // It doesn't look like isConnected get's polyfilled so do it here
-// this is the official polyfill from MDN - remove this if we stop supporting IE
+// this is the official polyfill from MDN - remove this when we stop supporting IE
 if (!("isConnected" in Node.prototype)) {
     Object.defineProperty(Node.prototype, "isConnected", {
         get() {
@@ -353,3 +353,21 @@ if (!("isConnected" in Node.prototype)) {
         },
     });
 }
+
+// It doesn't look like remove() get's polyfilled so do it here - https://anvil.works/forum/t/detect-internet-explorer/9675
+// this is the official polyfill from MDN - remove this when we stop supporting IE
+(function (arr) {
+    arr.forEach(function (item) {
+      if (item.hasOwnProperty('remove')) {
+        return;
+      }
+      Object.defineProperty(item, 'remove', {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: function remove() {
+          this.parentNode && this.parentNode.removeChild(this);
+        }
+      });
+    });
+  })([Element.prototype, CharacterData.prototype, DocumentType.prototype].filter(Boolean));

@@ -57,11 +57,16 @@
       (java.sql.Timestamp. (max (.getTimeInMillis next-exec) (System/currentTimeMillis))))))
 
 (defn get-cron-job-info [app-id job-id]
-  (when-let [info (first (jdbc/query util/db ["SELECT next_run, last_bg_task_id, id, completion_status, background_tasks.task_name as task_name, debug, session, start_time, last_seen_alive FROM scheduled_tasks LEFT JOIN background_tasks ON (last_bg_task_id = id) WHERE scheduled_tasks.app_id = ? AND job_id = ?" app-id job-id]))]
-    (merge
-      (when (:last_bg_task_id info)
-        (background-tasks/present-background-task info))
-      (select-keys info [:next_run]))))
+  (when-let [infos (jdbc/query util/db ["SELECT next_run, last_bg_task_id, id, completion_status, background_tasks.task_name AS task_name, debug, session, start_time, last_seen_alive, scheduled_tasks.env_id AS env_id
+                                               FROM scheduled_tasks
+                                               LEFT JOIN background_tasks ON (last_bg_task_id = id)
+                                               LEFT JOIN app_environments ON (scheduled_tasks.env_id = app_environments.env_id)
+                                               WHERE (scheduled_tasks.app_id = ? OR (scheduled_tasks.app_id IS NULL AND app_environments.app_id = ?)) AND job_id = ?" app-id app-id job-id])]
+    (for [info infos]
+      (merge
+        (when (:last_bg_task_id info)
+          (background-tasks/present-background-task info))
+        (select-keys info [:env_id :next_run])))))
 
 ;; Common code for updating jobs from DB records
 (defn get-scheduled-jobs [scheduled-tasks-yaml previous-scheduled-jobs extra-keys]

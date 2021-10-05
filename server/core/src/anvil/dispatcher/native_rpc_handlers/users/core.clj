@@ -571,7 +571,7 @@
       true)))
 
 (defn reset-email-password! [app environment email confirmation-key password]
-  (let [{:keys [require_secure_passwords confirm_email] :as _props} (get-props-with-named-user-table (tables-util/table-mapping-for-environment environment) (:content app))
+  (let [{:keys [require_secure_passwords confirm_email] :as _props} (get-props-with-named-user-table (tables-util/table-mapping-for-environment environment util/*session-state*) (:content app))
         _ (when (and require_secure_passwords
                      (< (.length (str password)) 7))
             (throw+ {:anvil/server-error "Passwords must be 8 characters or more" :type "anvil.users.PasswordNotAcceptable"}))

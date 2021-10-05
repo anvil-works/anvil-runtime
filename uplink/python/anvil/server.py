@@ -96,6 +96,9 @@ class TaskState(threading.local, collections.MutableMapping):
         self._check_valid()
         self.d[k] = v
 
+    def __delitem__(self, k):
+        del self.d[k]
+
     def __getitem__(self, k):
         self._check_valid()
         return self.d[k]

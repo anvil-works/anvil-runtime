@@ -19,7 +19,7 @@ anvil.server._register_exception_type("anvil.users.PasswordNotAcceptable", Passw
 anvil.server._register_exception_type("anvil.users.MFARequired", MFARequired)
 anvil.server._register_exception_type("anvil.users.PasswordResetRequested", PasswordResetRequested)
 
-#!defFunction(anvil.users,_,email,password,[remember=False])!2: "Log in with the specified email address and password. Returns None if authentication failed.\n\nBy default, login status is not remembered between sessions; set remember=True to remember login status." ["login_with_email"]
+#!defFunction(anvil.users,_,email,password,[remember=False])!2: "Log in with the specified email address and password. Raises anvil.users.AuthenticationFailed exception if the login failed.\n\nBy default, login status is not remembered between sessions; set remember=True to remember login status." ["login_with_email"]
 def login_with_email(email, password, remember=False, mfa=None):
     return anvil.server.call("anvil.private.users.login_with_email", email, password, remember=remember, mfa=mfa)
 

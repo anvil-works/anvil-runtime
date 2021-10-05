@@ -218,7 +218,7 @@ module.exports = (pyModule) => {
 
         locals($loc) {
             $loc["__new__"] = PyDefUtils.mkNew(pyModule["Component"], (self) => {
-                self._anvil.invalidItemElement = $("<option/>").text("<Invalid value>").val(-1);
+                self._anvil.invalidItemElement = $("<option />").text("<Invalid value>").val(-1);
 
                 self._anvil.select = $(self._anvil.elements.select).on("change", (e) => {
                     if (self._anvil.getPropJS("enabled")) {
@@ -256,7 +256,7 @@ module.exports = (pyModule) => {
             let foundSelectedValue = false;
 
             if (isTrue(self._anvil.getProp("include_placeholder"))) {
-                s.append($("<option/>").text(self._anvil.getProp("placeholder").toString()).val(-2));
+                s.append($("<option />").text(self._anvil.getProp("placeholder").toString()).val(-2));
                 s.val(-2);
                 foundSelectedValue = true;
                 if (self._anvil.cachedInvalidValue === Sk.builtin.none.none$) {
@@ -270,7 +270,7 @@ module.exports = (pyModule) => {
                     itemKey = item;
                     itemVal = item;
                     jsItems.push([itemKey, itemVal]);
-                    s.append($("<option/>").text(itemKey.toString()).val(i));
+                    s.append($("<option />").text(itemKey.toString()).val(i));
                 } else if (!(item instanceof Sk.builtin.list || item instanceof Sk.builtin.tuple)) {
                     throw new Sk.builtin.TypeError("'items' must be a list of strings or tuples");
                 } else {
@@ -284,7 +284,7 @@ module.exports = (pyModule) => {
                     }
                     [itemKey, itemVal] = item;
                     jsItems.push(item);
-                    s.append($("<option/>").text(itemKey.toString()).val(i));
+                    s.append($("<option />").text(itemKey.toString()).val(i));
                 }
                 if (self._anvil.cachedInvalidValue && Sk.misceval.richCompareBool(self._anvil.cachedInvalidValue, itemVal, "Eq")) {
                     s.val(i);

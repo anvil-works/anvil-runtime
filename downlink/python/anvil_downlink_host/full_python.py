@@ -1,5 +1,6 @@
-import  marshal, os, psutil, random, sys, threading, time
+import  os, psutil, random, sys, threading, time
 from subprocess import PIPE
+from anvil_downlink_util.pipes import MessagePipe
 
 # State representing which workers are running here
 from anvil_downlink_host import workers_by_id, send_with_header, maybe_quit_if_draining_and_done, \
@@ -22,6 +23,8 @@ class Worker:
                                        bufsize=0, stdin=PIPE, stdout=PIPE, preexec_fn=get_demote_fn(app_id))
         self.proc_info = psutil.Process(self.proc.pid)
         self.task_info = task_info
+        self.from_worker = MessagePipe(self.proc.stdout)
+        self.to_worker = MessagePipe(self.proc.stdin)
 
         workers_by_id[first_req_id] = self
         self.cache_key = cache_key
@@ -151,11 +154,10 @@ class Worker:
     def read_loop(self):
         try:
             while True:
-                # marshal.load() takes the GIL, so only do it once we know there's something there to load.
-                dummy_char = self.proc.stdout.read(1)
-                if len(dummy_char) == 0:
+                try:
+                    msg, bindata = self.from_worker.receive()
+                except EOFError:
                     break
-                msg = marshal.load(self.proc.stdout)
                 type = msg.get("type")
                 id = msg.get("id") or msg.get("requestId")
 
@@ -177,13 +179,11 @@ class Worker:
                         print("Discarding invalid message with bogus ID: %s" % repr(msg))
                         if type == "CHUNK_HEADER":
                             print("Discarding binary data chunk")
-                            marshal.load(self.proc.stdout)
                         continue
 
                 try:
                     if type == "CHUNK_HEADER":
-                        x = marshal.load(self.proc.stdout)
-                        send_with_header(msg, x)
+                        send_with_header(msg, bindata)
                         if msg.get("lastChunk"):
                             self.transmitted_media(msg['requestId'], msg['mediaId'])
                     else:
@@ -270,54 +270,42 @@ class Worker:
             print ("Worker terminated for IDs %s (return code %s)" % (self.req_ids, rt))
             maybe_quit_if_draining_and_done()
 
-    def send(self, msg, bin=False):
+    def send(self, msg, bindata=None):
+        id = msg.get("id")
+        if msg.get("type") in ["CALL", "CALL_WITH_APP", "GET_TASK_STATE", "LAUNCH_REPL", "REPL_COMMAND", "TERMINATE_REPL"]:
+            # It's a new request! Start the timeout
+            #print ("Setting timeout and routing for new request ID %s" % id)
+            workers_by_id[id] = self
+            if msg.get("enable-profiling"):
+                self.enable_profiling[id] = True
+                self.start_time[id] = time.time()
+            self.req_ids.add(id)
+            if msg["type"] != "REPL_COMMAND":
+                self.set_timeout(id)
 
-        if not bin:
-            id = msg.get("id")
-            if msg.get("type") in ["CALL", "CALL_WITH_APP", "GET_TASK_STATE", "LAUNCH_REPL", "REPL_COMMAND", "TERMINATE_REPL"]:
-                # It's a new request! Start the timeout
-                #print ("Setting timeout and routing for new request ID %s" % id)
-                workers_by_id[id] = self
-                if msg.get("enable-profiling"):
-                    self.enable_profiling[id] = True
-                    self.start_time[id] = time.time()
-                self.req_ids.add(id)
-                if msg["type"] != "REPL_COMMAND":
-                    self.set_timeout(id)
+        elif msg.get("type") == "REPL_KEEPALIVE":
+            self.clear_timeout(msg["repl"])
+            self.set_timeout(msg["repl"])
+            send_with_header({"id": id, "response": None})
+            return
 
-            elif msg.get("type") == "REPL_KEEPALIVE":
-                self.clear_timeout(msg["repl"])
-                self.set_timeout(msg["repl"])
-                send_with_header({"id": id, "response": None})
-                return
+        self.to_worker.send(msg, bindata)
 
-            # A horrid hack - a one-char "activation" that's not marshalled, because marshal holds the GIL and Windows doesn't support select() on pipes and urrrggghhh
+        def outbound_done():
+            self.outbound_ids.pop(id, None)
+            workers_by_id.pop(id, None)
+            maybe_quit_if_draining_and_done()
 
-            d = b"X" + marshal.dumps(msg)
-        else:
-            d = marshal.dumps(msg)
-
-        self.proc.stdin.write(d)
-        self.proc.stdin.flush()
-
-        if not bin:
-            def outbound_done():
-                self.outbound_ids.pop(id, None)
-                workers_by_id.pop(id, None)
-                maybe_quit_if_draining_and_done()
-
-            if "response" in msg or "error" in msg:
-                self.on_media_complete(msg, outbound_done)
+        if "response" in msg or "error" in msg:
+            self.on_media_complete(msg, outbound_done)
 
     def get_task_state(self, msg):
         self.send(msg)
 
-    def handle_inbound_message(self, msg, bin=None):
-        self.send(msg)
-        if bin is not None:
-            self.send(bin, bin=True)
-            if msg.get("last_chunk"):
-                self.transmitted_media(msg.get("requestId"), msg.get("mediaId"))
+    def handle_inbound_message(self, msg, bindata=None):
+        self.send(msg, bindata)
+        if bin is not None and msg.get("last_chunk"):
+            self.transmitted_media(msg.get("requestId"), msg.get("mediaId"))
 
     report_stats = report_worker_stats
 

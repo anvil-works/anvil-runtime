@@ -140,6 +140,10 @@ class _AppInfo:
 
         def __setattr__(self, key, value):
             raise AttributeError("This object is read-only")
+        
+        def __repr__(self):
+            info = ", ".join("{}={!r}".format(key, val) for key, val in self.__dict__.items())
+            return "Environment({})".format(info)
 
     def __init__(self, id, branch):
         self.__dict__.update(id=id, branch=branch, environment=_AppInfo._Environment())

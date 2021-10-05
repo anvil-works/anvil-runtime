@@ -27,7 +27,9 @@
 
 (clj-logging-config.log4j/set-logger! :level :info)
 
-(defonce table-mapping-for-environment (fn [environment] {}))
+(defonce table-mapping-for-environment (fn
+                                         ([environment] {})
+                                         ([environment session-state] {})))
 (defonce db-for-mapping (fn ([mapping] util/db) ([session-state mapping] util/db)))
 (defonce db-for-mapping-transaction (fn [mapping] util/db))
 (defonce mutate-db-for-mapping? (fn [mapping] false))
@@ -86,7 +88,7 @@
 
 
 (defn db-for-current-app []
-  (db-for-mapping rpc-util/*session-state* (table-mapping-for-environment (current-environment))))
+  (db-for-mapping rpc-util/*session-state* (table-mapping-for-environment (current-environment) rpc-util/*session-state*)))
 
 (defn as-int [x]
   (if (integer? x)
@@ -449,7 +451,7 @@
 
 (def total-open-txns (atom 0))
 
-(defn open-app-transaction! [_kwargs]
+(defn open-app-transaction! [{:keys [isolation] :as _kwargs}]
   (if-let [thread-id rpc-util/*thread-id*]
     (let [_ (when-not (and thread-id (not rpc-util/*client-request?*))
               (throw+ (general-tables-error "You can only perform table transactions from server modules. You can't use them here.")))
@@ -457,12 +459,14 @@
           _ (when (@open-transactions thread-id)
               (throw+ (general-tables-error "You already have a transaction open here")))
 
-          db-map (db-for-mapping-transaction (table-mapping-for-environment rpc-util/*environment*))
+          db-map (db-for-mapping-transaction (table-mapping-for-environment rpc-util/*environment* rpc-util/*session-state*))
 
           conn (try
                  (doto (jdbc/get-connection db-map)
                    (.setAutoCommit false)
-                   (.setTransactionIsolation Connection/TRANSACTION_SERIALIZABLE))
+                   (.setTransactionIsolation (if (= isolation "relaxed")
+                                               Connection/TRANSACTION_REPEATABLE_READ
+                                               Connection/TRANSACTION_SERIALIZABLE)))
                  (catch SQLException e
                    (log/error "DB Connection failed in open-app-transaction! for app" rpc-util/*app-id* ", probably too many transactions:" (str e))
                    (throw+ (general-tables-error "Failed to connect to database: Too many transactions already in progress."))))
@@ -601,19 +605,23 @@
    (or (:size (first (jdbc/query db ["SELECT sum(length(data)) as size FROM pg_largeobject WHERE loid = ?" oid])))
        0)))
 
-(defn- delete-media-objects [object-ids use-quota!]
-  (doseq [object-id object-ids]
-    (let [size (get-object-size object-id)]
-      (when use-quota! (use-quota! 0 (- size)))
-      (jdbc/query (db) ["SELECT lo_unlink(?)" object-id]))))
+(defn- delete-media-objects
+  ([object-ids use-quota!] (delete-media-objects (db) object-ids use-quota!))
+  ([db-c object-ids use-quota!]
+   (doseq [object-id object-ids]
+     (let [size (get-object-size db-c object-id)]
+       (when use-quota! (use-quota! 0 (- size)))
+       (jdbc/query db-c ["SELECT lo_unlink(?)" object-id])))))
 
 (defn delete-media-in-row [table-id row-id use-quota!]
   (let [affected-media (jdbc/query (db) ["DELETE FROM app_storage_media WHERE table_id = ? AND row_id = ? RETURNING object_id" table-id row-id])]
     (delete-media-objects (map :object_id affected-media) use-quota!)))
 
-(defn delete-media-in-table [table-id use-quota!]
-  (let [affected-media (jdbc/query (db) ["DELETE FROM app_storage_media WHERE table_id = ? RETURNING object_id" table-id])]
-    (delete-media-objects (map :object_id affected-media) use-quota!)))
+(defn delete-media-in-table
+  ([table-id use-quota!] (delete-media-in-table (db) table-id use-quota!))
+  ([db-c table-id use-quota!]
+   (let [affected-media (jdbc/query db-c ["DELETE FROM app_storage_media WHERE table_id = ? RETURNING object_id" table-id])]
+     (delete-media-objects db-c (map :object_id affected-media) use-quota!))))
 
 (defn delete-media-in-column [table-id col-id use-quota!]
   (let [affected-media (jdbc/query (db) ["DELETE FROM app_storage_media WHERE table_id = ? AND column_id = ? RETURNING object_id" table-id (name col-id)])]

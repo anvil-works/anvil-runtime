@@ -172,7 +172,7 @@
                              (getConnection [_this] (.getConnection ^DataSource @datasource))))})
 
 
-(def LATEST-DB-VERSION? #{"2021-08-03-crosslink-fix"})
+(def LATEST-DB-VERSION? #{"2021-09-22-table-mapping-dbs"})
 
 (defn require-latest-db-version [continue-anyway?]
   (try
@@ -385,6 +385,12 @@
                (< (System/currentTimeMillis) timeout-time))
       (Thread/sleep check-ms)))
   (pred))
+
+(defn printlog [& more]
+  (let [s (with-out-str (apply print more))]
+    (log/info s)
+    (when *in-repl?*
+      (println s))))
 
 ;;;;;;;;;;;;;;;;;;;
 ;; The following two functions are corrected versions of the ones in ring.middleware.proxy-headers, which

@@ -66,12 +66,15 @@ function initComponentsOnForm(components, pyForm, eventBindingsByName) {
             for (var evt in bindings) {
                 const pyHandler = Sk.generic.getAttr.call(pyForm, new Sk.builtin.str(bindings[evt])); // use generic getattr for performance
                 if (pyHandler === undefined) {
-                    // TODO: Should probably at least warn that we tried to attach a non-existent handler.
+                    if (window.anvilParams?.inIDE) {
+                        // only do this if we're in the IDE.
+                        Sk.builtin.print([`Warning: ${pyForm.tp$name}.${bindings[evt]} does not exist. Trying to set the '${evt}' event of self${name ? '.' + name : ''} from ${pyForm.tp$name}.`]); 
+                    }
                 } else if (Sk.builtin.checkCallable(pyHandler)) {
                     addHandler(pyComponent, pyHandler, evt);
                 } else {
                     // Trying to set the event handler to an attribute - ignore but give a warning - e.g. Form1.tooltip
-                    Sk.builtin.print([`Warning: ${pyForm.tp$name}.${bindings[evt]} is not a valid handler for the '${evt}' event of ${name || pyForm.tp$name}. It should be a callable function (found type '${Sk.abstr.typeName(pyHandler)}')`]);
+                    Sk.builtin.print([`Warning: ${pyForm.tp$name}.${bindings[evt]} is not a valid handler for the '${evt}' event of self${name ? '.' + name : ''} from ${pyForm.tp$name}. It should be a callable function (found type '${Sk.abstr.typeName(pyHandler)}')`]);
                 }
             }
         }
@@ -290,13 +293,20 @@ function loadApp(app, appId, appOrigin, preloadModules) {
 
     // jQuery 3 migration
 
-    let jQueryDeprecationWarned = false;
+    let jQueryDeprecationWarned = {};
     $.migrateWarnings = {
         push: (msg) => {
-            if (jQueryDeprecationWarned)
+            if (jQueryDeprecationWarned[msg])
                 return;
 
-            jQueryDeprecationWarned = true;
+            $.migrateMute = false;
+            if (msg && msg.indexOf("jQuery.isFunction()") > -1) {
+                // Ignore this warning. Used by bootstrap-notify.
+                $.migrateMute = true; 
+                return; 
+            }
+
+            jQueryDeprecationWarned[msg] = true;
             stdout("WARNING: This application uses deprecated jQuery 2.2 features. Please see the Javascript console for more details. Error: " + msg);
             sendLog({
                 warning: {
@@ -306,7 +316,6 @@ function loadApp(app, appId, appOrigin, preloadModules) {
             });
         }
     }
-    $.migrateMute = false;
 
 
     var uncaughtExceptions = {pyHandler: Sk.builtin.none.none$};
@@ -1161,6 +1170,12 @@ var appLoaded = false;
 
 window.loadApp = function(params, preloadModules) {
     window.anvilParams = params;
+    window.anvilOnline = {
+        onLine: navigator.onLine,
+        serviceWorkerAgrees: true,
+        lastCheck: 0,
+        OFFLINE_TIMEOUT: 5000,
+    };
 
     var appOrigin = params["appOrigin"];
     if (appLoaded) { console.log("Rejected duplicate app load"); return {}; }
@@ -1170,7 +1185,28 @@ window.loadApp = function(params, preloadModules) {
         .catch((error) => {
             console.error('Service worker registration failed:', error);
         });
+        // the service worker takes care of a false positive
+        navigator.serviceWorker.onmessage = (event) => {
+            if (event.data && event.data.type === "OFFLINE_STATUS") {
+                const onLine = event.data.onLine;
+                if ((navigator.onLine && !onLine) || !window.anvilOnline.serviceWorkerAgrees) {
+                    // then the service worker disagrees with the navigator
+                    window.anvilOnline.onLine = onLine;
+                    window.anvilOnline.serviceWorkerAgrees = false;
+                    window.anvilOnline.lastCheck = Date.now();
+                }
+            }
+        };
     }
+
+    // these events are fired on change of online/offline status
+    window.addEventListener("online", () => {
+        // switching from offline to online probably isn't a false positive
+        window.anvilOnline.onLine = true;
+    });
+    window.addEventListener("offline", () => {
+        window.anvilOnline.onLine = false;
+    });
 
 
     var appLoadPromise = loadApp(params["app"], params["appId"], appOrigin, preloadModules);

@@ -20,7 +20,7 @@
               :docLinkTitle       "You need to add the Users service to your app. Learn more"}))))
 
 (defn get-props-with-named-user-table
-  ([] (get-props-with-named-user-table (tables-util/db) (tables-util/table-mapping-for-environment util/*environment*) util/*app*))
+  ([] (get-props-with-named-user-table (tables-util/db) (tables-util/table-mapping-for-environment util/*environment* util/*session-state*) util/*app*))
   ([mapping app] (get-props-with-named-user-table (tables-util/db-for-mapping mapping) mapping app))
   ([db-c mapping app]
    (let [{:keys [user_table] :as props} (get-props app)]
@@ -32,12 +32,15 @@
 (defn remap-user-table [source-app-info source-app-version-spec new-app-yaml table-mappings]
   (let [SERVICE-URL "/runtime/services/anvil/users.yml"]
     (when (some #(= SERVICE-URL (:source %)) (:services new-app-yaml))
-      (update-in new-app-yaml [:services] (fn [svcs] (doall (map #(if (= SERVICE-URL (:source %))
-                                                                    (let [source-app (app-data/get-app source-app-info source-app-version-spec)
-                                                                          old-user-table-id (:user_table (get-props (:content source-app)))
-                                                                          new-user-table-id (:new-id (get table-mappings old-user-table-id))]
-                                                                      (assoc % :server_config {:user_table (or new-user-table-id old-user-table-id)}))
-                                                                    %) svcs)))))))
+      (let [updated-new-app-yaml (update-in new-app-yaml [:services] (fn [svcs] (doall (map #(if (= SERVICE-URL (:source %))
+                                                                                               (let [source-app (app-data/get-app source-app-info source-app-version-spec)
+                                                                                                     old-user-table-id (:user_table (get-props (:content source-app)))
+                                                                                                     new-user-table-id (:new-id (get table-mappings old-user-table-id))]
+                                                                                                 (update % :server_config merge {:user_table (or new-user-table-id old-user-table-id)}))
+                                                                                               %) svcs))))]
+        (when (not= updated-new-app-yaml new-app-yaml)
+          ;; Only return new yaml if something actually changed
+          updated-new-app-yaml)))))
 
 (defn row-to-map [r]
   ;; this is disgusting. Item caches come out of the native table funcs with string keys, but

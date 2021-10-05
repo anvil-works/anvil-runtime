@@ -55,12 +55,13 @@ anvil.server._register_exception_type("anvil.tables.QuotaExceededError", QuotaEx
 
 
 class Transaction:
-	def __init__(self):
+	def __init__(self, relaxed=False):
 		self._aborting = False
+		self._isolation = "relaxed" if relaxed else None
 
 	#!defMethod(anvil.tables.Transaction instance)!2: "Begin the transaction" ["__enter__"]
 	def __enter__(self):
-		anvil.server.call("anvil.private.tables.open_transaction")
+		anvil.server.call("anvil.private.tables.open_transaction", isolation=self._isolation)
 		return self
 
 	#!defMethod(_)!2: "End the transaction" ["__exit__"]
@@ -78,37 +79,44 @@ class Transaction:
 #	$doc: "When applied to a function (as a decorator), the whole function will run in a data tables transaction. If it conflicts with another transaction, it will retry up to five times.",
 # anvil$helpLink: "/docs/data-tables/transactions"
 #  } ["in_transaction"]
-def in_transaction(f):
-	def new_f(*args, **kwargs):
-		n = 0
-		while True:
-			try:
-				with Transaction():
-					return f(*args, **kwargs)
-			except TransactionConflict:
-                # lazy load random incase we make random.js a slow path on the client
-				import random
-				n += 1
-				if n == 18:
-					raise
-				#print(f"RETRYING TXN {n}")
-				# Max total sleep time is a little under 150 seconds (avg 75), so server calls will timeout before this finishes usually.
-				sleep_amt = random.random() * (1.5**n) * 0.05
+def in_transaction(maybe_f=None, relaxed=None):
+
+	def wrap(f):
+		def new_f(*args, **kwargs):
+			n = 0
+			while True:
 				try:
-					time.sleep(sleep_amt)
-				except:
-					anvil.server.call("anvil.private._sleep", sleep_amt)
+					with Transaction(relaxed=relaxed):
+						return f(*args, **kwargs)
+				except TransactionConflict:
+					# lazy load random incase we make random.js a slow path on the client
+					import random
+					n += 1
+					if n == 18:
+						raise
+					#print(f"RETRYING TXN {n}")
+					# Max total sleep time is a little under 150 seconds (avg 75), so server calls will timeout before this finishes usually.
+					sleep_amt = random.random() * (1.5**n) * 0.05
+					try:
+						time.sleep(sleep_amt)
+					except:
+						anvil.server.call("anvil.private._sleep", sleep_amt)
 
-	try:
-		reregister = f._anvil_reregister
-	except AttributeError:
-		pass
+		try:
+			reregister = f._anvil_reregister
+		except AttributeError:
+			pass
+		else:
+			reregister(new_f)
+
+		new_f.__name__ = f.__name__
+
+		return new_f
+
+	if maybe_f is None:
+		return wrap
 	else:
-		reregister(new_f)
-
-	new_f.__name__ = f.__name__
-
-	return new_f
+		return wrap(maybe_f)
 
 
 #!defFunction(anvil.tables,_,column_name,ascending=)!2: "Sort the results of this table search by a particular column. Default to ascending order." ["order_by"]

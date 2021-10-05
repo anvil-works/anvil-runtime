@@ -187,7 +187,7 @@ module.exports = function(pyModule) {
 
                 let s = $(`style[anvil-data-grid-id=${self._anvil.dataGridId}]`);
                 if (s.length === 0) {
-                    s = $("<style/>").attr("anvil-data-grid-id", self._anvil.dataGridId).appendTo($("head"));
+                    s = $("<style />").attr("anvil-data-grid-id", self._anvil.dataGridId).appendTo($("head"));
                 }
                 self._anvil.styleSheet = s[0].sheet;
                 self._anvil.updateColStyles = updateColStyles.bind(self, self);
@@ -284,6 +284,7 @@ module.exports = function(pyModule) {
             /*!defMethod(_)!2*/ "Jump to the next page of this DataGrid"["next_page"];
             /*!defMethod(_)!2*/ "Jump to the previous page of this DataGrid"["previous_page"];
             /*!defMethod(_)!2*/ "Get the current page number of this DataGrid"["get_page"];
+            /*!defMethod(_)!2*/ "Set the page number of this DataGrid. The page number must be positive."["set_page"];
         },
     });
 

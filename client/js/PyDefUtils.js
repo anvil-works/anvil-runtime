@@ -1111,7 +1111,7 @@ var propertyGroups = {
             description: "The height of this component.",
             pyVal: true,
             set(s, e, v) {
-                e.css("height", Sk.ffi.remapToJs(v));
+                e.css("height", PyDefUtils.cssLength(v.toString()));
             },
         },
     },
@@ -1125,12 +1125,7 @@ var propertyGroups = {
             description: 'The width of this {{component}}, or "default" to have the width set by the container.',
             deprecated: true,
             set(s, e, v) {
-                v = Sk.ffi.remapToJs(v);
-                if (v === "default") {
-                    e.css("width", s._anvil.defaultWidth);
-                } else {
-                    e.css("width", v);
-                }
+                e.css("width", PyDefUtils.cssLength(v.toString()));
             },
         },
 

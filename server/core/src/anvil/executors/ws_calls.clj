@@ -131,7 +131,7 @@
                :session-state @(::current-session call-context)
                :anvil.dispatcher/change-session! (::change-session! call-context)
                :origin (keyword origin)
-               :call-stack (cons {:type (keyword stack-frame-type)} {:type (keyword type)})
+               :call-stack (cons {:type (keyword stack-frame-type)} call-stack)
                :thread-id (:thread-id (::request call-context))))))
 
 

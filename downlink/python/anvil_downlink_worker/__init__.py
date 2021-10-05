@@ -167,13 +167,20 @@ def load_app(app):
     _serialise.release_reqresps()
 
 
+_initial_import_done = False
+
+
 def load_app_modules():
     """Call from _threaded_server when the environment is ready to import all server modules in this app"""
+    global _initial_import_done
+    if _initial_import_done: return
     try:
         for n in modules_to_import:
             importlib.import_module(n)
     except ErrorLoadingUserCode as e:
         raise e.exc
+    _initial_import_done = True
+
 
 repl_scopes = {}
 

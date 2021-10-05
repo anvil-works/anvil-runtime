@@ -32,19 +32,18 @@
                       new-name table-id])))
 
 (defn delete-table-content! [db-c table-id use-quota!]
-  (table-util/delete-media-in-table table-id use-quota!)
+  (table-util/delete-media-in-table db-c table-id use-quota!)
   (let [deleted-row-count (first (jdbc/execute! db-c ["DELETE FROM app_storage_data WHERE table_id = ?" table-id]))]
     (use-quota! (- deleted-row-count) 0))
   (jdbc/execute! db-c ["DELETE FROM app_storage_tables WHERE id = ?" table-id])
   (table-util/drop-view! db-c table-id))
 
+
 (defn delete-table-access!
   ([mapping table-id] (delete-table-access! (table-util/db-for-mapping mapping) mapping table-id))
   ([db-c mapping table-id]
-   ;; Drop access to a table, and the whole table if it's safe to do so
+   ;; Drop access to a table, and the whole table if it's not used anywhere else.
    (when (table-util/delete-table-access-record! db-c mapping table-id)
-     (binding [table-util/*current-db-transaction* db-c]
-       ;; Ew.
-       (table-util/with-use-quota [use-quota!]
-         (delete-table-content! db-c table-id use-quota!)))
+     (table-util/with-use-quota [use-quota!]
+       (delete-table-content! db-c table-id use-quota!))
      true)))

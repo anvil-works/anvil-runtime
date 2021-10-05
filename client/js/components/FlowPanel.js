@@ -137,7 +137,7 @@ module.exports = (pyModule) => {
             /*!defMethod(_,component,[index=],[width=],[expand=])!2*/ "Add a component to this panel. Optionally specify the position in the panel to add it, or the width to apply to components that can't self-size width-wise."
             $loc["add_component"] = PyDefUtils.funcWithKwargs(function (kwargs, self, component) {
                 pyModule["Container"]._check_no_parent(component);
-                const { idx, expand = false } = kwargs;
+                const { index: idx, expand = false } = kwargs;
                 let containerElement;
 
                 return Sk.misceval.chain(

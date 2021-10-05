@@ -315,11 +315,13 @@
                                                                        "get_task_name" (dispatcher/respond! return-path
                                                                                                             (if task
                                                                                                               {:response (.substring (:task_name task) 5)}
-                                                                                                              {:error "Background Task not found"}))
+                                                                                                              {:error {:message (str "Background Task not found: " id)
+                                                                                                                       :type    "anvil.server.BackgroundTaskNotFound"}}))
                                                                        "get_start_time" (dispatcher/respond! return-path
                                                                                                              (if task
                                                                                                                {:response (DateTime. (str (:start_time task)))}
-                                                                                                               {:error "Background Task not found"}))
+                                                                                                               {:error {:message (str "Background Task not found: " id)
+                                                                                                                        :type    "anvil.server.BackgroundTaskNotFound"}}))
                                                                        "kill" (if (= :client origin)
                                                                                 (throw+ {:anvil/server-error "Can't manage background tasks from the client" :type "anvil.server.BackgroundTaskError"})
                                                                                 (kill! task return-path))

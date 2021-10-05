@@ -713,7 +713,7 @@ module.exports = function(appId, appOrigin) {
 
     function doRpcCall(pyKwargs, args, commandOrMethod, liveObjectSpec, suppressLoading) {
 
-        if (!window.navigator.onLine) {
+        if (!navigator.onLine) {
             // if we're offline we can't make this call
             // throw an error that can be caught by the custom error handler
             throw PyDefUtils.pyCall(pyMod["AppOfflineError"], [new Sk.builtin.str("App is offline")]);
@@ -1008,13 +1008,16 @@ module.exports = function(appId, appOrigin) {
                         window.setLoading(false);
                     deleteOutstandingRequest(requestId)
                     console.error("Websocket connection failed", evt);
-                    reject(
-                        new Sk.builtin.RuntimeError(
-                            "Connection to server failed (" +
-                                ((evt && (evt.code || evt.message || evt.type)) || "FAIL") +
-                                ")"
-                        )
-                    );
+                    if (window.navigator.onLine) {
+                        // we have a problem - the navigator says we're online
+                        window.anvilOnline.onLine = false;
+                        window.anvilOnline.serviceWorkerAgrees = false;
+                        window.anvilOnline.lastCheck = Date.now();
+                    }
+                    const msg = `Connection to server failed (${
+                        (evt && (evt.code || evt.message || evt.type)) || "FAIL"
+                    })`;
+                    reject(PyDefUtils.pyCall(pyMod["AppOfflineError"], [new Sk.builtin.str(msg)]));
                 }, profile: profile};
 
                 var sendProfile = profile.append("Send call");
@@ -1385,8 +1388,39 @@ module.exports = function(appId, appOrigin) {
     });
 
     /*!defFunction(anvil.server,!_)!2*/ "Returns `True` if this app is online and `False` otherwise.\nIf `anvil.server.is_app_online()` returns `False` we expect `anvil.server.call()` to throw an `anvil.server.AppOfflineError`"
-    pyMod["is_app_online"] = new Sk.builtin.func(function() {
-        return Sk.ffi.toPy(window.navigator.onLine);
+    pyMod["is_app_online"] = new Sk.builtin.func(function () {
+        if (!navigator.onLine) {
+            // trust the navigator
+            return Sk.builtin.bool.false$;
+        } else if (window.anvilOnline.serviceWorkerAgrees || !("serviceWorker" in navigator)) {
+            // no reason to doubt the navigator
+            return Sk.ffi.toPy(navigator.onLine);
+        }
+        // ok so the navigator says we're online and the service worker or an RpcCall has (at some point) said we're offline.
+        // when was the last time we checked this. If it's less than the timeout use the value we previously had.
+        // Otherwise, check with the service worker
+        const { onLine, lastCheck, OFFLINE_TIMEOUT } = window.anvilOnline;
+        if (lastCheck > Date.now() - OFFLINE_TIMEOUT) {
+            // use the value we have
+            return Sk.ffi.toPy(onLine);
+        }
+        // check with the service worker somehow...
+        const checkWithFetch = async () => {
+            let res;
+            try {
+                // no need to worry about a polyfill here
+                // IE doesn't have a service worker so this code is unreachable
+                // use the manifest which is not cached so we will do a call to the server
+                await fetch("_/manifest.json?buildTime=0");
+                res = true;
+            } catch (e) {
+                res = false;
+            }
+            window.anvilOnline.onLine = res;
+            window.anvilOnline.lastCheck = Date.now();
+            return Sk.ffi.toPy(res);
+        };
+        return PyDefUtils.suspensionFromPromise(checkWithFetch());
     });
 
     let setupObjectWithClass = (className, vals) => {

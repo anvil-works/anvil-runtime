@@ -22,6 +22,19 @@ module.exports = function () {
     const newProxy = Sk.abstr.lookupSpecial(dummyProxy, Sk.builtin.str.$new);
     const ProxyType = dummyProxy.constructor;
 
+    async function getModule(url) {
+        // we can't use import(url.toString()) because webpack won't support expressions in import statements
+        const mod = await new Function("return import(" + JSON.stringify(url.toString()) + ")").call();
+        return Sk.ffi.proxy(mod);
+    }
+
+    const WRAPPER_ASSIGNMENTS = ["__module__", "__name__", "__qualname__", "__doc__", "__annotations__"].map(
+        (x) => new Sk.builtin.str(x)
+    );
+    const WRAPPER_UPDATES = [new Sk.builtin.str("__dict__")];
+    const STR_UPDATE = new Sk.builtin.str("update");
+    const STR_WRAPPED = new Sk.builtin.str("__wrapped__");
+
     // we only ever serialize from the client to the server
     // the server deserialize method returns the object literal as a dictionary
     ProxyType.prototype.__serialize__ = new Sk.builtin.method_descriptor(ProxyType, {
@@ -44,6 +57,28 @@ module.exports = function () {
     PyDefUtils.pyCall(portable_class, [ProxyType, new Sk.builtin.str("anvil.js.ProxyType")]);
 
     Sk.abstr.setUpModuleMethods("js", pyMod, {
+        /*!defBuiltinFunction(anvil.js,!_,js_promise)!1*/
+        await_promise: {
+            $name: "await_promise",
+            $meth(wrappedPromise) {
+                const maybePromise = wrappedPromise.valueOf();
+                if (
+                    maybePromise instanceof Promise ||
+                    (maybePromise && maybePromise.then && typeof maybePromise.then === "function")
+                ) {
+                    return Sk.misceval.chain(Sk.misceval.promiseToSuspension(maybePromise), (res) =>
+                        Sk.ffi.toPy(res, { dictHook: (obj) => Sk.ffi.proxy(obj) })
+                    );
+                }
+                // we weren't given a wrapped promise so just return the argument we were given :shrug:
+                return wrappedPromise;
+            },
+            $flags: { OneArg: true },
+            $doc: "Await the result of a Javascript Promise in Python. This function will block until the promise resolves or rejects. If the promise resolves, it will return the resolved value. If the promise rejects, it will raise the rejected value as an exception",
+            /*GENDOC*
+            anvil$helpLink: "/docs/client/javascript/accessing-javascript#calling-asynchronous-javascript-apis",
+            //*/
+        },
         /*!defBuiltinFunction(anvil.js,!_,js_function_or_name,*args)!1*/
         call_$rw$: {
             $name: "call",
@@ -139,14 +174,39 @@ module.exports = function () {
                     );
                 }
                 callback_handler.co_fastcall = true;
-                return Sk.misceval.chain(
-                    functools.wraps,
-                    () => PyDefUtils.pyCallOrSuspend(functools.wraps, [pyfunc]),
-                    (wrapper) => PyDefUtils.pyCallOrSuspend(wrapper, [new Sk.builtin.func(callback_handler)])
-                );
+                const pyWrapper = new Sk.builtin.func(callback_handler);
+                // assign __name__ etc
+                WRAPPER_ASSIGNMENTS.forEach((attrName) => {
+                    const attr = pyfunc.tp$getattr(attrName);
+                    if (attr !== undefined) pyWrapper.tp$setattr(attrName, attr);
+                });
+                // update __dict__
+                WRAPPER_UPDATES.forEach((attrName) => {
+                    const attr = pyfunc.tp$getattr(attrName) || new Sk.builtin.dict([]);
+                    const update_meth = pyWrapper.tp$getattr(attrName).tp$getattr(STR_UPDATE);
+                    PyDefUtils.pyCall(update_meth, [attr]);
+                });
+                pyWrapper.tp$setattr(STR_WRAPPED, pyfunc);
+                return pyWrapper;
             },
             $doc: "Use @anvil.js.report_exceptions as a decorator for any function used as a javascript callback. Error handling may be suppressed by an external javascript libary. This decorator makes sure that errors in your python code are reported.",
             $flags: { OneArg: true },
+            /*GENDOC*
+            anvil$helpLink: "/docs/client/javascript/accessing-javascript#capturing-exceptions-in-callbacks",
+            //*/
+        },
+
+        /*!defBuiltinFunction(anvil.js,!Javascript Module,url)!1*/
+        import_from: {
+            $name: "import_from",
+            $meth(url) {
+                return Sk.misceval.promiseToSuspension(getModule(url));
+            },
+            $doc: "use anvil.js.import_from(url) to dynamically import a Javascript Module. Accessing the attributes of a Javascript Module vary depending on the Module. See the documentation for examples",
+            $flags: { OneArg: true },
+            /*GENDOC*
+            anvil$helpLink: "/docs/client/javascript/accessing-javascript#javascript-modules",
+            //*/
         },
     });
 
@@ -161,7 +221,7 @@ module.exports = function () {
     const oldLookup = pyMod.window.$lookup;
     const strParent = new Sk.builtin.str("parent");
     // override the internal method $lookup
-    // it's a bit of a hack but accessing window.parent throws cross origin errors 
+    // it's a bit of a hack but accessing window.parent throws cross origin errors
     // since the default implementation of $lookup uses toPy
     // which accesses attributes that end up getting blocked
     pyMod.window.$lookup = function (pyName) {
@@ -180,18 +240,23 @@ module.exports = function () {
         },
     };
 
-    const functools = {
-        get wraps() {
-            delete this.wraps;
-            return Sk.misceval.chain(
-                Sk.importModule("functools", false, true),
-                (f) => (this.wraps = f.tp$getattr(new Sk.builtin.str("wraps")))
-            );
+    pyMod.ExternalError = Sk.builtin.ExternalError;
+    /*!defMethod(_,)!2*/ ({
+        $doc: "An Error that occurs in Javascript will be raised in Python as an anvil.js.ExternalError. Typically used in a try/except block to catch a Javascript Error",
+        anvil$helpLink: "/docs/client/javascript/accessing-javascript#catching-exceptions",
+    });
+    ["__init__"];
+    /*!defAttr()!1*/ ({
+        name: "original_error",
+        type: "Javascript object",
+        description: "The original Javascript error that was raised.",
+    });
+    pyMod.ExternalError.prototype.original_error = new Sk.builtin.property(
+        new Sk.builtin.func((self) => {
+            return Sk.ffi.toPy(self.nativeError, { dictHook: (obj) => Sk.ffi.proxy(obj) });
+        })
+    );
+    /*!defClass(anvil.js,!ExternalError, __builtins__..Exception)!*/
 
-        }
-    }
-        
     return pyMod;
-
 };
-        

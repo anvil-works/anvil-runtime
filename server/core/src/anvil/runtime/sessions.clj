@@ -313,15 +313,17 @@
 ; So we moved to URL sessions winning, with tokens marked "burned" after we see valid cookies. Burned tokens remain valid as long as a cookie for the same session is presented.
 (defn get-session-for-request [request cookie-name get-blank-session-val]
   (log/trace "Get session for" (:uri request) (pr-str (:params request)))
-  (let [create-blank-session #(new-session (merge (get-blank-session-val)
-                                                  (when % {:anvil.runtime/replacement-session true})))
+  (let [create-blank-session #(do
+                               (log/trace "Creating blank session from:" (pr-str %))
+                               (new-session (merge (get-blank-session-val)
+                                                         (when % {:anvil.runtime/replacement-session true}))))
 
         get-session-from-cookie-token-or-create-blank (fn []
                                                         (let [supplied-cookie-token (get-in request [:cookies cookie-name :value])]
                                                           (when supplied-cookie-token
                                                             (log/trace "Got a cookie token:" supplied-cookie-token))
                                                           (or (when-let [[session id] (load-session-by-token supplied-cookie-token #(cons (get-in % [::tokens :cookie]) (get-in % [::tokens :tmp])))]
-                                                                (log/trace "Loaded session" id)
+                                                                (log/trace "Loaded session" id (.hashCode session))
                                                                 (when (session-matches-app-and-env? request session)
                                                                   ;; If this was the main cookie token, this session's primary browser can do cookies. Great.
                                                                   ;; Disable URL tokens for this session. (Don't do this for temporary tokens - PDF renderers can always
@@ -329,31 +331,48 @@
                                                                   (log/trace "App/env good!")
                                                                   (when (and (= supplied-cookie-token (get-in @session [::tokens :cookie]))
                                                                              (get-in @session [::tokens :url]))
-                                                                    (swap! session update-in [::tokens] #(-> %
-                                                                                                             (assoc :burned (get % :url))
-                                                                                                             (dissoc :url))))
+                                                                    (log/trace "Burning URL tokens" (pr-str (get-in @session [::tokens])))
+                                                                    (swap! session update-in [::tokens] #(if-let [url-token (get % :url)]
+                                                                                                           (-> %
+                                                                                                               (assoc :burned url-token)
+                                                                                                               (dissoc :url))
+                                                                                                           %))
+                                                                    ;; Normally we would (notify-session-update!) after a swap, but in this case a
+                                                                    ;; slightly stale session isn't a problem - it just means a burned URL token might
+                                                                    ;; continue to work a little longer on another server. This doesn't matter.
+                                                                    )
                                                                   {:session session, :cookie-token supplied-cookie-token})) ;; TODO: We should probably clear the URL token here. Maybe.
                                                               ;; Else, this is an invalid session
                                                               {:session (create-blank-session (and supplied-cookie-token (not= supplied-cookie-token "")))})))]
     ;; First look for a session token in the URL
     (if-let [supplied-url-token (not-empty (get-in request [:params :s]))]
       ;; If we specified a valid URL token, load the session from it.
-      (or (when-let [[session id] (load-session-by-token supplied-url-token #(cons (get-in % [::tokens :url])
-                                                                                   (get-in % [::tokens :tmp])))]
+      (or (when-let [[session id] (load-session-by-token supplied-url-token #(do
+                                                                               (log/trace "Looking through URL tokens on session" (.hashCode %) (pr-str (get-in % [::tokens])) "for" (pr-str supplied-url-token))
+                                                                               (cons (get-in % [::tokens :url])
+                                                                                       (get-in % [::tokens :tmp]))))]
+            (log/trace "Found session" id)
             (when (session-matches-app-and-env? request session)
+              (log/trace "Session matches" id)
               {:session      session, :url-token supplied-url-token
                ;; Special case: allow URL->Cookie fixation for temp tokens only (PDF rendering is weird)
                :cookie-token (when (contains? (get-in @session [::tokens :tmp]) supplied-url-token)
                                supplied-url-token)}))
 
           ;; If we specified a burned URL token, load the session from the cookie, but only if it is the same session.
-          (when-let [[session id] (load-session-by-token supplied-url-token (fn [s] [(get-in s [::tokens :burned])]))]
-            (let [cookie-session (get-session-from-cookie-token-or-create-blank)]
-              (when (= (:session cookie-session) session)
-                cookie-session)))
+          (do
+            (when-let [[session id] (load-session-by-token supplied-url-token (fn [s]
+                                                                                (log/trace "Looking through burned tokens on session" (.hashCode s) (pr-str (get-in s [::tokens])) "for" (pr-str supplied-url-token))
+                                                                                [(get-in s [::tokens :burned])]))]
+              (log/trace "Found session for cookie match" id)
+              (let [cookie-session (get-session-from-cookie-token-or-create-blank)]
+                (when (= (:session cookie-session) session)
+                  (log/trace "Cookie session matches" id)
+                  cookie-session))))
 
           ;; If we specified a non-empty url token, it's an invalid session; otherwise it's just blank
-          {:session (create-blank-session (not= supplied-url-token ""))})
+          (do (log/trace "No matches anywhere")
+              {:session (create-blank-session (not= supplied-url-token ""))}))
 
       ;; No URL token? Look for a session from a cookie instead.
       (get-session-from-cookie-token-or-create-blank))))
