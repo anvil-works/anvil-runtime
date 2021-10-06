@@ -16,7 +16,7 @@ cd "$(dirname "$0")"
 
 rm -rf python-package-release
 mkdir python-package-release
-cp -aL ../../downlink/python/anvil_downlink_{worker,host} python-package-release/
+cp -aL ../../downlink/python/anvil_downlink_{worker,host,util} python-package-release/
 cp -aL ../../downlink/python/anvil python-package-release/anvil_downlink_worker
 cp -aL anvil_app_server python-package-release/
 grep -Pv '# BUILD:OMIT\s*$' setup.py > python-package-release/setup.py
