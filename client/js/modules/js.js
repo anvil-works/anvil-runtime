@@ -98,19 +98,22 @@ module.exports = function () {
             anvil$helpLink: "/docs/client/javascript/accessing-javascript#calling-proxyobjects",
             //*/
         },
-        /*!defBuiltinFunction(anvil.js,!_,component)!1*/
+        /*!defBuiltinFunction(anvil.js,!DOM node,component)!1*/
         get_dom_node: {
             $name: "get_dom_node",
             $meth(component) {
-                if (component._anvil === undefined) {
-                    throw new Sk.builtin.TypeError(
-                        "get_dom_node expected an anvil Component not " + Sk.abstr.typeName(component)
-                    );
+                if (component._anvil && component._anvil.domNode) {
+                    return Sk.ffi.proxy(component._anvil.domNode);
+                } else if (component.valueOf() instanceof Element) {
+                    // we're a proxy DOM node so just return the object back to the user
+                    return component;
                 }
-                return Sk.ffi.proxy(component._anvil.domNode);
+                throw new Sk.builtin.TypeError(
+                    `get_dom_node expected an anvil Component or DOM node, (got ${Sk.abstr.typeName(component)})`
+                );
             },
             $flags: { OneArg: true },
-            $doc: "Get the Javascript DOM node for a particular component, to manipulate from Python.",
+            $doc: "Returns the Javascript DOM node for an Anvil component. If a DOM node is passed to the function it will be returned. Anything else throws a TypeError",
             /*GENDOC*
             anvil$helpLink: "/docs/client/javascript/accessing-javascript#accessing-a-dom-node",
             //*/

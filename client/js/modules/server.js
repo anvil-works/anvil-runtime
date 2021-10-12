@@ -1320,6 +1320,9 @@ module.exports = function(appId, appOrigin) {
         const eventName = pyEventName.toString();
         const handlers = pyServerEventHandlers[eventName] || (pyServerEventHandlers[eventName] = []);
         handlers.push(pyHandler);
+        if (!websocket) {
+            connect(); // Make sure we're connected, so the server knows to send events here. Don't wait for the connection to complete.
+        }
         return Sk.builtin.none.none$;
     }
 

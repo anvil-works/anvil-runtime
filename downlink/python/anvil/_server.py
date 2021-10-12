@@ -1026,7 +1026,6 @@ def _reconstruct_objects(json, reconstruct_data_media, hold_back_value_types=Fal
 on_register = None # optional
 registrations = {}
 
-
 class HttpRequest(object):
 
     def __init__(self):
@@ -1037,6 +1036,18 @@ class HttpRequest(object):
             raise Exception("anvil.server.request is only available in http_endpoint calls.")
 
         return object.__getattribute__(self, name)
+
+    @property
+    def body_json(self):
+        if hasattr(self, "_body_json"):
+            return self._body_json
+        elif self.body is not None and self.headers.get("content-type", None) == "application/json":
+            self._body_json = json.loads(self.body.get_bytes())
+        else:
+            self._body_json = None
+        return self._body_json
+
+
 
 
 api_request = HttpRequest()
@@ -1276,12 +1287,7 @@ def http_endpoint(path, require_credentials=False, authenticate_users=False, aut
             api_request.username = username
             api_request.password = password
 
-            if body is not None and headers.get("content-type", None) == "application/json":
-                api_request.body_json = json.loads(api_request.body.get_bytes())
-            else:
-                api_request.body_json = None
 
-            
             # Path takes precedence over query params. Query params take precedence over form params.
             kwargs = dict(form_params)
             kwargs.update(query_params)

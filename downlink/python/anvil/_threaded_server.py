@@ -56,6 +56,17 @@ class HttpRequest(ThreadLocal):
 
         return ThreadLocal.__getattribute__(self, name)
 
+    @property
+    def body_json(self):
+        if hasattr(self, "_body_json"):
+            return self._body_json
+        elif self.body is not None and self.headers.get("content-type", None) == "application/json":
+            self._body_json = json.loads(self.body.get_bytes())
+        else:
+            self._body_json = None
+        return self._body_json
+
+
 _server.api_request = HttpRequest()
 
 

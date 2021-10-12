@@ -125,7 +125,8 @@ module.exports = function(appOrigin, uncaughtExceptions) {
             }
         },
         getsets: {
-            name: {
+            // todo can remove _$rw$ after PR - https://github.com/skulpt/skulpt/pull/1306 is merged
+            name_$rw$: {
                 $get() { return Sk.ffi.toPy(this.data.description); }
             },
             tags: {
