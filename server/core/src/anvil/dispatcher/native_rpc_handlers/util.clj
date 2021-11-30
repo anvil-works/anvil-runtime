@@ -8,7 +8,8 @@
             [anvil.dispatcher.types :as types]
             [anvil.runtime.quota :as quota]
             [anvil.dispatcher.core :as dispatcher]
-            [anvil.core.worker-pool :as worker-pool]))
+            [anvil.core.worker-pool :as worker-pool]
+            [anvil.core.tracing :as tracing]))
 
 (def ^:dynamic *app* nil)
 (def ^:dynamic *app-info* nil)
@@ -26,6 +27,7 @@
 (def ^:dynamic *profiles* nil)
 (def ^:dynamic *lo-cache-updates* nil)
 (def ^:dynamic *live-object-id* nil)
+(def ^:dynamic *trace-id* nil)
 
 (defn log-ctx []
   {:app-session *session-state*, :app-id (:id *app-info*), :environment (assoc *environment* :commit-id (:version *app*))})
@@ -50,6 +52,7 @@
             *app-origin* (:app-origin ~request)
             *req* ~request
             *thread-id* (:thread-id ~request)
+            *trace-id* (tracing/get-trace-id (:tracing-span ~request))
             *session-state* (:session-state ~request)
             *rpc-print* (fn [& args#]
                           (dispatcher/update! ~return-path {:output (with-out-str (apply print args#))}))
@@ -66,63 +69,65 @@
   ([f time-quota-key]
    {:fn
     (fn [{{:keys [live-object args kwargs func] :as call} :call
-          :keys                                           [app app-id app-info app-origin session-state origin thread-id environment]
+          :keys                                           [app app-id app-info app-origin session-state origin thread-id environment tracing-span]
           :as                                             request}
          return-path]
-      (worker-pool/run-task! {:type :native-rpc,
-                              :name (if live-object (format "%s.%s" (:backend live-object) func) func)
-                              :tags (worker-pool/get-task-tags-for-dispatch-request request)}
-        (with-native-bindings-from-request request return-path
-                                           (binding [*profiles* (atom [])
-                    *lo-cache-updates* (atom nil)]
-            (try
-              (let [start-time (double (System/currentTimeMillis))
-                    stop-time (atom nil)]
-                (try+
-                  (let [resp (try
-                               (apply f kwargs args)
-                               (finally
-                                 (reset! stop-time (double (System/currentTimeMillis)))))]
+      (let [func-name (if live-object (format "%s.%s" (:backend live-object) func) func)]
+        (worker-pool/run-task! {:type :native-rpc,
+                                :name func-name
+                                :tags (worker-pool/get-task-tags-for-dispatch-request request)}
+          (with-native-bindings-from-request request return-path
+            (tracing/with-parent-span tracing-span
+              (binding [*profiles* (atom [])
+                        *lo-cache-updates* (atom nil)]
+                (try
+                  (let [start-time (double (System/currentTimeMillis))
+                        stop-time (atom nil)]
+                    (try+
+                      (let [resp (try
+                                   (apply f kwargs args)
+                                   (finally
+                                     (reset! stop-time (double (System/currentTimeMillis)))))]
 
-                    (when @*rpc-cookies-updated?*
-                      (dispatcher/update! return-path {:set-cookie true}))
+                        (when @*rpc-cookies-updated?*
+                          (dispatcher/update! return-path {:set-cookie true}))
 
+                        (dispatcher/respond! return-path
+                                             (merge {:response resp}
+                                                    (when @*lo-cache-updates*
+                                                      {:cacheUpdates (live-objects/filter-cache-updates
+                                                                       @*lo-cache-updates*
+                                                                       (live-objects/get-seen-liveobjects args kwargs live-object resp))})
+                                                    (when (and *session-state*
+                                                               (:anvil/enable-profiling @*session-state*))
+                                                      {:profile (merge {:description "Running native fn"
+                                                                        :start-time  start-time
+                                                                        :end-time    (double (System/currentTimeMillis))}
+                                                                       (when *profiles*
+                                                                         {:children @*profiles*}))}))))
+                      (catch :anvil/server-error e
+                        (log/trace (:throwable &throw-context) "Server error")
+                        (dispatcher/respond! return-path
+                                             {:error (-> e
+                                                         (assoc :type (or (:type e) "anvil.server.InternalError"))
+                                                         (assoc :message (:anvil/server-error e))
+                                                         (assoc :trace [["<rpc>", 0]])
+                                                         (dissoc :anvil/server-error))}))
+                      (finally
+                        (when time-quota-key
+                          (quota/decrement! session-state environment
+                                            time-quota-key
+                                            (/ (- @stop-time start-time) 1000))))))
+                  (catch clojure.lang.ArityException e
                     (dispatcher/respond! return-path
-                                         (merge {:response resp}
-                                                (when @*lo-cache-updates*
-                                                  {:cacheUpdates (live-objects/filter-cache-updates
-                                                                   @*lo-cache-updates*
-                                                                   (live-objects/get-seen-liveobjects args kwargs live-object resp))})
-                                                (when (and *session-state*
-                                                           (:anvil/enable-profiling @*session-state*))
-                                                  {:profile (merge {:description "Running native fn"
-                                                                    :start-time  start-time
-                                                                    :end-time    (double (System/currentTimeMillis))}
-                                                                   (when *profiles*
-                                                                     {:children @*profiles*}))}))))
-                  (catch :anvil/server-error e
-                    (log/trace (:throwable &throw-context) "Server error")
-                    (dispatcher/respond! return-path
-                                         {:error (-> e
-                                                     (assoc :type (or (:type e) "anvil.server.InternalError"))
-                                                     (assoc :message (:anvil/server-error e))
-                                                     (assoc :trace [["<rpc>", 0]])
-                                                     (dissoc :anvil/server-error))}))
-                  (finally
-                    (when time-quota-key
-                      (quota/decrement! session-state environment
-                                        time-quota-key
-                                        (/ (- @stop-time start-time) 1000))))))
-              (catch clojure.lang.ArityException e
-                (dispatcher/respond! return-path
-                                     {:error {:type    "TypeError"
-                                              :message (str "Wrong number of arguments (" (dec (.actual e)) ") passed to " func "(). Did you pass keyword arguments as positional arguments, or vice versa?")
-                                              :trace   [["<rpc>", 0]]}}))
-              (catch Exception e
-                (let [error-id (random/hex 6)]
-                  (log/error e "Internal server error:" error-id)
-                  (dispatcher/respond! return-path
-                                       {:error {:type "anvil.server.InternalError" :message (str "Internal server error: " error-id)}}))))))))}))
+                                         {:error {:type    "TypeError"
+                                                  :message (str "Wrong number of arguments (" (dec (.actual e)) ") passed to " func "(). Did you pass keyword arguments as positional arguments, or vice versa?")
+                                                  :trace   [["<rpc>", 0]]}}))
+                  (catch Exception e
+                    (let [error-id (random/hex 6)]
+                      (log/error e "Internal server error:" error-id)
+                      (dispatcher/respond! return-path
+                                           {:error {:type "anvil.server.InternalError" :message (str "Internal server error: " error-id)}}))))))))))}))
 
 (defn wrap-lazy-media-server [f]
   (fn [{:keys [app-id environment app session-state] :as request} media-id]

@@ -4,15 +4,17 @@
             [anvil.util :as util]
             [clojure.edn :as edn]
             [slingshot.slingshot :refer [try+]]
-            [anvil.runtime.util :as runtime-util]
             [clojure.tools.logging :as log]
             [anvil.core.cache :as cache]
             [anvil.runtime.conf :as conf]
-            [anvil.metrics :as metrics])
+            [anvil.metrics :as metrics]
+            [anvil.runtime.app-log :as app-log]
+            [anvil.runtime.app-data :as app-data])
   (:import (clojure.lang IDeref IAtom Atom IAtom2)
            (java.sql SQLException)
            (java.util Date)
-           (java.io Writer)))
+           (java.io Writer)
+           (com.google.common.net InternetDomainName)))
 
 ;; Objects to represent an Anvil app session.
 ;; A session implements IAtom (so you can (swap!) and (deref) it, and you can still use atoms for ephemeral
@@ -38,20 +40,23 @@
 
 (clj-logging-config.log4j/set-logger! :level :info)
 
-(defprotocol AnySession
+(defprotocol ISession
+  (get-id [this] "Returns the ID of this session.")
+  (ensure-logged! [this] "Log this session, if it's not been logged already")
+  (persist! [this] "Persist this session to the DB, if it's not persisted already")
+  (persisted? [this] "Returns whether this session has been persisted to the DB")
+  (id-when-persisted [this] "Return this session's ID, or nil if it's not been persisted")
+
   (ephemeral-cache [this] "Returns an atom for cache (can disappear at any time, no coherence promised)")
-  (url-token [this] "A token that can be used to construct a URL in this session (may be nil)"))
+  (url-token [this] "A token that can be used to construct a URL in this session (may be nil)")
 
-(extend Atom
-  AnySession
-  {:ephemeral-cache (fn [this] this)
-   :url-token (constantly nil)})
-
-(defprotocol IPersistableSession
-  (persist! [this] "Persist this session, if it's not persisted already")
-  (persistent-id [this] "Return this session's persistent ID, or nil if it's not been persisted")
   (delete! [this] "Delete this session if it's been persisted")
   (deref-db [this] "Get the latest value of the session from the DB, even if it's in the cache"))
+
+(deftype ExtremelyFakeSession [id]
+
+  ISession
+  (get-id [this] id))
 
 (def ^:private SESSION-RELOAD-AFTER 5000)
 (def ^:private SESSION-TOUCH-AFTER 5000)
@@ -74,13 +79,15 @@
 
 (def -edn-roundtrip-ok?)
 (deftype DBSession [id cached-state ephemeral-cache]
-  AnySession
+
+  ISession
+  (get-id [this] id)
+  (persist! [this] nil)
+  (persisted? [this] true)
+  (id-when-persisted [this] (when-not (:deleted? @cached-state) id))
+  (ensure-logged! [this] nil) ;; We're already persisted; too late
   (ephemeral-cache [this] ephemeral-cache)
   (url-token [this] (get-in @this [::tokens :url]))
-
-  IPersistableSession
-  (persist! [this] nil)
-  (persistent-id [this] (when-not (:deleted? @cached-state) id))
   (delete! [this]
     (locking this
       (jdbc/execute! util/db ["DELETE FROM runtime_sessions WHERE session_id = ?" id])
@@ -140,14 +147,15 @@
         (loop []
           (or (try+
                 (jdbc/with-db-transaction [db-c util/db {:isolation :repeatable-read}]
-                  (let [old-v (if-let [s (:state (first (jdbc/query db-c ["SELECT state FROM runtime_sessions WHERE session_id=?" id])))]
-                                (edn/read-string edn-options s)
-                                (:val @cached-state))
+                  (let [[found-in-db? old-v] (if-let [s (:state (first (jdbc/query db-c ["SELECT state FROM runtime_sessions WHERE session_id=?" id])))]
+                                               [true (edn/read-string edn-options s)]
+                                               [false (:val @cached-state)])
                         new-v (f old-v)
                         new-v-str (pr-str new-v)
                         now (System/currentTimeMillis)]
-                    (when-not (or (= new-v old-v)
-                                  (= new-v ::no-change))
+                    (when-not (and found-in-db?
+                                   (or (= new-v old-v)
+                                       (= new-v ::no-change)))
                       ;; Check it's still round-trippable *before* we write it back to the DB
                       (assert (-edn-roundtrip-ok? new-v new-v-str))
                       (metrics/inc! :api/runtime-session-update-total)
@@ -207,35 +215,41 @@
                    (catch RuntimeException e
                      (log/error e (str "Could not read EDN:" stringified)))) nil)))
 
-(deftype DraftSession [draft-state]
-  AnySession
+(deftype DraftSession [id draft-state]
+
+  ISession
+  (get-id [this] id)
   (ephemeral-cache [this] (let [ds @draft-state]
                             (or (:ephemeral-cache ds)
                                 (ephemeral-cache (:db-session ds)))))
   (url-token [this]
     (persist! this)
     (url-token (:db-session @draft-state)))
-
-  IPersistableSession
   (persist! [this]
     (locking this
       (let [{:keys [db-session val ephemeral-cache]} @draft-state]
         (when-not db-session
-          (let [new-id (random/url-part 18)
-                gen-token #(str new-id "=" (random/url-part 21))
+          (ensure-logged! this)
+          (let [gen-token #(str id "=" (random/url-part 21))
                 val (assoc val ::tokens {:cookie (gen-token), :url (gen-token), :tmp #{}, :burned nil})
                 val-str (pr-str val)
                 now (System/currentTimeMillis)]
 
             (assert (-edn-roundtrip-ok? val val-str))
-            (jdbc/execute! util/db ["INSERT INTO runtime_sessions (session_id,state,last_seen) VALUES (?,?,NOW())" new-id val-str])
-            (reset! draft-state {:db-session (->DBSession new-id (atom {:val val, :db-last-seen now, :last-read now}) ephemeral-cache)})
+            (jdbc/execute! util/db ["INSERT INTO runtime_sessions (session_id,state,last_seen) VALUES (?,?,NOW())" id val-str])
+            (reset! draft-state {:db-session (->DBSession id (atom {:val val, :db-last-seen now, :last-read now}) ephemeral-cache)})
             (swap! ephemeral-cache dissoc ::dirty))))))
-  (persistent-id [this] (when-let [s (:db-session @draft-state)]
-                          (persistent-id s)))
+  (persisted? [this] (boolean (:db-session @draft-state)))
+  (id-when-persisted [this] (when-let [s (:db-session @draft-state)]
+                          (get-id s)))
   (delete! [this] (when-let [s (:db-session @draft-state)]
                     (delete! s)))
   (deref-db [this] (deref this))
+  (ensure-logged! [this]
+    (let [{:keys [logged? log-data db-session] {:keys [type]} :client} @draft-state]
+      (when-not (or logged? db-session)
+        (swap! draft-state assoc :logged? true)
+        (app-log/record-session! this log-data))))
 
   IDeref
   (deref [this] (let [{:keys [db-session val]} @draft-state]
@@ -259,9 +273,8 @@
 
 ;; This turned out to be less useful than we thought - we can eager-load then cache instead
 #_(deftype DelaySession [d]
-  AnySession
+  ISession
   (ephemeral-cache [this] (ephemeral-cache (:session @d)))
-  IPersistableSession
   (persist! [this] (persist! (:session @d)))
   (get-tokens [this] (if (realized? d) (or (:tokens @d) (get-tokens (:session @d)))))
   IDeref
@@ -290,12 +303,26 @@
                       (get-valid-tokens-from-session @session))
             [session id]))))))
 
-(defn new-session [{:keys [app-id environment] :as state}]
-  (->DraftSession (atom {:ephemeral-cache (atom {}),
+
+
+(defn new-unlogged-session-with-state [{:keys [app-id environment] :as state} log-data]
+  (->DraftSession (random/base32 20)
+                  (atom {:ephemeral-cache (atom {}),
+                         :logged?         false
+                         :log-data        log-data
                          :val             state})))
 
-(defn mk-session [environment]
-  (new-session {:app-id (:app_id environment), :environment environment}))
+(defn new-session-with-state [state log-data]
+  (doto (new-unlogged-session-with-state state log-data)
+    (ensure-logged!)))
+
+(defn new-unlogged-session-from-environment [environment client-type log-data]
+  (new-unlogged-session-with-state {:app-id (:app_id environment)
+                                    :client {:type client-type}
+                                    :environment environment} log-data))
+
+(defn empty-dummy-session []
+  (new-unlogged-session-with-state {} nil))
 
 (defn- session-matches-app-and-env? [{:keys [environment] :as req} existing-session]
   (and existing-session
@@ -307,16 +334,62 @@
        (or (not environment) ; Some requests allegedly don't have an environment, e.g. OAuth callbacks
            (= (:env_id environment) (:env_id (:environment @existing-session))))))
 
+(defn client-info-from-request [session-type req]
+  {:type     session-type
+   :ip       (:remote-addr req)
+   :location (util/get-ip-location (:remote-addr req))})
+
+(defonce get-shared-cookie-key (fn [app-info] "SHARED"))
+
+(defonce session-setup-hooks (atom {}))
+
+(defn resolve-ambiguous-client-type! [session type]
+  (when-not (get-in @session [:client :type])
+    (swap! session assoc-in [:client :type] type)))
+
+(defn new-session-state-from-request
+  ([req] (new-session-state-from-request req nil))
+  ([req client-type]
+   (apply merge
+          {:app-origin           (:app-origin req)
+           :app-id               (:app-id req)
+           :app-info             (:app-info req)
+           :environment          (:environment req)
+           :cookie-keys          {:local  (keyword (.substring (util/sha-256 (:app-id req)) 0 16))
+                                  :shared (keyword (.substring (util/sha-256 (get-shared-cookie-key (:app-info req))) 0 16))}
+
+           :shared-cookie-domain (when (:app-origin req)    ;; There is no origin if we're, say, in a client_auth_callback. In that case we don't care.
+                                   (let [[_ host] (re-find #"//([^/:]*)" (:app-origin req))
+                                         idn (try (InternetDomainName/from host) (catch IllegalArgumentException e nil))]
+                                     (if (and idn (.isUnderPublicSuffix idn))
+                                       (str (.topPrivateDomain idn))
+                                       host)))
+
+           :cookies              {:local  {}
+                                  :shared {}}
+
+           :client               (client-info-from-request client-type req)
+
+           ::last-accessed       (System/currentTimeMillis)
+           ::remote-addr         (:remote-addr req)         ; Happily, Ring seems to magically use x-real-ip if behind proxy.
+           ::user-agent          (get-in req [:headers "user-agent"])}
+
+          (for [[_ hook] @session-setup-hooks]
+            (hook req)))))
+
+
 ; Started with cookies always winning. But when running in an iframe everything had to use URL tokens. But then an oauth popup would open with old cookie tokens, so everything got confused.
 ; So we moved to URL sessions winning. But that made us vulnerable to session fixation.
 ; So we moved to URL sessions winning, but only once. Once a URL token had been used in a session with cookies, it was deleted. But this prevented a valid URL token being used twice before we worked out that cookies were available (e.g. client WS connections)
 ; So we moved to URL sessions winning, with tokens marked "burned" after we see valid cookies. Burned tokens remain valid as long as a cookie for the same session is presented.
-(defn get-session-for-request [request cookie-name get-blank-session-val]
+(defn get-session-for-request [request cookie-name]
   (log/trace "Get session for" (:uri request) (pr-str (:params request)))
   (let [create-blank-session #(do
                                (log/trace "Creating blank session from:" (pr-str %))
-                               (new-session (merge (get-blank-session-val)
-                                                         (when % {:anvil.runtime/replacement-session true}))))
+                               ;; We create a lot of these. Don't log this until someone touches it
+                               (new-unlogged-session-with-state (merge (new-session-state-from-request request)
+                                                                       (when % {:anvil.runtime/replacement-session true}))
+                                                                (app-log/log-data-from-ring-request request)))
 
         get-session-from-cookie-token-or-create-blank (fn []
                                                         (let [supplied-cookie-token (get-in request [:cookies cookie-name :value])]
@@ -380,17 +453,17 @@
 (defn with-app-session [ring-handler get-cookie-name]
   (fn [req]
     (let [cookie-name (get-cookie-name req)
-          {:keys [session cookie-token url-token]} (get-session-for-request req cookie-name #(runtime-util/blank-app-session-state req))
+          {:keys [session cookie-token url-token]} (get-session-for-request req cookie-name)
           req (assoc req :app-session session :session-url-token url-token)
           _ (when-let [callback (::call-when-app-session-loaded! req)]
               (callback session))
-          pre-id (persistent-id session)
-          _ (when pre-id
-              (log/trace "Loaded session" (persistent-id session) "for request to" (:uri req)))]
+          existing-session? (persisted? session)
+          _ (when existing-session?
+              (log/trace "Loaded session" (get-id session) "for request to" (:uri req)))]
 
       (when-let [resp (ring-handler req)]
-        (let [post-id (persistent-id session)]
-          (when (and post-id (not pre-id))
+        (let [post-id (id-when-persisted session)]
+          (when (and post-id (not existing-session?))
             (log/trace "Created session" post-id "for request to" (:uri req)))
 
           (if-let [cookie-token (or cookie-token
@@ -407,7 +480,7 @@
 (defn generate-tmp-url-token! [session]
   (persist! session)                                        ;; TODO this will error out anywhere we use a bare atom. Using bare atoms needs to go away.
 
-  (let [token (str (persistent-id session) "=" (random/base32 30))]
+  (let [token (str (get-id session) "=" (random/base32 30))]
     (swap! session update-in [::tokens :tmp] #(conj (or % #{}) token))
     token))
 
@@ -439,4 +512,4 @@
 
 (defonce list-sessions (fn [app-id env-id] nil))
 
-(def set-ws-hooks! (util/hook-setter [register-session-listener! unregister-session-listener! notify-session-update! send-event! list-sessions]))
+(def set-ws-hooks! (util/hook-setter [register-session-listener! unregister-session-listener! notify-session-update! send-event! list-sessions get-shared-cookie-key]))

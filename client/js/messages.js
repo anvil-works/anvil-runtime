@@ -29,8 +29,7 @@ $(function() {
         } catch (err) {
             console.error(err, err.stack || "(no stack trace)");
             if (err instanceof Sk.builtin.BaseException) {
-                rv = {fn: "pythonError", filename: err.filename, line: err.lineno,
-                      col: err.colno, type: err.tp$name, msg: Sk.ffi.remapToJs(err.args).join("; ")};
+                rv = {fn: "pythonError", traceback: err.traceback, type: err.tp$name, msg: Sk.ffi.remapToJs(err.args)[0]};
             } else {
                 rv = {error: ""+err};
             }

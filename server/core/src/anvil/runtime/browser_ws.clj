@@ -12,7 +12,8 @@
             [anvil.metrics :as metrics]
             [anvil.core.worker-pool :as worker-pool]
             [anvil.runtime.ws-util :as ws-util]
-            [anvil.runtime.sessions :as sessions]))
+            [anvil.runtime.sessions :as sessions]
+            [anvil.core.tracing :as tracing]))
 
 ;; Hookable functions
 
@@ -95,60 +96,75 @@
                                                     :session-state app-session
                                                     :use-quota?    true
                                                     :call-stack    (list {:type :browser})}
-                                  d (serialisation/deserialise ds data)
-                                  request-id (:id d)
+                                  func (or (:command data) (:method (:liveObjectCall data)))
+                                  request-id (:id data)
                                   responder (serial-responder request-id)
                                   return-path {:respond!
                                                #(responder % true)
                                                :update!
                                                (fn [{:keys [output] :as r}]
                                                  (when (string? output)
-                                                   (app-log/record! request "print"
-                                                                    [{:t (System/currentTimeMillis) :s output}]))
+                                                   ;; TODO NEW TRACE API
+                                                   (app-log/record-event! app-session nil "print" output nil))
                                                  (responder r false))}]
-                              (swap! outstanding-incoming-request-ids assoc request-id {:context {:func (or (:command d) (:method (:liveObjectCall d)))}
+                              (swap! outstanding-incoming-request-ids assoc request-id {:context    {:func (or (:command data) (:method (:liveObjectCall data)))}
                                                                                         :start-time (System/currentTimeMillis)})
                               (log/trace "Calling with replacement session?" (:anvil.runtime/replacement-session @app-session))
                               (try+
-                                (if (= (:command d) "anvil.private.reset_session")
+                                (if (= (:command data) "anvil.private.reset_session")
                                   (do
                                     (swap! app-session assoc :anvil.runtime/replacement-session false)
                                     (reload-anvil-cookies! app-session request)
-                                    (responder {:response (:id @app-session)}
+                                    (sessions/resolve-ambiguous-client-type! app-session "browser")
+                                    (sessions/ensure-logged! app-session)
+                                    (sessions/persist! app-session)
+                                    (responder {:response (sessions/url-token app-session)}
                                                true))
                                   (if (:anvil.runtime/replacement-session @app-session)
-                                    (responder {:error {:type    "anvil.server.SessionExpiredError"
-                                                        :message "Session expired"
-                                                        :trace   [["<rpc>", 0]]}}
-                                               true)
-                                    (dispatcher/dispatch! (assoc request-template
-                                                            :vt_global (:vt_global d)
-                                                            :call (assoc (select-keys d [:args :kwargs])
-                                                                    :func (or (:command d) (:method (:liveObjectCall d)))
-                                                                    :live-object (serialisation/loadLiveObject ds (:liveObjectCall d))))
-                                                          return-path)))
+                                    (do
+                                      ;; Set the session type here, just in case something (like a log event) causes the replacement session to be logged.
+                                      (sessions/resolve-ambiguous-client-type! app-session "browser")
+                                      (responder {:error {:type    "anvil.server.SessionExpiredError"
+                                                          :message "Session expired"
+                                                          :trace   [["<rpc>", 0]]}}
+                                                 true))
+                                    (let [[deserialised-data live-object] (try+
+                                                                            (let [deserialised-data (serialisation/deserialise ds data)
+                                                                                  live-object (serialisation/loadLiveObject ds (:liveObjectCall deserialised-data))]
+                                                                              [deserialised-data live-object])
+                                                                            (catch :anvil/invalid-mac e
+                                                                              (responder {:error {:type    "anvil.server.InvalidObjectError"
+                                                                                                  :message "Error processing object from expired session"
+                                                                                                  :trace   [["<rpc>", 0]]}}
+                                                                                         true)))]
+                                      (dispatcher/dispatch! (assoc request-template
+                                                              :vt_global (:vt_global deserialised-data)
+                                                              :call (assoc (select-keys deserialised-data [:args :kwargs])
+                                                                      :func func
+                                                                      :live-object live-object))
+                                                            return-path))))
 
                                 ;; Don't catch :anvil/server-error here, as dispatch functions should do that themselves
                                 ;; and respond appropriately.
-
                                 (catch Exception e
                                   (let [error-id (random/hex 6)]
-                                    (log/error e "Error in function dispatch for '" (:command d) "/" (:method (:liveObjectCall d)) "':" error-id)
+                                    (log/error e "Error in function dispatch for '" (:command data) "/" (:method (:liveObjectCall data)) "':" error-id)
                                     (responder {:error {:message (str "Internal server error: " error-id)}}
                                                true)))))
 
                             (= type "LOG")
                             (try
+                              (sessions/resolve-ambiguous-client-type! app-session "browser") ;; Just in case this is a replacement session that hasn't been logged yet.
                               (cond
                                 (:error data)
                                 (do (metrics/inc! :api/runtime-errors-total)
-                                    (app-log/record! request "client_err" (:error data)))
+                                    (app-log/record-event! app-session nil "client_err" (str (:type (:error data)) ": " (:message (:error data))) (:error data)))
 
                                 (:warning data)
-                                (app-log/record! request "client_warning" (:warning data))
+                                (app-log/record-event! app-session nil "client_warning" nil (:warning data))
 
                                 :else
-                                (app-log/record! request "client_print" (:print data)))
+                                (app-log/record-event! app-session nil "client_print" (:print data) nil))
                               (catch Exception e
                                 (log/error e)))
 

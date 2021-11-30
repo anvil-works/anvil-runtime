@@ -8,7 +8,8 @@
             [clojure.tools.logging :as log]
             [anvil.dispatcher.core :as dispatcher]
             [clojure.data.json :as json]
-            [anvil.runtime.sessions :as sessions]))
+            [anvil.runtime.sessions :as sessions]
+            [anvil.runtime.app-log :as app-log]))
 
 (defn get-cal-utc []
   (doto (Calendar/getInstance (TimeZone/getTimeZone "UTC"))
@@ -121,22 +122,28 @@
        (when-not (app-data/abuse-caution? nil app_id)
          (let [launch! (fn []
                          (try
-                           (dispatcher/dispatch!
-                             {:call              {:func   "anvil.private.background_tasks.launch"
-                                                  :args   [task_name]
-                                                  :kwargs {}}
-                              :scheduled-task-id job_id
-                              :app-id            app_id
-                              :environment       environment
-                              :session-state     (sessions/mk-session environment)
-                              :origin            :server}
-                             ;; Return path
-                             {:update!  (constantly nil)
-                              :respond! (fn [{:keys [error response]}]
-                                          (if error
-                                            ;; TODO log this somewhere the app can see it
-                                            (log/error "Failed to launch BG task for" job_id "for app" app_id ":" error)
-                                            (update-job! util/db job {:last_bg_task_id (json/read-str (:id response))})))})
+                           ;; This session is created with no log data, so will not be logged unless there's an error launching - see below.
+                           (let [session (sessions/new-unlogged-session-from-environment environment "background_task" {:scheduled_task job_id :func (str "task:" task_name)})]
+                             (dispatcher/dispatch!
+                               {:call              {:func   "anvil.private.background_tasks.launch"
+                                                    :args   [task_name]
+                                                    :kwargs {}}
+                                :scheduled-task-id job_id
+                                :app-id            app_id
+                                :environment       environment
+                                :session-state     session
+                                :call-stack        (list {:type :scheduled_task})
+                                :origin            :server}
+                               ;; Return path
+                               {:update!  (constantly nil)
+                                :respond! (fn [{:keys [error response]}]
+                                            (if error
+                                              (do
+                                                ;; There was an error launching the scheduled task, so *now* the session is worth logging.
+                                                ;; We'll pretend it's a "background_task" session, event though the task never launched.
+                                                (app-log/record-event! session nil "err" (str (:type error) ": " (:message error)) error)
+                                                (log/error (str "Failed to launch Scheduled Task " job_id " for app " app_id ": " error)))
+                                              (update-job! util/db job {:last_bg_task_id (json/read-str (:id response))})))}))
                            (catch Exception e
                              (log/error e (str "Failed to launch scheduled task " job_id " for app " app_id)))))]
            (if (nil? last_bg_task_id)

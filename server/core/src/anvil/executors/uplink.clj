@@ -18,7 +18,9 @@
     [anvil.runtime.util :as runtime-util]
     [anvil.core.worker-pool :as worker-pool]
     [anvil.runtime.ws-util :as ws-util]
-    [anvil.runtime.sessions :as sessions])
+    [anvil.runtime.sessions :as sessions]
+    [anvil.runtime.app-log :as app-log]
+    [anvil.core.tracing :as tracing])
   (:import (java.util.regex PatternSyntaxException)))
 
 
@@ -55,10 +57,16 @@
 (def launch-bg-task! (partial ws-server/launch-bg-task! WS-SERVER-PARAMS {}))
 
 (defn wrap-as-executor [{:keys [send-request!] :as connection}]
-  {:fn    (fn execute-on-uplink! [{{:keys [func]} :call, :keys [app app-info environment] :as request} return-path]
+  {:fn    (fn execute-on-uplink! [{{:keys [func]} :call, :keys [app app-info environment tracing-span] :as request} return-path]
             (let [profiling-info {:origin      (format "Server (Uplink executor)")
                                   :description (str "Uplink execute (" func ")")}
-                  {:keys [call-context request return-path]} (ws-calls/stateful-request-to-serialisable-request request return-path profiling-info)]
+
+                  tracing-span (tracing/start-span (str "Uplink call: " (:short (dispatcher/request-task-description request))) {:internal true} tracing-span)
+                  request (assoc request :tracing-span tracing-span)
+                  return-path (dispatcher/return-path-with-closing-span return-path tracing-span)
+
+                  {:keys [call-context request return-path]} (ws-calls/stateful-request-to-serialisable-request request return-path profiling-info)
+                  request (assoc request :serialised-tracing-span nil)] ;; TODO: Work out how to serialise the tracing span here, so the uplink can add spans of its own. See dispatch-uplink-call!
 
               (send-request! call-context {:type "CALL"} request return-path)))
 
@@ -91,7 +99,8 @@
                                 (reset! disconnect-on-idle? true)
                                 (maybe-disconnect-if-idle!))
 
-          default-session-state (sessions/new-session {})
+          default-session (atom nil) ;; The session for all calls in a call stack that started on the Uplink.
+
           ;; call-stack-ids aren't trusted (they're user supplied), but we need stable thread-ids for uplink-originated
           ;; calls (for transactions etc) - so we generate them for outbound calls by prefixing
           ;; the user-supplied string with a string unique to this session:
@@ -105,6 +114,7 @@
                 (fn [why]
                   (worker-pool/set-task-info! :websocket ::close)
                   (when-let [{:keys [app-info]} @connection]
+                    (app-log/record-event! @default-session nil "session_ended" nil nil)
                     (log/debug "Uplink websocket closed for app" (:id app-info) (pr-str why)))
                   (metrics/set! :api/runtime-connected-uplinks-total (swap! connected-uplink-count dec))
 
@@ -158,17 +168,17 @@
 
                                   :else
                                   (do
-                                    (ws-util/tag-channel! channel {:app-info app-info, :environment env, :app-session default-session-state})
                                     (reset! connection {:app-info app-info,
                                                         :protocol-version protocol-version,
                                                         :environment env,
                                                         :app-origin (app-data/get-default-app-origin env),
                                                         :server-privilege? (= priv :uplink)})
-                                    (reset! default-session-state
-                                            {:client (runtime-util/client-info-from-request (if (= :uplink priv) :uplink :client_uplink)
-                                                                                            request)
-                                             :app-id (:id app-info)
-                                             :environment env})
+                                    (reset! default-session (sessions/new-session-with-state {:client      (sessions/client-info-from-request (if (= :uplink priv) :uplink :client_uplink)
+                                                                                                                                              request)
+                                                                                              :app-id      (:id app-info)
+                                                                                              :environment env}
+                                                                                             (app-log/log-data-from-ring-request request)))
+                                    (ws-util/tag-channel! channel {:app-info app-info, :environment env, :app-session @default-session})
                                     (send! channel (util/write-json-str {:auth     "OK"
                                                                          :priv     priv
                                                                          :app-info (runtime-util/get-runtime-app-info env)}))
@@ -193,6 +203,7 @@
                                   (log/debug "Server function registered:" (:name raw-data))
 
                                   (swap! my-fn-registrations conj (set-uplink-handler! @connection-cookie (:name raw-data)))
+                                  (app-log/record-event! @default-session nil "uplink_register" (str "Registered uplink function: " (:name raw-data)) {:func (:name raw-data)})
                                   (catch PatternSyntaxException _e
                                     (send! channel "{\"error\": \"Invalid function name specification\"}")
                                     (log/debug "Closing uplink channel: Invalid function spec")
@@ -214,7 +225,7 @@
                                     call-stack-id (:call-stack-id raw-data)
                                     pending-response (get-pending-response call-stack-id)
                                     context (or (:context pending-response)
-                                                (ws-calls/new-call-context :uplink-call (:app-info @connection) (:environment @connection) nil nil default-session-state))
+                                                (ws-calls/new-call-context :uplink-call (:app-info @connection) (:environment @connection) nil nil @default-session))
                                     call-stack-info (STACK-FRAME-INFO (:server-privilege? @connection))
                                     return-path {:update!  #(send! channel (util/write-json-str (assoc % :id call-id)))
                                                  :respond! #(do (serialisation/serialise-to-websocket! (assoc % :id call-id) channel true nil)

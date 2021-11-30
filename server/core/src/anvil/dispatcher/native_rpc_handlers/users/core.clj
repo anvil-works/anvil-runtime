@@ -502,7 +502,7 @@
             util/*app* (:content app)
             util/*app-id* (:id app)
             util/*environment* environment
-            util/*session-state* (or util/*session-state* (sessions/new-session {}))
+            util/*session-state* (or util/*session-state* (sessions/empty-dummy-session))
             util/*rpc-print* #(log/info "Email confirmation table output:" %&)]
 
     (let [{:keys [user_table use_email] :as props} (get-props-with-named-user-table)]

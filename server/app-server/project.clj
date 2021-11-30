@@ -22,19 +22,21 @@
 
                  [org.clojure/tools.cli "1.0.194"]
 
-                 [io.zonky.test/embedded-postgres "1.2.6" :exclusions [[io.zonky.test.postgres/embedded-postgres-binaries-linux-amd64-alpine]]]
-                 [io.zonky.test.postgres/embedded-postgres-binaries-linux-arm32v7 "10.11.0"]
-                 [io.zonky.test.postgres/embedded-postgres-binaries-linux-arm64v8 "10.11.0"]
+                 [io.zonky.test/embedded-postgres "1.3.1" :exclusions [[io.zonky.test.postgres/embedded-postgres-binaries-linux-amd64-alpine]]]
+                 [io.zonky.test.postgres/embedded-postgres-binaries-linux-arm32v7] ;; Versions are specified by BOM below.
+                 [io.zonky.test.postgres/embedded-postgres-binaries-linux-arm64v8]
 
-                 [anvil/embedded-traefik "0.2.0"]
+                 [anvil/embedded-traefik "0.3.0"]
 
                  [org.bouncycastle/bcprov-jdk15on "1.60"]
 
                  ;; Hacks for Java 11 (#2334) - we shouldn't need this
                  [javax.xml.bind/jaxb-api "2.3.1"]
                  [org.glassfish.jaxb/jaxb-runtime "2.3.1"]]
+  :bom {:import [[io.zonky.test.postgres/embedded-postgres-binaries-bom "13.4.0"]]}
   :main anvil.app-server.run
   :repl-options {:init (do (use 'anvil.app-server.run) (-main "--config-file" "test-files/anvil.conf.yaml"))}
+  :plugins [[lein-bom "0.2.0-SNAPSHOT"]]
   :uberjar-name "anvil-app-server.jar"
   :aot :all
   :omit-source true

@@ -162,7 +162,8 @@ module.exports = function() {
         }
         let bytes = new Sk.builtin.bytes(new Uint8Array(r));
         if (json) {
-            const jsstr = bytes.$jsstr();
+            const decode = bytes.tp$getattr(new Sk.builtin.str("decode"));
+            const jsstr = PyDefUtils.pyCall(decode).toString();
             let json;
             try {
                 json = JSON.parse(jsstr);

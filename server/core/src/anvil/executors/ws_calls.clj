@@ -11,7 +11,8 @@
             [crypto.random :as random]
             [anvil.runtime.app-data :as app-data]
             [anvil.runtime.sessions :as sessions]
-            [anvil.runtime.util :as runtime-util]))
+            [anvil.runtime.util :as runtime-util]
+            [anvil.core.tracing :as tracing]))
 
 (clj-logging-config.log4j/set-logger! :level :info)
 
@@ -27,7 +28,7 @@
   ;;  - a serialisable request
   ;;  - a return path that understands :update-python-session
   ;;  - a precise specification of the app+dependencies version for (retrieve-exact-app) (currently the app itself, but we can make this more efficient)
-  (let [{:keys [app-id app session-state environment call-stack stale-uplink? vt_global]} request
+  (let [{:keys [app-id app session-state environment call-stack stale-uplink? tracing-span vt_global]} request
         blended-version (apply str (:commit-id environment) (for [[_ {:keys [commit-id]}] (sort-by first (:dependency_code app))] commit-id))
         n-responses (atom 0)
         current-session (atom session-state)
@@ -51,19 +52,21 @@
                                  (if-not (contains? update :update-python-session)
                                    (dispatcher/update! return-path update)
                                    (do
-                                     (swap! session-state #(if (= (:pymods %) @python-session-state-at-send)
-                                                             (do
-                                                               (log/trace "Update OK")
-                                                               (assoc % :pymods (sessions/map->UserData (:update-python-session update))))
-                                                             (do
-                                                               (log/trace "No match:" (:pymods %) @python-session-state-at-send)
-                                                               %)))
+                                     (swap! @current-session #(if (= (:pymods %) @python-session-state-at-send)
+                                                                (do
+                                                                  (log/trace "Update OK")
+                                                                  (assoc % :pymods (sessions/map->UserData (:update-python-session update))))
+                                                                (do
+                                                                  (log/trace "No match:" (:pymods %) @python-session-state-at-send)
+                                                                  %)))
                                      (reset! python-session-state-at-send (:update-python-session update)))))}
 
-        call-context {::request request
-                      ::accounting-info (get-accounting-info request)
-                      ::current-session current-session
-                      ::change-session! #(reset! current-session %)
+        call-context {::request              request
+                      ::accounting-info      (get-accounting-info request)
+                      ::current-session      current-session
+                      ::change-session!      (fn [new-session]
+                                               (reset! current-session new-session)
+                                               (reset! python-session-state-at-send (:pymods @new-session)))
                       ::upstream-return-path return-path}
 
         request-for-downlink nil #_{:id            req-id
@@ -77,7 +80,7 @@
         request (-> {:call-stack       (map #(select-keys % [:type]) call-stack)
                      :client           (:client @session-state)
                      :sessionData      (or @python-session-state-at-send {})
-                     :session-id       (sessions/persistent-id session-state)
+                     :session-id       (sessions/get-id session-state)
                      :app-id           app-id
                      :app-info         (runtime-util/get-runtime-app-info environment)
                      :commit-id        (:commit-id environment)
@@ -100,7 +103,7 @@
 ;; For example, BG task launches, calls from uplink code, etc.
 ;; Origin argument is only used to generate thread id.
 (defn new-call-context [origin app-info environment app-origin app session-state]
-  (let [current-session (atom (or session-state (sessions/new-session {})))]
+  (let [current-session (atom (or session-state (sessions/empty-dummy-session)))]
     {::request              {:app-id      (:id app-info)
                              :app-info    app-info
                              :app-origin  app-origin
@@ -119,7 +122,7 @@
   (let [{:keys [call-stack environment]} (::request call-context)
         {:keys [args kwargs command liveObjectCall vt_global]} serialisable-request
         liveObjectCall (serialisation/loadLiveObject (serialisation/mk-Deserialiser deserialiser-config) liveObjectCall)]
-    (-> (select-keys (::request call-context) [:app-id :app-info :app :environment])
+    (-> (select-keys (::request call-context) [:app-id :app-info :app :environment :tracing-span])
         (assoc :call {:func        (or (:method liveObjectCall)
                                        command)
                       :args        args
@@ -130,6 +133,7 @@
                                (app-data/get-default-app-origin environment))
                :session-state @(::current-session call-context)
                :anvil.dispatcher/change-session! (::change-session! call-context)
+               :anvil.dispatcher/alternate-session (:anvil.dispatcher/alternate-session (::request call-context))
                :origin (keyword origin)
                :call-stack (cons {:type (keyword stack-frame-type)} call-stack)
                :thread-id (:thread-id (::request call-context))))))

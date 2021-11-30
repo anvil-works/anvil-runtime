@@ -182,7 +182,7 @@
                                                                 (util/sha-256 mac))))
                                           (do
                                             (log/info "Invalid Capability MAC" (pr-str mac))
-                                            (throw (Exception. "Invalid Capability"))))
+                                            (throw+ {:anvil/invalid-mac "Invalid Capability MAC"})))
                                         (types/->Capability (concat scope narrow))))
                   "Date"       #(Date. (:value obj))
                   "DateTime"   #(DateTime. (:value obj))

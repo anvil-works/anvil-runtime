@@ -29,7 +29,8 @@
            (javax.sql DataSource)
            (java.time Instant ZoneOffset)
            (java.time.format DateTimeFormatter)
-           (com.maxmind.geoip2.model CityResponse)))
+           (com.maxmind.geoip2.model CityResponse)
+           (org.apache.commons.codec.binary Base64)))
 
 ;; This needs to work on lots of different formats.
 ;; E.g. "16" - TODO: Add tests
@@ -120,8 +121,8 @@
     (.substring (.toString ^Keyword val) 1)
     val))
 
-(defn write-json-str [val]
-  (json/write-str val :key-fn preserve-slashes))
+(defn write-json-str [val & options]
+  (apply json/write-str val :key-fn preserve-slashes options))
 
 (defn read-json-str [val]
   (json/read-str val :key-fn keyword))
@@ -172,7 +173,7 @@
                              (getConnection [_this] (.getConnection ^DataSource @datasource))))})
 
 
-(def LATEST-DB-VERSION? #{"2021-09-22-table-mapping-dbs"})
+(def LATEST-DB-VERSION? #{"2021-10-28-background-task-sessions"})
 
 (defn require-latest-db-version [continue-anyway?]
   (try
@@ -212,12 +213,12 @@
           (try+
             (jdbc/with-db-transaction [db-c db-spec {:isolation :serializable}]
               [false (f db-c)])
-            (catch #(or (and (instance? SQLException %) (= "40001" (.getSQLState %)))
+            (catch #(or (and (instance? SQLException %) (#{"40001" "40P01"} (.getSQLState %)))
                         (and (:anvil/server-error %) (= (:type %) "anvil.tables.TransactionConflict")))
                    e
               (if (and (> n 0) (not (:level db-spec)))
                 (do
-                  (log/trace "Conflict in with-db-transaction")
+                  (log/trace (str "Conflict in with-db-transaction: " e))
                   (Thread/sleep (long (* (Math/random) (Math/pow 2 (* 0.5 (- TXN-RETRIES n))))))
                   [true nil])
                 (throw+ e))))]
@@ -335,6 +336,10 @@
   `(when-let [r# (do ~@body)]
      (with-meta r# ~m)))
 
+(defn vary-meta-when [val fn & args]
+  (when val
+    (apply vary-meta val fn args)))
+
 (defmacro $ [a b c] `(~b ~a ~c))
 
 (defmacro defn-with-ttl-memoization [func args ttl & body]
@@ -391,6 +396,9 @@
     (log/info s)
     (when *in-repl?*
       (println s))))
+
+(defn basic-auth-header [user pass]
+  (str "Basic " (String. ^bytes (Base64/encodeBase64 (.getBytes (str user ":" pass))))))
 
 ;;;;;;;;;;;;;;;;;;;
 ;; The following two functions are corrected versions of the ones in ring.middleware.proxy-headers, which

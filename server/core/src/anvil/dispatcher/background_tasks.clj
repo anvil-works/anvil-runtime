@@ -14,7 +14,8 @@
             [anvil.runtime.app-data :as app-data]
             [anvil.core.worker-pool :as worker-pool]
             [anvil.runtime.sessions :as sessions]
-            [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks])
+            [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks]
+            [anvil.core.tracing :as tracing])
   (:use     [slingshot.slingshot :only [throw+ try+]])
   (:import (anvil.dispatcher.types DateTime)
            (java.util Date)
@@ -24,7 +25,7 @@
 ;; maps impl-name -> {:get-state, kill!}
 (defonce implementations (atom {}))
 
-(defrecord BackgroundTask [app_id env_id id task_name routing completion_status final_state start_time last_seen_alive])
+(defrecord BackgroundTask [app_id env_id id task_name routing completion_status final_state start_time last_seen_alive session_id])
 
 (defn mk-BackgroundTaskLiveObject [id]
   (types/mk-LiveObjectProxy "anvil.private.BackgroundTask" (util/write-json-str id) [] ["get_id" "get_termination_status" "get_error" "get_state" "get_return_value" "get_task_name" "get_start_time" "is_completed" "is_running" "kill"]) )
@@ -70,7 +71,7 @@
 
 (defn present-background-task [bt]
   (-> bt
-      (select-keys [:id :completion_status :task_name :debug])
+      (select-keys [:id :completion_status :task_name :debug :session_id])
       (assoc :last_seen_alive (.getTime (:last_seen_alive bt)))
       (assoc :start_time (.getTime (:start_time bt)))
       (assoc :session_sha (util/sha-256 (str (:session bt))))))
@@ -81,7 +82,7 @@
 
 (defn get-state
   ([task return-path]
-    (get-state task return-path vector))
+   (get-state task return-path vector))
   ([task return-path render-resp]
    (dispatcher/report-exceptions-to-return-path return-path
      (if-not task
@@ -140,7 +141,7 @@
                      (dispatcher/respond! return-path r)))})
     (dispatcher/respond! return-path {:response nil})))
 
-(defn record-final-state! [{:keys [id] :as _task} {:keys [taskState response error] :as _resp} error?]
+(defn record-final-state! [session {:keys [id] :as _task} {:keys [taskState response error] :as _resp} error?]
   (let [[serialised-state error] (try+
                                    (if error
                                      [(serialiser/serialise-to-map {:state taskState}) error]
@@ -156,24 +157,21 @@
 
         serialised-state (merge
                            serialised-state
-                           (when error {:error error}))]
+                           (when error {:error error}))
+        status (cond
+                 (#{:threw :mia :killed} error?) (name error?)
+                 error? "threw"
+                 :else "completed")]
 
-    (let [{:keys [session] :as task}
-          (first (jdbc/query util/db [(str "UPDATE background_tasks SET completion_status = ?::background_task_status, final_state = ?::jsonb"
-                                           (when (not= error? :mia) ", last_seen_alive=NOW()")
-                                           " WHERE id = ? AND completion_status IS NULL RETURNING *")
-                                      (cond
-                                        (#{:threw :mia :killed} error?) (name error?)
-                                        error? "threw"
-                                        :else "completed")
-                                      serialised-state id]))]
+    (when (and (first (jdbc/query util/db [(str "UPDATE background_tasks SET completion_status = ?::background_task_status, final_state = ?::jsonb"
+                                                (when (not= error? :mia) ", last_seen_alive=NOW()")
+                                                " WHERE id = ? AND completion_status IS NULL RETURNING *")
+                                           status serialised-state id]))
+               session)
 
       ;; The session might already have ended - if this is the error coming in after a kill, for example.
       ;; So only record this event if we were the one to set the task's completion status
-      (when task
-        ;; Env can be nil here when the app has been deleted (this happens during tests)
-        (when-let [env (get-environment-for-background-task task)]
-          (app-log/record-raw! session env "session_ended" {:type "background_task" :state nil}))))))
+      (app-log/record-event! session nil "background_task_ended" nil {:status status}))))
 
 
 ;; When we send Media into a background task, we need to ensure that it has all arrived
@@ -207,14 +205,22 @@
             req chunked-streams)))
 
 
-(def rpc-handlers {"anvil.private.background_tasks.launch"    {:fn (fn [{{[task-fn] :args} :call, :keys [origin from-bg-task? app-id environment session-state], :as request} return-path]
+(def rpc-handlers {"anvil.private.background_tasks.launch"    {:fn (fn [{{[task-fn] :args} :call, :keys [origin from-bg-task? app-id environment session-state tracing-span], :as request} return-path]
                                                                      (worker-pool/run-task! {:type :native-rpc,
                                                                                              :name ::bg-task-launch-async-for-media-wait
                                                                                              :tags (worker-pool/get-task-tags-for-dispatch-request request)}
                                                                        (dispatcher/report-exceptions-to-return-path return-path
                                                                          ;; This is naaaasty:
                                                                          (let [request (wait-for-media request)
-                                                                               restrict? (app-data/abuse-caution? session-state app-id)]
+                                                                               restrict? (app-data/abuse-caution? session-state app-id)
+                                                                               return-path (assoc return-path :respond! (fn [resp]
+                                                                                                                          ;; Response is always a BG task liveobject. Add its metadata to our tracing span.
+                                                                                                                          ;; TODO: Once BG tasks are sensible Portable Classes, we won't need this DB lookup, we can include the session ID in the wire format for the object.
+                                                                                                                          (let [task-id (json/read-str (-> resp :response :id))
+                                                                                                                                session-id (:session_id (first (jdbc/query util/db ["SELECT session_id FROM background_tasks WHERE id = ?" task-id])))]
+                                                                                                                            (tracing/merge-span-attrs tracing-span {:task_id         task-id
+                                                                                                                                                                    :task_session_id session-id}))
+                                                                                                                          (dispatcher/respond! return-path resp)))]
                                                                            (when (= :client origin)
                                                                              (throw+ {:anvil/server-error "Can't launch background tasks from the client." :type "anvil.server.BackgroundTaskError"}))
 
@@ -232,7 +238,9 @@
                                                                                                                                (assoc :scheduled? (boolean (:scheduled-task-id request)))
                                                                                                                                (assoc :bg-task-timeout (if restrict?
                                                                                                                                                          30000
-                                                                                                                                                         nil)))
+                                                                                                                                                         nil))
+                                                                                                                               ;; It's useful to use the existing span here, because then we get all the task's executor info on *this* span, which has custom rendering anyway.
+                                                                                                                               (assoc :use-existing-tracing-span? true))
                                                                                                                            return-path))]
 
                                                                              (if-not restrict?
@@ -333,26 +341,26 @@
 ;; A utility function, for use in pypy and local wrapper. It sets up a new background task record,
 ;; a new session, and a return path pointing to that task. The return value of the function is (optionally) used
 ;; as the final state.
-(defn setup-background-task-context [{:keys [app-id app-origin environment scheduled-task-id] {func :func} :call :as request} impl cleanup-fn]
-  (let [new-session (sessions/new-session {:app-id app-id
-                                           :app-origin  app-origin
-                                           :client      {:type :background_task}
-                                           :environment environment})
+(defn setup-background-task-context [{:keys [app-id app-origin environment scheduled-task-id tracing-span] {func :func} :call :as request} impl cleanup-fn]
+  (let [new-session (sessions/new-session-with-state {:app-id      app-id
+                                                      :app-origin  app-origin
+                                                      :client      {:type :background_task}
+                                                      :environment environment}
+                                                     (merge {:func func}
+                                                            (when scheduled-task-id
+                                                              {:scheduled_task scheduled-task-id})))
         log-ctx (merge {:app-session new-session}
                        (select-keys request [:app-id :environment]))
-        _ (app-log/record! log-ctx :new-session (merge {:type "background-task" :func func}
-                                                       (when scheduled-task-id
-                                                         {:scheduled_task scheduled-task-id})))
-        task (create-background-task-record environment impl func (:session-id (:app-log @(:app-session log-ctx))))
+        task (create-background-task-record environment impl func (sessions/get-id new-session))
 
         return-path {:update!  (fn [{:keys [output]}]
                                  (when output
-                                   (app-log/record! log-ctx "print" [{:t (System/currentTimeMillis) :s output}])))
+                                   (app-log/record-event! new-session (tracing/get-trace-id tracing-span) "print" output nil)))
                      :respond! (fn [{:keys [error] :as resp}]
-                                 (record-final-state! task resp (boolean error))
+                                 (record-final-state! new-session task resp (boolean error))
 
                                  (when error
-                                   (app-log/record! log-ctx "err" error))
+                                   (app-log/record-event! new-session (tracing/get-trace-id tracing-span) "err" (str (:type error) ": " (:message error)) error))
                                  (when cleanup-fn
                                    (cleanup-fn task)))}]
 
@@ -366,7 +374,7 @@
 (defn launch-local-background-task!
   ([executor request]
    ;; Launch an background task on a non-async-aware executor, using return value as final state
-   (let [[bt request return-path] (setup-background-task-context request :local-wrapper #(swap! local-background-tasks dissoc (:id %)))
+   (let [[bt {:keys [session-state] :as request} return-path] (setup-background-task-context request :local-wrapper #(swap! local-background-tasks dissoc (:id %)))
          task-state (atom {})]
 
      (swap! local-background-tasks assoc (:id bt) {:task-state task-state})
@@ -378,10 +386,10 @@
                            (dissoc :background?))
         return-path)
        (catch :anvil/server-error e
-         (record-final-state! bt {:error {:message (:anvil/server-error e) :type (:type e)}} true)
+         (record-final-state! session-state bt {:error {:message (:anvil/server-error e) :type (:type e)}} true)
          (swap! local-background-tasks dissoc (:id bt)))
        (catch Exception e
-         (record-final-state! bt {:error {:message "Internal error launching task"}} true)
+         (record-final-state! session-state bt {:error {:message "Internal error launching task"}} true)
          (swap! local-background-tasks dissoc (:id bt))
          (throw e)))
 
@@ -417,10 +425,10 @@
                                                     (dispatcher/report-exceptions-to-return-path return-path
                                                       (try+
                                                         (rpc-util/with-native-bindings-from-request request return-path
-                                                                                                    (binding [*native-bg-task-state* (::task-state rpc-util/*req*)]
-                                                                                                      (dispatcher/respond! return-path {:response (f)})))
+                                                          (binding [*native-bg-task-state* (::task-state rpc-util/*req*)]
+                                                            (dispatcher/respond! return-path {:response (f)})))
                                                         (catch InterruptedException e
-                                                          (record-final-state! (::task request) {:taskState @(::task-state request)} :killed))))))]
+                                                          (record-final-state! (:session-state request) (::task request) {:taskState @(::task-state request)} :killed))))))]
                                           (swap! local-background-tasks (fn [ts]
                                                                           (if (contains? ts (:id (::task request)))
                                                                             (assoc-in ts [(:id (::task request)) :thread] t)

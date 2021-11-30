@@ -10,7 +10,8 @@
             [anvil.util :as util]
             [anvil.dispatcher.types :as types]
             [anvil.dispatcher.core :as dispatcher]
-            [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks])
+            [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks]
+            [anvil.core.tracing :as tracing])
   (:import
     (org.apache.commons.codec.binary Base64)
     (java.io InputStream ByteArrayOutputStream)
@@ -43,8 +44,7 @@
         headers (reduce merge {} (for [[k v] (:headers kwargs)]
                                    {(.substring (.toLowerCase (str k)) 1) v}))
         headers (if (:username kwargs)
-                  (assoc headers "authorization"
-                                 (str "Basic " (Base64/encodeBase64String (.getBytes (str (:username kwargs) ":" (:password kwargs))))))
+                  (assoc headers "authorization" (util/basic-auth-header (:username kwargs) (:password kwargs)))
                   headers)
 
         data    (:data kwargs)
@@ -79,7 +79,9 @@
                      :body      (when (not= method :get) data)
                      :keepalive -1}
 
-        {:keys [status headers body error] :as resp} @(http/request httpkit-map nil)]
+
+        {:keys [status headers body error] :as resp} (tracing/with-span ["HTTP Request" {:url url :method (name method)}]
+                                                       @(http/request httpkit-map nil))]
 
     (log/trace resp)
 

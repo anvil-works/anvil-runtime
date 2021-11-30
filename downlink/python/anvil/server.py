@@ -94,6 +94,7 @@ task_state = _server.NotABackgroundTaskState()
 #!defAttr()!1: {name: "status", type: "number", description: "The status code for this HTTP response. Default is 200."}
 #!defAttr()!1: {name: "body", type: "any", description: "The body of this HTTP response. Can be a string, a Media object, or any JSON-able value."}
 #!defAttr()!1: {name: "headers", type: "dict", description: "The headers to return with this HTTP response. Content-Type will be set automatically if not specified."}
+#!defMethod(_, status=200, body="", headers=None)!2: ("Create an HttpResponse object") ["__init__"];
 #!defClass(anvil.server,%HttpResponse)!0:
 
 

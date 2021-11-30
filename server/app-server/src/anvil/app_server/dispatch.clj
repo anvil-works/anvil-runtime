@@ -27,6 +27,7 @@
                        (.put env "DOWNLINK_SERVER" (str "ws://" server-host ":" server-port "/_/downlink"))
                        (.put env "DOWNLINK_KEY" downlink-key)
                        (.put env "ENABLE_PDF_RENDER" "1")
+                       (.put env "DOWNLINK_CAN_PERSIST" "1")
                        (.redirectError pb ProcessBuilder$Redirect/INHERIT)
                        (.redirectOutput pb ProcessBuilder$Redirect/INHERIT)
                        (.waitFor (.start pb)))

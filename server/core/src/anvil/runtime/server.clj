@@ -167,7 +167,9 @@
             {:keys [body-class]} (app-data/get-extra-rendering-info app-id app-session {})]
 
         (log/debug "Serving app" app-id)
-        (app-log/record! req :new-session {:type "browser"})
+
+        (sessions/resolve-ambiguous-client-type! app-session "browser")
+        (sessions/ensure-logged! app-session)
 
         ;; We are loading this app from scratch, so we don't care if our old session has expired.
         ;; We also reset the environment in this session to match what the URL told us, so that refreshing
@@ -195,6 +197,7 @@
                                    "{{google-api-key}}"     (or google-api-key "")
                                    "{{session-token}}"      (or (:session-url-token req)
                                                                 (get-in @app-session [::sessions/tokens :url])
+                                                                (get-in @app-session [::sessions/tokens :burned])
                                                                 "")
                                    "{{manifest-url}}"       (str (hiccup-util/escape-html app-origin) "/_/manifest.json")
                                    "{{theme-color}}"        (:primary-color style)
@@ -244,7 +247,8 @@
 (defn serve-api-request [path request]
   (log/trace "API hit" request)
   (log/trace "Session:" (:app-session request))
-  (app-log/record! request :new-session {:type "api"})
+  (sessions/resolve-ambiguous-client-type! (:app-session request) "http")
+  (sessions/ensure-logged! (:app-session request))
   (with-channel request channel
     (try+
       (let [anvil-cookies-updated? (atom false)
@@ -275,15 +279,25 @@
             _ (when (:new-session request)
                 (swap! (:app-session request) assoc-in [:client :type] :http))
 
+            method (.toUpperCase (name (:request-method request)))
+
             session (:app-session request)
             _ (reload-anvil-cookies! session request)
-            session (if (:cross-origin request)
-                      (sessions/new-session (assoc (blank-app-session-state request :http)
-                                              :alternate-session session))
-                      session)
+
+            ;; TODO: Work out how to get the path and method into session data that may have already been logged.
+            [session alternate-session] (if (:cross-origin request)
+                                          ;; N.B This session doesn't get logged immediately, because it might be thrown away if the http_endpoint allows cross-origin sessions.
+                                          ;; If it needs logging (because we ended up using it), that will happen in anvil.private.switch_session!
+                                          [(sessions/new-unlogged-session-with-state (sessions/new-session-state-from-request request :http)
+                                                                                     (-> (app-log/log-data-from-ring-request request)
+                                                                                         (assoc :path path
+                                                                                                :method method)))
+                                           session]
+                                          [session nil])
 
             dispatcher-request (promise)
 
+            trace-id nil                                    ;; TODO NEW TRACE API
             return-path {:update!
                          (fn [{:keys [output set-cookie] :as r}]
                            (cond
@@ -291,8 +305,8 @@
                              (reset! anvil-cookies-updated? true)
 
                              (string? output)
-                             (app-log/record! request "print"
-                                              [{:t (System/currentTimeMillis) :s output}])))
+                             ;; TODO which session do we log this into?!
+                             (app-log/record-event! session trace-id "print" output nil)))
 
                          :respond!
                          (fn [{{:keys [status body headers] :or {headers []}} :response :keys [response error] :as r}]
@@ -316,15 +330,16 @@
                                      (send! channel (-> {:body "No matching API endpoint"}
                                                         (resp/status 404)
                                                         (resp/content-type "text/plain")))
-                                     (app-log/record! request "err" (assoc error :message (str "API request routing failed. No @anvil.server.http_endpoint exists with path matching '" (subs path 0 (min (count path) 100)) (when (> (count path) 100) "...") "'"))
-                                                      error))
+                                     ;; TODO which session do we log this into?
+                                     (let [error (assoc error :message (str "API request routing failed. No @anvil.server.http_endpoint exists with path matching '" (subs path 0 (min (count path) 100)) (when (> (count path) 100) "...") "'"))]
+                                       (app-log/record-event! session trace-id "err" (str (:type error) ": " (:message error)) error)))
 
                                    (do
                                      (send! channel (-> {:body "An exception was raised. Check the application logs for details."}
                                                         (resp/status 500)
                                                         (resp/content-type "text/plain")))
                                      (when-not @responded?
-                                       (app-log/record! request "err" error))))
+                                       (app-log/record-event! session trace-id "err" (str (:type error) ": " (:message error)) error))))
 
                                  (or (instance? Media body) (instance? anvil.dispatcher.types.LazyMedia body))
                                  (worker-pool/run-task! {:type :task
@@ -354,7 +369,7 @@
                                  (string? body)
                                  (send! channel (-> {:body   body,
                                                      :status status}
-                                                    (resp/content-type "text/plain")
+                                                    (resp/content-type "text/plain; charset=utf-8")
                                                     (with-safe-anvil-cookies headers)))
 
                                  :else
@@ -421,7 +436,7 @@
                                                                                                                   (string/split cookies-header #"; ")))))))]
 
         (deliver dispatcher-request {:call          {:func (str "http:" path),
-                                                     :args [] :kwargs {:method                    (.toUpperCase (name (:request-method request)))
+                                                     :args [] :kwargs {:method                    method
                                                                        :path                      path
                                                                        :origin                    (get headers-without-app-cookies "origin")
                                                                        :query_params              (:query-params request)
@@ -438,7 +453,8 @@
                                      :origin        :http_endpoint
                                      :call-stack    (list {:type :http})
                                      :thread-id     (str "endpoint-" (:app-id request) "-" (random/hex 16))
-                                     :use-quota?    true})
+                                     :use-quota?    true
+                                     :anvil.dispatcher/alternate-session alternate-session})
         (metrics/inc! :api/runtime-serve-api-total)
         (dispatcher/dispatch! @dispatcher-request
                               return-path))
@@ -641,7 +657,7 @@
 
           (resp/redirect (str conf/static-root-url "/runtime-new/runtime/client_auth_error.html#" (codec/url-encode "No client ID specified in Google API service config.")))
 
-          (let [login-response (oauth/get-login-response request (sessions/persistent-id (:app-session request)) google-client-id redirect (:scope params) offline-access)]
+          (let [login-response (oauth/get-login-response request (sessions/get-id (:app-session request)) google-client-id redirect (:scope params) offline-access)]
             ;; Need to get csrf-token out of the cookie session and into app-session
             (swap! (:app-session request) assoc
                    ::google-csrf-token (-> login-response :session :anvil.core.google-oauth2/csrf-token)
@@ -685,7 +701,7 @@
               (resp/redirect (str "https://www.facebook.com/v3.2/dialog/oauth?"
                                   "&client_id=" facebook-client-id
                                   "&redirect_uri=" (codec/url-encode (str conf/runtime-common-url "/_/facebook_auth_callback"))
-                                  "&state=" (sessions/persistent-id (:app-session request)) "G" (codec/url-encode csrf-token)
+                                  "&state=" (sessions/get-id (:app-session request)) "G" (codec/url-encode csrf-token)
                                   "&scope=" (codec/url-encode scope)
                                   ;"&auth_type=reauthenticate" ; This causes Colette to land in an infinite loop being asked for her password.
                                   "&display=popup")))))))
@@ -744,7 +760,7 @@
                                   "&response_type=" (if app-id-provided? "code" "id_token")
                                   "&redirect_uri=" (codec/url-encode (str conf/runtime-common-url "/_/microsoft_auth_callback"))
                                   "&response_mode=form_post"
-                                  "&state=" (sessions/persistent-id (:app-session request)) "G" (codec/url-encode csrf-token)
+                                  "&state=" (sessions/get-id (:app-session request)) "G" (codec/url-encode csrf-token)
                                   "&nonce=" (codec/url-encode nonce)
                                   "&scope=" (codec/url-encode scope))))))))
 
@@ -774,7 +790,7 @@
             saml-request (.getEncodedAuthnRequest authn-request)
             csrf-token (random/hex 60)
 
-            relay-state (str (sessions/persistent-id (:app-session request)) "G" csrf-token)
+            relay-state (str (sessions/get-id (:app-session request)) "G" csrf-token)
 
             query-string (str "SAMLRequest=" (util/real-actual-genuine-url-encoder saml-request)
                               "&RelayState=" (util/real-actual-genuine-url-encoder relay-state)
@@ -836,7 +852,7 @@
   ;; These routes are unusual - they are accessible at /runtime/... on all origins!
   (GET "/_/client_auth_callback" req
     ;; in the Google developer console, so we must redirect back to the same place for every app.
-    (let [session-id (clojure.string/replace (-> req :params :state) #"G[^G]*$" "")
+    (let [session-id (clojure.string/replace (or (-> req :params :state) "") #"G[^G]*$" "")
           app-session (sessions/load-session-by-id-without-authentication session-id)]
 
       (if-not app-session
@@ -887,7 +903,7 @@
 
   (GET "/_/facebook_auth_callback" req
     (let [redirect-uri (str conf/runtime-common-url "/_/facebook_auth_callback")
-          session-id (clojure.string/replace (-> req :params :state) #"G[^G]*$" "")
+          session-id (clojure.string/replace (or (-> req :params :state) "") #"G[^G]*$" "")
           app-session (sessions/load-session-by-id-without-authentication session-id)]
       (if-not app-session
         (resp/redirect (str conf/static-root-url "/runtime-new/runtime/facebook_auth_error.html#" (codec/url-encode "SESSION_EXPIRED")))
@@ -953,7 +969,7 @@
   (POST "/_/microsoft_auth_callback" req
     ;; Tokens reference: https://docs.microsoft.com/en-us/azure/active-directory/develop/active-directory-v2-tokens
     (let [redirect-uri (str conf/runtime-common-url "/_/microsoft_auth_callback")
-          session-id (clojure.string/replace (-> req :params :state) #"G[^G]*$" "")
+          session-id (clojure.string/replace (or (-> req :params :state) "") #"G[^G]*$" "")
           app-session (sessions/load-session-by-id-without-authentication session-id)]
 
       (if-not app-session

@@ -276,18 +276,14 @@ function loadApp(app, appId, appOrigin, preloadModules) {
         }
 
         if (!fromServer) {
-            if (!accumulatingPrints) {
-                accumulatingPrints = [];
+            if (accumulatingPrints === null) {
+                accumulatingPrints = "";
                 setTimeout(function() {
                     sendLog({print: accumulatingPrints});
                     accumulatingPrints = null;
                 });
             }
-            if (accumulatingPrints.length != 0 && text == "\n") {
-                accumulatingPrints[accumulatingPrints.length-1].s += "\n";
-            } else {
-                accumulatingPrints.push({t:Date.now(), s:text});
-            }
+            accumulatingPrints += text;
         }
     };
 
@@ -326,122 +322,162 @@ function loadApp(app, appId, appOrigin, preloadModules) {
 
     RSVP.on('error', e => window.onunhandledrejection({reason: e}));
 
-    window.onerror = function(errormsg, url, line, col, errorObj) {
-        if (errormsg && errormsg.indexOf('__gCrWeb.autofill.extractForms') > -1) {
+
+    window.onerror = function (errormsg, url, line, col, errorObj) {
+        if (typeof errormsg === "string" && errormsg.indexOf("__gCrWeb.autofill.extractForms") > -1) {
             // This is a Chrome-on-iOS bug. Only happens when autofill=off in settings. Ignore.
             return;
         }
         try {
-            let showErrorPopup = function () {
-                $('#error-indicator').show().stop(true).css({"padding-left": 30, "padding-right": 30, right: 10}).animate({"padding-left": 20, "padding-right": 20, right: 20}, 1000); //.css("opacity", "1").animate({opacity: 0.7}, 1000);
-            };
-
-            let customErrorHandlerThrewError = function(e) {
-                if (e === errorObj) {
-                    // It just re-raised, which means it didn't want to interrupt
-                    // the default error popup.
-                    showErrorPopup();
-                } else {
-                    // Error handler threw an error. Abandon.
-                    uncaughtExceptions.pyHandler = Sk.builtin.none.none$;
-                    window.onerror(undefined, undefined, undefined, undefined, e);
-                }
-            };
-
             if (serverModuleAndLog && errorObj instanceof serverModuleAndLog.pyMod["SessionExpiredError"]) {
-                $("#session-expired-modal button.refresh").off("click").on("click", function() {
-                    document.location.href = window.anvilAppOrigin + "/" + (window.anvilParams.accessKey || '');
-                });
-
-                if ($('.modal:visible').length > 0) {
-                    if ($('.modal:visible')[0].id != "session-expired-modal") {
-                        $('.modal').one("hidden.bs.modal", function() {
-                            $("#session-expired-modal").modal("show");
-                        }).modal('hide');
-                    }
-                } else {
-                    $("#session-expired-modal").modal("show");
-                }
+                handleSessionExpired(errorObj);
             } else if (errorObj instanceof Sk.builtin.BaseException) {
-                var args = Sk.ffi.remapToJs(errorObj.args);
-
-                var errorMsg = {
-                    fn: "pythonError",
-                    traceback: errorObj.traceback,
-                    type: errorObj.tp$name,
-                    msg: args[0],
-                }
-
-                if (errorObj._anvil && errorObj._anvil.errorObj) {
-                    errorMsg.type = errorObj._anvil.errorObj.type;
-                    errorMsg.errorObj = errorObj._anvil.errorObj;
-                }
-
-                if (window.anvilOnPythonException) {
-                    window.anvilOnPythonException(errorMsg);
-                }
-                console.log("Python exception: " + errorObj.tp$name + ": " + args[0]);
-                if (errorObj.nativeError) {
-                    console.log(errorObj.nativeError);
-                } else {
-                    console.log(errorObj);
-                }
-                $('#error-indicator .output').text(errorObj.tp$name + ": " + args[0]);
-
-                var logTrace = [];
-                for (var i in errorObj.traceback) {
-                    var tb = errorObj.traceback[i]
-                    logTrace.push([tb.filename, tb.lineno]);
-                }
-                sendLog({error: {type: errorObj.tp$name, trace: logTrace, message: args[0],
-                                 jsTrace: errorObj.nativeError && errorObj.nativeError.stack,
-                                 bindingErrors: errorObj._anvil && errorObj._anvil.errorObj && errorObj._anvil.errorObj.bindingErrors,
-                                 anvilVersion: window.anvilVersion}});
-
-                if (uncaughtExceptions.pyHandler !== Sk.builtin.none.none$) {
-                    PyDefUtils.callAsyncWithoutDefaultError(uncaughtExceptions.pyHandler, undefined, undefined, undefined, errorObj).catch(customErrorHandlerThrewError);
-                }
-
+                handlePythonError(errorObj);
             } else {
-                console.error("Uncaught runtime error: " + errormsg + " at " + url + ":" + line + ", column " +
-                    col, errorObj);
-
-                if (window.anvilOnRuntimeError) {
-                    window.anvilOnRuntimeError(errormsg, url, line, col, errorObj);
-                }
-
-                $('#error-indicator .output').text(errormsg || "Unhandled runtime error");
-
-                const err = {
-                    runtimeError: (errorObj && errorObj.constructor && errorObj.constructor.name) || "Unknown error",
-                    jsUrl: url,
-                    jsLine: line,
-                    jsCol: col,
-                    message: "" + (errorObj || "Unknown error"),
-                    jsTrace: errorObj && errorObj.stack,
-                    anvilVersion: window.anvilVersion,
-                };
-
-                sendLog({ error: err });
-
-                if (uncaughtExceptions.pyHandler !== Sk.builtin.none.none$) {
-                    PyDefUtils.callAsyncWithoutDefaultError(uncaughtExceptions.pyHandler, undefined, undefined, undefined, errorObj).catch(customErrorHandlerThrewError);
-                } else {
-                    // Log uncaught JS error
-
-                    if (window.anvilOnUncaughtRuntimeError) {
-                        window.anvilOnUncaughtRuntimeError(err);
-                    }
-                }
+                handleJsError(errormsg, url, line, col, errorObj);
             }
-
-            if (uncaughtExceptions.pyHandler === Sk.builtin.none.none$) {
-                showErrorPopup();
-            }
-        } catch(e) {
+        } catch (e) {
             console.error("Uncaught error in window.onerror! ");
             console.error(e);
         }
+    };
+
+
+    function handleSessionExpired(errorObj) {
+        if (hasCustomHandler()) {
+            customHandlerHandler(errorObj, showRefreshSessionModal);
+        } else {
+            showRefreshSessionModal();
+        }
+    }
+
+
+    function handlePythonError(errorObj) {
+        const args = Sk.ffi.remapToJs(errorObj.args);
+
+        if (window.anvilOnPythonException) {
+            const errorMsg = {
+                fn: "pythonError",
+                traceback: errorObj.traceback,
+                type: errorObj.tp$name,
+                msg: args[0],
+            };
+
+            if (errorObj._anvil && errorObj._anvil.errorObj) {
+                errorMsg.type = errorObj._anvil.errorObj.type;
+                errorMsg.errorObj = errorObj._anvil.errorObj;
+            }
+
+            window.anvilOnPythonException(errorMsg);
+        }
+
+        console.log("Python exception: " + errorObj.tp$name + ": " + args[0]);
+        if (errorObj.nativeError) {
+            console.log(errorObj.nativeError);
+        } else {
+            console.log(errorObj);
+        }
+
+        const err = {
+            type: errorObj.tp$name,
+            trace: errorObj.traceback.map(({ filename, lineno }) => [filename, lineno]),
+            message: args[0],
+            jsTrace: errorObj.nativeError && errorObj.nativeError.stack,
+            bindingErrors: errorObj._anvil && errorObj._anvil.errorObj && errorObj._anvil.errorObj.bindingErrors,
+            anvilVersion: window.anvilVersion,
+        };
+
+        sendLog({ error: err });
+
+        $("#error-indicator .output").text(errorObj.tp$name + ": " + args[0]);
+        if (hasCustomHandler()) {
+            customHandlerHandler(errorObj);
+        } else {
+            showErrorPopup();
+        }
+    }
+
+    function handleJsError(errormsg, jsUrl, jsLine, jsCol, errorObj) {
+        console.error("Uncaught runtime error: " + errormsg + " at " + jsUrl + ":" + jsLine + ", column " + jsCol, errorObj);
+
+        if (window.anvilOnRuntimeError) {
+            window.anvilOnRuntimeError(errormsg, jsUrl, jsLine, jsCol, errorObj);
+        }
+
+        const err = {
+            runtimeError: (errorObj && errorObj.constructor && errorObj.constructor.name) || "Unknown error",
+            jsUrl,
+            jsLine,
+            jsCol,
+            message: "" + (errorObj || "Unknown error"),
+            jsTrace: errorObj && errorObj.stack,
+            anvilVersion: window.anvilVersion,
+        };
+
+        sendLog({ error: err });
+
+        $("#error-indicator .output").text(errormsg || "Unhandled runtime error");
+        if (hasCustomHandler()) {
+            // we shouldn't send null to ExternalError
+            customHandlerHandler(new Sk.builtin.ExternalError(errorObj ?? "Unknown error"));
+        } else {
+            // Log uncaught JS error
+            window.anvilOnUncaughtRuntimeError?.(err);
+            showErrorPopup();
+        }
+    }
+
+    const showErrorPopup = () => {
+        $("#error-indicator")
+            .show()
+            .stop(true)
+            .css({ "padding-left": 30, "padding-right": 30, right: 10 })
+            .animate({ "padding-left": 20, "padding-right": 20, right: 20 }, 1000); //.css("opacity", "1").animate({opacity: 0.7}, 1000);
+    };
+
+    const showRefreshSessionModal = () => {
+        $("#session-expired-modal button.refresh")
+            .off("click")
+            .on("click", () => {
+                window.location.reload();
+            });
+
+        const currentModal = $(".modal:visible");
+        if (currentModal.length === 0) {
+            $("#session-expired-modal").modal("show");
+        } else if (currentModal[0].id != "session-expired-modal") {
+            currentModal
+                .one("hidden.bs.modal", () => {
+                    $("#session-expired-modal").modal("show");
+                })
+                .modal("hide");
+        } else {
+            // pass we're already visible
+        }
+    };
+
+    function hasCustomHandler() {
+        return uncaughtExceptions.pyHandler !== Sk.builtin.none.none$;
+    }
+
+    function customHandlerHandler(errorObj, reRaiseRenderer=showErrorPopup) {
+        PyDefUtils.callAsyncWithoutDefaultError(
+            uncaughtExceptions.pyHandler,
+            undefined,
+            undefined,
+            undefined,
+            errorObj
+        ).catch((e) => {
+            if (e === errorObj) {
+                // It just re-raised, which means it didn't want to interrupt
+                // the default error popup.
+                reRaiseRenderer();
+            } else {
+                // Error handler threw an error. Abandon.
+                uncaughtExceptions.pyHandler = Sk.builtin.none.none$;
+                window.onerror(undefined, undefined, undefined, undefined, e);
+            }
+        });
     }
 
     Sk.configure({

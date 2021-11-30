@@ -8,7 +8,7 @@
             [anvil.runtime.sessions :as sessions]
             [anvil.executors.downlink :as downlink]))
 
-(clj-logging-config.log4j/set-logger! :level :trace)
+(clj-logging-config.log4j/set-logger! :level :info)
 
 (defonce get-pdf-renderer (constantly nil))
 
@@ -54,7 +54,7 @@
                                                              options (second (:args (:call req)))
                                                              load-timeout (get-pdf-render-timeout (:app-id req))
                                                              req (assoc-in req [:call :args] [url options load-timeout])]
-                                                         (log/trace "URL for PDF renderer in session" (sessions/persistent-id (:session-state req)) " :" url)
+                                                         (log/trace "URL for PDF renderer in session" (sessions/get-id (:session-state req)) " :" url)
                                                          (if-let [executor (get-pdf-renderer (:app-id req) (:session-state req))]
                                                            ((:fn executor) req new-return-path)
                                                            (throw+ {:anvil/server-error "PDF rendering service not available"})))))))}
@@ -65,7 +65,7 @@
                                                  (dispatcher/report-exceptions-to-return-path return-path
                                                    ;; We're being called from the renderer's browser, and we want to steer this
                                                    ;; request back to the downlink that's triggering this render.
-                                                   (log/trace "Retrieving print session from" (get @session-state :print-sessions) "for session id" (sessions/persistent-id session-state))
+                                                   (log/trace "Retrieving print session from" (get @session-state :print-sessions) "for session id" (sessions/get-id session-state))
                                                    (if-let [[downlink ref] (when-let [{:keys [key downlink ref]} (get-in @session-state [:print-sessions print-id])]
                                                                              (when (= (util/sha-256 key) (util/sha-256 print-key))
                                                                                [downlink ref]))]

@@ -1,0 +1,11 @@
+#!/bin/bash
+
+# This script is used to generate official docker images of the Anvil App Server.
+# You probably want to extend the Dockerfile in this directory, or create an image starting from anvilworks/anvil-app-server
+#
+# https://registry.hub.docker.com/r/anvilworks/anvil-app-server
+#
+
+docker build -t anvilworks/anvil-app-server .
+
+docker push anvilworks/anvil-app-server

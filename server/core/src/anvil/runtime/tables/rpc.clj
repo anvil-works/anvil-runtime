@@ -18,7 +18,8 @@
             [anvil.runtime.tables.util :as table-util]
             [anvil.dispatcher.native-rpc-handlers.util :as nrpc-util]
             [anvil.runtime.sessions :as sessions]
-            [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks])
+            [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks]
+            [anvil.core.tracing :as tracing])
   (:import (java.sql SQLException ResultSet Blob)
            (anvil.dispatcher.types Date DateTime LiveObjectProxy MediaDescriptor Media ChunkedStream BlobMedia SerialisableForRpc SerializedPythonObject)
            (java.io ByteArrayOutputStream)
@@ -139,7 +140,7 @@
 
 
 (defn iter-page [[table-id query-obj view-cols cols query-modifiers :as _liveobject-id] _kwargs start-vals]
-  (util/timeit "Running iter-page" [checkpoint!]
+  (tracing/with-span ["Load data page" {:internal true}]
     (let [start-time (double (System/currentTimeMillis))
 
           ;; Capitals are sanitised values. Yes, we are constructing SQL by hand.
@@ -183,7 +184,7 @@
 
           ;;_ (log/trace "Link cols:\n" link-cols-query)
 
-          _ (checkpoint! "Link-col query start")
+          _ (tracing/add-span-event! "Link-col query start")
           LINK-COLS (or (when rpc-util/*session-state*
                           (get-in (sessions/ephemeral-cache rpc-util/*session-state*) [::LINK-COL-CACHE table-id]))
                         (let [link-cols (util/with-metric-query "link-cols-query"
@@ -198,13 +199,13 @@
                             (swap! (sessions/ephemeral-cache rpc-util/*session-state*) assoc-in [::LINK-COL-CACHE table-id] LINK-COLS))
                           LINK-COLS))
 
-          _ (checkpoint! "Link-col queried")
+          _ (tracing/add-span-event! "Link-col queried")
 
           [link-col-ids loaded-tables] (reduce (fn [[link-col-ids loaded-tables] {:keys [col_id target_table_id]}]
                                                  [(cons col_id link-col-ids)
                                                   (assoc loaded-tables target_table_id (ensure-table-access-ok-returning-cols (db) target_table_id :read-row nil))]) [nil nil] LINK-COLS)
 
-          _ (checkpoint! "Link-col access checks")
+          _ (tracing/add-span-event! "Link-col access checks")
 
           ;; Load all the rows we could possibly be interested in, following references to single rows in other
           ;; tables recursively.
@@ -249,7 +250,7 @@
 
           ;;_ (log/trace "Load rows:\n" (cons row-query args))
 
-          _ (checkpoint! "Ready for query")
+          _ (tracing/add-span-event! "Ready for query")
 
           _ (log/trace (with-out-str
                          (println "Query:")
@@ -270,19 +271,19 @@
                                           (throw+ (general-tables-error (second (re-find #"ERROR: (.*)" msg))))
                                           (throw e))))))
 
-          _ (checkpoint! "DB query complete")
+          _ (tracing/add-span-event! "DB query complete")
 
           direct-match-rows (filter :direct_match all-rows)
 
           row-map (reduce (fn [row-map row]
                             (assoc row-map (:id row) row)) {} all-rows)
 
-          _ (checkpoint! "Row map compiled")
+          _ (tracing/add-span-event! "Row map compiled")
 
           rows (doall (map (partial mk-Row table-id cols view-cols row-map loaded-tables)
                            direct-match-rows))]
 
-      _ (checkpoint! (str "mk-Row executed " (count direct-match-rows) " times"))
+      _ (tracing/add-span-event! (str "mk-Row executed " (count direct-match-rows) " times"))
 
       (when rpc-util/*profiles*
         (swap! rpc-util/*profiles* conj {:description "Loading data page"

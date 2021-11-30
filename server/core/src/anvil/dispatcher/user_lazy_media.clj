@@ -15,7 +15,7 @@
         trigger (promise)
         return-path {:update!  (fn [{:keys [output]}]
                                  (when (string? output)
-                                   (app-log/record! (nrpc-util/log-ctx) "print" [{:t (System/currentTimeMillis) :s output}])))
+                                   (app-log/record-event! nrpc-util/*session-state* nrpc-util/*trace-id* "print" output nil)))
                      :respond! #(do (log/trace "Response:" %) (deliver trigger %))}]
 
     (log/trace "Dispatching call")
@@ -23,6 +23,7 @@
                            :app           nrpc-util/*app*, :app-id nrpc-util/*app-id*, :app-origin nrpc-util/*app-origin*
                            :environment nrpc-util/*environment*
                            :session-state nrpc-util/*session-state*
+                           :call-stack (list {:type :lazy_media_server})
                            :use-quota? true}
                           return-path)
 

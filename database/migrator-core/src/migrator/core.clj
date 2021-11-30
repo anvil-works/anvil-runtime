@@ -6,14 +6,17 @@
   (:gen-class)
   (:import (java.sql SQLException)))
 
+(defn maybe-create-db-version-table! [db]
+  (jdbc/execute! db ["CREATE TABLE IF NOT EXISTS db_version (version text not null, updated timestamp)"]))
 
 (defn get-migration-version [db]
-  (jdbc/execute! db ["CREATE TABLE IF NOT EXISTS db_version (version text not null, updated timestamp)"])
+  (maybe-create-db-version-table! db)
   (when @migrations/ANVIL-USER
     (jdbc/execute! db [(str "GRANT ALL ON db_version TO " @migrations/ANVIL-USER)]))
   (:version (first (jdbc/query db "SELECT * FROM db_version"))))
 
 (defn set-migration-version! [db version]
+  (maybe-create-db-version-table! db)
   (jdbc/execute! db ["DELETE FROM db_version"])
   (jdbc/execute! db ["INSERT INTO db_version (version, updated) VALUES (?,NOW())" version]))
 
@@ -39,7 +42,7 @@
                             (throw+ {::migration-failure :connection-failed}))))))
         all-migrations (->> (mapcat #(get @migrations/all-migrations %) db-types)
                             (sort-by first))
-        latest-version (first (last all-migrations))]
+        latest-version (or (first (last all-migrations)) "0000-00-00-initial")]
 
     (if db-empty?
       (do
@@ -66,14 +69,22 @@
                   migrations (->> all-migrations
                                   (filter (fn [[v _fn]] (> (compare v current-version) 0))))]
               (println "Database currently at" (pr-str current-version))
-              (println (count migrations) "migration(s) to perform.")
-              (doseq [[v migrate!] migrations]
-                (println "Executing" (pr-str v))
-                (migrate! db))
-              (when latest-version
-                (set-migration-version! db latest-version)
-                (println "Database now at" (pr-str latest-version)))
-              (println "Migration complete.")))
+              (cond
+                (not (empty? migrations))
+                (do
+                  (println (count migrations) "migration(s) to perform.")
+                  (doseq [[v migrate!] migrations]
+                    (println "Executing" (pr-str v))
+                    (migrate! db))
+                  (set-migration-version! db latest-version)
+                  (println "Migration complete.")
+                  (println "Database now at" (pr-str latest-version)))
+
+                (= current-version latest-version)
+                (println "Database is already up to date.")
+
+                :else
+                (println "WARNING: This database is at" (pr-str current-version) "which is newer than " (pr-str latest-version) ".\nYou may be running an old version of this database."))))
           (catch SQLException e
             (println (str e))
             (throw+ {::migration-failure :other-db-error})))))))

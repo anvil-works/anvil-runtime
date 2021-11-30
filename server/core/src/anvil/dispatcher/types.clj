@@ -157,7 +157,11 @@
     mac))
 
 (defn gen-cap-mac [{:keys [scope] :as _capability} extra-liveobject-key]
-  (util/sha-256 (str @secret (util/write-json-str scope) (util/write-json-str extra-liveobject-key) @secret)))
+  (let [scope (for [element scope]
+                (if (map? element)
+                  (into (sorted-map) element)
+                  element))]
+    (util/sha-256 (str @secret (util/write-json-str scope) (util/write-json-str extra-liveobject-key) @secret))))
 
 (defn mk-LiveObjectProxy [backend id permissions methods & [itemCache iterItems]]
   (LiveObjectProxy. backend id permissions nil methods itemCache iterItems))

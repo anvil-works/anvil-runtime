@@ -255,6 +255,7 @@ module.exports = function(pyModule) {
     };
 
     const getColumn = (self, colId) => {
+        colId ?? (colId = null);
         let col = self._anvil.cols[colId];
         if (col === undefined) {
             const dataGridId = getDataGridId(self);
@@ -262,6 +263,9 @@ module.exports = function(pyModule) {
             self._anvil.domNode.appendChild(colEl);
             if (dataGridId === undefined) {
                 self._anvil.updateDataGridId = true;
+            }
+            if (colId === null) {
+                colEl.classList.add("extra-column");
             }
             col =  { colEl, autoRow: null , dataGridId};
             self._anvil.cols[colId] = col;

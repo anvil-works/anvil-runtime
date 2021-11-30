@@ -51,11 +51,12 @@
 
         environment (assoc environment :commit-id (:version app))
 
-        app-session (sessions/new-session {:app-origin  (app-data/get-default-app-origin environment)
-                                           :client      {:type :email}
-                                           :environment environment})
-        log-ctx {:app-session app-session, :app-id (:id app-info), :environment (assoc environment :commit-id (:version app))}
-        _ (app-log/record! log-ctx :new-session {:type "email" :from_addr from :to_addr recipient})
+        app-session (sessions/new-session-with-state {:app-origin  (app-data/get-default-app-origin environment)
+                                                      :app-id      app-id
+                                                      :client      {:type :email}
+                                                      :environment environment}
+                                                     {:from_addr from :to_addr recipient})
+        ;;log-ctx {:app-session app-session, :app-id (:id app-info), :environment (assoc environment :commit-id (:version app))}
 
 
         responded? (atom false)
@@ -72,11 +73,11 @@
         smtp-result! (fn [r]
                        (when (simple-smtp-result! r)
                          (try (.cancel timer-task) (catch Exception e))))
-
+        trace-id nil                                        ;; TODO NEW TRACE API
         return-path {:update!
                      (fn [{:keys [output]}]
                        (when (string? output)
-                         (app-log/record! log-ctx "print" [{:t (System/currentTimeMillis) :s output}])))
+                         (app-log/record-event! app-session trace-id "print" output nil)))
 
                      :respond!
                      (fn [{:keys [error]}]
@@ -103,7 +104,7 @@
                                error (if cant-handle-email?
                                        (assoc error :message "No server function has been decorated @anvil.email.handle_message, so incoming email message could not be delivered")
                                        error)]
-                           (app-log/record! log-ctx "err" error)
+                           (app-log/record-event! app-session trace-id "err" (str (:type error) ": " (:message error)) error)
                            (smtp-result! {:error msg-for-smtp}))
 
                          :else
@@ -188,6 +189,7 @@
                                :environment   environment
                                :origin        :email
                                :thread-id     (str "email-" (:id app-info) "-" (random/hex 16))
+                               :call-stack    (list {:type :email_server})
                                :use-quota?    true}
                               return-path)
 

@@ -17,41 +17,7 @@
 ;;(clj-logging-config.log4j/set-logger! :level :trace)
 
 
-(defn client-info-from-request [session-type req]
-  {:type     session-type
-   :ip       (:remote-addr req)
-   :location (util/get-ip-location (:remote-addr req))})
 
-(defonce session-setup-hooks (atom {}))
-(defn blank-app-session-state
-  ([req] (blank-app-session-state req :browser))
-  ([req client-type]
-   (apply merge
-          {:app-origin           (:app-origin req)
-           :app-id               (:app-id req)
-           :app-info             (:app-info req)
-           :environment          (:environment req)
-           :cookie-keys          {:local  (keyword (.substring (util/sha-256 (:app-id req)) 0 16))
-                                  :shared (keyword (.substring (util/sha-256 (app-data/get-shared-cookie-key (:app-info req))) 0 16))}
-
-           :shared-cookie-domain (when (:app-origin req)    ;; There is no origin if we're, say, in a client_auth_callback. In that case we don't care.
-                                   (let [[_ host] (re-find #"//([^/:]*)" (:app-origin req))
-                                         idn (try (InternetDomainName/from host) (catch IllegalArgumentException e nil))]
-                                     (if (and idn (.isUnderPublicSuffix idn))
-                                       (str (.topPrivateDomain idn))
-                                       host)))
-
-           :cookies              {:local  {}
-                                  :shared {}}
-
-           :client               (client-info-from-request client-type req)
-
-           ::last-accessed       (System/currentTimeMillis)
-           ::remote-addr         (:remote-addr req)         ; Happily, Ring seems to magically use x-real-ip if behind proxy.
-           ::user-agent          (get-in req [:headers "user-agent"])}
-
-          (for [[_ hook] @session-setup-hooks]
-            (hook req)))))
 
 (defn reload-anvil-cookies! [into-session req]
   ;; When a request comes in, we have some stuff on the actual cookies coming into the request. It might be

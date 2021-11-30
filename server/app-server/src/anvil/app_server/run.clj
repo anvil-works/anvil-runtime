@@ -167,24 +167,26 @@
    :get-valid-origins                     (fn [_env] [(conf/get-app-origin)])})
 
 
-(app-log/set-log-impl! {:record! (fn record! [_request-ctx type data & [_trust-sess?]]
-                                   (condp contains? type
-                                     #{"client_err" "err"}
-                                     (log/error (apply str
-                                                       "Error report from "
-                                                       (if (= "client_err" type) "client" "server") " code:\n"
-                                                       (:type data) ": " (:message data)
-                                                       (when (:trace data) "\nTraceback:")
-                                                       (for [[path line] (:trace data)]
-                                                         (str "\n  " path ":" line "\n"))))
+(app-log/set-log-impl! {:record-session! (fn record-session! [session log-data]
+                                           (log/info "[SESSION]" (-> session :client :type) (runtime-sessions/get-id session) log-data))
+                        :record-event!   (fn [session trace-id type log-text data]
+                                           (condp contains? type
+                                             #{"client_err" "err"}
+                                             (log/error (apply str
+                                                               "Error report from "
+                                                               (if (= "client_err" type) "client" "server") " code:\n"
+                                                               (:type data) ": " (:message data)
+                                                               (when (:trace data) "\nTraceback:")
+                                                               (for [[path line] (:trace data)]
+                                                                 (str "\n  " path ":" line "\n"))))
 
-                                     #{"print" "client_print"}
-                                     (doseq [msg (map :s data) :when (not (re-matches #"(?s)\s*" msg))]
-                                       (log/debug (if (= "client_print" type)
-                                                    "[CLIENT]" "[SERVER]") (.replaceAll ^String msg "\n$" "")))
+                                             #{"print" "client_print"}
+                                             (log/debug (if (= "client_print" type)
+                                                          "[CLIENT]" "[SERVER]") (.replaceAll ^String log-text "\n$" ""))
 
-                                     ;; :else
-                                     (log/info (str "[LOG " type "]") data)))})
+                                             ;; :else
+                                             (if data (log/info (str "[LOG " type "]") log-text data)
+                                                      (log/info (str "[LOG " type "]") log-text))))})
 
 (background-tasks/set-background-task-hooks! {:get-environment-for-background-task (constantly {})})
 

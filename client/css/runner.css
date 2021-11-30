@@ -36,6 +36,11 @@ html, body {
         margin-top: -50px;
     }
 }
+@media print {
+	a[href]:after {
+		content: unset;
+	}
+}
 
 #anvil-header img {
 	max-height: 25px;

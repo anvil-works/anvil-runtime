@@ -13,7 +13,8 @@
             [anvil.dispatcher.background-tasks :as background-tasks]
             [anvil.core.worker-pool :as worker-pool]
             [anvil.executors.ws-server :as ws-server]
-            [anvil.runtime.app-data :as app-data]))
+            [anvil.runtime.app-data :as app-data]
+            [anvil.core.tracing :as tracing]))
 
 
 (clj-logging-config.log4j/set-logger! :level :info)
@@ -154,12 +155,19 @@
     (ws-server/launch-bg-task! WS-SERVER-PARAMS {::get-app get-app} connection request return-path)))
 
 (defn wrap-as-executor [{:keys [send-request!] :as connection}]
-  {:fn    (fn execute-on-downlink! [{{:keys [func]} :call, :keys [app app-info environment] :as request} return-path]
+  {:fn    (fn execute-on-downlink! [{{:keys [func]} :call, :keys [app app-info environment tracing-span] :as request} return-path]
             (let [profiling-info {:origin      "Server (Downlink executor)"
                                   :description (format "Downlink execute (%s)" func)}
                   blended-version (apply str (:commit-id environment) (for [[_ {:keys [commit-id]}] (sort-by first (:dependency_code app))] commit-id))
+
+                  tracing-span (tracing/start-span (str "Downlink call: " (:short (dispatcher/request-task-description request))) {:internal true} tracing-span)
+                  request (assoc request :tracing-span tracing-span)
+                  return-path (dispatcher/return-path-with-closing-span return-path tracing-span)
+
                   {:keys [call-context request return-path]} (ws-calls/stateful-request-to-serialisable-request request return-path profiling-info)
-                  request (assoc request :app-version blended-version)]
+
+                  request (assoc request :app-version blended-version
+                                         :serialised-tracing-span nil)] ;; TODO: Work out how to serialise the tracing span here, so the downlink can add spans of its own. See dispatch-downlink-call!
 
               (send-request! (assoc call-context ::get-app (constantly app)) {:type "CALL"} request return-path)))
 
@@ -175,7 +183,7 @@
           ds (serialisation/mk-Deserialiser {:origin :server, :permitted-live-object-backends #{}})
           internal-error (atom nil)
 
-          {:keys [get-pending-response get-bg-task get-app-info-and-env is-closed? send-close-errors! send-request! handle-response! handle-update! is-idle? get-pending-responses]}
+          {:keys [get-pending-response get-app-info-and-env is-closed? send-close-errors! send-request! handle-response! handle-update! handle-task-killed! is-idle? get-pending-responses]}
           (ws-server/setup-request-handlers WS-SERVER-PARAMS channel)
 
           disconnect-on-idle? (atom false)
@@ -243,9 +251,7 @@
 
                             ;; Background task shuffling off its mortal coil
                             (= (:type raw-data) "NOTIFY_TASK_KILLED")
-                            (when-let [bg-task (get-bg-task (:id raw-data))]
-                              (let [data (serialisation/deserialise ds raw-data)]
-                                (background-tasks/record-final-state! bg-task (if (:taskState data) {:taskState (:taskState data)} {}) :killed)))
+                            (handle-task-killed! ds raw-data)
 
                             ;; TODO restart conversion here: Need the versions of everything
                             ;; Fetch app (missed cache)

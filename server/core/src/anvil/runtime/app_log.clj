@@ -2,14 +2,18 @@
   (:require [clojure.tools.logging :as log]
             [anvil.util :as util]))
 
-(defonce record-raw! (fn [session-id environment type data]
-                       (log/info type data)))
+(defn log-data-from-ring-request [{:keys [remote-addr] :as req}]
+  (merge {}
+         (when remote-addr
+           {:addr     remote-addr
+            :location (util/get-ip-location remote-addr)})))
 
-(defonce record! (fn record!
-                   ([request-ctx type data] (record! request-ctx type data true))
-                   ([{:keys [app-session app-id environment]
-                      :as   _request-ctx} type data trust-sess?]
-                    (log/info type data))))
+(defonce record-session! (fn [session log-data]))
 
-(def set-log-impl! (util/hook-setter #{record! record-raw!}))
+(defonce record-event! (fn [session trace-id type log-text data]
+                         nil))
+
+(defonce record-trace! (fn [session trace-id task-name]))
+
+(def set-log-impl! (util/hook-setter #{record-session! record-event! record-trace!}))
 

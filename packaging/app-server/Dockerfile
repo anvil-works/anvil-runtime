@@ -1,4 +1,4 @@
-FROM python:3
+FROM --platform=linux/amd64 python:3
 
 RUN apt-get -yyy update && apt-get -yyy install software-properties-common && \
     wget -O- https://apt.corretto.aws/corretto.key | apt-key add - && \

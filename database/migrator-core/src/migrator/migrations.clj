@@ -38,7 +38,7 @@
 
 (defn load-resource-migrations! []
   (doseq [[filename slurpable migration-db-type] (apply concat
-                                                    (for [type [:base :dedicated :runtime :central]]
+                                                    (for [type [:base :dedicated :runtime :central :app-logs]]
                                                       (map #(conj % type) (list-resource-directory-files
                                                                             (str "migrations/" (name type))))))
           :let [[_ migration-name] (re-matches #"(?:.*/)?([^/\\]+).sql" filename)
@@ -50,7 +50,10 @@
                                              (str/replace "$ANVIL_DATABASE" (:db (first (jdbc/query db ["SELECT current_database() AS db"])))))
                                          (.replaceAll sql "(?s)--\\[GRANTS\\]--.*--\\[/GRANTS\\]--" ""))]
                                (try
-                                 (jdbc/execute! db [sql])
+                                 (if-let [conn (jdbc/db-find-connection db)]
+                                   (.execute (jdbc/prepare-statement conn sql))
+                                   (with-open [conn (jdbc/get-connection db)]
+                                     (.execute (jdbc/prepare-statement conn sql))))
                                  (catch SQLException e
                                    (println (format "Error while executing %s/%s:\n%s"
                                                     (name migration-db-type) migration-name e))
@@ -64,7 +67,7 @@
 
 (defn is-db-empty? [db]
   (try
-    (jdbc/query db ["SELECT 'Test for presence of table' FROM app_storage_tables LIMIT 1"])
+    (jdbc/query db ["SELECT 'Test for presence of table' FROM db_version LIMIT 1"])
     false
     (catch SQLException e
       (if (= "42P01" (.getSQLState e))

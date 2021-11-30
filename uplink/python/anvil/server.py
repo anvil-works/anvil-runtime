@@ -1,11 +1,16 @@
 from __future__ import unicode_literals
-import threading, time, json, random, string, logging, collections
+import threading, time, json, random, string, logging
 
 from ws4py.client.threadedclient import WebSocketClient
 
 import anvil
 from . import _server, _serialise, _threaded_server
 from ._threaded_server import live_object_backend, LazyMedia, _switch_session, call_context as context
+try:
+    from collections.abc import MutableMapping
+except ImportError:
+    # python 2 compatible
+    from collections import MutableMapping
 
 from ._server import (register, 
                       callable, 
@@ -77,7 +82,7 @@ anvil.app = anvil._AppInfo(None,None)
 CallContext._DEFAULT_TYPE = "uplink"
 context.type = "uplink"
 
-class TaskState(threading.local, collections.MutableMapping):
+class TaskState(threading.local, MutableMapping):
     def __init__(self):
         self._is_valid = False # most threads aren't BG tasks
         self.d = {}

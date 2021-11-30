@@ -7,7 +7,12 @@
             [anvil.util :as util]
             [anvil.dispatcher.serialisation.core :as serialisation]
             [crypto.random :as random]
-            [clojure.tools.logging :as log]))
+            [clojure.tools.logging :as log]
+            [anvil.core.tracing :as tracing]
+            [clojure.string :as str]
+            [anvil.runtime.app-log :as app-log]
+            [anvil.runtime.sessions :as sessions])
+  (:import (io.opentelemetry.api.trace Span)))
 
 (clj-logging-config.log4j/set-logger! :level :info)
 
@@ -19,16 +24,30 @@
 
 (defonce background-tasks (atom {}))
 
-(defn launch-bg-task! [{:keys [bg-impl-id]} extra-context {:keys [send-request!] :as connection} request return-path]
+(defn launch-bg-task! [{:keys [bg-impl-id]} extra-context {:keys [send-request!] :as connection} launcher-request return-path]
   (dispatcher/synchronous-return-path return-path
     (let [call-id (str "bg-" (random/base64 10))
           [bg-task request return-path] (background-tasks/setup-background-task-context
-                                          request bg-impl-id #(swap! background-tasks dissoc (:id %)))
-          {:keys [request return-path call-context]} (ws-calls/stateful-request-to-serialisable-request request return-path nil)]
-      (swap! background-tasks assoc (:id bg-task) {:task bg-task, :call-id call-id, :connection connection})
-      (send-request! (-> call-context (merge extra-context) (assoc ::task-id (:id bg-task)))
-                     {:type "LAUNCH_BACKGROUND", :id call-id} request return-path)
-      (background-tasks/mk-BackgroundTaskLiveObject (:id bg-task)))))
+                                          launcher-request bg-impl-id #(swap! background-tasks dissoc (:id %)))
+          task-name (str/replace (get-in request [:call :func]) #"^task:" "")
+          bg-task-span (tracing/start-span (str "Background task: " task-name)
+                                           (merge {:executor bg-impl-id
+                                                   :launcher_session_id (sessions/get-id (:session-state launcher-request))}
+                                                  (when-let [launch-span ^Span (:tracing-span request)]
+                                                    {:launcher_trace_id (tracing/get-trace-id launch-span)})))
+          request-with-task-span (assoc request :tracing-span bg-task-span)
+          return-path (dispatcher/return-path-with-closing-span return-path bg-task-span)]
+
+      (tracing/log-trace bg-task-span {:type :bg-task :task task-name})
+      (app-log/record-trace! (:session-state request) (tracing/get-trace-id bg-task-span) (get-in request [:call :func]))
+
+      (let [{:keys [request return-path call-context]} (ws-calls/stateful-request-to-serialisable-request request-with-task-span return-path nil)]
+        (swap! background-tasks assoc (:id bg-task) {:task bg-task, :call-id call-id, :connection connection})
+        (send-request! (-> call-context
+                           (merge extra-context)
+                           (assoc ::task-id (:id bg-task)))
+                       {:type "LAUNCH_BACKGROUND", :id call-id} request return-path)
+        (background-tasks/mk-BackgroundTaskLiveObject (:id bg-task))))))
 
 
 
@@ -65,7 +84,7 @@
     {:get-pending-response  #(get @pending-responses %)
      :is-idle?              #(empty? @pending-responses)
      :get-pending-responses (fn [] @pending-responses)
-     :get-bg-task           #(when-let [id (get-in @pending-responses [% ::task-id])]
+     :get-bg-task           #(when-let [id (get-in @pending-responses [% :context ::task-id])]
                                {:id id})                    ;; fake it!
      :is-closed?            (fn [] @closed?)
      :send-request!         (fn send-request! [context {:keys [type id] :as _envelope} serialisable-request return-path]
@@ -108,6 +127,14 @@
                                   (dispatcher/update! return-path {:update-python-session pymods}))
                                 (dispatcher/respond! return-path response)
                                 (swap! pending-responses dissoc (:id response))))
+
+     :handle-task-killed!   (fn handle-task-killed! [ds response]
+                              (when-let [ctx (get-in @pending-responses [(:id response) :context])]
+                                (let [task-id (::task-id ctx)
+                                      data (serialisation/deserialise ds response)
+                                      session @(::ws-calls/current-session ctx)]
+                                  (background-tasks/record-final-state! session {:id task-id} (if (:taskState data) {:taskState (:taskState data)} {}) :killed)
+                                  (swap! pending-responses dissoc (:id response)))))
 
      :handle-update!        (fn handle-update! [update]
                               (when-let [p (@pending-responses (:id update))]

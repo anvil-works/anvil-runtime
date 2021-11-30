@@ -239,14 +239,19 @@
 
 (defn list-cells-v4 [_kwargs capability range]
   (let [[creds spreadsheet-id access [sheet-title _sheet-id]] (types/unwrap-capability capability ["_" "google-sheets"] 4)
-        range-str (str (escape-sheet-title sheet-title) "!" range)
-        resp (request {:url (str "https://sheets.googleapis.com/v4/spreadsheets/" spreadsheet-id "/values/" (util/real-actual-genuine-url-encoder range-str))} creds)]
-    (flatten (map-indexed (fn [r row]
-                            (map-indexed (fn [c val]
+        range-str (str (escape-sheet-title sheet-title) (if (empty? range) "" "!") range)
+        real-range (util/real-actual-genuine-url-encoder range-str)
+        url (str "https://sheets.googleapis.com/v4/spreadsheets/" spreadsheet-id "/values/" real-range)
+        formulaParam "?valueRenderOption=FORMULA"
+        v-rows (get (request {:url url} creds) "values")
+        i-rows (get (request {:url (str url formulaParam)} creds) "values")
+        row-data (map vector v-rows i-rows)]
+    (flatten (map-indexed (fn [r [v-row i-row]]
+                            (map-indexed (fn [c [val i-val]]
                                            {:value val
+                                            :input_value (str i-val)
                                             :row (inc r)
-                                            :col (inc c)}) row)) (get resp "values")))))
-
+                                            :col (inc c)}) (map vector v-row i-row))) row-data))))
 (defn update-cell [_kwargs cell-id edit-url row col value creds]
   (let [wl-access (get-whitelist-access ::worksheet-cell-edit-url edit-url creds)
         _ (ensure-whitelist-access-ok wl-access true "edit cell")
@@ -267,12 +272,14 @@
   (let [[creds spreadsheet-id access [sheet-title _sheet-id] row col] (types/unwrap-capability capability ["_" "google-sheets"] 6)
         _ (ensure-whitelist-access-ok (keyword access) true "update cell")
         range (str col row)
-        resp (request {:url (str "https://sheets.googleapis.com/v4/spreadsheets/" spreadsheet-id "/values/" range "?valueInputOption=USER_ENTERED")
+        params "?valueInputOption=USER_ENTERED&includeValuesInResponse=true"
+        resp (request {:url (str "https://sheets.googleapis.com/v4/spreadsheets/" spreadsheet-id "/values/" range params)
                        :method :put
                        :headers {"Content-Type" "application/json"}
-                       :body (json/write-str {:values [[value]]})} creds)]
-    ;; TODO: Perhaps return some kind of success?
-    ))
+                       :body (json/write-str {:values [[value]]})} creds)
+        values (get-in resp ["updatedData" "values" 0])]
+    (first values)))
+
 
 (defn delete-row-v4 [_kwargs capability]
   (let [[creds spreadsheet-id access [_sheet-title sheet-id] row] (types/unwrap-capability capability ["_" "google-sheets"] 5)

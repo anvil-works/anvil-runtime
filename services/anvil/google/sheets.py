@@ -5,6 +5,7 @@ import anvil.server as rpc
 add_missing_fields = False
 
 def index_to_col(idx):
+    assert type(idx) is int, "Expected an integer for column index not " + type(idx).__name__
     idx -= 1
     if idx < 26:
         return chr(65 + (idx % 26))
@@ -39,21 +40,15 @@ class Cell(ApiItem):
     #!defAttr()!1: {name:"row",type:"number",description:"This cell's row index (starting from 1)"}
     #!defAttr()!1: {name:"col",type:"number",description:"This cell's column index (starting from 1)"}
     #!defAttr()!1: {name:"value",type:"string",description:"The value in this cell"}
-    def __getattr__(self, name):
-        if name == "input_value":
-            # This used to be different. In v4 we just return the value, because it would take two API calls to get the input_value too.
-            return self["value"]
-        else:
-            return ApiItem.__getattr__(self, name)
-
     def __setattr__(self, name, value):
         if name == "value" or name == "inputValue":
 
-            rpc.call("anvil.private.google.sheets.v4.update_cell", self._other["capability"], value)
+            val = rpc.call("anvil.private.google.sheets.v4.update_cell", self._other["capability"], value)
 
-            self._obj['value'] = value
+            self._obj["input_value"] = str(value)
+            self._obj["value"] = val
 
-            return value
+            return val
         else:
             object.__setattr__(self, name, value)
 
@@ -199,11 +194,13 @@ class Worksheet(ApiItem):
 
     #!defMethod(list[anvil.google.sheets.Cell instance],[min_row=],[max_row=],[min_col=],[max_col=])!2: "List cells in the worksheet, optionally specifying a region" ["list_cells"]
     def list_cells(self, min_row=None, max_row=None, min_col=None, max_col=None):
+        if min_row is max_row is min_col is max_col is None:
+            range = ""
+        else:
+            min_col_str = index_to_col(min_col)
+            max_col_str = index_to_col(max_col)
 
-        min_col_str = index_to_col(min_col)
-        max_col_str = index_to_col(max_col)
-
-        range = min_col_str + str(min_row) + ":" + max_col_str + str(max_row)
+            range = min_col_str + str(min_row) + ":" + max_col_str + str(max_row)
 
         cells = rpc.call("anvil.private.google.sheets.v4.list_cells", self._other['capability'], range)
         return [Cell(c,{

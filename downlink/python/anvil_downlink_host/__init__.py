@@ -96,6 +96,16 @@ class Connection(WebSocketClient):
         self._sending_lock = threading.RLock()
         self._send_next_bin = None
         self._key = key
+        self._last_keepalive_reply = time.time()
+        
+        threading.Timer(30, self.check_keepalives).start()
+
+    def check_keepalives(self):
+        if time.time() - self._last_keepalive_reply > 30:
+            print("No keepalive reply in 30 seconds. Exiting.")
+            os._exit(1)
+        else:
+            threading.Timer(30, self.check_keepalives).start()
 
     def opened(self):
         print("Anvil websocket open")
@@ -233,7 +243,7 @@ class Connection(WebSocketClient):
                 if id in workers_by_id:
                     workers_by_id[id].handle_inbound_message(data)
                 elif id.startswith("downlink-keepalive"):
-                    pass # We don't care about these
+                    self._last_keepalive_reply = time.time()
                 else:
                     print("Bogus reply for " + id +": " + repr(data)[:120])
 
@@ -473,7 +483,7 @@ def run_downlink_host():
     n = 0
     while True:
         try:
-            for _ in range(6):
+            for _ in range(2):
                 time.sleep(5)
                 report_stats()
 

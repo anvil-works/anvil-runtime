@@ -159,17 +159,28 @@ class _CapAny(object):
     def __repr__(self):
         return "ANY"
 
+def _check_valid_scope(scope, name="scope"):
+    if type(scope) is not list:
+            raise TypeError("The {} of a Capabilty must be a list".format(name))
+    try:
+        return json.loads(json.dumps(scope))
+    except TypeError as e:
+        raise TypeError("The {} provided is not valid JSON data. {}".format(name, e))
+
 
 class Capability(object):
     def __init__(self, scope, mac=None, narrow=None):
-        if type(scope) is not list:
-            raise Exception("The scope of a Capabilty must be a list")
+        scope = _check_valid_scope(scope)
         self._scope = scope
         self._mac = mac
-        if mac is None and (len(scope) == 0 or scope[0] == "_"):
-            raise Exception("To construct a Capability from scratch, its scope cannot start with ['_']")
+        if mac is not None:
+            pass
+        elif not len(scope):
+            raise ValueError("Cannot construct a capability with an empty scope")
+        elif scope[0] == "_":
+            raise ValueError("To construct a Capability from scratch, its scope cannot start with ['_']")
+
         self._narrow = narrow or []
-        self.local_tag = None
         self._do_apply_update = None
         self._do_get_update = None
         self._queued_update = {}
@@ -179,22 +190,16 @@ class Capability(object):
         return self._scope + self._narrow
 
     def narrow(self, narrowing_suffix):
+        narrowing_suffix = _check_valid_scope(narrowing_suffix, "narrow argument")
         return Capability(self._scope, self._mac, self._narrow + narrowing_suffix)
 
-    @staticmethod
-    def require(cap, scope):
-        cap_scope = cap.scope
-        if not isinstance(cap, Capability) or len(cap_scope) > len(scope):
-            raise Exception("Not a capability: %s" % cap)
-        for i in range(len(cap_scope)):
-            if scope[i] != cap_scope[i]:
-                raise Exception("Invalid capability for this action")
-
     def __repr__(self):
-        try:
-            return "<anvil.server.Capability:[%s]>" % (",".join((str(x) for x in self.scope)))
-        except:
-            return "<anvil.server.Capability:INVALID:%s>" % repr(self.scope)
+        return "<anvil.server.Capability:{}>".format(self.scope)
+
+    def __eq__(self, other):
+        if type(other) is not Capability:
+            return NotImplemented
+        return self.scope == other.scope
 
     def set_update_handler(self, apply_update, get_update=None):
         self._do_apply_update = apply_update
@@ -230,21 +235,26 @@ class Capability(object):
 #!defFunction(anvil.server,list,capability,scope_pattern)!2: "Checks that its first argument is a valid Capability, and that its scope matches the supplied pattern.\n\nTo match, the scope must:\n - Be at least as broad as the pattern (ie the same length or shorter)\n- Contain the same values in the same position as the pattern - unless that position in the pattern is Capability.ANY, which matches any value\n\nReturns a list of matched scope elements, of the same length as the pattern. (If the scope was broader than required, missing elements are set to None.)" ["unwrap_capability"]
 def unwrap_capability(cap, scope_pattern):
     if type(cap) is not Capability:
-        raise Exception("Not a valid Capability: '%s'" % str(type(cap)))
+        raise TypeError("Not a valid Capability: found {}".format(type(cap).__name__))
+    if type(scope_pattern) is not list:
+        raise TypeError("scope_pattern should be a list, not {}".format(type(scope_pattern).__name__))
 
     scope = cap.scope
     ret = [None] * len(scope_pattern)
 
     if len(scope) > len(scope_pattern):
-        raise Exception("Capability is too narrow: required %s; got %s" % (scope_pattern, scope))
+        raise ValueError("Capability is too narrow: required %s; got %s" % (scope_pattern, scope))
 
     for i in range(len(scope)):
-        if scope_pattern[i] is Capability.ANY or cap.scope[i] == scope_pattern[i]:
-            ret[i] = cap.scope[i]
+        if scope_pattern[i] is Capability.ANY or scope[i] == scope_pattern[i]:
+            ret[i] = scope[i]
         else:
-            raise Exception("Incorrect Capability: required %s; got %s" % (scope_pattern, cap.scope))
+            raise ValueError("Incorrect Capability: required %s; got %s" % (scope_pattern, cap.scope))
 
     return ret
+
+# DEPRECATED: replaced by unwrap_capability - included here for Backwards compatibility
+Capability.require = staticmethod(unwrap_capability)
 
 
 # DEPRECATED: there is no longer any reason to inherit from this
@@ -1052,17 +1062,27 @@ class HttpRequest(object):
 
 api_request = HttpRequest()
 
-class HttpHeaders():
+def _lower_str(s):
+    if not isinstance(s, str):
+        return s
+    return s.lower()
 
-    def __init__(self):
-        self._headers = []
+class HttpHeaders(object):
+
+    def __init__(self, headers=None):
+        headers = headers or {}
+        assert isinstance(headers, dict), "headers should be a dict"
+        headers = {_lower_str(h): v for (h, v) in headers.items()}
+        self._headers = list(headers.items())
 
     def __setitem__(self, name, val):
+        name = _lower_str(name)
         self._headers = [(h,v) for (h,v) in self._headers if h != name]
 
         self.add(name, val)
 
     def __delitem__(self, name):
+        name = _lower_str(name)
         self._headers = [(h,v) for (h,v) in self._headers if h != name]
 
     def add(self, name, val):
@@ -1071,15 +1091,33 @@ class HttpHeaders():
     def clear(self):
         self._headers = []
 
+    def copy(self):
+        new_self = HttpHeaders()
+        new_self._headers = self._headers.copy()
+        return new_self
+
     def __repr__(self):
-        return repr(self._headers)
+        return "HttpHeaders(" + repr(self._headers) + ")"
 
 
-class HttpResponse():
-    def __init__(self, status=200, body=""):
+class HttpResponse(object):
+    def __init__(self, status=200, body="", headers=None):
         self.status = status
         self.body = body
-        self.headers = HttpHeaders()
+        self.headers = headers
+
+    @property
+    def headers(self):
+        return self._headers
+
+    @headers.setter
+    def headers(self, value):
+        if value is None or isinstance(value, dict):
+            self._headers = HttpHeaders(value)
+        elif isinstance(value, HttpHeaders):
+            self._headers = value.copy()
+        else:
+            raise TypeError("headers should be set to a dictionary")
 
 
 class CallContext(object):
@@ -1353,7 +1391,7 @@ class CookieContainer(object):
 cookies = CookieContainer()
 
 
-class NotABackgroundTaskState():
+class NotABackgroundTaskState(object):
     def __setitem__(self, key, value):
         raise Exception("Cannot access anvil.server.task_state outside a background task")
 

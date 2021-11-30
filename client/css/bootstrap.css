@@ -4,6 +4,7 @@
  * Licensed under MIT (https://github.com/twbs/bootstrap/blob/master/LICENSE)
  */
 /*! normalize.css v3.0.3 | MIT License | github.com/necolas/normalize.css */
+/* Internal note - when updating comment out @media print { } css else images don't display in pdfs */
 html {
   font-family: sans-serif;
   -ms-text-size-adjust: 100%;
@@ -192,7 +193,7 @@ th {
   padding: 0;
 }
 /*! Source: https://github.com/h5bp/html5-boilerplate/blob/master/src/css/main.css */
-@media print {
+/* @media print {
   *,
   *:before,
   *:after {
@@ -262,7 +263,7 @@ th {
   .table-bordered td {
     border: 1px solid #ddd !important;
   }
-}
+} */
 @font-face {
   font-family: "Glyphicons Halflings";
   src: url("../fonts/glyphicons-halflings-regular.eot");

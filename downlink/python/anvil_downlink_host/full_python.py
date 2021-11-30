@@ -14,6 +14,7 @@ CACHE_LOCK = threading.Lock()
 
 class Worker:
     def __init__(self, first_req_id, enable_profiling=False, app_id=None, app_version=None, cache_key=None, set_timeout=True, task_info=None):
+        self.initial_req_id = first_req_id
         self.req_ids = {first_req_id}
         self.outbound_ids = {} # Outbound ID -> inbound ID it came from
         self.lock = threading.RLock()
@@ -136,6 +137,7 @@ class Worker:
         if self.killing_task:
             return
         self.killing_task = True
+        print("SOFT KILL BACKGROUND TASK %s" % self.initial_req_id)
 
         # Request state. If it returns with in 5 seconds, we will die with state, else we hard-kill
         self.timeout_timer = threading.Timer(5, self._hard_kill_background_task)
@@ -143,10 +145,10 @@ class Worker:
         self.timeout_timer.start()
 
     def _hard_kill_background_task(self):
-        print("TIMEOUT KILLING BACKGROUND TASK %s" % self.req_ids)
+        print("HARD KILL BACKGROUND TASK %s" % self.initial_req_id)
         try:
             self.req_ids.discard('pre-kill-task-state')
-            send_with_header({'type': 'NOTIFY_TASK_KILLED', 'id': list(self.req_ids)[0]})
+            send_with_header({'type': 'NOTIFY_TASK_KILLED', 'id': self.initial_req_id})
         finally:
             self.hard_timeout()
 
@@ -218,8 +220,11 @@ class Worker:
 
                             self.req_ids.discard('pre-kill-task-state')
 
-                            send_with_header({'type': 'NOTIFY_TASK_KILLED', 'id': list(self.req_ids)[0],
+                            send_with_header({'type': 'NOTIFY_TASK_KILLED', 'id': self.initial_req_id,
                                                          'taskState': msg['response'], 'objects': objects})
+
+                            if self.timeout_timer:
+                                self.timeout_timer.cancel()
 
                             self.proc.terminate()
                         else:

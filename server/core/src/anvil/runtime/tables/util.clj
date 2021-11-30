@@ -71,7 +71,7 @@
   (if (= "40001" (.getSQLState e))
     (general-tables-error "Another transaction has changed this data; aborting"
                           "anvil.tables.TransactionConflict")
-    e))
+    (general-tables-error (str "Internal database error: " (.getMessage e)))))
 
 (defmacro with-transform-err [& body]
   `(try

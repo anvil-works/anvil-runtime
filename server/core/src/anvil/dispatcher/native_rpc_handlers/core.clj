@@ -98,7 +98,6 @@
                                           (fn [_kwargs lm is-download?]
                                             (let [{:keys [manager key id name]} (.serialiseForRpc lm nil)
                                                   enc util/real-actual-genuine-url-encoder]
-                                              (log/info "Session state: " (keys @native-util/*session-state*))
                                               (str native-util/*app-origin* "/_/lm/" (enc manager) "/" (enc key) "/" (enc id) "/" (enc (or name "")) "?s="
                                                    (sessions/url-token native-util/*session-state*)
                                                    (if is-download? "" "&nodl=1")))))
@@ -142,11 +141,12 @@
    "anvil.private.switch_session!"      {:fn (fn [req return-path]
                                                (dispatcher/synchronous-return-path
                                                  return-path
-                                                 (let [alternate-session (:alternate-session @(:session-state req))]
-                                                   (if (and alternate-session
-                                                            (:anvil.dispatcher/change-session! req))
+                                                 (let [alternate-session (:anvil.dispatcher/alternate-session req)
+                                                       change-session! (:anvil.dispatcher/change-session! req)]
+                                                   (if (and alternate-session change-session!)
                                                      (do
-                                                       ((:anvil.dispatcher/change-session! req) alternate-session)
+                                                       (change-session! alternate-session)
+                                                       (sessions/ensure-logged! alternate-session)
                                                        (:pymods @alternate-session))
                                                      (:pymods @(:session-state req))))))}
 
@@ -158,7 +158,7 @@
                                             (let [session_id (if (and (not session_id)
                                                                       (empty? session_ids)
                                                                       (not channel))
-                                                               (sessions/persistent-id native-util/*session-state*)
+                                                               (sessions/get-id native-util/*session-state*)
                                                                session_id)
                                                   evt {:name    name
                                                        :payload payload}
@@ -202,7 +202,8 @@
    "anvil.private.get_session_id"       (native-util/wrap-native-fn
                                           (fn [_kwargs]
                                             (native-util/require-server! "get the current session ID")
-                                            (sessions/persistent-id native-util/*session-state*)))
+                                            (sessions/persist! native-util/*session-state*)
+                                            (sessions/get-id native-util/*session-state*)))
 
    "anvil.private.list_sessions"        (native-util/wrap-native-fn
                                           ;; Returns all the sessions in the current environment, or just the ones where a particular user is logged in.

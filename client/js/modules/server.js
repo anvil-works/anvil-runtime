@@ -108,7 +108,7 @@ module.exports = function(appId, appOrigin) {
                 return Sk.misceval.callsim(anvil.tp$getattr(new Sk.builtin.str("LiveObjectProxy")), obj);
             },
             "Capability": () => {
-                return Sk.misceval.callsim(pyMod["Capability"], Sk.ffi.remapToPy(obj.scope), new Sk.builtin.str(obj.mac), Sk.builtin.none.none$);
+                return new pyMod["Capability"](obj.scope, obj.mac, null);
             },
             "ValueType": () => {
                 return obj.typeName;
@@ -270,6 +270,7 @@ module.exports = function(appId, appOrigin) {
             websocket = deferred.promise;
 
             var ws = new WebSocket(appOrigin.replace(/^http/, "ws") + "/_/ws/" + (window.anvilParams.accessKey || '') + "?s=" + window.anvilSessionToken);
+            window.anvilWebsocket = ws;
             var heartbeatInterval = null;
 
             ws.onopen = function() {
@@ -385,9 +386,7 @@ module.exports = function(appId, appOrigin) {
 
                             console.log("Capability updates:", updates)
                             for (let pyCap of req.knownCapabilities) {
-                                let scope = pyCap._scope;
-                                if (pyCap._narrow) { scope = scope.concat(pyCap._narrow); }
-                                let scopeJson = JSON.stringify(scope);
+                                const scopeJson = pyCap._JSONScope;
                                 if (scopeJson in updates) {
                                     console.log("Update for", scopeJson)
                                     capUpdateChain.push(
@@ -866,13 +865,11 @@ module.exports = function(appId, appOrigin) {
             } else if (is(mapping.value, pyMod['Capability'])) {
                 let o = {
                     scope: mapping.value._scope,
+                    narrow: mapping.value._narrow,
                     mac: mapping.value._mac,
                     path: mapping.path,
-                    type: ["Capability"]
+                    type: ["Capability"],
                 };
-                if (mapping.value._narrow) {
-                    o.narrow = mapping.value._narrow
-                }
 
                 knownCapabilities.push(mapping.value);
 
@@ -1128,67 +1125,162 @@ module.exports = function(appId, appOrigin) {
         }
     });
 
-    pyMod["Capability"] = Sk.misceval.buildClass(pyMod, function($gbl, $loc) {
-        /*!defMethod(_,scope)!2*/ "Create a Capability object. Give it a list representing its scope - eg [\"my_database\", \"table_name\"]. The scope of user-created Capabilities may not begin with \"_\"."
-        $loc['__init__']    = new Sk.builtin.func(function init(self, pyScope, pyMac, pyNarrow) {
-            self._scope = Sk.ffi.remapToJs(pyScope);
-            self._mac = pyMac && Sk.ffi.remapToJs(pyMac);
-            self._narrow = (pyNarrow && Sk.ffi.remapToJs(pyNarrow)) || [];
+    const _CapAny = Sk.abstr.buildNativeClass("_CapAny", {
+        constructor: function () {},
+        slots: {
+            $r() {
+                return new Sk.builtin.str("ANY");
+            },
+        },
+    });
+    const _ANY = Object.create(_CapAny.prototype);
 
-            if (!self._mac || typeof(self._mac) !== "string") {
-                throw new Sk.builtin.RuntimeError("Cannot create new Capability objects in Form code");
-            }
 
-            self._applyUpdate = (pyUpdate) => {
-                console.log("Applying update", pyUpdate)
-                if (!self._doApplyUpdate) {
+    pyMod["Capability"] = Sk.abstr.buildNativeClass("anvil.server.Capability", {
+        constructor: function Capability(scope, mac, narrow) {
+            this._scope = scope;
+            this._mac = mac;
+            this._narrow = narrow || (narrow = []);
+            this._localTag = null;
+            const fullScope = scope.concat(narrow);
+            this._fullScope = fullScope;
+            this._JSONScope = JSON.stringify(fullScope);
+            this._doApplyUpdate = null;
+            this._applyUpdate = (pyUpdate) => {
+                if (!this._doApplyUpdate) {
                     return Sk.builtin.none.none$;
                 }
-                return Sk.misceval.callsimOrSuspendArray(self._doApplyUpdate, [pyUpdate]);
+                return PyDefUtils.pyCallOrSuspend(this._doApplyUpdate, [pyUpdate]);
             };
-        });
+            let pyFullScope;
+            Object.defineProperties(this, {
+                _pyFullScope: {
+                    get() {
+                        // always return a different object so that it can be changed in python.
+                        pyFullScope || (pyFullScope = Sk.ffi.toPy(fullScope).valueOf());
+                        return new Sk.builtin.list([...pyFullScope]);
+                    },
+                },
+            });
+        },
+        slots: {
+            tp$new(_args, _kws) {
+                throw new Sk.builtin.RuntimeError("Cannot create new Capability objects in Form code.");
+            },
+            $r() {
+                const scopeRepr = Sk.misceval.objectRepr(this._pyFullScope);
+                return new Sk.builtin.str(`<anvil.server.Capability:${scopeRepr}>`);
+            },
+            tp$richcompare(other, op) {
+                if ((op !== "Eq" && op !== "NotEq") || other.constructor !== pyMod["Capability"]) {
+                    return Sk.builtin.NotImplemented.NotImplemented$;
+                }
+                const ret = Sk.misceval.richCompareBool(this._pyFullScope, other._pyFullScope, "Eq");
+                return op === "Eq" ? ret : !ret;
+            },
+        },
+        methods: {
+            /*!defBuiltinMethod(anvil.server.Capability instance,additional_scope)!2*/
+            "narrow": {
+                $meth(pyNarrowSuffix) {
+                    if (!(pyNarrowSuffix instanceof Sk.builtin.list)) {
+                        throw new Sk.builtin.TypeError("The narrow argument of a Capability should be a list");
+                    }
+                    let jsNarrow;
+                    try {
+                        const failHook = () => {
+                            throw Error("bad pyobject");
+                        };
+                        jsNarrow = Sk.ffi.toJs(pyNarrowSuffix, { setHook: failHook, unhandledHook: failHook });
+                    } catch {
+                        throw new Sk.builtin.TypeError("The narrow argument provided is not valid JSON data.");
+                    }
+                    const narrow = this._narrow.concat(jsNarrow);
+                    return new pyMod["Capability"](this._scope, this._mac, narrow);
+                },
+                $flags: { OneArg: true },
+                $doc: "Return a new capability that is narrower than this one, by appending additional scope element(s) to it.",
+            },
+            /*!defBuiltinMethod(_,apply_update:callable,[get_update:callable])!2*/
+            "set_update_handler": {
+                $meth(pyApplyUpdate, _ignored) {
+                    this._doApplyUpdate = pyApplyUpdate;
+                    return Sk.builtin.none.none$;
+                },
+                $flags: { MinArgs: 1, MaxArgs: 2 },
+                $doc: "Set a handler for what happens when an update is sent to this capability.\n\nOptionally provide a function for aggregating updates (default behaviour is to merge them, if they are all dictionaries, or to return only the most recent update otherwise.)",
+            },
+            /*!defBuiltinMethod(_,update)!2*/
+            "send_update": {
+                $meth(pyUpdate) {
+                    return this._applyUpdate(pyUpdate);
+                },
+                $flags: { OneArg: true },
+                $doc: "Send an update to the update handler for this capability, in this interpreter and also in any calling environment (eg browser code) that passed this capability into the current server function.",
+            },
+        },
+        getsets: {
+            scope: {
+                $get() {
+                    return this._pyFullScope;
+                },
+            },
+        },
+        proto: {
+            ANY: _ANY,
+        },
+        flags: {
+            sk$unacceptableBase: true,
+        },
+    });
+    [/*!defAttr()!1*/ {
+        name: "scope",
+        type: "list",
+        description: "A list representing what this capability represents. It can be extended by calling narrow(), but not shortened.\n\nEg: ['my_resource', 42, 'foo']",
+    }];
+    [/*!defClassAttr()!1*/ {
+        name: "ANY",
+        type: "object",
+        description: "Sentinel value for unwrap_capability",
+    }];
+    /*!defClass(anvil.server, Capability)!*/
 
-        [/*!defAttr()!1*/ {
-            name: "scope",
-            type: "list",
-            description: "A list representing what this capability represents. It can be extended by calling narrow(), but not shortened.\n\nEg: ['my_resource', 42, 'foo']",
-        }];
 
-        $loc["__getattr__"] = new Sk.builtin.func((self, pyAttrName) => {
-            if (pyAttrName.v == "scope") {
-                return Sk.ffi.remapToPy(self._scope.concat(self._narrow))
+
+    pyMod["unwrap_capability"] = new Sk.builtin.func((cap, scopePattern) => {
+        if (Sk.builtin.type(cap) !== pyMod["Capability"]) {
+            throw new Sk.builtin.TypeError("The first argument must be a Capability");
+        }
+        if (!(scopePattern instanceof Sk.builtin.list)) {
+            throw new Sk.builtin.TypeError(`scope_pattern should be a list, not ${Sk.abstr.typeName(scopePattern)}`);
+        }
+        const patArr = scopePattern.valueOf();
+        const scope = cap._pyFullScope;
+        const scopeArr = scope.valueOf();
+        if (scopeArr.length > patArr.length) {
+            throw new Sk.builtin.ValueError(
+                `Capability is too narrow: required ${Sk.misceval.objectRepr(
+                    scopePattern
+                )}; got ${Sk.misceval.objectRepr(scope)}`
+            );
+        }
+        const ret = new Array(patArr.length).fill(Sk.builtin.none.none$);
+        for (let i = 0; i < scopeArr.length; i++) {
+            const patVal = patArr[i];
+            const scopeVal = scopeArr[i];
+            if (patVal === _ANY || scopeVal === patVal || Sk.misceval.richCompareBool(scopeVal, patVal, "Eq")) {
+                ret[i] = scopeVal;
             } else {
-                throw new Sk.builtin.AttributeError(pyAttrName);
+                throw new Sk.builtin.ValueError(
+                    `Incorrect Capability: required ${Sk.misceval.objectRepr(
+                        scopePattern
+                    )}; got ${Sk.misceval.objectRepr(scope)}`
+                );
             }
-        });
+        }
+        return new Sk.builtin.list(ret);
+    });
 
-        // TODO support "local_tag" attribute as the only writable attr (default None)
-        $loc["__setattr__"] = new Sk.builtin.func(() => { throw new Sk.builtin.AttributeError("Capability objects are read-only"); });
-
-        /*!defMethod(anvil.server.Capability instance,additional_scope)!2*/ "Return a new capability that is narrower than this one, by appending additional scope element(s) to it."
-        $loc["narrow"] = new Sk.builtin.func((self, pyAdditionalScope) => {
-            return Sk.misceval.callsim(pyMod["Capability"],
-                                       Sk.ffi.remapToPy(self._scope),
-                                       Sk.ffi.remapToPy(self._mac),
-                                       self._narrow ? Sk.abstr.objectAdd(Sk.ffi.remapToPy(self._narrow), pyAdditionalScope) : new Sk.builtin.list(pyAdditionalScope));
-        });
-
-        /*!defMethod(_,apply_update:callable,[get_update:callable])!2*/ "Set a handler for what happens when an update is sent to this capability.\n\nOptionally provide a function for aggregating updates (default behaviour is to merge them, if they are all dictionaries, or to return only the most recent update otherwise.)"
-        $loc["set_update_handler"] = new Sk.builtin.func((self, pyApplyUpdate, _ignored) => {
-            self._doApplyUpdate = pyApplyUpdate;
-            return Sk.builtin.none.none$;
-        })
-
-        /*!defMethod(_,update)!2*/ "Send an update to the update handler for this capability, in this interpreter and also in any calling environment (eg browser code) that passed this capability into the current server function."
-        $loc["send_update"] = new Sk.builtin.func((self, pyUpdate) => {
-            return self._applyUpdate(pyUpdate);
-        });
-
-
-        $loc["__repr__"] = new Sk.builtin.func((self) => {
-            return new Sk.builtin.str("<anvil.server.Capability:[" + self._scope.concat(self._narrow || []) + "]>");
-        });
-    }, /*!defClass(anvil.server)!1*/ "Capability", []);
 
     pyMod["_register_exception_type"] = new Sk.builtin.func(function(pyName, pyClass) {
         if (!pyName || !(pyName instanceof Sk.builtin.str) || !pyClass) {
@@ -1210,7 +1302,7 @@ module.exports = function(appId, appOrigin) {
     pyMod["SessionExpiredError"] = Sk.misceval.buildClass(pyMod, function($gbl, $loc) {
         $loc["__init__"] = new Sk.builtin.func(function init(self) {
             self.traceback = []
-            self.args = new Sk.builtin.list([Sk.ffi.remapToPy("Session expired")]);
+            self.args = new Sk.builtin.list([Sk.ffi.toPy("Session expired")]);
             return Sk.builtin.none.none$;
         });
     }, "SessionExpiredError", [Sk.builtin.Exception]);

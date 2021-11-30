@@ -77,9 +77,13 @@
 
                  [malabarba/lazy-map "1.3"]
 
-                 [com.onelogin/java-saml "2.5.0"]]
+                 [com.onelogin/java-saml "2.5.0"]
 
-  :plugins [[lein-aot-order "0.1.0"]]
+                 [io.opentelemetry/opentelemetry-sdk]]
+  :bom {:import [[io.opentelemetry/opentelemetry-bom "1.7.0"]]}
+
+  :plugins [[lein-aot-order "0.1.0"]
+            [lein-bom "0.2.0-SNAPSHOT"]]
   :aot :order
   :auto-clean false
   :omit-source true

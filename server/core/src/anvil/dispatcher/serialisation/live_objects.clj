@@ -1,5 +1,6 @@
 (ns anvil.dispatcher.serialisation.live-objects
-  (:use clojure.set)
+  (:use clojure.set
+        slingshot.slingshot)
   (:require [anvil.util :as util]
             [anvil.dispatcher.types :as types]
             [clojure.tools.logging :as log]))
@@ -19,7 +20,7 @@
 
       (do
         (log/info "Invalid LiveObject MAC" (pr-str live-object-map))
-        (throw (Exception. "Invalid LiveObject MAC"))))))
+        (throw+ {:anvil/invalid-mac "Invalid LiveObject MAC"})))))
 
 
 ;; Utility function, might want to go elsewhere
