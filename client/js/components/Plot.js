@@ -313,14 +313,22 @@ module.exports = (pyModule) => {
 
         locals($loc) {
             $loc["__new__"] = PyDefUtils.mkNew(pyModule["Component"], (self) => {
+                const onResize = () => relayout(self);
+                self._anvil.plotlyUpdated = false;
+                self._anvil.initialized = false;
+
                 self._anvil.pageEvents = {
                     add() {
                         self._anvil.initialized = true;
+                        window.addEventListener("resize", onResize);
                         return update(self);
                     },
                     show() {
                         return update(self);
                     },
+                    remove() {
+                        window.removeEventListener("resize", onResize);
+                    }
                 };
             });
 
@@ -527,22 +535,32 @@ module.exports = (pyModule) => {
     //   PyDefUtils.raiseEventAsync({curve_number: data.curveNumber}, self, "legend_click");
     //   return false;
     // }
+    function notReady(self) {
+        return !self._anvil.initialized || (!self._anvil.props.layout && !self._anvil.props.data)
+    }
 
-    function update(self) {
-        if (!self._anvil.initialized || (!self._anvil.props.layout && !self._anvil.props.data)) return;
-
+    function getJsLayout(self) {
         const jsLayout = remapToJs(self._anvil.props.layout) || {};
         jsLayout.height = self._anvil.element.height();
         jsLayout.width = self._anvil.element.width();
+        return jsLayout;
+    }
 
+    function update(self) {
+        if (notReady(self)) return;
+
+        const jsLayout = getJsLayout(self);
         const jsData = remapToJs(self._anvil.props.data) || [];
-
-        const jsConfig = remapToJs(self._anvil.props.config) || { displayLogo: false, displaylogo: false, staticPlot: !self._anvil.getPropJS("interactive") };
+        const jsConfig = remapToJs(self._anvil.props.config) || {
+            displayLogo: false,
+            displaylogo: false,
+            staticPlot: !self._anvil.getPropJS("interactive"),
+        };
 
         // Do not block here. There's no need, no code depends on the result.
         // If we decide we need to block, just return a suspension here.
         loadPlotly(self).then(() => {
-            const outerEl = self._anvil.elements.outer;
+            const outerEl = self._anvil.domNode;
             Plotly.newPlot(outerEl, jsData, jsLayout, jsConfig);
             outerEl.on("plotly_click", onPlotlyClick.bind(null, self));
             outerEl.on("plotly_doubleclick", onPlotlyDoubleClick.bind(null, self));
@@ -550,16 +568,26 @@ module.exports = (pyModule) => {
             outerEl.on("plotly_hover", onPlotlyHover.bind(null, self));
             outerEl.on("plotly_unhover", onPlotlyUnhover.bind(null, self));
             outerEl.on("plotly_afterplot", onPlotlyAfterplot.bind(null, self));
+            self._anvil.plotlyUpdated = true;
 
             // For some reason, this doesn't ever get called. Possibly we're on an old version of Plotly. Work it out if anyone needs it.
             //self._anvil.element[0].on("plotly_legendclick", onPlotlyLegendClick.bind(null, self));
         });
         return Sk.builtin.none.none$;
-    };
+    }
 
-
-
-
+    function relayout(self) {
+        if (typeof Plotly === "undefined" || !self._anvil.plotlyUpdated) return;
+        // only relayout the width and height
+        const width = self._anvil.element.width();
+        const height = self._anvil.element.height();
+        try {
+            // relayout returns a Promise, the errors are part of the syncronous code
+            Plotly.relayout(self._anvil.domNode, { width, height });
+        } catch (e) {
+            console.warn(e);
+        }
+    } 
 
 
 };

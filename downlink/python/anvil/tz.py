@@ -32,7 +32,7 @@ class tzlocal(tzoffset):
 
 	#!defMethod(_)!2: "Use the local timezone of the browser" ["__init__"]
     def __init__(self):
-        if time.daylight:
+        if time.localtime().tm_isdst and time.daylight:
             s = -time.altzone
         else:
             s = -time.timezone

@@ -1,6 +1,7 @@
 """A module for creating an Anvil app (and if necessary an Anvil account) from
 the command line or via API, returning an app object with an Uplink key."""
 
+from http import client
 import json, re, sys, time
 import anvil.server
 
@@ -10,12 +11,14 @@ CREATOR_APP_KEY="client_SHAMM7JH74E3HZQ4Y2WFK2FV-EZY7I4WKHGYU2BSK"
 
 
 class App(object):
-    def __init__(self, id, uplink_key, origin, email, name):
+    def __init__(self, id, uplink_key, origin, email, name, **kwargs):
         self.id = id
         self.uplink_key = uplink_key
+        self.client_uplink_key = kwargs.get("client_uplink_key")
         self.origin = origin
         self.email = email
         self.name = name
+        self.__dict__.update(kwargs)
 
     def connect(self, **kw):
         anvil.server.connect(self.uplink_key, **kw)
@@ -41,10 +44,14 @@ def create_app(example_name, email=None):
         print("(To create a fresh example app, run 'rm {}', then run this script again.)\n".format(filename))
         return existing_app
 
-    anvil.server.connect(CREATOR_APP_KEY)
+    print("Connecting to Anvil to set this app up...")
+    anvil.server.connect(CREATOR_APP_KEY, quiet=True)
+    print("Connected.")
 
-    while email is None or not re.match(r"^\w+@\w+\.\w+", email):
-        email = input_fn("Enter your email address to create an Anvil account (or create the demo app in your existing account): ")
+    while email is None or not re.match(r"^[\w\+_\-\.]+@[\w\+\-\.]+\.\w+", email):
+        if email is not None:
+            print("I don't think '{}' is a valid email address.".format(email))
+        email = input_fn("Enter your email address to create an Anvil account (or create this app in your existing account): ")
 
     poll_token = anvil.server.call("clone_example", email, example_name)
 
@@ -55,7 +62,7 @@ def create_app(example_name, email=None):
 
     while cloned_apps is None:
         time.sleep(2)
-        cloned_apps = anvil.server.call("poll_example", email, poll_token)
+        cloned_apps = anvil.server.call("poll_example", email, poll_token, v=2)
 
     anvil.server.disconnect()
 

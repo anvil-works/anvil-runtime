@@ -31,6 +31,8 @@
             [anvil.runtime.sessions :as sessions]
             [anvil.dispatcher.native-rpc-handlers.users.util :as users-util]
             [anvil.runtime.tables.rpc :as tables]
+            [anvil.runtime.tables.v2.rpc]
+            [medley.core :refer [find-first]]
             [clojure.data.json :as json]))
 
 
@@ -101,6 +103,21 @@
                                               (str native-util/*app-origin* "/_/lm/" (enc manager) "/" (enc key) "/" (enc id) "/" (enc (or name "")) "?s="
                                                    (sessions/url-token native-util/*session-state*)
                                                    (if is-download? "" "&nodl=1")))))
+
+   "anvil.private.get_client_config"    (native-util/wrap-native-fn
+                                          (fn [_kws path]
+                                            (->> (:services native-util/*app*)
+                                                 (find-first #(= path (:source %)))
+                                                 :client_config)))
+
+   "anvil.private.get_server_config"    (native-util/wrap-native-fn
+                                          (fn [_kws path]
+                                            (if native-util/*client-request?*
+                                              (throw+ {:anvil/server-error "Cannot access server config from the client"
+                                                       :type "anvil.server.PermissionDenied"})
+                                              (->> (:services native-util/*app*)
+                                                   (find-first #(= path (:source %)))
+                                                   :server_config))))
 
    "anvil.private.enable_profiling"     (native-util/wrap-native-fn
                                           (fn [_kwargs]

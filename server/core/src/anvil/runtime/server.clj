@@ -75,9 +75,12 @@
        (resp/status (if app-exists-but-no-key? 403 404)))))
 
 
-(defonce apps-always-embeddable-from nil)
+(defonce get-embedding-restrictions (fn [app-map]
+                                      (when-not (or (:allow_embedding app-map) (nil? (:allow_embedding app-map)))
+                                        "none")))
 
-(def set-app-embedding-impl! (util/hook-setter #{apps-always-embeddable-from}))
+
+(def set-app-embedding-impl! (util/hook-setter #{get-embedding-restrictions}))
 
 (defn get-app-from-request
   ([request] (get-app-from-request request true))
@@ -107,14 +110,19 @@
                                 fake-path (str "anvil-services/" anvil-prefix p)]]
                       (str "Sk.builtinFiles.files[" (util/write-json-str fake-path) "] = " (util/write-json-str content) ";")))))))
 
-(defn- get-extra-snippets [app-map]
-  (let [app-services (:services app-map)
-        get-service (fn [url] (first (filter #(= (:source %) url) app-services)))
-        segment-config (:client_config (get-service "/runtime/services/segment.yml"))]
-    (str
-      (when segment-config
-        (format "<script type=\"text/javascript\">\n  !function(){var analytics=window.analytics=window.analytics||[];if(!analytics.initialize)if(analytics.invoked)window.console&&console.error&&console.error(\"Segment snippet included twice.\");else{analytics.invoked=!0;analytics.methods=[\"trackSubmit\",\"trackClick\",\"trackLink\",\"trackForm\",\"pageview\",\"identify\",\"reset\",\"group\",\"track\",\"ready\",\"alias\",\"debug\",\"page\",\"once\",\"off\",\"on\"];analytics.factory=function(t){return function(){var e=Array.prototype.slice.call(arguments);e.unshift(t);analytics.push(e);return analytics}};for(var t=0;t<analytics.methods.length;t++){var e=analytics.methods[t];analytics[e]=analytics.factory(e)}analytics.load=function(t){var e=document.createElement(\"script\");e.type=\"text/javascript\";e.async=!0;e.src=(\"https:\"===document.location.protocol?\"https://\":\"http://\")+\"cdn.segment.com/analytics.js/v1/\"+t+\"/analytics.min.js\";var n=document.getElementsByTagName(\"script\")[0];n.parentNode.insertBefore(e,n)};analytics.SNIPPET_VERSION=\"4.0.0\";\n  analytics.load(\"%s\");\n  analytics.page();\n  }}();\n</script><!--"
-                (hiccup-util/escape-html (:write_key segment-config)))))))
+(defonce service-snippet-fns (atom {}))
+
+(swap! service-snippet-fns assoc "/runtime/services/segment.yml"
+       (fn [app-map {:keys [client_config]}]
+         (format "<script type=\"text/javascript\">\n  !function(){var analytics=window.analytics=window.analytics||[];if(!analytics.initialize)if(analytics.invoked)window.console&&console.error&&console.error(\"Segment snippet included twice.\");else{analytics.invoked=!0;analytics.methods=[\"trackSubmit\",\"trackClick\",\"trackLink\",\"trackForm\",\"pageview\",\"identify\",\"reset\",\"group\",\"track\",\"ready\",\"alias\",\"debug\",\"page\",\"once\",\"off\",\"on\"];analytics.factory=function(t){return function(){var e=Array.prototype.slice.call(arguments);e.unshift(t);analytics.push(e);return analytics}};for(var t=0;t<analytics.methods.length;t++){var e=analytics.methods[t];analytics[e]=analytics.factory(e)}analytics.load=function(t){var e=document.createElement(\"script\");e.type=\"text/javascript\";e.async=!0;e.src=(\"https:\"===document.location.protocol?\"https://\":\"http://\")+\"cdn.segment.com/analytics.js/v1/\"+t+\"/analytics.min.js\";var n=document.getElementsByTagName(\"script\")[0];n.parentNode.insertBefore(e,n)};analytics.SNIPPET_VERSION=\"4.0.0\";\n  analytics.load(\"%s\");\n  analytics.page();\n  }}();\n</script>"
+                 (hiccup-util/escape-html (:write_key client_config)))))
+
+(defn- get-service-snippets [app-map]
+  (->> (for [{:keys [source] :as service} (:services app-map)
+             :let [get-snippet (get @service-snippet-fns source)]
+             :when get-snippet]
+         (get-snippet app-map service))
+       (apply str)))
 
 (defn with-anvil-cookies [resp session]
   ;; Takes the current value of the anvil cookies from the session and puts them onto an HTTP response
@@ -154,7 +162,7 @@
             environment (assoc environment :commit-id commit-id)
             _ (checkpoint! "YAML loaded")
             meta (:metadata app-map)
-            app-map (dissoc app-map :metadata)
+            app-map (assoc-in (dissoc app-map :metadata) [:theme :vars] (:theme-vars style))
             app-origin (:app-origin req)
 
             app-services (:services app-map)
@@ -203,8 +211,9 @@
                                    "{{theme-color}}"        (:primary-color style)
                                    "{{shim-css}}"           (:css-shims style)
                                    "{{theme-css}}"          (:css style)
+                                   "{{root-vars}}"          (:root-vars style)
                                    "{{head-html}}"          head-html
-                                   "{{extra-snippets}}"     (get-extra-snippets app-map)
+                                   "{{extra-snippets}}"     (get-service-snippets app-map)
                                    "{{app-info-object}}"    (util/write-json-str (runtime-util/get-runtime-app-info environment))
                                    "{{load-app-code}}"      (str "\n$(function() {"
                                                                  (get-service-code app-map)
@@ -235,11 +244,10 @@
                                                                                 {:same-site :none
                                                                                  :secure    true})))
                 %))
-            (#(if (and (not (or (:allow_embedding app-map) (nil? (:allow_embedding app-map))))
-                       apps-always-embeddable-from)
+            (#(if-let [restrict-embedding-origins (get-embedding-restrictions app-map)]
                 (-> %
-                    (resp/header "X-Frame-Options" (str "allow-from " apps-always-embeddable-from))
-                    (resp/header "Content-Security-Policy" (str "frame-ancestors " apps-always-embeddable-from)))
+                    (resp/header "X-Frame-Options" (str "allow-from " restrict-embedding-origins))
+                    (resp/header "Content-Security-Policy" (str "frame-ancestors " restrict-embedding-origins)))
                 %))))
       (catch :anvil/app-loading-error e
         (app-500 req (:message e))))))
@@ -815,6 +823,9 @@
 
   (POST "/_/log" request
     ;; Absorb this by default
+    {:status 200})
+
+  (GET "/_/check-app-online" req
     {:status 200})
 
   (GET "/_/get_stripe_publishable_keys" []

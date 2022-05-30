@@ -11,7 +11,8 @@
             [anvil.dispatcher.types :as types]
             [anvil.dispatcher.core :as dispatcher]
             [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks]
-            [anvil.core.tracing :as tracing])
+            [anvil.core.tracing :as tracing]
+            [anvil.core.worker-pool :as worker-pool])
   (:import
     (org.apache.commons.codec.binary Base64)
     (java.io InputStream ByteArrayOutputStream)
@@ -38,67 +39,66 @@
     (clojure.java.io/copy in out)
     (.toByteArray out)))
 
-(defn request [kwargs]
-  (let [url     (:url kwargs)
-        method  (keyword (.toLowerCase (or (:method kwargs) "GET")))
-        headers (reduce merge {} (for [[k v] (:headers kwargs)]
-                                   {(.substring (.toLowerCase (str k)) 1) v}))
-        headers (if (:username kwargs)
-                  (assoc headers "authorization" (util/basic-auth-header (:username kwargs) (:password kwargs)))
-                  headers)
+(defn request [{:keys [url timeout method headers data username password] :as kwargs}]
+  (worker-pool/with-expanding-threadpool-when-slow
+    (let [method (keyword (.toLowerCase (or method "GET")))
+          headers (reduce merge {} (for [[k v] headers]
+                                     {(.substring (.toLowerCase (str k)) 1) v}))
+          headers (if username
+                    (assoc headers "authorization" (util/basic-auth-header username password))
+                    headers)
 
-        data    (:data kwargs)
+          [data c-type] (cond
 
-        [data c-type] (cond
+                          (or (nil? data) (= data "")
+                              (string? data)) [data]
 
-                        (or (nil? data) (= data "")
-                            (string? data)) [data]
+                          (instance? MediaDescriptor data) [(blocking-hacks/?->InputStream u/*req* data)
+                                                            (.getContentType ^MediaDescriptor data)]
 
-                        (instance? MediaDescriptor data) [(blocking-hacks/?->InputStream u/*req* data)
-                                                                (.getContentType ^MediaDescriptor data)]
+                          (map? data) (if (headers "content-type")
+                                        [(util/write-json-str data)]
+                                        [(->> data
+                                              (map #(str (codec/url-encode (.substring (str (first %)) 1))
+                                                         "=" (codec/url-encode (str (second %)))))
+                                              (string/join "&"))
+                                         "application/x-www-form-urlencoded"])
 
-                        (map? data) (if (headers "content-type")
-                                      [(util/write-json-str data)]
-                                      [(->> data
-                                            (map #(str (codec/url-encode (.substring (str (first %)) 1))
-                                                       "=" (codec/url-encode (str (second %)))))
-                                            (string/join "&"))
-                                       "application/x-www-form-urlencoded"])
+                          (vector? data) (throw+ (general-http-error "Cannot use a list as the body of an HTTP request"))
 
-                        (vector? data) (throw+ (general-http-error "Cannot use a list as the body of an HTTP request"))
+                          :else (throw+ (general-http-error (str "Cannot use '" (.getClass data) "' as the body of an HTTP request"))))
 
-                        :else (throw+ (general-http-error (str "Cannot use '" (.getClass data) "' as the body of an HTTP request"))))
+          headers (if c-type
+                    (assoc headers "content-type" c-type)
+                    headers)
 
-        headers (if c-type
-                  (assoc headers "content-type" c-type)
-                  headers)
-
-        httpkit-map {:url       url
-                     :method    method
-                     :headers   headers
-                     :body      (when (not= method :get) data)
-                     :keepalive -1}
+          httpkit-map {:url       url
+                       :timeout   timeout
+                       :method    method
+                       :headers   headers
+                       :body      (when (not= method :get) data)
+                       :keepalive -1}
 
 
-        {:keys [status headers body error] :as resp} (tracing/with-span ["HTTP Request" {:url url :method (name method)}]
-                                                       @(http/request httpkit-map nil))]
+          {:keys [status headers body error] :as resp} (tracing/with-span ["HTTP Request" {:url url :method (name method)}]
+                                                         @(http/request httpkit-map nil))]
 
-    (log/trace resp)
+      (log/trace resp)
 
-    (when error
-      (throw+ (general-http-error "anvil.http.HttpRequestFailed"
-                                  (if (instance? javax.net.ssl.SSLException error)
-                                    (str "SSL error: " (.getMessage error))
-                                    (.getMessage error)))))
+      (when error
+        (throw+ (general-http-error "anvil.http.HttpRequestFailed"
+                                    (if (instance? javax.net.ssl.SSLException error)
+                                      (str "SSL error: " (.getMessage error))
+                                      (.getMessage error)))))
 
-    {:status  status
-     :headers headers
-     :content (BlobMedia. (:content-type headers)
-                          (cond
-                            (string? body) (.getBytes body (Charset/forName "utf-8"))
-                            (instance? InputStream body) (slurp-bytes body)
-                            :else (throw+ (general-http-error (str "Don't know how to handle a response of " (if (nil? body) "null" (.getClass body)) " (status " (pr-str status) ")"))))
-                          nil)}))
+      {:status  status
+       :headers headers
+       :content (BlobMedia. (:content-type headers)
+                            (cond
+                              (string? body) (.getBytes body (Charset/forName "utf-8"))
+                              (instance? InputStream body) (slurp-bytes body)
+                              :else (throw+ (general-http-error (str "Don't know how to handle a response of " (if (nil? body) "null" (.getClass body)) " (status " (pr-str status) ")"))))
+                            nil)})))
 
 
 (defn url-encode [_kwargs s]

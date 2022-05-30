@@ -48,7 +48,11 @@ module.exports = (pyModule) => {
                         if (src) script.removeAttribute("src");
                         // we will add the textConent and src in the pageEvents.add callback
                         // this is to prevent jquery append doing it for us!
-                        return {script, textContent, src};
+                        const isAsync = script.attributes.async?.value;
+                        // because firefox sets the async property to true for dynamically created scripts
+                        // div.innerHtml = "<script src='..'></script>" in firefox async is true, chrome it's false
+                        // https://developer.mozilla.org/en-US/docs/Web/HTML/Element/script#compatibility_notes
+                        return { script, textContent, src, isAsync };
                     });
                     // we need to store these now and add them dom when the component is added to the dom
 
@@ -166,12 +170,13 @@ module.exports = (pyModule) => {
                 self._anvil.pageEvents = {
                     beforeAdd() {
                         let promise;
-                        self._anvil.scripts.forEach(({script: oldScript, textContent, src}) => {
+                        self._anvil.scripts.forEach(({script: oldScript, textContent, src, isAsync}) => {
                             if (src) oldScript.src = src;
                             
                             const newScript = document.createElement("script");
+                            newScript.async = isAsync;
                             newScript.textContent = textContent;
-                            for (let attr of oldScript.attributes) {
+                            for (const attr of oldScript.attributes) {
                                 newScript.setAttribute(attr.name, attr.value);
                             }
                             // this is a varaition on what jQuery does 
@@ -183,13 +188,12 @@ module.exports = (pyModule) => {
                             // This might happen if anvil.js was used and the innerHTML was changed via dom manipulation
                             // if there is no parentNode or domNode.isConnected === false
                             // then we shouldn't add the scripts to the dom. (polyfill for isConnected below)
-
                             if (promise) {
-                                promise.then(() => parentNode?.replaceChild(newScript, oldScript));
+                                promise = promise.then(() => parentNode?.replaceChild(newScript, oldScript));
                             } else {
                                 parentNode?.replaceChild(newScript, oldScript);
                             }
-                            if (parentNode && oldScript.src && (oldScript.type || "").toLowerCase() !== "module" && !oldScript.async) {
+                            if (parentNode && src && (oldScript.type || "").toLowerCase() !== "module" && !isAsync) {
                                 const p = new Promise((resolve) => {
                                     newScript.onload = resolve;
                                     newScript.onerror = () => {
@@ -198,11 +202,7 @@ module.exports = (pyModule) => {
                                         resolve();
                                     };
                                 });
-                                if (promise) {
-                                    promise.then(() => p);
-                                } else {
-                                    promise = p;
-                                }
+                                promise = promise ? promise.then(() => p) : p;
                             }
                         });
 

@@ -30,6 +30,8 @@ from ._server import (register,
                       ExecutionTerminatedError, 
                       TimeoutError, 
                       NoServerFunctionError, 
+                      PermissionDenied,
+                      ServiceNotAdded,
                       CookieError, 
                       _FailError, 
                       BackgroundTaskError,
@@ -50,7 +52,7 @@ from ._server import (register,
                       unsubscribe,
                       get_subscriptions)
 
-_threaded_server.send_reqresp = lambda r, collect_capabilities=None: _get_connection().send_reqresp(r, collect_capabilities=collect_capabilities)
+_threaded_server.send_reqresp = lambda r, collect_capabilities=None, remote_is_trusted=False: _get_connection().send_reqresp(r, collect_capabilities=collect_capabilities, remote_is_trusted=remote_is_trusted)
 
 __author__ = 'Meredydd Luff <meredydd@anvil.works>'
 
@@ -76,9 +78,7 @@ _init_session = None
 
 _get_extra_headers = lambda: {}
 
-# Override _threaded_server; we have a constant global AppInfo object
-anvil.app = anvil._AppInfo(None,None)
-# and we are executing on an uplink
+# we are executing on an uplink
 CallContext._DEFAULT_TYPE = "uplink"
 context.type = "uplink"
 
@@ -225,7 +225,7 @@ class _Connection(WebSocketClient):
             type = data["type"] if 'type' in data else None
 
             if 'auth' in data:
-                anvil.app._setup(**data.get('app-info', {}))
+                _threaded_server.default_app._setup(**data.get('app-info', {}))
                 CallContext._DEFAULT_TYPE = context.type = data.get('priv', 'uplink')
 
                 if not _quiet:
@@ -308,13 +308,13 @@ class _Connection(WebSocketClient):
                 if blob is not None:
                     WebSocketClient.send(self, blob, True)
         except TypeError:
-            raise _server.AnvilSerializationError("Value must be JSON serializable")
+            raise _server.SerializationError("Value must be JSON serializable")
 
-    def send_reqresp(self, reqresp, collect_capabilities=None):
+    def send_reqresp(self, reqresp, collect_capabilities=None, remote_is_trusted=False):
         if not self._ready and not _connection_ctx.is_initalising_session:
             raise RuntimeError("Websocket connection not ready to send request")
 
-        _serialise.serialise(reqresp, self.send_with_header, collect_capabilities=collect_capabilities)
+        _serialise.serialise(reqresp, self.send_with_header, collect_capabilities=collect_capabilities, remote_is_trusted=remote_is_trusted)
 
 
 _key = None

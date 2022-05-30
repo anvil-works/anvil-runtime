@@ -103,11 +103,12 @@ module.exports = function() {
     var xmlmod = PyDefUtils.getModule("anvil.xml");
     var anvilmod = PyDefUtils.getModule("anvil");
     var servermod = PyDefUtils.getModule("anvil.server");
+    const pyNone = Sk.builtin.none.none$;
 
     pyMod["url_encode"] = pyMod["encode_uri_component"] = new Sk.builtin.func(function(c) {
         Sk.builtin.pyCheckArgs("url_encode", arguments, 1, 1);
         Sk.builtin.pyCheckType("url_encode", "string_to_encode", Sk.builtin.checkString(c));
-        return Sk.ffi.remapToPy(encodeURIComponent(Sk.ffi.remapToJs(c)));
+        return Sk.ffi.toPy(encodeURIComponent(Sk.ffi.toJs(c)));
     });
 
     pyMod["UrlEncodingError"] = Sk.misceval.buildClass(pyMod, function($gbl, $loc) {
@@ -118,41 +119,37 @@ module.exports = function() {
         Sk.builtin.pyCheckArgs("url_decode", arguments, 1, 1);
         Sk.builtin.pyCheckType("url_decode", "string_to_decode", Sk.builtin.checkString(s));
         try {
-            return Sk.ffi.remapToPy(decodeURIComponent(Sk.ffi.remapToJs(s)));
+            return Sk.ffi.toPy(decodeURIComponent(Sk.ffi.toJs(s)));
         } catch(_e) {
             throw Sk.misceval.callsim(pyMod["UrlEncodingError"]);
         }
     });
 
     pyMod["json_stringify"] = new Sk.builtin.func(function(obj) {
-        return Sk.ffi.remapToPy(JSON.stringify(Sk.ffi.remapToJs(obj)));
+        return Sk.ffi.toPy(JSON.stringify(Sk.ffi.toJs(obj)));
     });
 
     pyMod["b64_encode"] = new Sk.builtin.func(function(s) {
-        return Sk.ffi.remapToPy(btoa(Sk.ffi.remapToJs(s)));
+        return Sk.ffi.toPy(btoa(Sk.ffi.toJs(s)));
     });
 
     pyMod["b64_decode"] = new Sk.builtin.func(function(s) {
-        return Sk.ffi.remapToPy(atob(Sk.ffi.remapToJs(s)));
+        return Sk.ffi.toPy(atob(Sk.ffi.toJs(s)));
     }); 
+
+    const ExceptionInit = Sk.builtin.Exception.tp$getattr(Sk.builtin.str.$init);
 
     pyMod["HttpError"] = Sk.misceval.buildClass(pyMod, function($gbl, $loc) {
         $loc["__init__"] = new Sk.builtin.func(function init(self, pyStatus, pyContent, pyMessage) {
-            var args = []
-            self.traceback = []
-            if (pyMessage) {
-                args.push(pyMessage);
+            pyStatus ?? (pyStatus = pyNone);
+            pyContent ?? (pyContent = pyNone);
+            pyMessage ?? (pyMessage = pyNone);
+            Sk.abstr.sattr(self, new Sk.builtin.str("status"), pyStatus);
+            Sk.abstr.sattr(self, new Sk.builtin.str("content"), pyContent);
+            if (pyMessage === pyNone && pyStatus !== pyNone) {
+                pyMessage = Sk.ffi.toPy("HTTP error " + pyStatus.toString());
             }
-            if (pyStatus) {
-                args.push(pyStatus);
-                Sk.abstr.sattr(self, new Sk.builtin.str("status"), pyStatus);
-            }
-            if (pyContent) {
-                args.push(pyContent)
-                Sk.abstr.sattr(self, new Sk.builtin.str("content"), pyContent);
-            }
-            self.args = new Sk.builtin.list(args);
-            return Sk.builtin.none.none$;
+            return PyDefUtils.pyCall(ExceptionInit, [self, pyMessage]);
         });
     }, "HttpError", [Sk.builtin.Exception]);
 
@@ -170,7 +167,7 @@ module.exports = function() {
             } catch(e) {
                 throw new Sk.builtin.ValueError("Returned data is not valid JSON");
             }
-            return Sk.ffi.remapToPy(json);
+            return Sk.ffi.toPy(json);
         } else {
             const contentType = xhr.getResponseHeader("content-type") || "";
             if (!Sk.__future__.python3) {
@@ -183,7 +180,7 @@ module.exports = function() {
     // NOTE: `http.request` should be updated to be binary-safe and handle Media objects, like proxy_request used to (check the git history)
     var request = function(kwargs, pyUrl) {
 
-        if (pyUrl) { kwargs["url"] = Sk.ffi.remapToJs(new Sk.builtin.str(pyUrl)); }
+        if (pyUrl) { kwargs["url"] = Sk.ffi.toJs(new Sk.builtin.str(pyUrl)); }
 
         if (kwargs["username"] && kwargs["password"]) {
             kwargs["headers"] = kwargs["headers"] || {}
@@ -205,8 +202,24 @@ module.exports = function() {
                 kwargs["headers"]["Content-Type"] = "application/json";
             }
         }
+        let timeout = null;
+        if (kwargs["timeout"]) {
+            timeout = kwargs["timeout"];
+            if (typeof timeout !== "number") {
+                throw new Sk.builtin.TypeError("timeout must be set to a number");
+            }
+            timeout = timeout * 1000;
+        }
 
-        var params = {url: kwargs["url"], method: kwargs["method"], headers: kwargs["headers"], data: kwargs["data"], xhrFields: {responseType: "arraybuffer"}, beforeSend: (xhr)=>xhr.overrideMimeType("application/x-octet-stream")};
+        var params = {
+            url: kwargs["url"],
+            timeout: timeout,
+            method: kwargs["method"],
+            headers: kwargs["headers"],
+            data: kwargs["data"],
+            xhrFields: { responseType: "arraybuffer" },
+            beforeSend: (xhr) => xhr.overrideMimeType("application/x-octet-stream"),
+        };
         window.setLoading(true);
         return PyDefUtils.suspensionPromise(function(resolve, reject) {
             $.ajax(params).done(function(r, ts, xhr) {
@@ -214,7 +227,13 @@ module.exports = function() {
                 resolve(pyGetResponse(r, xhr, kwargs["json"]))
             }).fail(function(xhr, textStatus, errorThrown) {
                 window.setLoading(false);
-                reject(Sk.misceval.callsim(pyMod["HttpError"], Sk.ffi.remapToPy(xhr.status), pyGetResponse(xhr, kwargs["json"])));
+                const status = xhr.status;
+                const content = pyGetResponse(xhr, kwargs["json"]);
+                let message = textStatus || errorThrown;
+                if (message === "error") {
+                    message = null; // instead use a HttpError's nicer message.
+                }
+                reject(PyDefUtils.pyCall(pyMod["HttpError"], [Sk.ffi.toPy(status), content, Sk.ffi.toPy(message)]));
             });
         })
     };

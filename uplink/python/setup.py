@@ -23,7 +23,12 @@ setup(
     # Versions should comply with PEP440.  For a discussion on single-sourcing
     # the version across setup.py and the project code, see
     # https://packaging.python.org/en/latest/single_source_version.html
-    version='0.3.41',
+
+    version='0.3.42', # TODO SEE BELOW
+    # TODO ANNOUNCEMENT REQUIRED ON NEXT BUMP
+    # naive datetimes created in anvil uplink code will be given an offset for the local timezone when serialized
+    # previously naive datetimes were always assumed to be UTC
+    # see _server.py line 800
 
     description='The Anvil server uplink library',
     long_description=long_description,
@@ -65,6 +70,8 @@ setup(
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.9',
     ],
 
     # What does your project relate to?

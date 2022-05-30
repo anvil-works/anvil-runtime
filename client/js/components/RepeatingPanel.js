@@ -493,7 +493,6 @@ module.exports = (pyModule, componentsModule) => {
             },
             (r) => {
                 self._anvil.element.removeClass("paginating");
-                self._anvil.element.removeClass("paginating");
                 return Sk.misceval.chain(
                     null,
                     () => {

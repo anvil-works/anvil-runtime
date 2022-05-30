@@ -53,6 +53,7 @@
                                              :connection-uri (:database conf)}
        :force-data-table-views-for-everyone true
        :restrict-email-domains?             false
+       :force-secure-cookies?               (:https-origin? conf)
        :app-smtp-config                     (:app-smtp-config conf)
        :data-path                           (:data-dir @config)
        :error-log-path                      (data-path "error.log")

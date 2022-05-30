@@ -4,6 +4,12 @@ var $builtinmodule = window.memoise('stripe.checkout', function() {
 
     var checkoutCallbackDefer = null;
 
+    let stripeLoaded = false;
+    const loadStripeCheckout = async () => {
+        await PyDefUtils.loadScript("https://checkout.stripe.com/checkout.js");
+        stripeLoaded = true;
+    };
+
     var loadKeys = RSVP.defer();
     var anvil = PyDefUtils.getModule("anvil");
     var appPath = Sk.ffi.remapToJs(anvil.tp$getattr(new Sk.builtin.str("app_path")));
@@ -11,81 +17,97 @@ var $builtinmodule = window.memoise('stripe.checkout', function() {
     	loadKeys.resolve(data);
     });
 
-    var getToken = function(kwargs) {
-    	var stripeMod = PyDefUtils.getModule("stripe");
+    var getToken = async function (kwargs) {
+        var stripeMod = PyDefUtils.getModule("stripe");
 
-    	var amount = kwargs["amount"];
-    	var currency = kwargs["currency"];
-    	var title = kwargs["title"] || "Online Payment";
-    	var description = kwargs["description"] || "Powered by Anvil";
-    	var zipCode = kwargs["zipcode"] || false;
-    	var billingAddress = kwargs["billing_address"] || false;
-      var email = kwargs["email"] || undefined;
-    	var shippingAddress = kwargs["shipping_address"];
+        var amount = kwargs["amount"];
+        var currency = kwargs["currency"];
+        var title = kwargs["title"] || "Online Payment";
+        var description = kwargs["description"] || "Powered by Anvil";
+        var zipCode = kwargs["zipcode"] || false;
+        var billingAddress = kwargs["billing_address"] || false;
+        var email = kwargs["email"] || undefined;
+        var shippingAddress = kwargs["shipping_address"];
 
-    	var config = Sk.ffi.remapToJs(Sk.misceval.callsim(stripeMod.tp$getattr(new Sk.builtin.str("get_config"))));
-    	checkoutCallbackDefer = RSVP.defer();
+        var config = Sk.ffi.remapToJs(Sk.misceval.callsim(stripeMod.tp$getattr(new Sk.builtin.str("get_config"))));
+        checkoutCallbackDefer = RSVP.defer();
 
-		var openHandler = function(keys) {
+        var openHandler = function (keys) {
+            var publishable_keys = kwargs["raw"] ? config.publishable_key : keys;
 
-      var publishable_keys = kwargs["raw"] ? config.publishable_key : keys;
+            if (kwargs["raw"] && !publishable_keys) {
+                checkoutCallbackDefer.reject(
+                    "Stripe API keys not found - please enter your Publishable Keys into Anvil's Stripe configuration page."
+                );
+                return;
+            }
 
-      if (kwargs["raw"] && !publishable_keys) {
-        checkoutCallbackDefer.reject("Stripe API keys not found - please enter your Publishable Keys into Anvil's Stripe configuration page.");
-        return;
-      }
+            var handler = StripeCheckout.configure({
+                key: config.live_mode ? publishable_keys.live : publishable_keys.test,
+                image: kwargs["icon_url"] || window.anvilCDNOrigin + "/runtime/img/ANVIL-Logo-2015-no-tagline-no-name.png",
+                locale: "auto",
+                currency: currency,
+                token: function (token, args) {
+                    args.email = token.email;
+                    checkoutCallbackDefer.resolve([token.id, args]);
+                },
+                closed: function () {
+                    checkoutCallbackDefer.reject();
+                },
+                name: title,
+                description: description,
+                amount: amount,
+                billingAddress: billingAddress,
+                shippingAddress: shippingAddress,
+                zipCode: zipCode,
+                bitcoin: false,
+                alipay: false,
+                allowRememberMe: true,
+                email: email,
+            });
 
-			var handler = StripeCheckout.configure({
-			    key: (config.live_mode ? publishable_keys.live : publishable_keys.test),
-			    image: kwargs["icon_url"] || (window.anvilCDNOrigin + '/ide/img/ANVIL-Logo-2015-no-tagline-no-name.png'),
-			    locale: 'auto',
-			    currency: currency,
-			    token: function(token, args) {
-			    	args.email = token.email;
-					checkoutCallbackDefer.resolve([token.id, args]);
-			    },
-			    closed: function() {
-			    	checkoutCallbackDefer.reject();
-			    },
-			    name: title,
-		      	description: description,
-		      	amount: amount,
-		      	billingAddress: billingAddress,
-		      	shippingAddress: shippingAddress,
-		      	zipCode: zipCode,
-		      	bitcoin: false,
-		      	alipay: false,
-		      	allowRememberMe: true,
-            email: email,
-			});
+            handler.open();
+        };
 
-			handler.open();
-		};
+        if (!stripeLoaded) {
+            await loadStripeCheckout();
+        }
 
-		var helpers = StripeCheckout.require("lib/helpers");
-		var stripeWillPopup = (helpers.isSupportedMobileOS() && !(helpers.isNativeWebContainer() || helpers.isAndroidWebapp() || helpers.isiOSWebView() || helpers.isiOSBroken()));
+        var helpers = StripeCheckout.require("lib/helpers");
+        var stripeWillPopup =
+            helpers.isSupportedMobileOS() &&
+            !(
+                helpers.isNativeWebContainer() ||
+                helpers.isAndroidWebapp() ||
+                helpers.isiOSWebView() ||
+                helpers.isiOSBroken()
+            );
 
-		// TODO: Work out whether we have actually suspended before this point.
-		// For now, be conservative and assume that we have.
-		var popupWillBeBlocked = true;
+        // TODO: Work out whether we have actually suspended before this point.
+        // For now, be conservative and assume that we have.
+        var popupWillBeBlocked = true;
 
-		if (stripeWillPopup && popupWillBeBlocked) {
-			var cancelled = true;
-			$("#stripeContinue").off("click").one("click", function() {
-				cancelled = false;
-				loadKeys.promise.then(openHandler);
-			});
-			$("#stripe-checkout-modal").modal("show").off("hidden.bs.modal").one("hidden.bs.modal", function() {
-				if (cancelled) {
-					checkoutCallbackDefer.reject();
-				}
-			});
-		} else {
+        if (stripeWillPopup && popupWillBeBlocked) {
+            var cancelled = true;
+            $("#stripeContinue")
+                .off("click")
+                .one("click", function () {
+                    cancelled = false;
+                    loadKeys.promise.then(openHandler);
+                });
+            $("#stripe-checkout-modal")
+                .modal("show")
+                .off("hidden.bs.modal")
+                .one("hidden.bs.modal", function () {
+                    if (cancelled) {
+                        checkoutCallbackDefer.reject();
+                    }
+                });
+        } else {
+            loadKeys.promise.then(openHandler);
+        }
 
-			loadKeys.promise.then(openHandler);
-		}
-
-		return checkoutCallbackDefer.promise;
+        return checkoutCallbackDefer.promise;
     };
 
     var pyGetToken = function(kwargs) {
@@ -185,6 +207,9 @@ var $builtinmodule = window.memoise('stripe.checkout', function() {
 
     	return config.live_mode ? Sk.builtin.bool.true$ : Sk.builtin.bool.false$;
     });
+
+
+
 
     return mod;
 });

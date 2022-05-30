@@ -36,6 +36,10 @@ CREATE TABLE runtime_sessions (
   last_seen timestamp without time zone
 );
 
+CREATE TABLE anvil_config (
+  key text primary key,
+  value jsonb
+);
 
 -- This central sequence is used to get IDs for all app tables on all DBs
 
@@ -50,6 +54,6 @@ ALTER SCHEMA data_tables OWNER TO $ANVIL_USER;
 GRANT CREATE ON DATABASE $ANVIL_DATABASE TO $ANVIL_USER;
 ALTER USER $ANVIL_USER WITH CREATEROLE;
 
-GRANT ALL ON background_tasks, scheduled_tasks, runtime_sessions TO $ANVIL_USER;
+GRANT ALL ON background_tasks, scheduled_tasks, runtime_sessions, anvil_config TO $ANVIL_USER;
 GRANT USAGE ON app_storage_tables_id_seq TO $ANVIL_USER;
 --[/GRANTS]--

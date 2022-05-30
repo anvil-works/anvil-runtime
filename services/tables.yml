@@ -6,5 +6,19 @@ path_whitelist:
   - tables/__init__.py
   - anvil/tables/__init__.py
   - anvil/tables/query.py
+  - anvil/tables/_helpers.py
+  - anvil/tables/_errors.py
+  - anvil/tables/_config.py
+  - anvil/tables/_base_classes.py
+  - anvil/tables/v2/__init__.py
+  - anvil/tables/v2/_app_tables.py
+  - anvil/tables/v2/_batcher.py
+  - anvil/tables/v2/_constants.py
+  - anvil/tables/v2/_load_hacks.py
+  - anvil/tables/v2/_refs.py
+  - anvil/tables/v2/_row.py
+  - anvil/tables/v2/_search.py
+  - anvil/tables/v2/_table.py
+  - anvil/tables/v2/_utils.py
 client_config_properties: []
 server_config_properties: []

@@ -47,9 +47,10 @@ class StreamingMedia(anvil.Media):
 
 
 class IncomingReqResp:
-    def __init__(self, json):
+    def __init__(self, json, remote_is_trusted=False):
         self.media = {}
         self.capabilities = []
+        self.remote_is_trusted = remote_is_trusted
 
         def reconstruct_data_media(d):
             reconstructed = StreamingMedia(d['mime-type'], d.get("name", None))
@@ -57,7 +58,8 @@ class IncomingReqResp:
             return reconstructed
 
         self.json = _server._reconstruct_objects(json, reconstruct_data_media,
-                                                 hold_back_value_types=True, collect_capabilities=self.capabilities)
+                                                 remote_is_trusted=remote_is_trusted, hold_back_value_types=True,
+                                                 collect_capabilities=self.capabilities)
 
         _incoming_requests[self.json["id"]] = self
         self.maybe_execute()
@@ -68,7 +70,7 @@ class IncomingReqResp:
         def assert_no_media(_):
             raise Exception("We shouldn't have any Media left by this point")
 
-        self.json = _server._reconstruct_objects(self.json, assert_no_media)
+        self.json = _server._reconstruct_objects(self.json, assert_no_media, remote_is_trusted=self.remote_is_trusted)
 
     def add_binary_data(self, json, data):
         self.media[json['mediaId']].add_content(data, json['lastChunk'])
@@ -120,7 +122,7 @@ def release_reqresps():
         reqresp.maybe_execute()
 
 
-def serialise(reqresp, do_send, collect_capabilities=None):
+def serialise(reqresp, do_send, collect_capabilities=None, remote_is_trusted=False):
     media = []
 
     def enqueue_media(m):
@@ -128,7 +130,8 @@ def serialise(reqresp, do_send, collect_capabilities=None):
         media.append((media_id, m))
         return {"id": media_id}
 
-    reqresp = _server.fill_out_media(reqresp, enqueue_media, collect_capabilities=collect_capabilities)
+    reqresp = _server.fill_out_media(reqresp, enqueue_media, collect_capabilities=collect_capabilities,
+                                     remote_is_trusted=remote_is_trusted)
 
     do_send(reqresp)
 

@@ -49,6 +49,7 @@ class Worker:
         self.start_time = {first_req_id: time.time()}
         self.enable_profiling = {first_req_id: enable_profiling}
         self.killing_task = False
+        self.global_error = None
 
         threading.Thread(target=self.read_loop).start()
 
@@ -102,6 +103,10 @@ class Worker:
     def hard_timeout(self):
         print("TIMEOUT TERMINATE FOR %s" % self.req_ids)
         self.timed_out = True
+        self.proc.terminate()
+
+    def kill_with_error(self, err):
+        self.global_error = err
         self.proc.terminate()
 
     def drain(self):
@@ -234,6 +239,9 @@ class Worker:
                         #if statsd and (id in self.start_time):
                         #    statsd.timing('Downlink.WorkerLifetime', (time.time()*1000) - self.start_time.get(id, 0)*1000)
                         self.on_media_complete(msg, lambda: self.responded(id))
+                        if "error" in msg and msg.get("moduleLoadFailed"):
+                            self.kill_with_error(msg["error"])
+
 
                 except UnicodeError:
                     send_with_header({"id": id, "error": {"type": "UnicodeError", "message": "This function returned a binary string (not text). If you want to return binary data, use a BlobMedia object instead."}})
@@ -258,20 +266,28 @@ class Worker:
 
             error_id = "".join([random.choice('0123456789abcdef') for x in range(10)])
             for i in self.req_ids:
-                if self.timed_out:
-                    message = 'Server code took too long'
-                    type = "anvil.server.TimeoutError"
+                if self.global_error is not None:
+                    err = self.global_error
+                elif self.timed_out:
+                    err = {
+                        'message': "Server code took too long",
+                        'type': "anvil.server.TimeoutError"
+                    }
                 elif rt == -9:
-                    message = 'Server code execution process was killed. It may have run out of memory: %s' % (error_id)
-                    type = "anvil.server.ExecutionTerminatedError"
-                    sys.stderr.write(message + " (IDs %s)\n" % i)
+                    err = {
+                        'message': "Server code execution process was killed. It may have run out of memory: %s" % (error_id),
+                        'type': "anvil.server.ExecutionTerminatedError"
+                    }
+                    sys.stderr.write(err['message'] + " (IDs %s)\n" % i)
                     sys.stderr.flush()
                 else:
-                    message = 'Server code exited unexpectedly: %s' % (error_id)
-                    type = "anvil.server.ExecutionTerminatedError"
-                    sys.stderr.write(message + " (IDs %s)\n" % i)
+                    err = {
+                        'message': "Server code exited unexpectedly: %s" % (error_id),
+                        'type': "anvil.server.ExecutionTerminatedError"
+                    }
+                    sys.stderr.write(err['message'] + " (IDs %s)\n" % i)
                     sys.stderr.flush()
-                send_with_header({'id': i, 'error':{'type': type, 'message': message}})
+                send_with_header({'id': i, 'error': err})
             print ("Worker terminated for IDs %s (return code %s)" % (self.req_ids, rt))
             maybe_quit_if_draining_and_done()
 

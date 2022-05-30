@@ -1,5 +1,8 @@
 "use strict";
 
+import { SerializationInfo } from "./_server";
+import { anvilAppOnline } from "../app_online";
+
 module.exports = function(appId, appOrigin) {
 
     var pyMod = {"__name__": new Sk.builtin.str("anvil.server")};
@@ -8,6 +11,7 @@ module.exports = function(appId, appOrigin) {
     var anvil = PyDefUtils.getModule("anvil");
     var tz = PyDefUtils.getModule("anvil.tz");
     var datetime = Sk.importModule("datetime");
+    const VT_GLOBAL = "vt_global";
 
     pyMod["app_origin"] = Sk.ffi.remapToPy(appOrigin);
 
@@ -175,80 +179,103 @@ module.exports = function(appId, appOrigin) {
         return reconstructed;        
     }
 
-    var reconstructObjects = async function(json, mediaBlobs) {
+    async function reconstructSerializableType(typeName, data, serializationInfo) {
+        let pyObj;
+        let pyValueType = pyValueTypes[typeName];
+        if (!pyValueType) {
+            let mod = typeName.match(/^(.+)\.[^\.]+$/);
+            if (mod) {
+                Sk.misceval.retryOptionalSuspensionOrThrow(Sk.importModule(mod[1], false, true));
+                pyValueType = pyValueTypes[typeName];
+            }
+            if (!pyValueType) {
+                throw PyDefUtils.pyCall(pyMod["SerializationError"], [
+                    new Sk.builtin.str("No such serializable type: " + typeName),
+                ]);
+            }
+        }
 
-        var objs = json.objects;
-        var knownLiveObjectMethods = {};
+        const pyNewDeserialised = pyValueType.tp$getattr(new Sk.builtin.str("__new_deserialized__"));
+        data = maybeRemapToPy(data);
 
-        let pyVtGlobals = Sk.builtin.none.none$;
+        if (pyNewDeserialised) {
+            pyObj = PyDefUtils.pyCallOrSuspend(pyNewDeserialised, [data, serializationInfo]);
+            if (pyObj.$isSuspension) {
+                pyObj = await Sk.misceval.asyncToPromise(() => pyObj);
+            }
+        } else {
+            const newMethod = Sk.abstr.typeLookup(pyValueType, Sk.builtin.str.$new);
+            pyObj = PyDefUtils.pyCall(newMethod, [pyValueType]);
+            const pyDeserialize = pyObj.tp$getattr(new Sk.builtin.str("__deserialize__"));
+            if (pyDeserialize) {
+                const r = PyDefUtils.pyCallOrSuspend(pyDeserialize, [data, serializationInfo]);
+                if (r.$isSuspension) {
+                    await Sk.misceval.asyncToPromise(() => r);
+                }
+            } else {
+                PyDefUtils.pyCall(pyObj.$d.tp$getattr(new Sk.builtin.str("update")), [data]);
+            }
+        }
+        return pyObj;
+    }
 
-        for (var i in objs) {
-            var obj = objs[i];
+    async function reconstructObjects(json, mediaBlobs) {
 
-            var reconstructed = deserialiseObject(obj, mediaBlobs, knownLiveObjectMethods);
+        const objects = json.objects;
+        const knownLiveObjectMethods = {};
+        let serializationInfo;
 
-            if (obj.path.length < 1) {
+        for (const obj of objects) {
+            const reconstructed = deserialiseObject(obj, mediaBlobs, knownLiveObjectMethods);
+            const path = obj.path;
+
+            if (path.length < 1) {
                 console.error("Cannot reconstruct zero-length path; ignoring");
                 continue;
             }
 
-            var o = json;
-            var lastO = undefined;
-            var key = null;
-
-            for (var j in obj.path) {
-                key = obj.path[j];
-                lastO = o;
-                o = o[key];
+            let objectToReplace = json;
+            let positionToReplace;
+            let key;
+            for (key of path) {
+                // walk to the position we're going to be replacing
+                // and get the object that is currently at that position
+                positionToReplace = objectToReplace;
+                objectToReplace = objectToReplace[key];
             }
 
-            if (obj.type.indexOf("ValueType") > -1) {
+            let replaceWith = reconstructed;
 
-                let pyObj;
+            if (obj.type.includes("ValueType")) {
+                const typeName = reconstructed;
+                // we only create a serializationInfo object the first time we actually need it.
+                // Since we need to pass the python vt_global object to each deserialize method
+                // and since we don't want to convert vt_globl to a python object on each round
+                // the serializationInfo maintains a parallel python representation of the vt_global object
+                // this parallel version gets updated below as we reconstruct types
+                serializationInfo ??= new pyMod["SerializationInfo"](json.vt_global);
+                serializationInfo.$setTxDataAvailable(path[0] !== VT_GLOBAL);
+                serializationInfo.$setDefaultKey(typeName);
+                replaceWith = await reconstructSerializableType(typeName, objectToReplace, serializationInfo);
+            } else if (objectToReplace != null) {
+                console.error("Object reconstruction replacing something that's not a null leaf!", objectToReplace);
+            }
 
-                let pyValueType = pyValueTypes[reconstructed];
+            // we are either replacing a path into json.response or json.vt_global
+            // we don't actually need to update json.vt_global since the serializationInfo maintains the python version
+            // but it seems silly to make this update conditional
+            positionToReplace[key] = replaceWith;
 
-                if (!pyValueType) {
-                    let mod = reconstructed.match(/^(.+)\.[^\.]+$/);
-                    if (mod) {
-                        Sk.misceval.retryOptionalSuspensionOrThrow(Sk.importModule(mod[1], false, true));
-                        pyValueType = pyValueTypes[reconstructed];
-                    }
-                    if (!pyValueType) {
-                        throw Sk.misceval.callsim(pyMod['SerializationError'], new Sk.builtin.str("No such serializable type: "+reconstructed));
-                    }
+            if (serializationInfo && path[0] === VT_GLOBAL) {
+                try {
+                    // we update the parallel python representation of the vt_global object
+                    // we must do this because 
+                    // once the vt_global object has been converted to python
+                    // it no longer points to the same objects as json.vt_global
+                    serializationInfo.$updatePath(path.slice(1), replaceWith);
+                } catch (e) {
+                    console.error("Failed to update shared data", e);
                 }
-
-                if (obj.path[0] !== "vt_global" && pyVtGlobals === Sk.builtin.none.none$) {
-                    pyVtGlobals = maybeRemapToPy(json['vt_global'] || {});
-                }
-
-                let pyNewDeserialised = pyValueType.tp$getattr(new Sk.builtin.str("__new_deserialized__"));
-
-                if (pyNewDeserialised) {
-                    pyObj = Sk.misceval.callsimOrSuspend(pyNewDeserialised, maybeRemapToPy(lastO[key]), pyVtGlobals);
-                    if (pyObj.$isSuspension) {
-                        pyObj = await Sk.misceval.asyncToPromise(() => pyObj);
-                    }
-                } else {
-                    const newMethod = Sk.abstr.typeLookup(pyValueType, Sk.builtin.str.$new);
-                    pyObj = Sk.misceval.callsim(newMethod, pyValueType);
-                    let pyDeserialize = pyObj.tp$getattr(new Sk.builtin.str("__deserialize__"));
-                    if (pyDeserialize) {
-                        let r = Sk.misceval.callsimOrSuspend(pyDeserialize, maybeRemapToPy(lastO[key]), pyVtGlobals);
-                        if (r.$isSuspension) { await Sk.misceval.asyncToPromise(() => r); }
-                    } else {
-                        Sk.misceval.callsim(pyObj.$d.tp$getattr(new Sk.builtin.str("update")), maybeRemapToPy(lastO[key]));
-                    }
-                }
-
-                lastO[key] = pyObj;
-
-            } else {
-                if (lastO[key] !== null && lastO[key] !== undefined) {
-                    console.error("Object reconstruction replacing something that's not a null leaf!", lastO[key]);
-                }
-                lastO[key] = reconstructed;
             }
         }
         return json;
@@ -557,7 +584,7 @@ module.exports = function(appId, appOrigin) {
     };
 
     // Remap from python to js, extracting all non-JSON-able bits
-    var remapToJSPlusMappings = function(obj, keySeq, mappingsToPush, pyGlobalData) {
+    var remapToJSPlusMappings = function(obj, keySeq, mappingsToPush, serializationInfo) {
         if (obj.constructor && obj.constructor.anvil$serializableName) {
             let cls = Sk.builtin.type(obj);
             let typeName = cls.anvil$serializableName;
@@ -571,12 +598,13 @@ module.exports = function(appId, appOrigin) {
             let ms = [];
             let pyRet;
             let pySerialize = obj.tp$getattr(new Sk.builtin.str("__serialize__"));
+            serializationInfo.$setDefaultKey(typeName);
             if (pySerialize) {
-                pyRet = Sk.misceval.callsim(pySerialize, pyGlobalData);
+                pyRet = PyDefUtils.pyCall(pySerialize, [serializationInfo]);
             } else {
                 pyRet = obj.tp$getattr(new Sk.builtin.str("__dict__"));
             }
-            let ret = remapToJSPlusMappings(pyRet, keySeq, ms, pyGlobalData);
+            let ret = remapToJSPlusMappings(pyRet, keySeq, ms, serializationInfo);
             mappingsToPush.push(...ms);
             mappingsToPush.push({path: keySeq.slice(), value: obj});
             return ret;
@@ -589,7 +617,7 @@ module.exports = function(appId, appOrigin) {
                 }
                 var jsk = Sk.ffi.remapToJs(k);
                 keySeq.push(jsk);
-                ret[jsk] = remapToJSPlusMappings(obj.mp$subscript(k), keySeq, mappingsToPush, pyGlobalData);
+                ret[jsk] = remapToJSPlusMappings(obj.mp$subscript(k), keySeq, mappingsToPush, serializationInfo);
                 keySeq.pop();
             }
             return ret;
@@ -597,7 +625,7 @@ module.exports = function(appId, appOrigin) {
             let ret = [];
             for (var i=0; i < obj.v.length; i++) {
                 keySeq.push(i);
-                ret.push(remapToJSPlusMappings(obj.v[i], keySeq, mappingsToPush, pyGlobalData));
+                ret.push(remapToJSPlusMappings(obj.v[i], keySeq, mappingsToPush, serializationInfo));
                 keySeq.pop();
             }
             return ret;
@@ -622,7 +650,7 @@ module.exports = function(appId, appOrigin) {
             let ret = {};
             for (var i in obj) {
                 keySeq.push(i);
-                ret[i] = remapToJSPlusMappings(obj[i], keySeq, mappingsToPush, pyGlobalData);
+                ret[i] = remapToJSPlusMappings(obj[i], keySeq, mappingsToPush, serializationInfo);
                 keySeq.pop();
             }
             return ret;
@@ -630,7 +658,7 @@ module.exports = function(appId, appOrigin) {
             let ret = []
             for (var i=0; i < obj.length; i++) {
                 keySeq.push(i);
-                ret.push(remapToJSPlusMappings(obj[i], keySeq, mappingsToPush, pyGlobalData));
+                ret.push(remapToJSPlusMappings(obj[i], keySeq, mappingsToPush, serializationInfo));
                 keySeq.pop();
             }
             return ret;
@@ -712,9 +740,7 @@ module.exports = function(appId, appOrigin) {
 
     function doRpcCall(pyKwargs, args, commandOrMethod, liveObjectSpec, suppressLoading) {
 
-        if (!navigator.onLine) {
-            // if we're offline we can't make this call
-            // throw an error that can be caught by the custom error handler
+        if (!anvilAppOnline.checkStatus(false)) {
             throw PyDefUtils.pyCall(pyMod["AppOfflineError"], [new Sk.builtin.str("App is offline")]);
         }
 
@@ -722,9 +748,7 @@ module.exports = function(appId, appOrigin) {
 
         // Get a JS map of non-transformed python kwargs. Ugh.
         // This will be remapped to JS manually below.
-        var kwargs = {}
-        for(var i = 0; i < pyKwargs.length - 1; i+=2)
-            kwargs[pyKwargs[i].v] = pyKwargs[i+1];
+        const kwargs = PyDefUtils.keywordArrayToHashMap(pyKwargs);
 
 
         var requestId = generateUUID();
@@ -736,17 +760,19 @@ module.exports = function(appId, appOrigin) {
         var mappings = [];
         var knownLiveObjectInstances = {};
         let knownCapabilities = [];
-        let pyValueTypeGlobalData = new Sk.builtin.dict();
+        const serializationInfo = new pyMod["SerializationInfo"]();
         var call = remapToJSPlusMappings({
             type: "CALL",
             id: requestId,
             args: args,
             kwargs: kwargs,
             objects: [],
-        }, [], mappings, pyValueTypeGlobalData);
+        }, [], mappings, serializationInfo);
 
         let gdMappings = [];
-        call['vt_global'] = remapToJSPlusMappings(pyValueTypeGlobalData, ["vt_global"], gdMappings, Sk.builtin.none.none$);
+        const vtGlobal = serializationInfo.$toJson();
+        serializationInfo.$setTxDataAvailable(false);
+        call[VT_GLOBAL] = remapToJSPlusMappings(vtGlobal, [VT_GLOBAL], gdMappings, serializationInfo);
         mappings.unshift(...gdMappings);
 
         if (liveObjectSpec) {
@@ -931,13 +957,8 @@ module.exports = function(appId, appOrigin) {
                     });
                 } else {
                     // We can even tell the user where the bad object was!
-                    var e = new Sk.builtin.TypeError("Cannot pass " + (mapping.value ? mapping.value.tp$name : "unexpected") + " object to a server function: arguments" + pythonifyPath(mapping.path.slice(1)));
-                    e._anvil = {
-                        errorObj: {
-                            type: "AnvilSerializationError",
-                        }
-                    }
-                    throw e;
+                    const msg = `Cannot pass ${mapping.value ? mapping.value.tp$name : "unexpected"} object to a server function: arguments ${pythonifyPath(mapping.path.slice(1))}`
+                    throw PyDefUtils.pyCall(pyMod["SerializationError"], [new Sk.builtin.str(msg)])
                 }
             }
 
@@ -1005,12 +1026,8 @@ module.exports = function(appId, appOrigin) {
                         window.setLoading(false);
                     deleteOutstandingRequest(requestId)
                     console.error("Websocket connection failed", evt);
-                    if (window.navigator.onLine) {
-                        // we have a problem - the navigator says we're online
-                        window.anvilOnline.onLine = false;
-                        window.anvilOnline.serviceWorkerAgrees = false;
-                        window.anvilOnline.lastCheck = Date.now();
-                    }
+                    anvilAppOnline.updateStatus(false);
+
                     const msg = `Connection to server failed (${
                         (evt && (evt.code || evt.message || evt.type)) || "FAIL"
                     })`;
@@ -1104,26 +1121,7 @@ module.exports = function(appId, appOrigin) {
     pyMod["Serializable"] = Sk.misceval.buildClass(pyMod, ($gbl, $loc) => {
     }, "Serializable", [Sk.builtin.object]);
 
-    pyMod["portable_class"] = pyMod["serializable_type"] = new Sk.builtin.func((pyClass, pyName) => {
-        let doRegister = (pyClass, pyName) => {
-            let typeName = pyName ? pyName.v : null;
-            if (!typeName) {
-                const module_ = Sk.abstr.lookupSpecial(pyClass, Sk.builtin.str.$module);
-                const name_ = Sk.abstr.lookupSpecial(pyClass, Sk.builtin.str.$name);
-                typeName = `${module_}.${name_}`;
-            }
-            pyClass.anvil$serializableName = typeName;
-            pyValueTypes[typeName] = pyClass;
-            return pyClass;
-        };
 
-        if (pyName === undefined && pyClass instanceof Sk.builtin.str) {
-            pyName = pyClass
-            return new Sk.builtin.func((pyClass) => doRegister(pyClass, pyName));
-        } else {
-            return doRegister(pyClass, pyName);
-        }
-    });
 
     const _CapAny = Sk.abstr.buildNativeClass("_CapAny", {
         constructor: function () {},
@@ -1142,6 +1140,7 @@ module.exports = function(appId, appOrigin) {
             this._mac = mac;
             this._narrow = narrow || (narrow = []);
             this._localTag = null;
+            this._hash = null;
             const fullScope = scope.concat(narrow);
             this._fullScope = fullScope;
             this._JSONScope = JSON.stringify(fullScope);
@@ -1157,7 +1156,7 @@ module.exports = function(appId, appOrigin) {
                 _pyFullScope: {
                     get() {
                         // always return a different object so that it can be changed in python.
-                        pyFullScope || (pyFullScope = Sk.ffi.toPy(fullScope).valueOf());
+                        pyFullScope ??= Sk.ffi.toPy(fullScope).valueOf();
                         return new Sk.builtin.list([...pyFullScope]);
                     },
                 },
@@ -1170,6 +1169,9 @@ module.exports = function(appId, appOrigin) {
             $r() {
                 const scopeRepr = Sk.misceval.objectRepr(this._pyFullScope);
                 return new Sk.builtin.str(`<anvil.server.Capability:${scopeRepr}>`);
+            },
+            tp$hash() {
+                return (this._hash ??= Sk.abstr.objectHash(new Sk.builtin.str(this._JSONScope)));
             },
             tp$richcompare(other, op) {
                 if ((op !== "Eq" && op !== "NotEq") || other.constructor !== pyMod["Capability"]) {
@@ -1281,6 +1283,8 @@ module.exports = function(appId, appOrigin) {
         return new Sk.builtin.list(ret);
     });
 
+    pyMod["SerializationInfo"] = SerializationInfo;
+
 
     pyMod["_register_exception_type"] = new Sk.builtin.func(function(pyName, pyClass) {
         if (!pyName || !(pyName instanceof Sk.builtin.str) || !pyClass) {
@@ -1329,7 +1333,7 @@ module.exports = function(appId, appOrigin) {
     pyMod["TimeoutError"] = Sk.misceval.buildClass(pyMod, function($gbl, $loc) {
     }, "TimeoutError", [Sk.builtin.Exception]);
 
-    /*!defClass(anvil.server,%SerializationError, __builtins__..Exception)!*/ 
+    /*!defClass(anvil.server,SerializationError, __builtins__..Exception)!*/ 
     pyNamedExceptions["anvil.server.SerializationError"] = 
     pyMod["SerializationError"] = Sk.misceval.buildClass(pyMod, function($gbl, $loc) {
     }, "SerializationError", [Sk.builtin.Exception]);
@@ -1353,6 +1357,11 @@ module.exports = function(appId, appOrigin) {
     pyNamedExceptions["anvil.server.NoServerFunctionError"] = 
     pyMod["NoServerFunctionError"] = Sk.misceval.buildClass(pyMod, function($gbl, $loc) {
     }, "NoServerFunctionError", [Sk.builtin.Exception]);
+
+    /*!defClass(anvil.server,PermissionDenied, __builtins__..Exception)!*/ 
+    pyNamedExceptions["anvil.server.PermissionDenied"] = 
+    pyMod["PermissionDenied"] = Sk.misceval.buildClass(pyMod, function($gbl, $loc) {
+    }, "PermissionDenied", [Sk.builtin.Exception]);
 
     /*!defClass(anvil.server,%InvalidResponseError, __builtins__..Exception)!*/ 
     pyNamedExceptions["anvil.server.InvalidResponseError"] = 
@@ -1378,6 +1387,11 @@ module.exports = function(appId, appOrigin) {
     pyNamedExceptions["anvil.server.BackgroundTaskKilled"] = 
     pyMod["BackgroundTaskKilled"] = Sk.misceval.buildClass(pyMod, function($gbl, $loc) {
     }, "BackgroundTaskKilled", [Sk.builtin.Exception]);
+
+    /*!defClass(anvil.server,ServiceNotAdded, __builtins__..Exception)!*/ 
+    pyNamedExceptions["anvil.server.ServiceNotAdded"] = 
+    pyMod["ServiceNotAdded"] = Sk.misceval.buildClass(pyMod, function($gbl, $loc) {
+    }, "ServiceNotAdded", [Sk.builtin.Exception]);
 
     var cls = Sk.misceval.buildClass(pyMod, function($gbl, $loc) {
         $loc['__enter__'] = new Sk.builtin.func(function(self) {
@@ -1448,6 +1462,36 @@ module.exports = function(appId, appOrigin) {
     }
 
     Sk.abstr.setUpModuleMethods("anvil.server", pyMod, {
+        portable_class: {
+            $meth(pyClass, pyName) {
+                const doRegister = (pyClass, pyName) => {
+                    let typeName = pyName ? pyName.valueOf() : null;
+                    if (typeName == null) {
+                        // use gattr so that the appropriate error is thrown
+                        let mod = Sk.abstr.gattr(pyClass, Sk.builtin.str.$module).toString();
+                        const name = Sk.abstr.gattr(pyClass, Sk.builtin.str.$name).toString();
+                        if (mod === "__main__" && window.anvilAppMainModule) {
+                            mod = window.anvilAppMainPackage + "." + window.anvilAppMainModule;
+                        }
+                        typeName = `${mod}.${name}`;
+                    } else if (!(typeof typeName === "string")) {
+                        throw new Sk.builtin.TypeError(
+                            "The second argument to portable_class must be a string, got " + Sk.abstr.typeName(pyName)
+                        );
+                    }
+                    pyClass.anvil$serializableName = typeName;
+                    pyValueTypes[typeName] = pyClass;
+                    return pyClass;
+                };
+                if (pyName === Sk.builtin.none.none$ && pyClass instanceof Sk.builtin.str) {
+                    pyName = pyClass;
+                    return new Sk.builtin.func((pyClass) => doRegister(pyClass, pyName));
+                } else {
+                    return doRegister(pyClass, pyName);
+                }
+            },
+            $flags: { NamedArgs: ["cls", "name"], Defaults: [Sk.builtin.none.none$] },
+        },
         /* ! defBuiltinFunction(anvil.server,!_,event_name, event_handler)!1*/
         add_event_handler: {
             $name: "add_event_handler",
@@ -1471,6 +1515,9 @@ module.exports = function(appId, appOrigin) {
         },
     });
 
+    // Old name, for apps written before portable classes were released
+    pyMod["serializable_type"] = pyMod["portable_class"];
+
     pyMod["get_app_origin"] = new Sk.builtin.func(function(pyBranch) {
         return PyDefUtils.suspensionFromPromise(PyDefUtils.callAsync(pyMod["call_s"], undefined, undefined, undefined, Sk.ffi.remapToPy("anvil.private.get_app_origin"), pyBranch || Sk.builtin.none.none$));
     });
@@ -1484,38 +1531,11 @@ module.exports = function(appId, appOrigin) {
 
     /*!defFunction(anvil.server,!_)!2*/ "Returns `True` if this app is online and `False` otherwise.\nIf `anvil.server.is_app_online()` returns `False` we expect `anvil.server.call()` to throw an `anvil.server.AppOfflineError`"
     pyMod["is_app_online"] = new Sk.builtin.func(function () {
-        if (!navigator.onLine) {
-            // trust the navigator
-            return Sk.builtin.bool.false$;
-        } else if (window.anvilOnline.serviceWorkerAgrees || !("serviceWorker" in navigator)) {
-            // no reason to doubt the navigator
-            return Sk.ffi.toPy(navigator.onLine);
+        const p = anvilAppOnline.checkStatus(true);
+        if (typeof p === "boolean") {
+            return Sk.ffi.toPy(p);
         }
-        // ok so the navigator says we're online and the service worker or an RpcCall has (at some point) said we're offline.
-        // when was the last time we checked this. If it's less than the timeout use the value we previously had.
-        // Otherwise, check with the service worker
-        const { onLine, lastCheck, OFFLINE_TIMEOUT } = window.anvilOnline;
-        if (lastCheck > Date.now() - OFFLINE_TIMEOUT) {
-            // use the value we have
-            return Sk.ffi.toPy(onLine);
-        }
-        // check with the service worker somehow...
-        const checkWithFetch = async () => {
-            let res;
-            try {
-                // no need to worry about a polyfill here
-                // IE doesn't have a service worker so this code is unreachable
-                // use the manifest which is not cached so we will do a call to the server
-                await fetch("_/manifest.json?buildTime=0");
-                res = true;
-            } catch (e) {
-                res = false;
-            }
-            window.anvilOnline.onLine = res;
-            window.anvilOnline.lastCheck = Date.now();
-            return Sk.ffi.toPy(res);
-        };
-        return PyDefUtils.suspensionFromPromise(checkWithFetch());
+        return Sk.misceval.chain(PyDefUtils.suspensionFromPromise(p), Sk.ffi.toPy);
     });
 
     let setupObjectWithClass = (className, vals) => {

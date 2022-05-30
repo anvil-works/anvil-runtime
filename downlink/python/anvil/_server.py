@@ -9,6 +9,7 @@ import sys
 import re
 import json
 import math
+import anvil.tz
 
 _do_call = None
 
@@ -184,6 +185,7 @@ class Capability(object):
         self._do_apply_update = None
         self._do_get_update = None
         self._queued_update = {}
+        self._hash = None
 
     @property
     def scope(self):
@@ -200,6 +202,11 @@ class Capability(object):
         if type(other) is not Capability:
             return NotImplemented
         return self.scope == other.scope
+
+    def __hash__(self):
+        if self._hash is None:
+            self._hash = hash(json.dumps(self.scope))
+        return self._hash
 
     def set_update_handler(self, apply_update, get_update=None):
         self._do_apply_update = apply_update
@@ -257,21 +264,112 @@ def unwrap_capability(cap, scope_pattern):
 Capability.require = staticmethod(unwrap_capability)
 
 
+class SerializationInfo(object):
+    def __init__(self, fromdata=None, remote_is_trusted=False):
+        self._txdata = {}
+        self._localdata = {}
+        self._defaultkey = None
+        self._trusted = remote_is_trusted
+        self._enable_txdata = True
+        if fromdata is None:
+            pass
+        elif type(fromdata) is dict:
+            self._txdata[":GLOBAL"] = fromdata
+        else:
+            it = iter(fromdata)
+            for k, v in zip(it, it):
+                self._txdata[k] = v
+
+    def __bool__(self):
+        return bool(self._enable_txdata)
+
+    __nonzero__ = __bool__
+
+    def _to_json(self):
+        if len(self._txdata) == 1 and ":GLOBAL" in self._txdata:
+            return self._txdata[":GLOBAL"]
+        else:
+            r = []
+            for k, v in self._txdata.items():
+                r.append(k)
+                r.append(v)
+            return r
+
+    def _resolve_key(self, key):
+        if key is None:
+            return self._defaultkey
+        elif isinstance(key, type):
+            try:
+                return key.SERIALIZATION_INFO[0]
+            except AttributeError:
+                return key.__module__ + "." + key.__name__
+        else:
+            return ":" + str(key)
+
+    def _set_default_key(self, key):
+        self._defaultkey = key
+
+    def _set_txdata_available(self, enable):
+        self._enable_txdata = enable
+    
+    def _set_data_factory(self, _data, resolved_key, factory):
+        data = _data.get(resolved_key)
+        if data is None:
+            data = _data[resolved_key] = factory()
+        return data
+
+    def shared_data(self, key=None, transmitted_data_factory=dict, local_data_factory=dict):
+        key = self._resolve_key(key)
+        localdata = self._set_data_factory(self._localdata, key, local_data_factory)
+        if not self._enable_txdata:
+            return None, localdata
+        txdata = self._set_data_factory(self._txdata, key, transmitted_data_factory)
+        return txdata, localdata
+
+    @property
+    def remote_is_trusted(self):
+        return self._trusted
+
+    @property
+    def local_is_trusted(self):
+        return anvil.is_server_side()
+
+    def __repr__(self):
+        # TODO adjust for public api
+        return "SerializationInfo<" + repr(self._txdata) + ", " + repr(self._localdata) + ">"
+
+
+# Backwards compatibility: If you use SerializationInfo like a dict, it man works like  if you use it like a dict
+def _wrap_global_dict(attr_name):
+    def f(self, *args, **kws):
+        transmitted_data = self.shared_data("GLOBAL")[0]
+        if transmitted_data is None:
+            # using the old API so better to throw here
+            raise RuntimeError("This object is part of shared_data; you cannot access shared_data from its __serialize__ method.")
+        return getattr(transmitted_data, attr_name)(*args, **kws)
+    return f
+
+
+for method in ["__getitem__", "__setitem__", "__delitem__", "__iter__", "__len__", "__contains__", "keys", "items",
+               "values", "get", "pop", "popitem", "clear", "update", "setdefault"]:
+    setattr(SerializationInfo, method, _wrap_global_dict(method))
+
+
 # DEPRECATED: there is no longer any reason to inherit from this
 class Serializable(object):
     SERIALIZATION_INFO = None
 
-    def __serialize__(self, global_data):
+    def __serialize__(self, info):
         return self.__dict__
 
     # You only need one of __deserialize__ (called instead of __init__)
     # or __new_deserialized__ (called instead of __new__+__init__).
     # (Of the two, you almost always want __deserialize__.)
-    def __deserialize__(self, from_data, global_data):
+    def __deserialize__(self, from_data, info):
         self.__dict__.update(from_data)
 
     @classmethod
-    def __new_deserialized__(cls, from_data, global_data):
+    def __new_deserialized__(cls, from_data, info):
         obj = cls.__new__(cls)
         obj.__dict__.update(from_data)
         return obj
@@ -322,6 +420,8 @@ def portable_class(cls, name=None):
             raise TypeError("Portable classes must be new-style classes (inherit from object). %s is not a new-style class." % repr(cls))
         if name is None:
             name = cls.__module__ + "." + cls.__name__
+        elif not isinstance(name, str):
+            raise TypeError("The second argument to portable_class must be a str")
         _value_types[name] = cls
         cls.SERIALIZATION_INFO = (name, cls)
         return cls
@@ -387,16 +487,16 @@ class LazyMedia(anvil.Media):
 class AnvilWrappedError(Exception):
     registered_type_name = None
 
-    def __init__(self, error_obj):
-        if isinstance(error_obj, dict):
+    def __init__(self, message=""):
+        if isinstance(message, dict):
             self.manually_created = False
-            self.error_obj = error_obj
+            self.error_obj = message
         else:
             self.manually_created = True
-            self.error_obj = {'message': str(error_obj), 'trace': []}
-            t =  type(self).registered_type_name
+            self.error_obj = {"message": str(message), "trace": []}
+            t = type(self).registered_type_name
             if t is not None:
-                self.error_obj['type'] = t
+                self.error_obj["type"] = t
         self.message = self.error_obj.get("message", "")
         Exception.__init__(self, self.message)
 
@@ -481,11 +581,11 @@ def apply_cache_updates(cache_updates, objects_to_walk):
 
 
 class MaybeWrappedError(Exception):
-    def __init__(self, error_obj):
-        if isinstance(error_obj, dict):
-            Exception.__init__(self, error_obj["message"])
+    def __init__(self, message=""):
+        if isinstance(message, dict):
+            Exception.__init__(self, message["message"])
         else:
-            Exception.__init__(self, error_obj)
+            Exception.__init__(self, message)
 
 
 class SerializationError(MaybeWrappedError):
@@ -548,6 +648,9 @@ class PermissionDenied(MaybeWrappedError):
     pass
 
 
+class ServiceNotAdded(MaybeWrappedError):
+    pass
+
 
 
 _register_exception_type("anvil.server.SerializationError", SerializationError)
@@ -564,6 +667,7 @@ _register_exception_type("anvil.server._FailError", _FailError)
 _register_exception_type("anvil.server.BackgroundTaskError", BackgroundTaskError)
 _register_exception_type("anvil.server.BackgroundTaskNotFound", BackgroundTaskNotFound)
 _register_exception_type("anvil.server.PermissionDenied", PermissionDenied)
+_register_exception_type("anvil.server.ServiceNotAdded", ServiceNotAdded)
 
 
 
@@ -702,7 +806,7 @@ def serialise_val(v, known_liveobject_methods):
         if v.tzinfo is not None:
             offset = v.tzinfo.utcoffset(v).total_seconds()
         else:
-            offset = 0
+            offset = anvil.tz.tzlocal().utcoffset(v).total_seconds()
 
         sign = "+" if offset >= 0 else "-"
         z = "%s%02d%02d" % (sign, abs(int(offset/3600)), int((offset % 3600)/60))
@@ -767,11 +871,11 @@ def _module_prefixes(module):
     return [".".join(module_parts[:i]) for i in range(1, len(module_parts)+1)]
 
 
-def fill_out_media(json, handle_media_fn, collect_capabilities=None):
+def fill_out_media(json, handle_media_fn, collect_capabilities=None, remote_is_trusted=False):
     obj_descr = []
     path = []
     known_liveobject_methods = {}
-    vt_global_data = {}
+    serialization_info = SerializationInfo(remote_is_trusted=remote_is_trusted)
     import datetime
 
     def do_fom(_json):
@@ -789,6 +893,7 @@ def fill_out_media(json, handle_media_fn, collect_capabilities=None):
             type_name, tp = _json.SERIALIZATION_INFO
             if type_name not in _value_types or t_json is not tp:
                 raise SerializationError("Cannot serialize %s (must be registered with @anvil.server.portable_class) at msg%s" % (t_json, _repr_path(path)))
+            serialization_info._set_default_key(type_name)
 
             try:
                 serialize = _json.__serialize__
@@ -796,7 +901,7 @@ def fill_out_media(json, handle_media_fn, collect_capabilities=None):
                 def serialize(_):
                     return _json.__dict__
 
-            content = serialize(vt_global_data)
+            content = serialize(serialization_info)
 
             _json = do_fom(content)
 
@@ -880,13 +985,13 @@ def fill_out_media(json, handle_media_fn, collect_capabilities=None):
 
     json = do_fom(json)
 
-    if vt_global_data != {}:
+    vt_global = serialization_info._to_json()
+    if len(vt_global) != 0:
         path.append("vt_global")
-        gd = vt_global_data
-        vt_global_data = None
+        serialization_info._set_txdata_available(False)
         od = obj_descr
         obj_descr = []
-        json["vt_global"] = do_fom(gd)
+        json["vt_global"] = do_fom(vt_global)
         obj_descr += od
         path.pop()
 
@@ -958,14 +1063,12 @@ def parsedatetime(s):
     minutes = int(s[-5] + s[-2:])
     total_minutes = hours*60+minutes
 
-    # Cannot import earlier - circular dependency!
-    import anvil.tz
-
     return d.replace(tzinfo=anvil.tz.tzoffset(minutes=total_minutes))
 
 
-def _reconstruct_objects(json, reconstruct_data_media, hold_back_value_types=False, collect_capabilities=None):
+def _reconstruct_objects(json, reconstruct_data_media, hold_back_value_types=False, collect_capabilities=None, remote_is_trusted=False):
     known_liveobject_methods = {}
+    serialization_info = SerializationInfo(json.get("vt_global"), remote_is_trusted=remote_is_trusted) if not hold_back_value_types else None
 
     if "objects" in json:
         held_back_objects = []
@@ -1012,17 +1115,19 @@ def _reconstruct_objects(json, reconstruct_data_media, hold_back_value_types=Fal
                     try:
                         reconstruct = value_type.__new_deserialized__
                     except AttributeError:
-                        def reconstruct(data, global_data):
+                        def reconstruct(data, info):
                             obj = value_type.__new__(value_type)
                             try:
                                 deserialize = obj.__deserialize__
                             except AttributeError:
-                                def deserialize(data, vt_global):
+                                def deserialize(data, info):
                                     obj.__dict__.update(data)
-                            deserialize(data, global_data)
+                            deserialize(data, info)
                             return obj
 
-                    last_obj[key] = reconstruct(last_obj[key], None if d["path"][0] == 'vt_global' else json.get('vt_global'))
+                    serialization_info._set_txdata_available(d["path"][0] != 'vt_global')
+                    serialization_info._set_default_key(type_name)
+                    last_obj[key] = reconstruct(last_obj[key], serialization_info)
                 else:
                     last_obj[key] = reconstructed
 

@@ -100,22 +100,23 @@
 
 (defn launch-cron-jobs! []
   (let [jobs-we-have-committed-to-launching
-        (util/with-db-transaction [db util/db]
-          (let [jobs (jdbc/query db ["SELECT * FROM scheduled_tasks WHERE next_run < NOW() ORDER BY random() LIMIT 10"])
-                now (Date.)]
-            (doall
-              (for [job jobs
-                    :let [next-run (get-next-execution-time-logging-errors (:next_run job) (:time_spec job) job)
-                          next-run (when next-run
-                                     (if (.before next-run now)
-                                       (get-next-execution-time-logging-errors nil (:time_spec job) job)
-                                       next-run))
-                          locked? (util/app-locked? (:app_id job))]
-                    :when (and next-run
-                               (not locked?))]
-                (do
-                  (update-job! db job {:next_run next-run})
-                  job)))))]
+        (util/with-db-lock ::launch-cron-jobs false
+          (util/with-db-transaction [db util/db]
+            (let [jobs (jdbc/query db ["SELECT * FROM scheduled_tasks WHERE next_run < NOW() ORDER BY random() LIMIT 10"])
+                  now (Date.)]
+              (doall
+                (for [job jobs
+                      :let [next-run (get-next-execution-time-logging-errors (:next_run job) (:time_spec job) job)
+                            next-run (when next-run
+                                       (if (.before next-run now)
+                                         (get-next-execution-time-logging-errors nil (:time_spec job) job)
+                                         next-run))
+                            locked? (util/app-locked? (:app_id job))]
+                      :when (and next-run
+                                 (not locked?))]
+                  (do
+                    (update-job! db job {:next_run next-run})
+                    job))))))]
 
     (doseq [{:keys [job_id task_name last_bg_task_id] :as job} jobs-we-have-committed-to-launching]
       (let [{:keys [app_id] :as environment} (get-environment-for-job job)]

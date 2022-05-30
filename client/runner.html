@@ -23,10 +23,10 @@
   <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/bootstrap.css?buildTime=0" crossorigin/>
   <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/bootstrap-theme.min.css?buildTime=0" crossorigin/>
   <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/runner.css?buildTime=0" crossorigin/>
-  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/daterangepicker.css" crossorigin/>
-  <link rel="stylesheet" href="{{cdn-origin}}/runtime/node_modules/animate.css/animate.min.css" crossorigin/>
+  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/daterangepicker.css?buildTime=0" crossorigin/>
+  <link rel="stylesheet" href="{{cdn-origin}}/runtime/node_modules/animate.css/animate.min.css?buildTime=0" crossorigin/>
 
-  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/font-awesome.min.css" crossorigin/>
+  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/font-awesome.min.css?buildTime=0" crossorigin/>
 
   <style>
     #loadingSpinner {
@@ -52,21 +52,22 @@
   <meta name="mobile-web-app-capable" content="yes">
 
   <style>{{shim-css}}</style>
-  <style>{{theme-css}}</style>
+  <style>{{root-vars}}</style>
+  <style title="theme.css">{{theme-css}}</style>
 
   <script src="{{cdn-origin}}/runtime/node_modules/jquery/dist/jquery.min.js?buildTime=0" crossorigin></script>
-  <script src="{{cdn-origin}}/runtime/node_modules/jquery-migrate/dist/jquery-migrate.min.js" crossorigin></script>
+  <script src="{{cdn-origin}}/runtime/node_modules/jquery-migrate/dist/jquery-migrate.min.js?buildTime=0" crossorigin></script>
 
   {{head-html}}
 </head>
 <body class="{{body-class}}">
 <div id="anvil-header">
   <a href="https://anvil.works/?utm_source=app_banner" target="_blank" class="cta"><span class="hidden-xs">Build web apps for free with</span><span class="visible-xs-inline">Built with</span> Anvil</a>
-  <a href="https://anvil.works/?utm_source=app_banner" target="_blank"><span class="hidden-xs">Built with </span><img src="{{cdn-origin}}/runtime/img/logo-35.png" crossorigin></a>
+  <a href="https://anvil.works/?utm_source=app_banner" target="_blank"><span class="hidden-xs">Built with </span><img src="{{cdn-origin}}/runtime/img/logo-35.png?buildTime=0" crossorigin></a>
 </div>
 
 <a id="anvil-badge" href="https://anvil.works/?utm_source=app_banner" target="_blank">
-  <img src="{{cdn-origin}}/runtime/img/made-with-anvil.png" crossorigin>
+  <img src="{{cdn-origin}}/runtime/img/made-with-anvil.png?buildTime=0" crossorigin>
 </a>
 
 <div class="anvil-root-container">
@@ -75,23 +76,6 @@
 
 <div id="loadingSpinner"></div>
 
-<!-- Alert modal -->
-
-<div id="alert-modal" class="modal fade">
-  <div class="modal-dialog modal-sm">
-    <div class="modal-content">
-      <div class="modal-header">
-        <button type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span><span class="sr-only">Close</span></button>
-        <h4 class="modal-title alert-title">Title</h4>
-      </div>
-      <div class="modal-body">
-        Body
-      </div>
-      <div class="modal-footer">
-      </div>
-    </div><!-- /.modal-content -->
-  </div><!-- /.modal-dialog -->
-</div><!-- /.modal -->
 
 <!-- Session expired modal -->
 
@@ -122,7 +106,7 @@
         <h4 class="modal-title">Log in with Google</h4>
       </div>
       <div class="modal-body text-center">
-        <button id="googleLogInButton" type="button" class="btn" data-dismiss="modal"><img src="{{cdn-origin}}/runtime/img/google-signin-buttons/btn_google_signin_light_normal_web.png" crossorigin/></button>
+        <button id="googleLogInButton" type="button" class="btn" data-dismiss="modal"><img src="{{cdn-origin}}/runtime/img/google-signin-buttons/btn_google_signin_light_normal_web.png?buildTime=0" crossorigin/></button>
       </div>
       <div class="modal-footer">
         <button id="googleCancelButton" type="button" class="btn btn-default" data-dismiss="modal">Cancel</button>
@@ -282,13 +266,6 @@
 
 <!--   <script src="{{cdn-origin}}/runtime/node_modules/core-js-bundle/minified.js?buildTime=0" crossorigin></script>
  -->
-  <script src="https://www.youtube.com/iframe_api"></script>
-  <script>
-    function gm_authFailure(e) { window.googleMapsAuthFailure = true; };
-  </script>
-  <script src="https://maps.googleapis.com/maps/api/js?key={{google-api-key}}&v=3&libraries=geometry"></script>
-
-  <script src="https://checkout.stripe.com/checkout.js"></script>
 
   <script src="{{cdn-origin}}/runtime/js/lib/unorm.js?buildTime=0" crossorigin></script>
 
@@ -297,18 +274,22 @@
 
   <script src="{{cdn-origin}}/runtime/js/runner.bundle.js?buildTime=0" crossorigin></script>
 
+  {{extra-snippets}}
   <script>
       window.anvilCDNOrigin = "{{cdn-origin}}";
       window.anvilAppOrigin = "{{canonical-url}}";
       window.anvilSessionToken = "{{session-token}}";
       window.anvilVersion = "{{anvil-version}}";
       window.anvilAppInfo = {{app-info-object}};
+      window.anvilGoogleApiKey = "{{google-api-key}}";
+      // docker-platform-server-base script adds sha's in html files - we put this variable here so that we can aggrissively cache the std-lib files
+      // the std-lib is loaded dynamically in runner.js
+      window.anvilSkulptLib = "{{cdn-origin}}/runtime/js/lib/skulpt-stdlib-file-number.json?buildTime=0";
 
       // NB: We will need to preserve things other than ?s= at some point.
       window.history.replaceState(window.history.state || {}, "Anvil App", document.location.origin + document.location.pathname + document.location.hash);
 
       // {{load-app-code}}
   </script>
-  {{extra-snippets}}
 </body>
 </html>

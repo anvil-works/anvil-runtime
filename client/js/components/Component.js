@@ -167,7 +167,7 @@ module.exports = (pyModule) => {
                     return Sk.builtin.none.none$;
                 },
                 $flags: { MinArgs: 2, MaxArgs: 2 },
-                $doc: "Set a function to call when the 'event_name' event happens on this component. Using set_event_hanlder removes all other handlers. Seting the handler function to None removes all handlers.",
+                $doc: "Set a function to call when the 'event_name' event happens on this component. Using set_event_handler removes all other handlers. Setting the handler function to None removes all handlers.",
             },
             /*!defBuiltinMethod(,event_name, handler_func:callable)!2*/
             "add_event_handler": {
@@ -297,7 +297,7 @@ module.exports = (pyModule) => {
                     throw new Sk.builtin.TypeError("expected the first argument to be a string");
                 }
                 eventName = eventName.toString();
-                if (eventName in this._anvil.eventTypes || eventName in (this._anvil.customComponentEventTypes || {}) || eventName.match(/^x\-/)) {
+                if (eventName in this._anvil.eventTypes || eventName in (this._anvil.customComponentEventTypes || {}) || eventName.startsWith("x-")) {
                     return eventName;
                 } else {
                     throw new Sk.builtin.ValueError(`Cannot ${msg} for unknown event '${eventName}' on ${this.tp$name} component. Custom event names must start with 'x-'.`)
@@ -310,8 +310,6 @@ module.exports = (pyModule) => {
             }
         },
         flags: {
-            // Ew. This global should be somewhere else.
-            $_anvilThemeColors: {},
             sk$klass: true // tell skulpt we can be treated like a regular klass for tp$setatttr
         },
     });
@@ -428,8 +426,6 @@ module.exports = (pyModule) => {
 
             dataBindingProp: null,
 
-            // Ew
-            themeColors: pyModule["Component"].$_anvilThemeColors,
         };
     }
 };

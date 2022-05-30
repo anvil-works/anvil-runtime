@@ -159,7 +159,7 @@ module.exports = (pyModule) => {
                         PyDefUtils.raiseEventAsync({}, self, "focus");
                     })
                     .on("blur", function (e) {
-                        setTimeout(() => self._anvil.dataBindingWriteback(self, "text").finally(() => PyDefUtils.raiseEventAsync({}, self, "lost_focus")));
+                        self._anvil.dataBindingWriteback(self, "text").finally(() => setTimeout(() => PyDefUtils.raiseEventAsync({}, self, "lost_focus")));
                     });
 
                 const type = self._anvil.props["type"].toString();

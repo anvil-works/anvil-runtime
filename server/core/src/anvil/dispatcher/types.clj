@@ -4,8 +4,10 @@
             [crypto.random :as random]
             [anvil.util :as util]
             [anvil.core.worker-pool :as worker-pool]
-            )
+            [clojure.tools.logging :as log])
   (:import (java.io File FileOutputStream ByteArrayInputStream ByteArrayOutputStream)))
+
+(clj-logging-config.log4j/set-logger! :level :trace)
 
 (defprotocol SerialisableForRpc
   (serialiseForRpc [this extra-liveobject-key] "Return a JSONable object that represents this one"))
@@ -56,18 +58,39 @@
      :scope scope
      :mac (gen-cap-mac this extra-liveobject-key)}))
 
-(defn unwrap-capability [capability require-scope-prefix max-specialisation-depth]
-  (when-not (instance? anvil.dispatcher.types.Capability capability)
-    (throw+ {:anvil/server-error "Invalid capability"}))
+(defn unwrap-capability
+  ([{:keys [scope] :as capability} pattern]
+   (when-not (instance? anvil.dispatcher.types.Capability capability)
+     (log/info "Fake Capability rejected. Wanted pattern:\n" pattern "\nGot object:\n" capability)
+     (throw+ {:anvil/server-error "Invalid capability"}))
+   (when-not (<= (count scope) (count pattern))
+     (throw+ {:anvil/server-error "Invalid capability scope. Provided capability scope is too narrow."}))
 
-  (let [scope (:scope capability)
-        [scope-prefix scope-rest] (split-at (count require-scope-prefix) scope)]
-    (when-not (= scope-prefix require-scope-prefix)
-      (throw+ {:anvil/server-error (str "Invalid capability scope. Required prefix: " (pr-str require-scope-prefix) ", got prefix: " (pr-str scope-prefix))}))
-    (when-not (<= (count scope-rest) max-specialisation-depth)
-      (throw+ {:anvil/server-error (str "Invalid capability scope. Provided capability scope is too narrow.")}))
+   (let [m (map vector pattern scope)]
+     (when-not (every? (fn [[p s]]
+                         (or
+                           (= p s)
+                           (= p :ANY)
+                           (and (map? p)
+                                (= (set (keys p)) (set (keys s)))
+                                (every? (fn [[k v]] (= v :ANY)) p))))
+                       m)
+       (log/info "Capability test failed. Wanted pattern:\n" pattern "\nGot scope:\n" scope)
+       (throw+ {:anvil/server-error "Invalid capability scope."})))
+   scope)
 
-    (drop (count scope-prefix) scope)))
+  ([capability require-scope-prefix max-specialisation-depth]
+   (when-not (instance? anvil.dispatcher.types.Capability capability)
+     (throw+ {:anvil/server-error "Invalid capability"}))
+
+   (let [scope (:scope capability)
+         [scope-prefix scope-rest] (split-at (count require-scope-prefix) scope)]
+     (when-not (= scope-prefix require-scope-prefix)
+       (throw+ {:anvil/server-error (str "Invalid capability scope. Required prefix: " (pr-str require-scope-prefix) ", got prefix: " (pr-str scope-prefix))}))
+     (when-not (<= (count scope-rest) max-specialisation-depth)
+       (throw+ {:anvil/server-error (str "Invalid capability scope. Provided capability scope is too narrow.")}))
+
+     (drop (count scope-prefix) scope))))
 
 (defn serialise-for-item-cache [val extra-liveobject-key]
   (cond

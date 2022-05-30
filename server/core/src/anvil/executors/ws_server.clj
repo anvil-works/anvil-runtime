@@ -11,7 +11,8 @@
             [anvil.core.tracing :as tracing]
             [clojure.string :as str]
             [anvil.runtime.app-log :as app-log]
-            [anvil.runtime.sessions :as sessions])
+            [anvil.runtime.sessions :as sessions]
+            [org.httpkit.server :as ws])
   (:import (io.opentelemetry.api.trace Span)))
 
 (clj-logging-config.log4j/set-logger! :level :info)
@@ -92,6 +93,9 @@
                                                 (str (if (= (:origin serialisable-request) :client) "client-" "server-")
                                                      (random/base64 10)))]
                                 (log/trace "Sending" link-name "request" call-id ":" serialisable-request)
+
+                                (when-not (ws/open? channel)
+                                  (log/warn "About to try sending to a closed" link-name "websocket channel for app" (:app-id serialisable-request) (str "(" (:command serialisable-request) ")")))
 
                                 (try
                                   (swap! pending-responses assoc call-id {:context context :return-path return-path})

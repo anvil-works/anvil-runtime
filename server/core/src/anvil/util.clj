@@ -13,7 +13,8 @@
             [org.httpkit.client :as http]
             [org.httpkit.sni-client :as sni]
             [org.httpkit.sni-client :as https]
-            [compojure.core])
+            [compojure.core]
+            [clojure.java.io :as io])
   (:import (java.sql SQLException)
            (javax.crypto Mac)
            (javax.crypto.spec SecretKeySpec)
@@ -22,7 +23,7 @@
            (java.net InetAddress)
            (com.maxmind.db CHMCache)
            (com.maxmind.geoip2 DatabaseReader$Builder DatabaseReader)
-           (java.io File)
+           (java.io File ByteArrayOutputStream ByteArrayInputStream FileOutputStream)
            (com.maxmind.geoip2.exception GeoIp2Exception)
            (com.mchange.v2.c3p0 DataSources)
            (java.util Properties Map)
@@ -133,6 +134,19 @@
       (.put p (name k) (str v)))
     p))
 
+(defn inputstream->bytes [inputstream]
+  (with-open [out (ByteArrayOutputStream.)]
+    (io/copy inputstream out)
+    (.toByteArray out)))
+
+(defn slurp-binary [^File file]
+  (with-open [in (io/input-stream (.getAbsolutePath file))]
+    (inputstream->bytes in)))
+
+(defn spit-binary [^File file byte-input]
+  (with-open [o (FileOutputStream. (.getAbsolutePath file))]
+    (.write o byte-input)))
+
 (def ^:dynamic *metric-query-name* nil)
 
 (defmacro with-metric-query [name & body]
@@ -173,19 +187,6 @@
                              (getConnection [_this] (.getConnection ^DataSource @datasource))))})
 
 
-(def LATEST-DB-VERSION? #{"2021-10-28-background-task-sessions"})
-
-(defn require-latest-db-version [continue-anyway?]
-  (try
-    (let [current-version (:version (first (jdbc/query db ["SELECT version FROM db_version"])))]
-      (when-not (LATEST-DB-VERSION? current-version)
-        (log/warn "This database is migrated to" current-version "; we require" LATEST-DB-VERSION?)
-        (throw (Exception.))))
-    (catch Exception _
-      (log/warn "Anvil DB schema update required. Please run migrator then restart Anvil.")
-      (when-not continue-anyway?
-        (System/exit 1)))))
-
 (defmacro letd [lets & body]
   (let [new-lets (->> lets
                       (partition 2)
@@ -207,31 +208,50 @@
 
 (def total-txn-retries (atom 0))
 
-(defn -with-db-transaction [db-spec f]
+(defonce rollback-quota-changes! (fn [rollback-state]))
+
+(def set-quota-hooks! (hook-setter [rollback-quota-changes!]))
+
+(defn -with-db-transaction [db-spec relaxed-isolation-level f]
   (loop [n TXN-RETRIES]
-    (let [[recur? r]
+    (let [rollback-state (when-not (:level db-spec)
+                           (atom {}))
+
+          actual-isolation-level (if (and relaxed-isolation-level (or (zero? (jdbc/get-level db-spec))
+                                                                      (= relaxed-isolation-level (:anvil-txn-isolation-level db-spec))))
+                                   relaxed-isolation-level
+                                   :serializable)
+          [recur? r]
           (try+
-            (jdbc/with-db-transaction [db-c db-spec {:isolation :serializable}]
-              [false (f db-c)])
+            (jdbc/with-db-transaction [db-c db-spec {:isolation actual-isolation-level}]
+              (let [db-c (if rollback-state (assoc db-c :anvil-quota-rollback-state rollback-state
+                                                        :anvil-txn-isolation-level actual-isolation-level) db-c)]
+                [false (f db-c)]))
             (catch #(or (and (instance? SQLException %) (#{"40001" "40P01"} (.getSQLState %)))
                         (and (:anvil/server-error %) (= (:type %) "anvil.tables.TransactionConflict")))
                    e
+              (when rollback-state
+                (rollback-quota-changes! rollback-state))
               (if (and (> n 0) (not (:level db-spec)))
                 (do
                   (log/trace (str "Conflict in with-db-transaction: " e))
                   (Thread/sleep (long (* (Math/random) (Math/pow 2 (* 0.5 (- TXN-RETRIES n))))))
                   [true nil])
-                (throw+ e))))]
+                (throw+ e)))
+            (catch Throwable e
+              (when rollback-state
+                (rollback-quota-changes! rollback-state))
+              (throw e)))]
       (if recur?
         (do
           (swap! total-txn-retries inc)
           (recur (dec n)))
         r))))
 
-(defmacro with-db-transaction [[conn-sym spec] & body]
-  `(-with-db-transaction ~spec (fn [db#]
-                                 (let [~conn-sym db#]
-                                   ~@body))))
+(defmacro with-db-transaction [[conn-sym spec isolation-level] & body]
+  `(-with-db-transaction ~spec ~isolation-level (fn [db#]
+                                                  (let [~conn-sym db#]
+                                                    ~@body))))
 
 (defn -with-try-db-lock [lock-name f]
   (let [lock-number (.hashCode (str lock-name))]
@@ -423,3 +443,25 @@
      (handler (forwarded-remote-addr-request request) respond raise))))
 
 ;;;;;;;;;;;;;;;;;;;;;; End middleware fix
+
+(defmacro with-temp-file [[f initial-content] & body]
+  `(let [~f (File/createTempFile "temp" "")
+         initial-content# ~initial-content]
+     (cond
+       (string? initial-content#)
+       (spit ~f initial-content#)
+
+       (bytes? initial-content#)
+       (spit-binary ~f initial-content#))
+     (try
+       ~@body
+       (finally
+         (.delete ~f)))))
+
+(defn as-int [x]
+  (if (integer? x)
+    x
+    (try
+      (Integer/parseInt x)
+      (catch NumberFormatException _
+        nil))))

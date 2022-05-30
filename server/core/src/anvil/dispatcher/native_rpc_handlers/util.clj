@@ -11,6 +11,8 @@
             [anvil.core.worker-pool :as worker-pool]
             [anvil.core.tracing :as tracing]))
 
+;(clj-logging-config.log4j/set-logger! :level :trace)
+
 (def ^:dynamic *app* nil)
 (def ^:dynamic *app-info* nil)
 (def ^:dynamic *app-id* nil)
@@ -115,10 +117,11 @@
                                                          (dissoc :anvil/server-error))}))
                       (finally
                         (when time-quota-key
-                          (quota/decrement! session-state environment
+                          (quota/decrement! session-state environment nil
                                             time-quota-key
                                             (/ (- @stop-time start-time) 1000))))))
                   (catch clojure.lang.ArityException e
+                    (log/trace e "Probably incorrect arity from user code")
                     (dispatcher/respond! return-path
                                          {:error {:type    "TypeError"
                                                   :message (str "Wrong number of arguments (" (dec (.actual e)) ") passed to " func "(). Did you pass keyword arguments as positional arguments, or vice versa?")
@@ -158,6 +161,7 @@
                              (apply method-fn id-decoded kwargs args))
                            (throw+ {:anvil/server-error (str "Unsupported live object method: " method)}))
                          (catch clojure.lang.ArityException e
+                           (log/trace e "Probably incorrect arity from user code")
                            (throw+ {:anvil/server-error (str "Wrong number of arguments (" (- (.actual e) 2) ") passed to " method "(). Did you pass keyword arguments as positional arguments, or vice versa?")
                                     :type               "TypeError"})))))
                    time-quota-key)))

@@ -181,7 +181,7 @@ module.exports = (pyModule) => {
 
             const Section = ({ panelId, full_width_row, row_background }) => {
                 const fwrClass = full_width_row ? " full-width-row" : "";
-                const background = row_background ? "background:" + row_background + ";" : "";
+                const background = row_background ? "background:" + PyDefUtils.getColor(row_background) + ";" : "";
                 return (
                     <div refName="section" className={"anvil-panel-section belongs-to-" + panelId} style={background}>
                         <div refName="sectionContainer" className={"anvil-panel-section-container anvil-container-overflow belongs-to-" + panelId + fwrClass}>
@@ -356,9 +356,17 @@ module.exports = (pyModule) => {
 
     function setColumnWidths(self, row) {
         // Set all the columns in this row to the right width.
-
-        const colWidths = JSON.parse(self._anvil.getPropJS("col_widths") || "{}");
-
+        const clientFailMsg = "The col_widths property is created from the design layout and should not be called in code";
+        let colWidths;
+        try {
+            colWidths = JSON.parse(self._anvil.getPropJS("col_widths") || "{}");
+        } catch {
+            throw new Sk.builtin.TypeError(clientFailMsg);
+        }
+        if (typeof colWidths !== "object") {
+            // don't throw since there may be existing projects quietly using the col_widths property
+            Sk.builtin.print([clientFailMsg]);
+        }
         const allCols = row.find(">.anvil-panel-col");
         const colCount = allCols.length;
         const defaultColWeight = Math.floor(60 / colCount);
@@ -403,11 +411,7 @@ module.exports = (pyModule) => {
             }
             let v = "transparent";
             if (lps.row_background) {
-                v = lps.row_background;
-                let m = ("" + v).match(/^theme:(.*)$/);
-                if (m) {
-                    v = window.anvilThemeColors[m[1]] || "";
-                }
+                v = PyDefUtils.getColor(lps.row_background);
             }
             e.parents(".anvil-panel-section").first().css("background", v);
         });

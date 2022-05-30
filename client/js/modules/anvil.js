@@ -3,6 +3,7 @@
 module.exports = function(appOrigin, uncaughtExceptions) {
 
 	var PyDefUtils = require("PyDefUtils");
+    var utils = require("utils");
 
     var pyModule = {
         "__name__": new Sk.builtin.str("anvil"),
@@ -31,6 +32,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         };
     }
 
+    const _warnings = {};
 
 
     /**
@@ -145,6 +147,68 @@ module.exports = function(appOrigin, uncaughtExceptions) {
     }];
     /*!defClass(anvil,#AppEnvironment)!*/
 
+    const rootElement = document.documentElement;
+
+    const _ThemeColors = Sk.abstr.buildNativeClass("anvil.ThemeColors", {
+        // for convenience we subclass from mappingproxy
+        // not really allowed in python but fine in js
+        // saves us implementing all the dict methods
+        base: Sk.builtin.mappingproxy,
+        constructor() {
+            // mapping is the internal name used in mapping proxy
+            this.mapping = Sk.ffi.toPy(window.anvilThemeColors);
+        },
+        slots: {
+            $r() {
+                return new Sk.builtin.str(`ThemeColors(${Sk.misceval.objectRepr(this.mapping)})`);
+            },
+            tp$as_sequence_or_mapping: true,
+            mp$ass_subscript(key, val) {
+                if (val === undefined) {
+                    throw new Sk.builtin.TypeError("cannot delete a theme color");
+                } else if (!Sk.builtin.checkString(key)) {
+                    throw new Sk.builtin.TypeError("theme color names must be strings");
+                } else if (!Sk.builtin.checkString(val)) {
+                    throw new Sk.builtin.TypeError("a theme color must be set to a string");
+                }
+                const themeColor = key.toString();
+                if (!(themeColor in window.anvilThemeColors)) {
+                    throw new Sk.builtin.KeyError(key);
+                }
+                this.mapping.mp$ass_subscript(key, val);
+                val = val.toString();
+                const varname = this.$getVar(themeColor);
+                rootElement.style.setProperty(varname, val);
+                window.anvilThemeColors[key] = val;
+            },
+        },
+        methods: {
+            update: {
+                $meth(args, kws) {
+                    const updateDict = PyDefUtils.pyCall(Sk.builtin.dict, args, kws);
+                    for (const [key, val] of updateDict.$items()) {
+                        this.mp$ass_subscript(key, val);
+                    }
+                    return Sk.builtin.none.none$;
+                },
+                $flags: { FastCall: true },
+            },
+        },
+        proto: {
+            $getVar(themeName) {
+                return (
+                    window.anvilThemeVars[themeName] ??
+                    (window.anvilThemeVars[themeName] = `--anvil-color-${themeName.replace(
+                        (/[^A-z0-9]/g, "-")
+                    )}-${utils.getRandomStr(4)}`)
+                );
+            },
+        },
+    });
+
+    // can only create this instance after the app has loaded
+    let _themeColorsInstance;
+
 
     var appInfoClass = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
         $loc["__getattr__"] = new Sk.builtin.func(function(self, pyAttrName) {
@@ -159,7 +223,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         });
         /*!defAttr()!1*/ ({name: "theme_colors", type: "mapping", description: "Theme colors for this app as a readonly dict."});
         $loc["theme_colors"] = new Sk.builtin.property(new Sk.builtin.func(function(self) {
-            return PyDefUtils.pyCallOrSuspend(Sk.builtin.mappingproxy, [Sk.ffi.toPy(window.anvilThemeColors || {})]);
+            return _themeColorsInstance ?? (_themeColorsInstance = new _ThemeColors());
         }));
         /*!defAttr()!1*/ ({name: "environment", type: "anvil.AppEnvironment instance", description: "The environment in which the current app is being run."});
         $loc["environment"] = new Sk.builtin.property(new Sk.builtin.func(function(self) {
@@ -185,76 +249,93 @@ module.exports = function(appOrigin, uncaughtExceptions) {
     }];
     pyModule["app"] = PyDefUtils.pyCall(appInfoClass);
 
-    var pyCurrentForm = null;
+    let pyCurrentForm = null;
+    const appPlaceHolder = document.getElementById("appGoesHere");
+
+    function clearPlaceHolder() {
+        while (appPlaceHolder.firstChild) {
+            appPlaceHolder.removeChild(appPlaceHolder.lastChild);
+        }
+    }
+
+    function openFormInstance(pyForm) {
+        if (!(pyForm instanceof pyModule["Component"])) {
+            throw new Sk.builtin.TypeError(
+                `Attempting to open a form which is not an anvil component, (got type ${pyForm?.tp$name})`
+            );
+        }
+
+        clearPlaceHolder();
+
+        const fns = [];
+        if (pyCurrentForm) {
+            fns.push(pyCurrentForm._anvil.removedFromPage);
+            pyCurrentForm = null;
+            fns.push(() => {
+                if (pyCurrentForm !== null) {
+                    Sk.builtin.print(["WARNING: You are likely calling 'open_form()' from inside the hide event of the outgoing form (or from one of its components). This may not be what you want."]);
+                }
+            });
+        }
+
+        fns.push(() => {
+            appPlaceHolder.appendChild(pyForm._anvil.domNode);
+            pyCurrentForm = pyForm;
+        });
+
+        fns.push(pyForm._anvil.addedToPage);
+
+        return Sk.misceval.chain(null, ...fns);
+    }
 
     /*!defFunction(anvil,!,form,*args,**kwargs)!2*/ "Open the specified form as a new page.\n\nIf 'form' is a string, a new form will be created (extra arguments will be passed to its constructor).\nIf 'form' is a Form object, it will be opened directly."
-    pyModule["open_form"] = new Sk.builtin.func(PyDefUtils.withRawKwargs(function(rawKwargs, pyForm) {
+    pyModule["open_form"] = new Sk.builtin.func(PyDefUtils.withRawKwargs(function(rawKwargs, pyForm, ...args) {
+        if (pyForm === undefined) {
+            throw new Sk.builtin.TypeError("anvil.open_form() requires an argument");
+        }
 
-        var openFormInstance = function(pyForm) {
-            // TODO: Check we actually have a form instance.
-            // i.e. is pyForm an instance of pyModule.Form?
+        if (!(pyForm instanceof Sk.builtin.str)) {
+            return openFormInstance(pyForm);
+        }
 
-            $("#appGoesHere > *").detach();
+        const formName = pyForm.toString();
 
-            var fns = [];
-            if (pyCurrentForm) {
-                fns.push(pyCurrentForm._anvil.removedFromPage);
-                pyCurrentForm = null;
-            }
-
-            fns.push(() => {
-                document.querySelector("#appGoesHere")?.appendChild(pyForm._anvil.domNode);
-                pyCurrentForm = pyForm;
-            })
-            fns.push(pyForm._anvil.addedToPage);
-            return Sk.misceval.chain(undefined, ...fns);
-        };
-
-        if (pyForm instanceof Sk.builtin.str) {
-
-            var formName = pyForm.v;
-            var args = Array.prototype.slice.call(arguments, 2); // Extra args to pass to __init__ of named form
-
-            return Sk.misceval.chain(undefined, function() {
-                return Sk.builtin.__import__(formName,
-                    {"__package__": new Sk.builtin.str(window.anvilAppMainPackage)},
-                    {}, [], -1);
-
-            }, function() {
-
-                let ps = formName.split(".");
-                let leafName = ps[ps.length-1];
-                // Yes, sysmodules is indexed with JS strings.
-                // No, this makes no sense.
+        return Sk.misceval.chain(
+            null,
+            () => {
+                const moduleDict = { __package__: new Sk.builtin.str(window.anvilAppMainPackage) };
+                return Sk.builtin.__import__(formName, moduleDict, {}, [], -1);
+            },
+            () => {
+                const leafName = formName.split(".").pop();
+                const modName = new Sk.builtin.str(window.anvilAppMainPackage + "." + formName);
                 let pyFormMod;
                 try {
-                    pyFormMod = Sk.sysmodules.mp$subscript(new Sk.builtin.str(window.anvilAppMainPackage + "." + formName));
-                } catch (e) {
-                    pyFormMod = Sk.sysmodules.mp$subscript(new Sk.builtin.str(formName));
+                    pyFormMod = Sk.sysmodules.mp$subscript(modName);
+                } catch {
+                    pyFormMod = Sk.sysmodules.mp$subscript(pyForm);
                 }
 
-
-                var formConstructor = pyFormMod.$d[leafName];
+                const formConstructor = pyFormMod.$d[leafName];
 
                 if (!formConstructor) {
-                    throw new Sk.builtin.AttributeError('"' + formName + '" module does not contain a class called "' + leafName + '"');
+                    throw new Sk.builtin.AttributeError(
+                        '"' + formName + '" module does not contain a class called "' + leafName + '"'
+                    );
                 }
 
                 if (rawKwargs) {
                     // Seriously? Skulpt expects raw JS strings in applyOrSuspend(), but Sk.builtin.func()
                     // translates them all into Skulpt strings for us. What a world...
-                    for (let i = 0; i < rawKwargs.length; i+=2) {
-                        rawKwargs[i] = rawKwargs[i].v;
+                    for (let i = 0; i < rawKwargs.length; i += 2) {
+                        rawKwargs[i] = rawKwargs[i].toString();
                     }
                 }
 
-                return Sk.misceval.applyOrSuspend(formConstructor, undefined, undefined, rawKwargs, args);
-
-            }, openFormInstance);
-
-        } else {
-            return openFormInstance(pyForm);
-        }
+                return PyDefUtils.pyCallOrSuspend(formConstructor, args, rawKwargs);
+            },
+            (pyForm) => openFormInstance(pyForm)
+        );
 
     }));
 
@@ -264,6 +345,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
     });
 
 
+    /*!defFunction(anvil,boolean)!2*/ "Check whether Anvil is running server side or not."
     pyModule["is_server_side"] = new Sk.builtin.func(function() {
         return Sk.builtin.bool.false$;
     });
@@ -764,18 +846,29 @@ module.exports = function(appOrigin, uncaughtExceptions) {
     pyModule["_get_live_object_id"] = new Sk.builtin.func(function(lo) {
         if (lo && lo._anvil_is_LiveObjectProxy) {
             return new Sk.builtin.str(lo._spec.id);
-        } else {
+        }
+        const getId = lo.tp$getattr(new Sk.builtin.str("get_id"));
+        if (getId === undefined) {
             throw new Sk.builtin.TypeError("Argument is not a LiveObject");
         }
+        if (_warnings._get_live_object_id === undefined) {
+            _warnings._get_live_object_id = true;
+            Sk.builtin.print(["Deprecated: _get_live_object_id is no longer required - call row.get_id() instead."]);
+        }
+        return PyDefUtils.pyCallOrSuspend(getId);
     });
 
-    pyModule["_clear_live_object_caches"] = new Sk.builtin.func(function(lo) {
+    pyModule["_clear_live_object_caches"] = new Sk.builtin.func(function (lo) {
         if (lo && lo._anvil_is_LiveObjectProxy) {
             lo._spec.itemCache = {};
             lo._spec.iterItems = {};
-        } else {
+            return;
+        }
+        const clearCache = lo.tp$getattr(new Sk.builtin.str("_clear_cache"));
+        if (clearCache === undefined) {
             throw new Sk.builtin.TypeError("Argument is not a LiveObject");
         }
+        return PyDefUtils.pyCallOrSuspend(clearCache);
     });
 
     pyModule["_get_service_client_config"] = new Sk.builtin.func(function(pyYmlPath) {
@@ -787,7 +880,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         return Sk.ffi.remapToPy(window.anvilCDNOrigin);
     });
 
-    /*!defFunction(anvil,anvil.Component instance)!2*/ "Get the currently focused Anvil component, or None if focus is not in a component."
+    /*!defFunction(anvil,!anvil.Component instance)!2*/ "Get the currently focused Anvil component, or None if focus is not in a component."
     pyModule["get_focused_component"] = new Sk.builtin.func(function() {
         let el = document.activeElement;
         let nearestCpt = $(el).closest(".anvil-component");
@@ -798,163 +891,180 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         }
     });
 
-    var resetAlertModal = function() {
-            var a = $("#alert-modal")
-            a.off("hidden.bs.modal.alertclear");
-            a.find(".modal-header").show();
-            a.find(".modal-body").show();
-            a.find(".modal-footer button").off("click").remove();
-            a.find(".modal-footer input").remove();
-            a.find(".modal-footer").hide();
 
-            const modalDialog = a.find(".modal-dialog").removeClass("modal-lg").removeClass("modal-sm");
-            PyDefUtils.applyRole(null, modalDialog[0]); // remove any roles that were applied
-            return a;
+    function AlertModal({ id, large, text, title, footer, dismissible, bodyVisible }) {
+        id = id ? "alert-modal-" + id : "alert-modal";
+        const displayNone = { style: "display: none;" };
+        bodyVisible = bodyVisible ? {} : displayNone;
+        const titleVisible = title == null ? displayNone : {};
+        const footerVisible = footer ? {} : displayNone;
+        const closeVisible = dismissible ? {} : displayNone;
+        return (
+            <div refName="alert" id={id} className="modal fade alert-modal">
+                <div refName="modalDialog" className={"modal-dialog modal-" + (large ? "lg" : "sm")}>
+                    <div refName="modalContent" className="modal-content">
+                        <div refName="modalHeader" className="modal-header" {...titleVisible}>
+                            <button
+                                refName="closeButton"
+                                type="button"
+                                className="close"
+                                data-dismiss="modal"
+                                {...closeVisible}>
+                                <span refName="closeIcon" aria-hidden="true">
+                                    &times;
+                                </span>
+                                <span refName="closeText" className="sr-only">
+                                    Close
+                                </span>
+                            </button>
+                            <h4 refName="modalTitle" className="modal-title alert-title">
+                                {title}
+                            </h4>
+                        </div>
+                        <div
+                            refName="modalBody"
+                            className={"modal-body" + (text == null ? "" : " alert-text")}
+                            {...bodyVisible}>
+                            {text}
+                        </div>
+                        <div refName="modalFooter" className="modal-footer" {...footerVisible} />
+                    </div>
+                </div>
+            </div>
+        );
     }
 
-    var modalReady = Promise.resolve();
-    var modalQueueLength = 0;
+    function AlertButton({ text, style }) {
+        return (
+            <button refName="alertBtn" type="button" className={"btn btn-" + (style || "default")} data-dismiss="modal">
+                {text}
+            </button>
+        );
+    }
 
-    var modal = function(kwargs) {
-        return PyDefUtils.suspensionPromise(function(resolve, reject) {
+    let activeModalLength = 0;
 
-            modalQueueLength++;
+    function modal(kwargs) {
+        let pyForm,
+            returnValue = Sk.builtin.none.none$;
+        let { large, title, content, buttons, dismissible, role } = kwargs;
+        let text = null;
+        let bodyVisible = false;
+        large = Sk.misceval.isTrue(large);
+        dismissible = Sk.misceval.isTrue(dismissible);
+        console.log("DISMISS", dismissible);
+        title = Sk.ffi.toJs(kwargs.title) == null ? null : String(title);
+        buttons = buttons?.valueOf(); // expects an array
 
-            if (modalQueueLength > 1) {
-                console.debug("Enqueue modal. Queue length now", modalQueueLength);
+        if (content instanceof pyModule["Component"]) {
+            pyForm = content;
+            bodyVisible = true;
+            if (pyForm._anvil.parent !== null || pyForm._anvil.inAlert) {
+                // you can't add a component to an alert if it already has a parent
+                throw new Sk.builtin.RuntimeError(
+                    "This component is already added to a container, or is already inside an alert"
+                );
             }
+        } else if (content) {
+            text = content.toString();
+            bodyVisible = true;
+        }
 
-            modalReady = modalReady.then(function() {
-                return new Promise(function(signalModalReady) {
-                    var a = resetAlertModal();
-                    var returnValue = Sk.builtin.none.none$;
-                    var pyForm = null;
+        const [alertNode, elements] = (
+            <AlertModal
+                id={activeModalLength++}
+                large={large}
+                text={text}
+                title={title}
+                footer={!!buttons?.length}
+                dismissible={dismissible}
+                bodyVisible={bodyVisible}
+            />
+        );
+        const a = $(alertNode);
 
-                    a.one("hide.bs.modal", function () {
-                        setTimeout(function () {
-                            if (pyForm) {
-                                pyForm._anvil.element.detach();
-                                PyDefUtils.asyncToPromise(pyForm._anvil.removedFromPage).then(() =>
-                                    resolve(returnValue)
-                                );
-                            } else {
-                                resolve(returnValue);
-                            }
-                        });
-                    });
-                    a.one("hidden.bs.modal.alertclear", function () {
-                        modalQueueLength--;
-                        signalModalReady();
-                    });
+        if (role) {
+            PyDefUtils.applyRole(role, elements.modalDialog);
+        }
 
-                    var size = kwargs.large && Sk.ffi.remapToJs(kwargs.large) ? "lg" : "sm";
-
-                    const modalDialog = a.find(".modal-dialog").addClass("modal-" + size);
-                    if (kwargs.role) {
-                        PyDefUtils.applyRole(kwargs.role, modalDialog[0]);
-                    }
-
-                    if ("title" in kwargs && kwargs["title"] && kwargs["title"] != Sk.builtin.none.none$) {
-                        a.find(".modal-title").text(new Sk.builtin.str(kwargs.title).$jsstr());
-                    } else {
-                        a.find(".modal-header").hide();
-                    }
-
-                    a.find(".modal-body").removeClass("alert-text").text("");
-
-                    if ("content" in kwargs && kwargs["content"] && kwargs["content"] !== Sk.builtin.none.none$) {
-                        if (kwargs.content instanceof pyModule["Component"]) {
-                            // instanceof enforced by skulpt best_base
-                            pyForm = kwargs.content;
-                            if (pyForm._anvil.parent !== null) {
-                                // you can't add a component to an alert if it already has a parent
-                                reject(
-                                    new Sk.builtin.RuntimeError(
-                                        "This component is already added to a container, call remove_from_parent() first"
-                                    )
-                                );
-                            }
-                            a.find(".modal-body").text("").append(pyForm._anvil.element);
-                            // this one should be set_event_handler
-                            // we want to reset this event if the same form
-                            // is added to a modal multiple times
-                            Sk.misceval.callsim(
-                                pyForm.tp$getattr(new Sk.builtin.str("set_event_handler")),
-                                Sk.ffi.remapToPy("x-close-alert"),
-                                PyDefUtils.funcWithRawKwargsDict(function (kws) {
-                                    returnValue = kws.value || Sk.builtin.none.none$;
-                                    a.modal("hide");
-                                })
-                            );
-                        } else {
-                            a.find(".modal-body")
-                                .addClass("alert-text")
-                                .text(new Sk.builtin.str(kwargs.content).$jsstr());
-                        }
-                    } else {
-                        a.find(".modal-body").hide();
-                    }
-
-                    var footer = a.find(".modal-footer");
-
-                    if (
-                        "buttons" in kwargs &&
-                        kwargs.buttons != Sk.builtin.none.none$ &&
-                        kwargs.buttons.v.length > 0
-                    ) {
-                        for (var i in kwargs.buttons.v || []) {
-                            var b = kwargs.buttons.v[i];
-                            if (typeof b.v == "string") {
-                                var txt = b;
-                                var val = b;
-                            } else {
-                                // Expect b to be a tuple (txt, val, style)
-                                var txt = b.v[0] ? b.v[0].v : "";
-                                var val = b.v[1];
-                                var style = b.v[2] ? b.v[2].v : "";
-                            }
-                            footer.append(
-                                $("<button type=button class=btn data-dismiss=modal />")
-                                    .addClass("btn-" + (style || "default"))
-                                    .text(txt)
-                                    .on(
-                                        "click",
-                                        function (val) {
-                                            returnValue = val;
-                                            a.modal("hide");
-                                        }.bind(null, val)
-                                    )
-                            );
-                        }
-                        footer.show();
-                    }
-
-                    var dismissible = kwargs.dismissible ? Sk.ffi.remapToJs(kwargs.dismissible) : true;
-
-                    var d = a.data("bs.modal");
-                    if (d) {
-                        d.options.backdrop = dismissible || "static";
-                        d.options.keyboard = dismissible;
-                    }
-
-                    a.find(".modal-header button.close").toggle(dismissible);
-
-                    a.modal({ backdrop: dismissible || "static", keyboard: dismissible, show: true });
-                    if (document.activeElement) document.activeElement.blur();
-                    a.trigger("focus");
-                    if (pyForm) {
-                        return new Promise(function (resolve, reject) {
-                            a.one("shown.bs.modal", function () {
-                                resolve(PyDefUtils.asyncToPromise(pyForm._anvil.addedToPage));
-                            });
-                        });
-                    } else {
-                        return;
-                    }
+        if (Array.isArray(buttons)) {
+            for (const pyBtnArg of buttons) {
+                let jsBtnArg = pyBtnArg?.valueOf();
+                let text = "",
+                    val = Sk.builtin.none.none$,
+                    style = "";
+                if (typeof jsBtnArg === "string") {
+                    text = jsBtnArg;
+                    val = pyBtnArg;
+                } else if (Array.isArray(jsBtnArg)) {
+                    // Expect b to be a tuple (txt, val, style)
+                    [text = "", val = Sk.builtin.none.none$, style = ""] = jsBtnArg;
+                    text = String(text);
+                    style = String(style);
+                } else {
+                    // just ignore and use the default values for text and val;
+                }
+                const [btnDomNode] = <AlertButton text={text} style={style} />;
+                $(btnDomNode).on("click", () => {
+                    returnValue = val;
+                    a.modal("hide");
                 });
-            });
+                elements.modalFooter.append(btnDomNode);
+            }
+        }
 
-        })
+        const { promise: deferredReturnPromise, resolve } = RSVP.defer();
+
+
+        a.one("hide.bs.modal", () => {
+            setTimeout(() => {
+                if (pyForm) {
+                    pyForm._anvil.element.detach();
+                    delete pyForm._anvil.inAlert;
+                    PyDefUtils.asyncToPromise(pyForm._anvil.removedFromPage).then(() => resolve(returnValue));
+                } else {
+                    resolve(returnValue);
+                }
+            });
+        });
+
+        a.one("hidden.bs.modal.alertclear", () => {
+            activeModalLength--;
+            a.remove();
+            // fixes not being able to scroll after stack alert closed
+            // https://stackoverflow.com/questions/19305821/multiple-modals-overlay
+            if (activeModalLength) document.body.classList.add("modal-open");
+        });
+
+        const {promise: loadPromise, resolve: loadResolve} = RSVP.defer();
+
+        if (pyForm) {
+            elements.modalBody.append(pyForm._anvil.domNode);
+            // use set_event_handler - we want to reset this event if the same form
+            // is added to a modal multiple times
+            PyDefUtils.pyCall(pyForm.tp$getattr(new Sk.builtin.str("set_event_handler")), [
+                new Sk.builtin.str("x-close-alert"),
+                PyDefUtils.funcWithRawKwargsDict((kws) => {
+                    returnValue = kws.value ?? Sk.builtin.none.none$;
+                    a.modal("hide");
+                }),
+            ]);
+            a.one("shown.bs.modal", () => {
+                pyForm._anvil.inAlert = true;
+                loadResolve(PyDefUtils.asyncToPromise(pyForm._anvil.addedToPage));
+            });
+        } else {
+            a.one("shown.bs.modal", () => {
+                loadResolve();
+            });
+        }
+
+        a.modal({ backdrop: dismissible || "static", keyboard: dismissible, show: true });
+        if (document.activeElement) document.activeElement.blur();
+        a.trigger("focus");
+
+
+        return PyDefUtils.suspensionFromPromise(loadPromise.then(() => deferredReturnPromise));
     }
 
     /**
@@ -1041,12 +1151,10 @@ module.exports = function(appOrigin, uncaughtExceptions) {
 
     /*!defFunction(anvil,_,content,[title=""],[buttons=],[large=False],[dismissible=True],[role=])!2*/ "Pop up an alert box. By default, it will have a single \"OK\" button which will return True when clicked."
     pyModule["alert"] = new Sk.builtin.func(PyDefUtils.withRawKwargs(function(pyKwarray, pyContent) {
-        var kwargs = {}
-        for(var i = 0; i < pyKwarray.length - 1; i+=2)
-            kwargs[pyKwarray[i].v] = pyKwarray[i+1];
-
-        kwargs.content = kwargs.content || pyContent;
-        kwargs.buttons = kwargs.buttons || Sk.ffi.remapToPy([
+        const kwargs = PyDefUtils.keywordArrayToHashMap(pyKwarray);
+        kwargs.content ??= pyContent;
+        kwargs.dismissible ??= true;
+        kwargs.buttons = kwargs.buttons || Sk.ffi.toPy([
             ["OK", true, "success"],
         ]);
 
@@ -1055,16 +1163,13 @@ module.exports = function(appOrigin, uncaughtExceptions) {
 
     /*!defFunction(anvil,_,content,[title=""],[buttons=],[large=False],[dismissible=False], [role=])!2*/ "Pop up a confirmation box. By default, it will have \"Yes\" and \"No\" buttons which will return True and False respectively when clicked."
     pyModule["confirm"] = new Sk.builtin.func(PyDefUtils.withRawKwargs(function(pyKwarray, pyContent) {
-        var kwargs = {}
-        for(var i = 0; i < pyKwarray.length - 1; i+=2)
-            kwargs[pyKwarray[i].v] = pyKwarray[i+1];
-
-        kwargs.content = kwargs.content || pyContent;
-        kwargs.buttons = kwargs.buttons || Sk.ffi.remapToPy([
+        const kwargs = PyDefUtils.keywordArrayToHashMap(pyKwarray);
+        kwargs.content ??= pyContent;
+        kwargs.buttons ??= Sk.ffi.toPy([
             ["No", false, "danger"],
             ["Yes", true, "success"],
         ]);
-        kwargs.dismissible = kwargs.dismissible || Sk.ffi.remapToPy(false);
+        kwargs.dismissible ??= false;
 
         return modal(kwargs);
     }));
@@ -1142,9 +1247,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
 
         /*!defMethod(,message,[title=""],[style="info"], [timeout=2])!2*/ "Create a popup notification. Call the show() method to display it."
         $loc["__init__"] = new Sk.builtin.func(PyDefUtils.withRawKwargs(function(pyKwarray, self, pyMessage) {
-            var kwargs = {};
-            for(var i = 0; i < pyKwarray.length - 1; i+=2)
-                kwargs[pyKwarray[i].v] = pyKwarray[i+1];
+            const kwargs = PyDefUtils.keywordArrayToHashMap(pyKwarray);
 
             self._anvil = {
                 message: Sk.ffi.remapToJs(kwargs.message || pyMessage),

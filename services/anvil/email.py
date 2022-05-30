@@ -10,9 +10,16 @@ class SendFailure(anvil.server.AnvilWrappedError):
 
 anvil.server._register_exception_type("anvil.email.SendFailure", SendFailure)
 
-#!defClass(anvil.email,DeliveryFailure)!:
 class DeliveryFailure(Exception):
-    pass
+    #!defMethod(_,message=None,smtp_code=554)!2: 
+    # {anvil$helpLink: "/docs/email/sending_and_receiving#rejecting-email", $doc: "While handling an error, you can raise a DeliveryFailure exception to reject email delivery. Optionally, you may specify a message and SMTP error code with the rejection."} ["__init__"]
+    def __init__(self, message=None, smtp_code=None):
+        if message is None:
+            super(DeliveryFailure, self).__init__()
+        elif smtp_code is not None:
+            message = "{}: {}".format(smtp_code, message)
+        super(DeliveryFailure, self).__init__(message)
+    #!defClass(anvil.email,DeliveryFailure)!:
 
 
 

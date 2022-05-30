@@ -5,14 +5,18 @@ from ws4py.client.threadedclient import WebSocketClient
 # Configuration
 
 TIMEOUT = int(os.environ.get("DOWNLINK_WORKER_TIMEOUT", "30"))
+KEEPALIVE_TIMEOUT = int(os.environ.get("DOWNLINK_KEEPALIVE_TIMEOUT", "30"))
 DROP_PRIVILEGES = os.environ.get("DROP_PRIVILEGES")
 RUNTIME_ID = os.environ.get("RUNTIME_ID", None) or ('python2-full' if sys.version_info[0] < 3 else 'python3-full')
 USER_ID = os.environ.get("DOWNLINK_USER_ID", None)
 ORG_ID = os.environ.get("DOWNLINK_ORG_ID", None)
+ENV_ID = os.environ.get("DOWNLINK_ENV_ID", None)
+SPEC_HASH = os.environ.get("DOWNLINK_SPEC_HASH", None)
 APP_CACHE_SIZE = int(os.environ.get("APP_CACHE_SIZE", "16"))
 ENABLE_PDF_RENDER = os.environ.get("ENABLE_PDF_RENDER")
 PER_WORKER_SOFT_MEMORY_LIMIT = int(os.environ["PER_WORKER_SOFT_MEMORY_LIMIT_MB"])*1024*1024 \
                                     if "PER_WORKER_SOFT_MEMORY_LIMIT_MB" in os.environ else None
+IDLE_TIMEOUT_SECONDS = int(os.environ.get("IDLE_TIMEOUT_SECONDS","0"))
 
 IS_WINDOWS = "Windows" in platform.system() or "CYGWIN" in platform.system()
 
@@ -43,8 +47,13 @@ MY_SESSION_ID = "".join((rnd.choice("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ
 
 draining_start_time = None
 
+
+def is_idle():
+    return len(workers_by_id) == 0
+
+
 def maybe_quit_if_draining_and_done():
-    if draining_start_time is not None and len(workers_by_id) == 0:
+    if draining_start_time is not None and is_idle():
         if time.time() < draining_start_time + 10:
             print("Giving API 10 seconds' grace for drain...")
             def f():
@@ -97,18 +106,34 @@ class Connection(WebSocketClient):
         self._send_next_bin = None
         self._key = key
         self._last_keepalive_reply = time.time()
-        
+        self._last_activity = time.time()
+
         threading.Timer(30, self.check_keepalives).start()
 
+    def record_activity(self):
+        self._last_activity = time.time()
+
+    def reset_idle_timer(self):
+        if IDLE_TIMEOUT_SECONDS:
+            threading.Timer(IDLE_TIMEOUT_SECONDS, self.idle_timeout).start()
+
+    def idle_timeout(self):
+        if is_idle() and self._last_activity < time.time() - IDLE_TIMEOUT_SECONDS:
+            print("Idle timeout")
+            signal_drain()
+        else:
+            self.reset_idle_timer()
+
     def check_keepalives(self):
-        if time.time() - self._last_keepalive_reply > 30:
-            print("No keepalive reply in 30 seconds. Exiting.")
+        if time.time() - self._last_keepalive_reply > KEEPALIVE_TIMEOUT:
+            print("No keepalive reply in %s seconds. Exiting." % KEEPALIVE_TIMEOUT)
             os._exit(1)
         else:
             threading.Timer(30, self.check_keepalives).start()
 
     def opened(self):
         print("Anvil websocket open")
+        self.record_activity()
         spec = {
             'runtime': RUNTIME_ID,
             'session_id': MY_SESSION_ID,
@@ -118,6 +143,9 @@ class Connection(WebSocketClient):
             spec['user_id'] = USER_ID
         elif ORG_ID is not None:
             spec['org_id'] = ORG_ID
+        elif ENV_ID is not None:
+            spec['env_id'] = ENV_ID
+            spec['spec_hash'] = SPEC_HASH
 
         id = os.environ.get("DOWNLINK_ID", None)
         if id:
@@ -151,9 +179,14 @@ class Connection(WebSocketClient):
 
             type = data["type"] if 'type' in data else None
             id = data["id"] if 'id' in data else None
+            is_keepalive = id and id.startswith("downlink-keepalive")
+
+            if not is_keepalive:
+                self.record_activity()
 
             if 'auth' in data:
                 print("Downlink authenticated OK")
+                self.reset_idle_timer()
 
             elif 'output' in data:
                 # Output from something this worker has called.
@@ -242,10 +275,10 @@ class Connection(WebSocketClient):
 
                 if id in workers_by_id:
                     workers_by_id[id].handle_inbound_message(data)
-                elif id.startswith("downlink-keepalive"):
+                elif is_keepalive:
                     self._last_keepalive_reply = time.time()
                 else:
-                    print("Bogus reply for " + id +": " + repr(data)[:120])
+                    print("Bogus reply for " + id + ": " + repr(data)[:120])
 
             elif type is None and "error" in data:
                 print("Fatal error from Anvil server: " + str(data["error"]))
@@ -258,6 +291,8 @@ class Connection(WebSocketClient):
             return WebSocketClient.send(self, payload, binary)
 
     def send_with_header(self, json_data, blob=None):
+        if (not json_data.get("id","").startswith("downlink-keepalive")) and json_data.get("type") != "STATS":
+            self.record_activity()
         with self._sending_lock:
             WebSocketClient.send(self, json.dumps(json_data), False)
             if blob is not None:
@@ -427,7 +462,7 @@ else:
         init_pdf_worker()
 
 
-def signal_drain(_signum, _frame):
+def signal_drain(_signum=None, _frame=None):
     global draining_start_time
     if draining_start_time:
         print("Downlink has already been draining for %s seconds. %s call(s) remaining:" % (int(time.time() - draining_start_time), len(workers_by_id)))

@@ -672,7 +672,7 @@ input[type=number]::-webkit-outer-spin-button {
 }
 
 .paginating .hide-while-paginating {
-    display: none;
+    visibility: hidden; /* Because display:none breaks canvas width during pagination */
 }
 
 [x-anvil-slot]>code.anvil-slot-name {

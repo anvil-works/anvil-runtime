@@ -284,7 +284,7 @@ module.exports = function(pyModule) {
             /*!defMethod(_)!2*/ "Jump to the next page of this DataGrid"["next_page"];
             /*!defMethod(_)!2*/ "Jump to the previous page of this DataGrid"["previous_page"];
             /*!defMethod(_)!2*/ "Get the current page number of this DataGrid"["get_page"];
-            /*!defMethod(_)!2*/ "Set the page number of this DataGrid. The page number must be positive."["set_page"];
+            /*!defMethod(_, page)!2*/ "Set the page number of this DataGrid. The page number must be positive."["set_page"];
         },
     });
 

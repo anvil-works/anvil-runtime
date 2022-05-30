@@ -26,16 +26,28 @@ class HttpRequestFailed(anvil.server.AnvilWrappedError):
 
 anvil.server._register_exception_type("anvil.http.HttpRequestFailed", HttpRequestFailed)
 
-#!defFunction(anvil.http,_,url,[method="GET"],[data=None],[json=False],[headers=None],[username=None],[password=None])!2: "Make an HTTP request to the specified URL.\n\nIf json=True, the response is parsed into Python objects (dicts/lists/etc), and 'data' is JSON-encoded before sending.\n\n'headers' can be a dict of strings to set HTTP headers.\nIf specified, 'username' and 'password' will be used to perform HTTP Basic authentication." ["request"]
-def request(url, method='GET', data=None, headers=None, username=None, password=None, json=False):
+#!defFunction(anvil.http,_,url,[method="GET"],[data=None],[json=False],[headers=None],[username=None],[password=None], [timeout=None])!2: "Make an HTTP request to the specified URL.\n\nIf json=True, the response is parsed into Python objects (dicts/lists/etc), and 'data' is JSON-encoded before sending.\n\n'headers' can be a dict of strings to set HTTP headers.\nIf specified, 'username' and 'password' will be used to perform HTTP Basic authentication." ["request"]
+def request(url, method='GET', data=None, headers=None, username=None, password=None, json=False, timeout=None):
     if headers is None:
         headers = {}
     if json and data is not None:
         data = json_mod.dumps(data)
         headers["content-type"] = "application/json"
+    if timeout is not None:
+        if not isinstance(timeout, (int, float)):
+            raise TypeError("timeout must be a number")
+        timeout = timeout * 1000
 
-    resp = anvil.server.call("anvil.private.http.request",
-                             url=url, method=method, data=data, headers=headers, username=username, password=password)
+    resp = anvil.server.call(
+        "anvil.private.http.request",
+        url=url,
+        method=method,
+        data=data,
+        headers=headers,
+        username=username,
+        password=password,
+        timeout=timeout,
+    )
     # Parse JSON if we have it
 
     if json:

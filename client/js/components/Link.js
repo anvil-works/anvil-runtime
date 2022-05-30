@@ -1,5 +1,5 @@
 "use strict";
-
+import { setHandled, isHandled } from "./events";
 var PyDefUtils = require("PyDefUtils");
 
 /**
@@ -136,14 +136,13 @@ module.exports = (pyModule) => {
                 self._anvil.element.on(
                     "click",
                     PyDefUtils.funcWithPopupOK((e) => {
-                        if (self._anvil.eventHandlers["click"] !== undefined) {
-                            e.stopPropagation(); // Prevent nested Buttons and Links from firing click events on parents
-                            PyDefUtils.raiseEventAsync(
-                                { keys: { meta: e.metaKey, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey } },
-                                self,
-                                "click"
-                            );
-                        }
+                        if (isHandled(e)) return;
+                        setHandled(e);
+                        PyDefUtils.raiseEventAsync(
+                            { keys: { meta: e.metaKey, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey } },
+                            self,
+                            "click"
+                        );
                     })
                 );
                 self._anvil.pageEvents = {
@@ -163,9 +162,8 @@ module.exports = (pyModule) => {
     });
 
 
-
     function setUrl(self, url, name = null) {
-        const a = self._anvil.elements.outer;
+        const a = self._anvil.domNode;
         if (url) {
             a.setAttribute("href", url);
             a.setAttribute("target", "_blank");

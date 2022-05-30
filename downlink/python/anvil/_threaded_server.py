@@ -11,7 +11,7 @@ class StackableLocal(object):
     def _push_stack(self):
         _nested = dict(self.__dict__)
         self.__dict__.clear()
-        self._nested = _nested
+        self.__dict__['_nested'] = _nested
         self.__init__()
 
     def _pop_stack(self):
@@ -131,17 +131,18 @@ backends = {}
 def _switch_session():
     import anvil.server
     sjson = anvil.server.call('anvil.private.switch_session!') or {"session": {}, "objects": []}
-    call_info.session = _server._reconstruct_objects(sjson, None)["session"]
+    call_info.session = _server._reconstruct_objects(sjson, None, remote_is_trusted=True)["session"]
 
 
 default_app = anvil.app
 
 
 class LocalAppInfo(ThreadLocal):
-    def __init__(self):
-        self.__dict__['id'] = default_app.id
-        self.__dict__['branch'] = default_app.branch
-        self.__dict__['environment'] = default_app.environment
+    def __getattr__(self, attr):
+        return getattr(default_app, attr)
+
+    def __setattr__(self, key, value):
+        raise AttributeError("This object is read-only")
 
     def _setup(self, environment={}, **kwargs):
         self.__dict__.update(kwargs, environment=anvil._AppInfo._Environment(**environment))
@@ -160,7 +161,8 @@ class IncomingRequest(_serialise.IncomingReqResp):
         self.run_fn = run_fn
         self.dump_task_state = dump_task_state
         self.setup_task_state = setup_task_state
-        _serialise.IncomingReqResp.__init__(self, json)
+        remote_is_trusted = _server.CallContext.StackFrame(json.get('call-stack', [{}])[0]).is_trusted
+        _serialise.IncomingReqResp.__init__(self, json, remote_is_trusted=remote_is_trusted)
 
     def execute(self):
         def make_call():
@@ -183,13 +185,15 @@ class IncomingRequest(_serialise.IncomingReqResp):
             anvil.app._setup(**self.json.get('app-info', {}))
             if self.setup_task_state:
                 self.setup_task_state(call_info.call_id, True)
+            import_complete = False
             try:
                 if self.import_modules:
                     self.import_modules()
+                import_complete = True
 
                 # Now we've imported enough to deserialise custom types
                 self.reconstruct_remaining_data()
-                call_info.session = _server._reconstruct_objects(sjson, None).get("session", {})
+                call_info.session = _server._reconstruct_objects(sjson, None, remote_is_trusted=self.remote_is_trusted).get("session", {})
 
                 if self.run_fn is not None:
                     response = self.run_fn()
@@ -234,7 +238,7 @@ class IncomingRequest(_serialise.IncomingReqResp):
                     raise Exception("Cannot save DataMedia objects in anvil.server.session")
 
                 try:
-                    sjson = _server.fill_out_media({'session': call_info.session}, err)
+                    sjson = _server.fill_out_media({'session': call_info.session}, err, remote_is_trusted=True)
                     json.dumps(sjson)
                 except TypeError as e:
                     raise _server.SerializationError("Tried to store illegal value in a anvil.server.session. " + e.args[0])
@@ -252,14 +256,14 @@ class IncomingRequest(_serialise.IncomingReqResp):
                 if self.dump_task_state:
                     try:
                         task_state = dict(anvil.server.task_state)
-                        tjson = _server.fill_out_media({'taskState': task_state}, err)
+                        tjson = _server.fill_out_media({'taskState': task_state}, err, remote_is_trusted=True)
                         json.dumps(tjson)
                         resp['taskState'] = task_state
                     except (TypeError, _server.SerializationError):
                         pass
 
                 try:
-                    send_reqresp(resp)
+                    send_reqresp(resp, remote_is_trusted=call_context.remote_caller.is_trusted)
                 except _server.SerializationError as e:
                     raise _server.SerializationError("Cannot serialize return value from function. " + str(e))
             except SendNoResponse:
@@ -274,12 +278,15 @@ class IncomingRequest(_serialise.IncomingReqResp):
 
                     try:
                         task_state = dict(anvil.server.task_state)
-                        tjson = _server.fill_out_media({'taskState': task_state}, err)
+                        tjson = _server.fill_out_media({'taskState': task_state}, err, remote_is_trusted=True)
                         json.dumps(tjson)
                     except (TypeError, _server.SerializationError):
                         pass
                     else:
                         e['taskState'] = task_state
+
+                if not import_complete:
+                    e['moduleLoadFailed'] = True
 
                 try:
                     send_reqresp(e)
@@ -302,6 +309,10 @@ class IncomingRequest(_serialise.IncomingReqResp):
 
 
 class IncomingResponse(_serialise.IncomingReqResp):
+    def __init__(self, json):
+        # Responses from the server are trusted by definition
+        _serialise.IncomingReqResp.__init__(self, json, remote_is_trusted=True)
+
     def execute(self):
         id = self.json['id']
         if id in call_responses:
@@ -368,7 +379,8 @@ def do_call(args, kwargs, fn_name=None, live_object=None): # Yes, I do mean args
         else:
             raise Exception("Expected one of fn_name or live_object")
         try:
-            send_reqresp(req, collect_capabilities=capabilities_for_update)
+            # We're calling a server function and those are always trusted
+            send_reqresp(req, collect_capabilities=capabilities_for_update, remote_is_trusted=True)
         except _server.SerializationError as e:
             raise _server.SerializationError("Cannot serialize arguments to function. " + str(e))
 

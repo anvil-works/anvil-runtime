@@ -19,8 +19,9 @@
 
 (defonce on-client-connect (fn [connection] nil))
 (defonce on-client-disconnect (fn [connection] nil))
+(defonce share-server-logs-with-client? (fn [environment] false))
 
-(def set-browser-ws-hooks! (util/hook-setter [on-client-connect on-client-disconnect]))
+(def set-browser-ws-hooks! (util/hook-setter [on-client-connect on-client-disconnect share-server-logs-with-client?]))
 
 (defonce connected-client-count (atom 0))
 
@@ -103,10 +104,13 @@
                                                #(responder % true)
                                                :update!
                                                (fn [{:keys [output] :as r}]
-                                                 (when (string? output)
+                                                 (if (string? output)
                                                    ;; TODO NEW TRACE API
-                                                   (app-log/record-event! app-session nil "print" output nil))
-                                                 (responder r false))}]
+                                                   (do
+                                                     (app-log/record-event! app-session nil "print" output nil)
+                                                     (when (share-server-logs-with-client? environment)
+                                                       (responder r false)))
+                                                   (responder r false)))}]
                               (swap! outstanding-incoming-request-ids assoc request-id {:context    {:func (or (:command data) (:method (:liveObjectCall data)))}
                                                                                         :start-time (System/currentTimeMillis)})
                               (log/trace "Calling with replacement session?" (:anvil.runtime/replacement-session @app-session))

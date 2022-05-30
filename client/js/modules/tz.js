@@ -17,8 +17,6 @@ module.exports = function() {
     var PyDefUtils = require("PyDefUtils");
 
     // N.B. We assume that none of this suspends.
-    var anvilmod = PyDefUtils.getModule("anvil");
-
     var datetime = Sk.importModule("datetime");
     var timedelta = datetime.tp$getattr(new Sk.builtin.str("timedelta"));
 

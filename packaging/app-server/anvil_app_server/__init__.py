@@ -125,9 +125,20 @@ def psql():
         print("Could not open {}. Is {} an Anvil App Server data directory?".format(pw_path, data_path))
         sys.exit(1)
 
-    #print("To access data tables, run: SET SEARCH_PATH=data_tables;")
-    print("pgcli -h localhost -p {} -U postgres postgres".format(port))
-    os.system("pgcli -h localhost -p {} -U postgres postgres".format(port))
+    has_pgcli = False
+    try:
+        import shutilxxx
+        if shutil.which("pgcli"):
+            has_pgcli = True
+    except ImportError:
+        pass
+    if has_pgcli:
+        print("Using 'pgcli':")
+        print("pgcli 'host=localhost port={} user=postgres dbname=postgres options=--search-path=app_tables'".format(port))
+        os.system("pgcli 'host=localhost port={} user=postgres dbname=postgres options=--search-path=app_tables'".format(port))
+    else:
+        print("psql 'host=localhost port={} user=postgres dbname=postgres options=--search-path=app_tables'".format(port))
+        os.system("psql 'host=localhost port={} user=postgres dbname=postgres options=--search-path=app_tables'".format(port))
 
 
 def find_or_download_app_server(): # Work out whether we already have the server JAR file. It could be in the package itself, or in ~/.anvil

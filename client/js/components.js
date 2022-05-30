@@ -113,10 +113,10 @@ module.exports.defineSystemComponents = function defineSystemComponents(pyModule
 
     require("./components/RichText")(pyModule);
 
-    if (window['google']) {
+    if (!window.isIE) {
         require("./components/GoogleMap")(pyModule);
     } else {
-        console.warn("Google unavailable, not loading GoogleMap component.");
+        console.warn("Google Maps is no longer supported in Internet Explorer");
     }
 
     require("./components/Plot")(pyModule);

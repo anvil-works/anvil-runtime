@@ -148,7 +148,8 @@ __pycache__
   (reduce (fn [yaml [name subtree]]
             (cond
               (or (and ignore-py-and-yaml? (re-matches #".*\.(py|yaml)" name))
-                  (and top-level? (#{"anvil.yaml" ".anvil_editor.yaml" "theme" "CONFLICTS.yaml"} name))
+                  (and top-level? (#{"anvil.yaml" ".anvil_editor.yaml" "theme" "CONFLICTS.yaml" "anvil-server-requirements.txt"} name))
+                  (and (= path [:extra_files "server_code"]) (= name "requirements.txt"))
                   (and top-level? (bytes? subtree)
                        (contains? default-file-contents name)
                        (some #(Arrays/equals ^bytes subtree (.getBytes ^String %)) (get default-file-contents name))))
@@ -231,6 +232,11 @@ __pycache__
 
                            (when-let [conflicts (read-yaml ["CONFLICTS.yaml"])]
                              {:conflicts conflicts}))
+                         (update-in [:runtime_options] (fn [opts]
+                                                         (if-let [reqs (or (get-in tm ["server_code" "requirements.txt"])
+                                                                           (get-in tm ["anvil-server-requirements.txt"]))]
+                                                           (assoc-in opts [:server_spec :requirements] (String. reqs))
+                                                           opts)))
                          (add-subtree-to-yaml [] (get tm "client_code") true get-id)
                          (add-subtree-to-yaml [] (get tm "server_code") false get-id))]
     (if ignore-extra-files?

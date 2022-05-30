@@ -22,6 +22,16 @@ module.exports = (pyModule) => {
 
     const {isTrue} = Sk.misceval;
     const inDesigner = window.anvilInDesigner;
+    let YTLoadExecuted = false;
+    const loadYT = async () => {
+        try {
+            YTLoadExecuted = true;
+            await PyDefUtils.loadScript("https://www.youtube.com/iframe_api");
+        } catch (e) {
+            YTLoadExecuted = false;
+            console.error(e);
+        }
+    };
 
 
     pyModule["YouTubeVideo"] = PyDefUtils.mkComponentCls(pyModule, "YouTubeVideo", {
@@ -204,6 +214,9 @@ module.exports = (pyModule) => {
                                 },
                             });
                         } else {
+                            if (!YTLoadExecuted) {
+                                loadYT();
+                            }
                             console.log("YouTube Player not yet loaded. Trying again in 1 sec.");
                             setTimeout(load, 1000);
                         }

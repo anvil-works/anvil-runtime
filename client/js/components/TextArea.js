@@ -51,7 +51,7 @@ module.exports = (pyModule) => {
                         }
                     };
 
-                    if (/.*(MSIE|Trident).*/.test(window.navigator.userAgent)) {
+                    if (window.isIE) {
                         return PyDefUtils.suspensionPromise((resolve) => {
                             setTimeout(() => {
                                 doUpdate();
@@ -152,22 +152,22 @@ module.exports = (pyModule) => {
                         PyDefUtils.raiseEventAsync({}, self, "focus");
                     })
                     .on("blur", function (e) {
-                        setTimeout(() => self._anvil.dataBindingWriteback(self, "text").finally(() => PyDefUtils.raiseEventAsync({}, self, "lost_focus")));
+                        self._anvil.dataBindingWriteback(self, "text").finally(() => setTimeout(() => PyDefUtils.raiseEventAsync({}, self, "lost_focus")));
                     });
                 self._anvil.taAutoExpand = isTrue(self._anvil.props["auto_expand"]) && !inDesigner;
                 self._anvil.taHeight = self._anvil.props["height"].toString();
                 const text = self._anvil.props["text"];
                 self._anvil.lastChangeVal = Sk.builtin.checkNone(text) ? "" : text.toString();
 
-                self._anvil.pageEvents = {
-                    add() {
-                        const elt = self._anvil.element;
-                        if (self._anvil.taAutoExpand) {
-                            self._anvil.taHeightDiff = elt.outerHeight() - elt.height();
-                            setHeightToContent(self, elt);
-                        }
-                    },
-                };
+                const elt = self._anvil.element;
+                const adjustHeight = () => {
+                    if (self._anvil.taAutoExpand) {
+                        self._anvil.taHeightDiff = elt.outerHeight() - elt.height();
+                        setHeightToContent(self, elt);
+                    }
+                }
+
+                self._anvil.pageEvents = { add: adjustHeight, show: adjustHeight };
             });
 
             /*!defMethod(_)!2*/ "Set the keyboard focus to this TextArea"

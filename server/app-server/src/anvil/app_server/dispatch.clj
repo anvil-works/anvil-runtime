@@ -117,10 +117,11 @@
 (dispatcher/register-dispatch-handler! ::uplink dispatcher/UPLINK-PRIORITY
                                        (fn [{{:keys [func live-object]} :call}]
                                          (when-not live-object
-                                           (or
-                                             (some #(when (re-matches (:func %) func)
-                                                      (:executor %))
-                                                   (map second @uplink-registrations))
+                                           (if-let [matching-uplinks (->> (map second @uplink-registrations)
+                                                                            (filter #(when (re-matches (:func %) func)
+                                                                                       (:executor %)))
+                                                                            (seq))]
+                                             (rand-nth matching-uplinks)
                                              (when (some #(re-matches % func) (map second @stale-uplink-funcs))
                                                (reset! dispatcher/*stale-uplink?* true)
                                                nil)))))

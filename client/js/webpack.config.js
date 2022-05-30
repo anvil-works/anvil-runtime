@@ -19,6 +19,30 @@ module.exports = {
     module: {
         rules: [
             {
+                test: /\.tsx?/,
+                use: [
+                    {
+                        loader: "babel-loader",
+                        options: {
+                            presets: [
+                                ["@babel/preset-env"],
+                            ],
+                            plugins: [
+                                "@babel/plugin-proposal-optional-chaining", 
+                                "@babel/plugin-proposal-class-properties"
+                            ],
+                        },
+                    },
+                    {
+                        loader: "ts-loader",
+                        options: {
+                            transpileOnly: true,
+                        },
+                    },
+                ],
+                exclude: /node_modules/,
+            },
+            {
                 test: /\.js$/,
                 include: [path.resolve(__dirname, "js"), /client/],
                 exclude : [
@@ -29,12 +53,14 @@ module.exports = {
                     loader: "babel-loader",
                     options: {
                         presets: [
-                            ["@babel/preset-env",
-                             {
-                                useBuiltIns: "usage",
-                                corejs: '3.8',
-                                modules: 'cjs',
-                             }],
+                            [
+                                "@babel/preset-env",
+                                {
+                                    useBuiltIns: "usage",
+                                    corejs: "3.8",
+                                    modules: "cjs",
+                                },
+                            ],
                             [
                                 "@babel/preset-react",
                                 {
@@ -42,7 +68,10 @@ module.exports = {
                                 },
                             ],
                         ],
-                        plugins: ["@babel/plugin-proposal-optional-chaining"],
+                        plugins: [
+                            "@babel/plugin-proposal-optional-chaining", 
+                            "@babel/plugin-proposal-class-properties"
+                        ],
                     },
                 },
             },
@@ -51,7 +80,7 @@ module.exports = {
 
     // Add an alias for resolving PyDefUtils and utils directly.
     resolve: {
-        extensions: [".js"],
+        extensions: [".ts", ".js"],
         alias: {
             PyDefUtils: path.resolve(__dirname, "PyDefUtils.js"),
             utils: path.resolve(__dirname, "utils.js"),

@@ -237,21 +237,24 @@
 
     results))
 
-(defn list-cells-v4 [_kwargs capability range]
-  (let [[creds spreadsheet-id access [sheet-title _sheet-id]] (types/unwrap-capability capability ["_" "google-sheets"] 4)
-        range-str (str (escape-sheet-title sheet-title) (if (empty? range) "" "!") range)
-        real-range (util/real-actual-genuine-url-encoder range-str)
+(defn list-cells-v4 [_kwargs capability range-str [row-min, col-min, row-max, col-max]]
+  (let [[creds spreadsheet-id _access [sheet-title _sheet-id]] (types/unwrap-capability capability ["_" "google-sheets"] 4)
+        range (str (escape-sheet-title sheet-title) (if (empty? range-str) "" "!") range-str)
+        real-range (util/real-actual-genuine-url-encoder range)
         url (str "https://sheets.googleapis.com/v4/spreadsheets/" spreadsheet-id "/values/" real-range)
-        formulaParam "?valueRenderOption=FORMULA"
-        v-rows (get (request {:url url} creds) "values")
-        i-rows (get (request {:url (str url formulaParam)} creds) "values")
-        row-data (map vector v-rows i-rows)]
-    (flatten (map-indexed (fn [r [v-row i-row]]
-                            (map-indexed (fn [c [val i-val]]
-                                           {:value val
-                                            :input_value (str i-val)
-                                            :row (inc r)
-                                            :col (inc c)}) (map vector v-row i-row))) row-data))))
+        formula-param "?valueRenderOption=FORMULA"
+        formatted-values (get (request {:url url} creds) "values")
+        input-values (get (request {:url (str url formula-param)} creds) "values")
+        row-data (map vector formatted-values input-values)]
+    (if (and (empty? row-data) (not-empty range-str) (= row-min row-max) (= col-min col-max))
+      [{:value "" :input_value "" :row row-min :col col-min}]
+      (flatten (map-indexed (fn [r [v-row i-row]]
+                              (map-indexed (fn [c [val i-val]]
+                                             {:value       val
+                                              :input_value (str i-val)
+                                              :row         (+ r row-min)
+                                              :col         (+ c col-min)}) (map vector v-row i-row))) row-data)))))
+
 (defn update-cell [_kwargs cell-id edit-url row col value creds]
   (let [wl-access (get-whitelist-access ::worksheet-cell-edit-url edit-url creds)
         _ (ensure-whitelist-access-ok wl-access true "edit cell")

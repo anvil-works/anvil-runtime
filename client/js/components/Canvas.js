@@ -344,7 +344,7 @@ module.exports = function(pyModule) {
                 },
                 /*!defAttr()!1*/ {
                     name: "global_composite_operation",
-                    type: "number",
+                    type: "string",
                     description: "The global composite operation to draw with. Defaults to 'source-over'",
                 },
                 /*!defAttr()!1*/ {
@@ -431,12 +431,7 @@ module.exports = function(pyModule) {
                         self._anvil.ctx[contextProps[name]] = pyValue._anvil.canvasGradient;
                         self._anvil.gradients[name] = pyValue;
                     } else if (colorProps.indexOf(name) > -1) {
-                        let v = Sk.ffi.remapToJs(pyValue);
-                        let m = ("" + v).match(/^theme:(.*)$/);
-                        if (m) {
-                            v = window.anvilThemeColors[m[1]] || "";
-                        }
-
+                        let v = PyDefUtils.getColor(pyValue);
                         self._anvil.ctx[contextProps[name]] = v;
                     } else {
                         self._anvil.ctx[contextProps[name]] = Sk.ffi.remapToJs(pyValue);

@@ -14,6 +14,8 @@
                      :public-key  (str data-path "/anvil-saml-public-key.pem")
                      :certificate (str data-path "/anvil-saml-cert.pem")})
 
+(def twilio-config nil)
+
 (defonce geoip-db-path nil)
 
 ;; Don't ask me why this (str) is required to keep Cursive happy

@@ -14,9 +14,9 @@
                  [clj-yaml "0.4.0"]
 
                  [org.clojure/tools.logging "0.4.1"]
-                 [org.slf4j/slf4j-log4j12 "1.7.1"]
-                 [log4j "1.2.17" :exclusions [javax.mail/mail javax.jms/jms com.sun.jdmk/jmxtools com.sun.jmx/jmxri]]
-                 [clj-logging-config "1.9.12"]
+                 [org.slf4j/slf4j-reload4j "1.7.36"]
+                 [ch.qos.reload4j/reload4j "1.2.19" :exclusions [javax.mail/mail javax.jms/jms com.sun.jdmk/jmxtools com.sun.jmx/jmxri]]
+                 [clj-logging-config "1.9.12" :exclusions [log4j]]
 
                  [org.subethamail/subethasmtp "3.1.7"]
 
@@ -33,7 +33,7 @@
                  ;; Hacks for Java 11 (#2334) - we shouldn't need this
                  [javax.xml.bind/jaxb-api "2.3.1"]
                  [org.glassfish.jaxb/jaxb-runtime "2.3.1"]]
-  :bom {:import [[io.zonky.test.postgres/embedded-postgres-binaries-bom "13.4.0"]]}
+  :bom {:import [[io.zonky.test.postgres/embedded-postgres-binaries-bom "10.18.0"]]}
   :main anvil.app-server.run
   :repl-options {:init (do (use 'anvil.app-server.run) (-main "--config-file" "test-files/anvil.conf.yaml"))}
   :plugins [[lein-bom "0.2.0-SNAPSHOT"]]

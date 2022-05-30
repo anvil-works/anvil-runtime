@@ -7,7 +7,6 @@
             [anvil.runtime.app-data :as app-data]
             [anvil.runtime.quota :as quota]
             [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks]
-            [anvil.runtime.secrets :as secrets]
             [anvil.dispatcher.core :as dispatcher]
             [anvil.util :as util]
             [crypto.random :as random]
@@ -23,8 +22,9 @@
 (clj-logging-config.log4j/set-logger! :level :info)
 
 (defonce get-reroute-address (fn [session-state app-id] (throw (UnsupportedOperationException.))))
+(defonce get-smtp-connection (fn [email-service-config environment] (throw (UnsupportedOperationException.))))
 
-(def set-email-hooks! (util/hook-setter [get-reroute-address]))
+(def set-email-hooks! (util/hook-setter [get-reroute-address get-smtp-connection]))
 
 (defn email-send-error [& msg]
   {:anvil/server-error (apply str msg), :type "anvil.email.SendFailure"})
@@ -34,12 +34,89 @@
 
 (def ^:dynamic *use-quota* true)
 (def ^:dynamic *require-service-config* true)
-(defonce test-override-smtp-config (atom nil))
 
 (def default-props {:custom_smtp false
                     :test_mode false})
 
-(def smtp-send)
+(defn smtp-send [{:keys [session transport] :as _smtp-connection}
+                 {:keys [from-address from-name to cc bcc subject text html attachments inline-attachments in-reply-to references app-id] :as _message}]
+
+  (let [main-body (let [mp (MimeMultipart. "alternative")]
+                    (when text
+                      (.addBodyPart mp (doto (MimeBodyPart.)
+                                         (.setText text "utf-8"))))
+                    (when html
+                      (.addBodyPart mp (doto (MimeBodyPart.)
+                                         (.setContent html "text/html; charset=utf-8"))))
+
+                    (when-not (or text html)
+                      (.addBodyPart mp (doto (MimeBodyPart.)
+                                         (.setText "" "utf-8"))))
+
+                    mp)
+
+        main-body-with-inline-attachments (if (and inline-attachments
+                                                   (not-empty inline-attachments))
+                                            (let [mp (MimeMultipart. "related")]
+                                              (.addBodyPart mp (doto (MimeBodyPart.)
+                                                                 (.setContent main-body)))
+                                              (doseq [att inline-attachments]
+                                                (.addBodyPart mp att))
+                                              mp)
+                                            main-body)
+
+        full-content (let [mp (MimeMultipart.)]
+                       (.addBodyPart mp (doto (MimeBodyPart.)
+                                          (.setContent main-body-with-inline-attachments)))
+                       (doseq [att attachments]
+                         (.addBodyPart mp att))
+                       mp)
+
+        msg (doto (proxy [MimeMessage] [session]
+                    (updateMessageID []
+                      (when (nil? (.getMessageID this))
+                        (.setHeader this "Message-ID" (str "<" (System/currentTimeMillis) "-" (random/hex 4) "-" (or app-id "internal") "@anvil>")))))
+              (.setFrom (InternetAddress. ^String from-address ^String from-name))
+              (.setSubject subject)
+              (.setContent full-content))]
+
+    (when to
+      (.setRecipients msg Message$RecipientType/TO (InternetAddress/parse to)))
+    (when cc
+      (.setRecipients msg Message$RecipientType/CC (InternetAddress/parse cc)))
+    (when bcc
+      (.setRecipients msg Message$RecipientType/BCC (InternetAddress/parse bcc)))
+
+    (when in-reply-to
+      (.setHeader msg "In-Reply-To" in-reply-to))
+
+    (when references
+      (.setHeader msg "References" references))
+
+    (log/trace "Sending message using transport" transport)
+    (.sendMessage transport msg (.getAllRecipients msg))
+
+    msg))
+
+(defn map->props [props]
+  (let [properties (Properties.)]
+    (doseq [[k v] props]
+      (.put properties k v))
+    properties))
+
+(defn open-smtp-connection [{:keys [host port user pass encryption] :as _smtp-config}]
+  (let [session (Session/getInstance (map->props (merge {"mail.smtp.starttls.enable" (if (contains? #{"ssl" "starttls"} encryption) "true" "false")}
+                                                        (when (= encryption "starttls")
+                                                          {"mail.smtp.starttls.required" "true"}))))
+        proto (if (= encryption "ssl") "smtps" "smtp")
+        transport (.getTransport session proto)]
+
+    (.connect transport host port user pass)
+    (log/trace "Created SMTP transport" transport ":" host)
+    (Thread/sleep 2000)
+
+    {:session session
+     :transport transport}))
 
 (defn get-props
   ([] (merge (get-props rpc-util/*app*)
@@ -49,7 +126,7 @@
      (merge (:client_config props) (:server_config props))
      (if *require-service-config*
        (throw+ {:anvil/server-error "Add the Email service to your app before calling this function"
-                :type               "AnvilServiceNotAdded"
+                :type               "anvil.server.ServiceNotAdded"
                 :docId              "email"
                 :docLinkTitle       "You need to add the Email service to your app. Learn more"})
        default-props))))
@@ -103,7 +180,7 @@
                                                                                     (nil? a))) as))))
                     "list of Media objects")
 
-    (let [{:keys [custom_smtp test_mode smtp_encryption smtp_host smtp_port smtp_user smtp_password] :as _props} (get-props)
+    (let [{:keys [custom_smtp test_mode] :as email-service-config} (get-props)
 
           app-info (app-data/get-app-info-insecure rpc-util/*app-id*)
 
@@ -140,7 +217,7 @@
 
 
           quota-available (or custom_smtp (not *use-quota*)
-                              (quota/decrement-if-possible! rpc-util/*session-state* rpc-util/*environment* :email 1))
+                              (quota/decrement-if-possible! rpc-util/*session-state* rpc-util/*environment* nil :email 1))
 
           reroute-to-owner? (or (not quota-available) test_mode)
 
@@ -164,18 +241,7 @@
 
       (try+
         (let [msg ^MimeMessage (smtp-send
-                                 (if custom_smtp
-                                   {:host       (or smtp_host "")
-                                    :port       (or smtp_port 0)
-                                    :user       (or smtp_user "")
-                                    :pass       (or (try+ (:value (secrets/get-global-app-secret-value rpc-util/*app-info* "email-service/smtp-password" smtp_password))
-                                                          (catch [:type "anvil.secrets.SecretError"] _))
-                                                    "")
-                                    :encryption smtp_encryption}
-                                   (or @test-override-smtp-config
-                                       (get conf/app-smtp-config from-domain)
-                                       (:default conf/app-smtp-config)))
-
+                                 (get-smtp-connection email-service-config rpc-util/*environment*)
                                  {:from-address       from_address
                                   :from-name          from_name
                                   :to                 possibly-rerouted-to
@@ -201,6 +267,7 @@
                                   :in-reply-to        in_reply_to
                                   :references         references
                                   :app-id             rpc-util/*app-id*})]
+
           (SerializedPythonObject. "anvil.email.SendReport" {:message_id (.getMessageID msg)}))
         (catch MessagingException e
           (throw+ (email-send-error (str (.getMessage e) " (" (.getSimpleName (.getClass e)) ")" (when custom_smtp (str ". You have enabled Custom SMTP for email sending - did you configure it correctly? You may need to provide a valid from_address."))))))))))
@@ -219,82 +286,3 @@
                "anvil.private.email.send.v2" (wrapped-send true)})
 
 (swap! dispatcher/native-rpc-handlers merge handlers)
-
-
-;; Actual Javamail/SMTP implementation
-
-(defn make-props [props]
-  (let [properties (Properties.)]
-    (doseq [[k v] props]
-      (.put properties k v))
-    properties))
-
-(defn smtp-send [{:keys [host port user pass encryption] :as _smtp-config}
-                 {:keys [from-address from-name to cc bcc subject text html attachments inline-attachments in-reply-to references app-id] :as _message}]
-
-  (when-not host
-    (throw+ {:anvil/server-error "No SMTP server has been configured for this app"}))
-
-  (let [session (Session/getInstance (make-props (merge {"mail.smtp.starttls.enable" (if (contains? #{"ssl" "starttls"} encryption) "true" "false")}
-                                                        (when (= encryption "starttls")
-                                                          {"mail.smtp.starttls.required" "true"}))))
-
-        main-body (let [mp (MimeMultipart. "alternative")]
-                    (when text
-                      (.addBodyPart mp (doto (MimeBodyPart.)
-                                         (.setText text "utf-8"))))
-                    (when html
-                      (.addBodyPart mp (doto (MimeBodyPart.)
-                                         (.setContent html "text/html; charset=utf-8"))))
-
-                    (when-not (or text html)
-                      (.addBodyPart mp (doto (MimeBodyPart.)
-                                         (.setText "" "utf-8"))))
-
-                    mp)
-
-        main-body-with-inline-attachments (if (and inline-attachments
-                                                   (not-empty inline-attachments))
-                                            (let [mp (MimeMultipart. "related")]
-                                              (.addBodyPart mp (doto (MimeBodyPart.)
-                                                                 (.setContent main-body)))
-                                              (doseq [att inline-attachments]
-                                                (.addBodyPart mp att))
-                                              mp)
-                                            main-body)
-
-        full-content (let [mp (MimeMultipart.)]
-                       (.addBodyPart mp (doto (MimeBodyPart.)
-                                          (.setContent main-body-with-inline-attachments)))
-                       (doseq [att attachments]
-                         (.addBodyPart mp att))
-                       mp)
-
-        msg (doto (proxy [MimeMessage] [session]
-                    (updateMessageID []
-                      (when (nil? (.getMessageID this))
-                        (.setHeader this "Message-ID" (str "<" (System/currentTimeMillis) "-" (random/hex 4) "-" (or app-id "internal") "@anvil>")))))
-              (.setFrom (InternetAddress. ^String from-address ^String from-name))
-              (.setSubject subject)
-              (.setContent full-content))
-
-        proto (if (= encryption "ssl") "smtps" "smtp")]
-
-    (when to
-      (.setRecipients msg Message$RecipientType/TO (InternetAddress/parse to)))
-    (when cc
-      (.setRecipients msg Message$RecipientType/CC (InternetAddress/parse cc)))
-    (when bcc
-      (.setRecipients msg Message$RecipientType/BCC (InternetAddress/parse bcc)))
-
-    (when in-reply-to
-      (.setHeader msg "In-Reply-To" in-reply-to))
-
-    (when references
-      (.setHeader msg "References" references))
-
-    (with-open [transport (.getTransport session proto)]
-      (.connect transport host port user pass)
-
-      (.sendMessage transport msg (.getAllRecipients msg))
-      msg)))

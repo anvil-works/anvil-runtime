@@ -67,8 +67,10 @@
                                 (deliver response-promise r)
                                 true))
 
+        TEMPORARY-FAILURE 451
+
         timer-task (util/timer-task "timing out SMTP response"
-                     (simple-smtp-result! {:error "The server timed out while attempting to deliver your message. Please try again."}))
+                     (simple-smtp-result! {:code TEMPORARY-FAILURE :error "The server timed out while attempting to deliver your message. Please try again."}))
 
         smtp-result! (fn [r]
                        (when (simple-smtp-result! r)
@@ -86,26 +88,28 @@
                          nil
 
                          (= (:type error) "RateLimitExceeded")
-                         (smtp-result! {:error "Rate limit exceeded"})
+                         (smtp-result! {:error {:code TEMPORARY-FAILURE :error "Rate limit exceeded"}})
 
                          error
                          (let [cant-handle-email? (and (= (:type error) "anvil.server.NoServerFunctionError")
                                                        (re-find #"email:handle_message" (:message error)))
-                               msg-for-smtp (cond
-                                              (#{"anvil.email.DeliveryFailure" "DeliveryFailure"} (:type error))
-                                              (:message error)
+                               error-for-smtp (cond
+                                                (#{"anvil.email.DeliveryFailure" "DeliveryFailure"} (:type error))
+                                                (if-let [[_ code-s message] (re-matches #"(\d+): (.*)" (:message error))]
+                                                  {:code (Integer/parseInt code-s) :message message}
+                                                  {:code 554 :message (:message error)})
 
-                                              cant-handle-email?
-                                              "This application cannot handle incoming email"
+                                                cant-handle-email?
+                                                {:code 551 :message "This application cannot handle incoming email"}
 
-                                              :else
-                                              "An internal error has occurred. Check the app logs for details.")
+                                                :else
+                                                {:code TEMPORARY-FAILURE :message "An internal error has occurred. Check the app logs for details."})
 
                                error (if cant-handle-email?
                                        (assoc error :message "No server function has been decorated @anvil.email.handle_message, so incoming email message could not be delivered")
                                        error)]
                            (app-log/record-event! app-session trace-id "err" (str (:type error) ": " (:message error)) error)
-                           (smtp-result! {:error msg-for-smtp}))
+                           (smtp-result! {:error error-for-smtp}))
 
                          :else
                          (smtp-result! {:ok true})))}
@@ -193,13 +197,14 @@
                                :use-quota?    true}
                               return-path)
 
-        (when-let [error (:error @response-promise)]
-          (throw (RejectException. ^String error)))
+        (when-let [{:keys [code message]} (:error @response-promise)]
+          (throw (RejectException. code message)))
 
 
         (catch :anvil/server-error e
           (dispatcher/respond! return-path {:error e})
-          (throw (RejectException. (:error @response-promise))))
+          (let [{:keys [code message]} (:error @response-promise)]
+            (throw (RejectException. code message))))
         (catch RejectException e
           (throw e))
         (catch Exception e

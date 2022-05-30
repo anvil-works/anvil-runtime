@@ -1,5 +1,6 @@
 "use strict";
 
+import { setHandled } from "./events";
 var PyDefUtils = require("PyDefUtils");
 
 /**
@@ -143,18 +144,15 @@ module.exports = (pyModule) => {
                 $(self._anvil.elements.button).on(
                     "click",
                     PyDefUtils.funcWithPopupOK((e) => {
+                        setHandled(e);
                         // Search me why this is needed, but it is.
-                        if (
-                            Sk.misceval.isTrue(self._anvil.props["enabled"]) &&
-                            self._anvil.eventHandlers["click"] !== undefined
-                        ) {
-                            e.stopPropagation(); // stop nested Buttons and Links from firing click events
-                            PyDefUtils.raiseEventAsync(
-                                { keys: { meta: e.metaKey, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey } },
-                                self,
-                                "click"
-                            );
-                        }
+                        if (!isTrue(self._anvil.props["enabled"])) return;
+
+                        PyDefUtils.raiseEventAsync(
+                            { keys: { meta: e.metaKey, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey } },
+                            self,
+                            "click"
+                        );
                     })
                 );
             });

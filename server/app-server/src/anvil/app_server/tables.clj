@@ -13,17 +13,20 @@
 ;;(clj-logging-config.log4j/set-logger! :level :trace)
 (defn- pps [o] (with-out-str (pprint o)))
 
-(defn update-indexes-and-views! [table-id]
-  (let [db (tables-util/db)
-        table-name (:python_name (first (jdbc/query (tables-util/db) ["SELECT python_name FROM app_storage_access WHERE table_id = ?" table-id])))
-        SQL-NAME (let [s (.replaceAll table-name "[^\\p{Alnum}]" "_")]
-                   (if (= s "") "_" s))]
-    (tables-util/update-col-indexes (tables-util/db) table-id)
-    (tables-util/update-table-views! (tables-util/db) table-id)
+(defn update-indexes-and-views!
+  ([]
+   (binding [tables-util/*environment-for-admin-call* {}]
+     (doseq [access-record (jdbc/query (tables-util/db) ["SELECT table_id,python_name FROM app_storage_access"])]
+       (update-indexes-and-views! access-record))))
+  ([{:keys [table_id python_name] :as access-record}]
+   (let [SQL-NAME (let [s (.replaceAll python_name "[^\\p{Alnum}]" "_")]
+                    (if (= s "") "_" s))]
+     (tables-util/update-col-indexes (tables-util/db) table_id)
+     (tables-util/update-table-views! (tables-util/db) table_id)
 
-    (jdbc/execute! (tables-util/db) ["CREATE SCHEMA IF NOT EXISTS app_tables"])
-    (jdbc/execute! (tables-util/db) [(str "DROP VIEW IF EXISTS app_tables." SQL-NAME)])
-    (jdbc/execute! (tables-util/db) [(str "CREATE VIEW app_tables." SQL-NAME " AS SELECT * FROM data_tables.table_" table-id)])))
+     (jdbc/execute! (tables-util/db) ["CREATE SCHEMA IF NOT EXISTS app_tables"])
+     (jdbc/execute! (tables-util/db) [(str "DROP VIEW IF EXISTS app_tables." SQL-NAME)])
+     (jdbc/execute! (tables-util/db) [(str "CREATE VIEW app_tables." SQL-NAME " AS SELECT * FROM data_tables.table_" table_id)]))))
 
 
 

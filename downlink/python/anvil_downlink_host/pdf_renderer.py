@@ -198,6 +198,8 @@ class Browser:
                     if not ready_to_print:
                         raise Exception("Components did not load within allowed time.")
                     else:
+                        print("Outstanding network requests:")
+                        pprint(outstanding_network_requests)
                         raise Exception("Network requests did not complete within allowed time.")
 
 

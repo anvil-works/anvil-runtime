@@ -40,7 +40,8 @@
             [anvil.runtime.app-log :as app-log]
             [clojure.java.jdbc :as jdbc]
             [anvil.dispatcher.background-tasks :as background-tasks]
-            [cheshire.core :as json])
+            [cheshire.core :as json]
+            [anvil.dispatcher.native-rpc-handlers.email :as email])
   (:gen-class)
   (:import (org.subethamail.smtp.server SMTPServer)
            (java.io File)
@@ -141,6 +142,7 @@
                 (System/exit 1)))]
     (update-cron-jobs! (:content app))
     (tables/validate-app-tables-schema (-> app :content :db_schema) (-> app :content :table_id_hints) main-app-id auto-migrate-tables? ignore-invalid-schema?)
+    (tables/update-indexes-and-views!)
     app))
 
 (defn wrap-cors [f origin]
@@ -190,6 +192,13 @@
 
 (background-tasks/set-background-task-hooks! {:get-environment-for-background-task (constantly {})})
 
+(email/set-email-hooks! {:get-smtp-connection (fn [_email-service-config _environment]
+                                                (let [{:keys [host] :as smtp-config} (:default runtime-conf/app-smtp-config)]
+
+                                                  (when-not host
+                                                    (throw+ {:anvil/server-error "No SMTP server has been configured"}))
+
+                                                  (email/open-smtp-connection smtp-config)))})
 
 ;; AGPL compliance: Serve up our source code (or, if we are an official release package, a GitHub link)
 (def source-link (delay
@@ -205,7 +214,9 @@
   (wrap-cors
     (routes
       (route/resources "/_/static/runtime" {:root "runtime-client-core" :mime-types util/additional-mime-types})
-      (route/resources "/_/static/services" {:root "runtime-client-core" :mime-types util/additional-mime-types})
+      (route/resources "/_/static/services" {:root "services-core" :mime-types util/additional-mime-types})
+      (GET "/_/static/icon-512x512.png" []
+        (resp/resource-response "runtime-client-core/icon-512x512.png"))
       (GET "/_/static/anvil-runtime-source.tgz" []
         ;; AGPL compliance: Provide source download
         (resp/resource-response "anvil-runtime-source.tgz"))
@@ -388,6 +399,9 @@
 
         https-origin? (= (.getScheme origin-uri) "https")
 
+        options (assoc options :origin-uri origin-uri
+                               :https-origin? https-origin?)
+
         use-reverse-proxy? (and (not (:disable-tls options))
                                 https-origin?)
 
@@ -480,6 +494,7 @@
     (let [app (load-main-app (:auto-migrate options) (:ignore-invalid-schema options))
 
           ring-config (-> site-defaults
+                          (assoc-in [:security :anti-forgery] false)
                           (assoc-in [:session :cookie-attrs :secure] https-origin?)
                           (assoc-in [:security :hsts] (and https-origin? (get options :add-hsts-headers false)))
                           (assoc-in [:security :frame-options] (if (get-in app [:content :allow_embedding])

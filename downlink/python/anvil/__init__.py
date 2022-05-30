@@ -2,6 +2,8 @@ import sys
 
 __author__ = 'Meredydd Luff <meredydd@anvil.works>'
 
+_warnings = {}
+
 
 class LiveObject():
     def __init__(self, spec):
@@ -24,6 +26,11 @@ class LiveObject():
 def _get_live_object_id(lo):
     if isinstance(lo, LiveObject):
         return lo._spec["id"]
+    elif hasattr(lo, "get_id"):
+        if _warnings.get("_get_live_object_id") is None:
+            _warnings["_get_live_object_id"] = True
+            print("Deprecated: _get_live_object_id is no longer required - call row.get_id() instead.")
+        return lo.get_id()
     else:
         raise Exception("Not a LiveObject")
 
@@ -129,8 +136,9 @@ def is_server_side():
 
 
 def _get_service_client_config(path):
-    # TODO: Return the actual client config!
-    return {}
+    import anvil.server
+    # TODO we could cache the return value - but we don't use it anywhere
+    return anvil.server.call("anvil.private.get_client_config", path)
 
 
 class _AppInfo:

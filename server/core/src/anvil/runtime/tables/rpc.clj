@@ -6,7 +6,7 @@
   (:require [clojure.java.jdbc :as jdbc]
             [anvil.runtime.tables.util :as tables-util]
             [clojure.data.json :as json]
-            [anvil.util :as util]
+            [anvil.util :as util :refer [as-int]]
             [clojure.tools.logging :as log]
             [anvil.dispatcher.serialisation.live-objects :as live-objects]
             [anvil.dispatcher.types :as types]
@@ -346,7 +346,7 @@
 
                  (not col)
                  (if-not auto-create-cols?
-                   (throw+ (general-tables-error (str "Row update failed: Column '" col-name "' does not exist and automatic column creation is disabled.") "anvil.tables.NoSuchColumn"))
+                   (throw+ (general-tables-error (str "Row update failed: Column '" col-name "' does not exist and automatic column creation is disabled.") "anvil.tables.NoSuchColumnError"))
                    (let [new-id (keyword (gen-new-id 8))]
 
                      (rpc-util/*rpc-println* (str "Automatically creating column " (pr-str col-name) " (" (get-type-name c val-type) ")"))
@@ -392,7 +392,7 @@
                        "anvil.tables.query.none_of"})
 
 (def search-modifiers #{"anvil.tables.order_by"
-                        "anvil.tables._page_size"})
+                        "anvil.tables.query.page_size"})
 
 (defn build-query-obj [query get-col table-name equality-only?]
   (log/trace "Building search expression from query:\n" (with-out-str (pprint query)))
@@ -610,7 +610,7 @@
                           :value {:column_name (:order_by arg)
                                   :ascending   (:ascending arg)}}
                          (= search-modifier "page_size")
-                         {:type "anvil.tables._page_size"
+                         {:type "anvil.tables.query.page_size"
                           :value {:rows (:page_size arg)}}
                          :else
                          ;; This is definitely an invalid arg. Pass it through to be picked up below.
@@ -642,7 +642,7 @@
                              "anvil.tables.order_by"
                              {:order_by (:id (get-col (:column_name value))) :ascending (boolean (:ascending value))}
 
-                             "anvil.tables._page_size"
+                             "anvil.tables.query.page_size"
                              (if (number? (:rows value))
                                {:chunk_size (:rows value)}
                                (throw+ (general-tables-error (str "Page size must be a number."))))
@@ -761,21 +761,26 @@
             ;; "set" maps to the same function
             "update"              (fn [[table-id row-id view-cols] kwargs]
                                     (let [kwargs (realise-media-in-kwargs kwargs)]
-                                      (with-use-quota [use-quota!]
-                                        (let [auto-create-cols? (:auto_create_missing_columns (get-service-config))
-                                              current-value (or
-                                                              (:data (first (jdbc/query (db) ["SELECT data from app_storage_data WHERE table_id = ? AND id = ?"
-                                                                                              table-id row-id])))
-                                                              (throw+ (general-tables-error "This row has been deleted")))
-                                              [new-data cols media-updates] (prepare-update! (db) table-id current-value kwargs view-cols auto-create-cols?)
-                                              new-data (merge new-data (do-media-updates! row-id table-id media-updates use-quota!))]
+                                      (with-use-quota [use-quota! :repeatable-read]
+                                        (try
+                                          (let [auto-create-cols? (:auto_create_missing_columns (get-service-config))
+                                                current-value (or
+                                                                (:data (first (jdbc/query (db) ["SELECT data from app_storage_data WHERE table_id = ? AND id = ? FOR UPDATE"
+                                                                                                table-id row-id])))
+                                                                (throw+ (general-tables-error "This row has been deleted")))
+                                                [new-data cols media-updates] (prepare-update! (db) table-id current-value kwargs view-cols auto-create-cols?)
+                                                new-data (merge new-data (do-media-updates! row-id table-id media-updates use-quota!))]
 
-                                          (jdbc/execute! (db) ["UPDATE app_storage_data SET data = ?::jsonb WHERE table_id = ? AND id = ?"
-                                                               new-data table-id row-id])
-                                          (rpc-util/update-live-object-cache! "anvil.tables.Row" rpc-util/*live-object-id*
-                                                                              (make-item-cache cols new-data nil nil))
+                                            (jdbc/execute! (db) ["UPDATE app_storage_data SET data = ?::jsonb WHERE table_id = ? AND id = ?"
+                                                                 new-data table-id row-id])
 
-                                          nil))))
+                                            (rpc-util/update-live-object-cache! "anvil.tables.Row" rpc-util/*live-object-id*
+                                                                                (make-item-cache cols new-data nil nil))
+
+                                            nil)
+                                          (catch Exception e
+                                            (log/warn (str "Row update failed on table " table-id " row " row-id))
+                                            (throw e))))))
 
             "get_id"              (fn [[table-id row-id _view-cols] _kwargs]
                                     (util/write-json-str [table-id row-id]))
@@ -837,8 +842,11 @@
 
                                                     row-data (merge row-data media-object-ids (get-view-data view-query))
                                                     _ (use-quota! 1 0)
-                                                    db-row (first (jdbc/query (db) ["INSERT INTO app_storage_data (table_id,data) VALUES (?,?::jsonb) RETURNING id, data"
-                                                                                    table-id row-data]))
+                                                    db-row (first (try (jdbc/query (db) ["INSERT INTO app_storage_data (table_id,data) VALUES (?,?::jsonb) RETURNING id, data"
+                                                                                         table-id row-data])
+                                                                       (catch Exception e
+                                                                         (log/warn (str "Row insert failed on table " table-id " with new data of size " (try (count (json/write-str row-data)) (catch Exception _ :error))))
+                                                                         (throw e))))
                                                     new-row (mk-Row table-id cols (get-cols-from-view-query view-query) nil nil db-row)]
 
                                                 ;; We didn't know the new row ID when we updated the media, so write that in now.

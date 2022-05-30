@@ -70,7 +70,7 @@
     (if return? (respond! return-path {:response (f)}) (f))
     (catch :anvil/server-error e
       (respond! return-path {:error {:message (:anvil/server-error e), :type (:type e)}}))
-    (catch Exception e
+    (catch Throwable e
       (let [error-id (random/hex 6)]
         (log/error e "Unexpected error in synchronous-return-path code:" error-id)
         (respond! return-path {:error {:message (str "Internal server error: " error-id)}})))))
@@ -165,7 +165,7 @@
 
     (when (and (re-matches #".*:.*" func) (= :client origin))
       (log/debug "Denied client access to scoped function" (pr-str func))
-      (respond! return-path {:error {:type    "anvil.server.PermissionDeniedError",
+      (respond! return-path {:error {:type    "anvil.server.PermissionDenied",
                                      :message (str "Cannot call scoped server function " (pr-str func) " from client code")}})
       (throw+ {:anvil/server-error "Cannot call scoped server function from client code"}))
 
@@ -176,7 +176,7 @@
             metrics-timer (atom nil)
             wrapped-respond! (fn [resp]
                                (when (and use-quota? (= 1 (swap! clock-stopped inc)))
-                                 (quota/decrement! session-state environment
+                                 (quota/decrement! session-state environment nil
                                                    :server-time
                                                    (/ (double (- (System/currentTimeMillis) start-time)) 1000)))
 
@@ -265,9 +265,6 @@
             (let [background-launch-fn (or (:bg-fn executor) (partial @default-background-wrapper executor))]
               (background-launch-fn request return-path)))
 
-          (catch :anvil/runtime-unavailable e
-            ;; We've already responded. Don't do anything - no need to clutter the logs.
-            )
           (catch Exception e
             (let [error-id (random/hex 6)]
               (log/error e "Unexpected error in downlink executor:" error-id)

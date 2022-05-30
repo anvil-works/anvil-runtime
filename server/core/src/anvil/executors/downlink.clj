@@ -192,7 +192,11 @@
                                 (when (is-idle?)
                                   (close channel)))
 
-          connection {:send-request! send-request!, ::ws-server/send-raw! #(send! channel %), ::tag-channel! (partial ws-util/tag-channel! channel) ::disconnect-on-idle! disconnect-on-idle! ::get-pending-responses get-pending-responses}]
+          close-with-error-message! (fn [error-msg]
+                                      (send! channel (util/write-json-str {:error error-msg}))
+                                      (close channel))
+
+          connection {:send-request! send-request!, ::ws-server/send-raw! #(send! channel %), ::tag-channel! (partial ws-util/tag-channel! channel) ::disconnect-on-idle! disconnect-on-idle! ::get-pending-responses get-pending-responses ::close-with-error-message! close-with-error-message!}]
 
       (on-close channel
                 (fn [why]
@@ -224,9 +228,7 @@
                           (cond
                             (not @registration-cookie)
                             (if (not= (:v raw-data) 2)
-                              (do
-                                (send! channel (util/write-json-str {:error "You are using an outdated version of the downlink server"}))
-                                (close channel))
+                              (close-with-error-message! "You are using an outdated version of the downlink server")
 
                               (if-let [cookie (register-downlink! raw-data connection)]
                                 (do
@@ -236,9 +238,7 @@
                                   (send! channel (util/write-json-str {:auth "OK"})))
 
                                 ;; else
-                                (do
-                                  (send! channel (util/write-json-str {:error "Incorrect downlink key"}))
-                                  (close channel))))
+                                (close-with-error-message! "Incorrect downlink key")))
 
                             (= (:type raw-data) "CHUNK_HEADER")
                             (serialisation/processBlobHeader ds raw-data)

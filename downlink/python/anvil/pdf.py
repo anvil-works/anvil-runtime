@@ -25,7 +25,11 @@ def _component_to_pdf(options, component_args, component_kwargs):
         raise Exception("Can only generate PDFs from server code")
     return _real_component_to_pdf(options, component_args, component_kwargs)
 
-#!defFunction(anvil.pdf,%anvil.Media instance,form_name,*args,**kwargs)!2: "Render an Anvil form to PDF. Pass the name of the form you want to render, plus any arguments you want to pass to its constructor.\n\nReturns a PDF as an Anvil Media object." ["render_form"]
+#!defFunction(anvil.pdf,%anvil.Media instance,form_name,*args,**kwargs)!2:
+# {
+#   $doc: "Render an Anvil form to PDF. Pass the name of the form you want to render, plus any arguments you want to pass to its constructor.\n\nReturns a PDF as an Anvil Media object.",
+#   anvil$helpLink: "/docs/media/creating_pdfs"
+# } ["render_form"]
 def render_form(*args, **kwargs):
     return _real_component_to_pdf({}, args, kwargs)
 

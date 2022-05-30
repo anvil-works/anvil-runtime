@@ -1,5 +1,6 @@
 "use strict";
 
+import { setHandled } from "./events";
 var PyDefUtils = require("PyDefUtils");
 
 /**
@@ -160,6 +161,9 @@ module.exports = (pyModule) => {
                 const change = PyDefUtils.raiseEventOrSuspend.bind(null, {}, self, "change");
                 self._anvil.element.on("change", (e) => {
                     PyDefUtils.asyncToPromise(() => Sk.misceval.chain(clicked(), change));
+                });
+                $(self._anvil.elements.label).on("click", (e) => {
+                    setHandled(e);
                 });
             });
 

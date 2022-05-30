@@ -4,7 +4,6 @@ let ACTIVE_CACHE = 'v0';
 let OFFLINE_TIMEOUT = 5000;
 
 let lastOffline = 0;
-let serviceWorkerAgrees = true;
 
 let cleanupOldCaches = async () => {
     for (let key of await caches.keys()) {
@@ -43,19 +42,10 @@ let _fetch = async e => {
             log && console.log("Not caching:", e.request.url);
             cache.delete(e.request);
         }
-        if (!serviceWorkerAgrees) {
-            // at some point the serviceWorker found we were offline
-            // but the navigator said we were onLine
-            postOfflineStatus(e, true);
-        }
+        updateOnlineStatus(e, true);
         return resp;
     } catch (err) {
-        if (navigator.onLine) {
-            // we don't need to worry if navigator says we're offline
-            // it's the false positives we care about
-            serviceWorkerAgrees = false;
-            postOfflineStatus(e, false);
-        }
+        updateOnlineStatus(e, false);
         
         if (match) {
             lastOffline = Date.now();
@@ -81,9 +71,22 @@ addEventListener('fetch', e => {
     e.respondWith(_fetch(e))
 });
 
+let navigatorTrusted = true;
+
+/// We only post a message if either the navigator was previously untrusted
+/// or the navigator is now untrusted
+async function updateOnlineStatus(e, onLine) {
+    if (onLine !== navigator.onLine) {
+        navigatorTrusted = false;
+        postOfflineStatus(e, onLine);
+    } else if (!navigatorTrusted) {
+        navigatorTrusted = true;
+        postOfflineStatus(e, onLine);
+    }
+}
 
 async function postOfflineStatus(e, onLine) {
     const client = await clients.get(e.clientId);
     if (!client) return;
-    client.postMessage({ type: "OFFLINE_STATUS", onLine: onLine });
+    client.postMessage({ type: "OFFLINE_STATUS", onLine });
 }

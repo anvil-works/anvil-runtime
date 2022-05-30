@@ -4,6 +4,7 @@
   (:require [anvil.dispatcher.core :as dispatcher]
             [anvil.runtime.conf :as conf]
             [anvil.util :as util]
+            [anvil.core.db-config :as db-config]
             [clojure.tools.logging :as log])
   (:import (com.onelogin.saml2.settings SettingsBuilder)
            (com.onelogin.saml2.util Constants Util)
@@ -50,27 +51,27 @@
     (.toString writer)))
 
 (defn get-cert-and-key []
-  (when-not (.exists (File. ^String (:private-key conf/saml-paths)))
-    (log/info "Generating SAML key pair")
-    (let [key-pair (generate-key-pair)
-          private-pem (->pem (.getPrivate key-pair) "PRIVATE KEY")
-          public-pem (->pem (.getPublic key-pair) "PUBLIC KEY")]
-      (spit (:private-key conf/saml-paths) private-pem)
-      (spit (:public-key conf/saml-paths) public-pem)))
+  (let [{:keys [private-key public-key]} (or (db-config/get-val ::keys)
+                                             (db-config/set-val ::keys (or (when (.exists (File. ^String (:private-key conf/saml-paths)))
+                                                                             (log/info "Loading legacy SAML key pair into DB")
+                                                                             {:private-key (slurp (:private-key conf/saml-paths))
+                                                                              :public-key  (slurp (:public-key conf/saml-paths))})
+                                                                           (let [key-pair (generate-key-pair)]
+                                                                             (log/info "Generated SAML key pair")
+                                                                             {:private-key (->pem (.getPrivate key-pair) "PRIVATE KEY")
+                                                                              :public-key  (->pem (.getPublic key-pair) "PUBLIC KEY")}))))
 
-  (let [private-key-pem (slurp (:private-key conf/saml-paths))]
-
-    (when-not (.exists (File. ^String (:certificate conf/saml-paths)))
-      (log/info "Generating SAML certificate")
-      (when-not (.exists (File. ^String (:public-key conf/saml-paths)))
-        (throw (Exception. "Cannot auto-generate SAML certificate without public key. Either provide the public key, or a suitable certificate.")))
-      (let [private-key-info (.readObject (PEMParser. (clojure.java.io/reader (:private-key conf/saml-paths))))
-            public-key-info (.readObject (PEMParser. (clojure.java.io/reader (:public-key conf/saml-paths))))
-            certificate (generate-x509-cert public-key-info (.getPrivateKey (JcaPEMKeyConverter.) private-key-info))]
-        (spit (:certificate conf/saml-paths) (->pem certificate "CERTIFICATE"))))
-
-    (let [cert-pem (slurp (:certificate conf/saml-paths))]
-      [private-key-pem cert-pem])))
+        certificate (or (db-config/get-val ::certificate)
+                        (db-config/set-val ::certificate (or (when (.exists (File. ^String (:certificate conf/saml-paths)))
+                                                               (log/info "Loading legacy SAML certificate into DB")
+                                                               (slurp (:certificate conf/saml-paths)))
+                                                             (let [private-key-info (.readObject (PEMParser. (clojure.java.io/reader (char-array private-key))))
+                                                                   public-key-info (.readObject (PEMParser. (clojure.java.io/reader (char-array public-key))))
+                                                                   certificate (generate-x509-cert public-key-info (.getPrivateKey (JcaPEMKeyConverter.) private-key-info))
+                                                                   cert-pem (->pem certificate "CERTIFICATE")]
+                                                               (log/info "Generated SAML certificate")
+                                                               cert-pem))))]
+    [private-key certificate]))
 
 (defn get-sp-entity-ids [app-info]
   {:app    (str conf/runtime-common-url "/_/saml-app/" (util/sha-256 (:id app-info)))

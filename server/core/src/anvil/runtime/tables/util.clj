@@ -25,7 +25,7 @@
            (java.time.format DateTimeFormatter DateTimeFormatterBuilder)
            (java.time.temporal ChronoField)))
 
-(clj-logging-config.log4j/set-logger! :level :info)
+;(clj-logging-config.log4j/set-logger! :level :debug)
 
 (defonce table-mapping-for-environment (fn
                                          ([environment] {})
@@ -46,7 +46,7 @@
 
 (defonce get-all-table-access-records
          (fn [_mapping]
-           (jdbc/query util/db ["SELECT table_id, python_name FROM app_storage_access"])))
+           (jdbc/query util/db ["SELECT DISTINCT ON (table_id) table_id,name,python_name,columns,client,server FROM app_storage_tables,app_storage_access WHERE id = table_id"])))
 
 (defonce update-table-access-record!
          (fn [_mapping table-id update]
@@ -90,14 +90,6 @@
 (defn db-for-current-app []
   (db-for-mapping rpc-util/*session-state* (table-mapping-for-environment (current-environment) rpc-util/*session-state*)))
 
-(defn as-int [x]
-  (if (integer? x)
-    x
-    (try
-      (Integer/parseInt x)
-      (catch NumberFormatException _
-        nil))))
-
 (defn get-service-config []
   (if-let [props (first (filter #(= (:source %) "/runtime/services/tables.yml") (:services rpc-util/*app*)))]
     (merge (:client_config props) (:server_config props))
@@ -110,7 +102,7 @@
   (cond
     (instance? SerialisableForRpc x) false
     (string? x) true
-    (number? x) true
+    (number? x) (not (Double/isNaN x))
     (nil? x) true
     (contains? #{true false} x) true
     (or (vector? x) (list? x)) (every? is-jsonable? x)
@@ -386,7 +378,8 @@
                   "seconds ago)")
         (try
           (.close ^Connection (:connection (:db-map tx)))
-          (catch Exception _))))))
+          (catch Exception _))
+        (util/rollback-quota-changes! (:anvil-quota-rollback-state tx))))))
 
 (defn start-transaction-tidy-timer []
   (.start (Thread. ^Runnable
@@ -424,7 +417,7 @@
 
 (defn with-app-transaction*
   "Run body-fn in a local transaction, or in the ongoing app transaction if there is one"
-  [require-ongoing-transaction? body-fn]
+  [require-ongoing-transaction? relaxed-isolation-level body-fn]
   (let [ot (get (swap! open-transactions #(if (get % rpc-util/*thread-id*)
                                             (update-in % [rpc-util/*thread-id* :open] inc)
                                             %))
@@ -434,8 +427,10 @@
         (if (contains? (::transaction-threads @rpc-util/*session-state*) rpc-util/*thread-id*)
           (throw+ (general-tables-error "This transaction has expired" "anvil.tables.TransactionError"))
           (throw+ {:anvil/server-error "No transaction currently running"}))
-        (with-table-transaction
-          (body-fn)))
+        ;; expanded (with-table-transaction) to hackily pipe in relaxed-isolation-level
+        (util/with-db-transaction [db-c (db) relaxed-isolation-level]
+          (binding [*current-db-transaction* db-c]
+            (body-fn))))
       (try
         (log/trace "Reusing open transaction. Probably.")
         (body-fn)
@@ -443,11 +438,6 @@
           (when ot
             (swap! open-transactions update-in [rpc-util/*thread-id* :open] dec)))))))
 
-(defmacro with-app-transaction [& body]
-  `(with-app-transaction* false (fn [] ~@body)))
-
-(defmacro require-app-transaction [& body]
-  `(with-app-transaction* true (fn [] ~@body)))
 
 (def total-open-txns (atom 0))
 
@@ -461,19 +451,22 @@
 
           db-map (db-for-mapping-transaction (table-mapping-for-environment rpc-util/*environment* rpc-util/*session-state*))
 
+          [isolation-kw isolation-level] (if (= isolation "relaxed")
+                                           [:repeatable-read Connection/TRANSACTION_REPEATABLE_READ]
+                                           [:serializable Connection/TRANSACTION_SERIALIZABLE])
           conn (try
                  (doto (jdbc/get-connection db-map)
                    (.setAutoCommit false)
-                   (.setTransactionIsolation (if (= isolation "relaxed")
-                                               Connection/TRANSACTION_REPEATABLE_READ
-                                               Connection/TRANSACTION_SERIALIZABLE)))
+                   (.setTransactionIsolation isolation-level))
                  (catch SQLException e
                    (log/error "DB Connection failed in open-app-transaction! for app" rpc-util/*app-id* ", probably too many transactions:" (str e))
                    (throw+ (general-tables-error "Failed to connect to database: Too many transactions already in progress."))))
 
           db-map (-> (jdbc/add-connection db-map conn)
                      ;; Tell the JDBC helper it's in a transaction already
-                     (assoc :level 1))]
+                     (assoc :level 1
+                            :anvil-quota-rollback-state (atom {})
+                            :anvil-txn-isolation-level isolation-kw))]
 
       (log/trace "Opening app transaction in thread" rpc-util/*thread-id*)
 
@@ -483,6 +476,7 @@
              #(if %
                 (do
                   (try (.close conn) (catch Exception _))
+                  (util/rollback-quota-changes! (:anvil-quota-rollback-state db-map))
                   (throw+ (general-tables-error "Internal error: Duplicate racing transactions on the same thread")))
                 {:open 0, :db-map db-map, :last-touched (System/currentTimeMillis)}))
 
@@ -496,15 +490,17 @@
   (when-not rpc-util/*thread-id*
     (throw+ (general-tables-error "Cannot close a transaction in an unidentified thread")))
   ;; Atomically remove and retrieve the value of the 'thread-id' key from this map
-  (if-let [{{:keys [^Connection connection]} :db-map} (-> (swap-vals! open-transactions dissoc rpc-util/*thread-id*)
-                                                          (first)
-                                                          (get rpc-util/*thread-id*))]
+  (if-let [{{:keys [^Connection connection anvil-quota-rollback-state]} :db-map}
+           (-> (swap-vals! open-transactions dissoc rpc-util/*thread-id*)
+               (first)
+               (get rpc-util/*thread-id*))]
     ;; We now MUST close connection before returning, because nobody else will
     (try
       (swap! rpc-util/*session-state* update-in [::transaction-threads] disj rpc-util/*thread-id*)
       (if-not rollback?
         (.commit connection)
         (.rollback connection))
+      (util/rollback-quota-changes! anvil-quota-rollback-state)
       (finally
         (.close connection)))
 
@@ -515,54 +511,42 @@
       (throw+ {:anvil/server-error "No transaction currently running"}))))
 
 
-(defn -mk-use-quota-fns [decrement! decrement-if-possible!]
-  (let [total-rows-added (atom 0)
-        total-bytes-added (atom 0)
-        use-quota! (fn use-quota!
-                     ([rows-added bytes-added] (use-quota! rows-added bytes-added true))
-                     ([rows-added bytes-added allow-throw?]
+(defn -mk-use-quota [db-txn decrement! decrement-if-possible!]
+  (fn use-quota!
+    ([rows-added bytes-added] (use-quota! rows-added bytes-added true))
+    ([rows-added bytes-added allow-throw?]
 
-                      (when (not= rows-added 0)
-                        (if allow-throw?
-                          (when-not (decrement-if-possible! :db-rows rows-added)
-                            (throw+ (general-tables-error "Row count quota exceeded" "anvil.tables.QuotaExceededError")))
-                          (decrement! :db-rows rows-added))
-                        (swap! total-rows-added + rows-added))
+     (when (not= rows-added 0)
+       (if allow-throw?
+         (when-not (decrement-if-possible! db-txn :db-rows rows-added)
+           (throw+ (general-tables-error "Row count quota exceeded" "anvil.tables.QuotaExceededError")))
+         (decrement! db-txn :db-rows rows-added)))
 
-                      (when (not= bytes-added 0)
-                        (if allow-throw?
-                          (when-not (decrement-if-possible! :db-bytes bytes-added)
-                            (throw+ (general-tables-error "Database size limit exceeded" "anvil.tables.QuotaExceededError")))
-                          (decrement! :db-bytes bytes-added))
-                        (swap! total-bytes-added + bytes-added))))
-        reset-quota! (fn reset-quota! []
-                       (decrement! :db-rows (- @total-rows-added))
-                       (decrement! :db-bytes (- @total-bytes-added))
-                       (reset! total-rows-added 0)
-                       (reset! total-bytes-added 0))]
+     (when (not= bytes-added 0)
+       (if allow-throw?
+         (when-not (decrement-if-possible! db-txn :db-bytes bytes-added)
+           (throw+ (general-tables-error "Database size limit exceeded" "anvil.tables.QuotaExceededError")))
+         (decrement! db-txn :db-bytes bytes-added))))))
 
-    [use-quota! reset-quota!]))
-
-(defmacro -with-use-quota [[decrement! decrement-if-possible!] [use-quota!] & body]
-  `(let [[~use-quota! reset-quota!#] (-mk-use-quota-fns ~decrement! ~decrement-if-possible!)]
-     (try
-       (with-app-transaction
-         ~@body)
-       (catch Exception e#
-         (reset-quota!#)
-
-         (if (= (.getMessage e#) "An attempt by a client to checkout a Connection has timed out.")
-           (do
-             (log/error "DB Connection failed in open-app-transaction! for app " rpc-util/*app-id* ", probably too many transactions:" (str e#))
-             (throw+ (general-tables-error "Failed to connect to database: Too many transactions already in progress.")))
-           (throw e#))))))
+(defmacro -with-use-quota [[decrement! decrement-if-possible! relaxed-isolation-level] [use-quota!] & body]
+  `(try
+     (with-app-transaction* false ~relaxed-isolation-level
+                            (fn [] (let [~use-quota! (-mk-use-quota (db) ~decrement! ~decrement-if-possible!)]
+                                     ~@body)))
+     (catch Exception e#
+       (if (= (.getMessage e#) "An attempt by a client to checkout a Connection has timed out.")
+         (do
+           (log/error "DB Connection failed in open-app-transaction! for app " rpc-util/*app-id* ", probably too many transactions:" (str e#))
+           (throw+ (general-tables-error "Failed to connect to database: Too many transactions already in progress.")))
+         (throw e#)))))
 
 (defmacro with-use-quota
   "Define a function that uses quota from the local app in a transaction, and rolls back on exception.
    If app-id is not specified, uses the current app for admin"
-  [[use-quota!] & body]
+  [[use-quota! relaxed-isolation-level] & body]
   `(-with-use-quota [(partial quota/decrement! rpc-util/*session-state* (current-environment))
-                     (partial quota/decrement-if-possible! rpc-util/*session-state* (current-environment))]
+                     (partial quota/decrement-if-possible! rpc-util/*session-state* (current-environment))
+                     ~relaxed-isolation-level]
                     [~use-quota!]
                     ~@body))
 

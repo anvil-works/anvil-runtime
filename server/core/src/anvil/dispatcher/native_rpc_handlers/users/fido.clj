@@ -5,12 +5,12 @@
             [anvil.dispatcher.native-rpc-handlers.util :as util]
             [crypto.random :as random]
             [anvil.runtime.secrets :as secrets]
-            [anvil.dispatcher.native-rpc-handlers.users.util :as users-util :refer [get-props-with-named-user-table
-                                                                                    get-user-and-check-enabled
-                                                                                    get-and-create-columns
-                                                                                    row-to-map]]
-            [anvil.runtime.tables.rpc :as tables]
-            [clojure.tools.logging :as log])
+            [anvil.dispatcher.native-rpc-handlers.users.util :refer [row-to-map
+                                                                     get-user-row-by-id
+                                                                     get-props-with-named-user-table
+                                                                     get-user-and-check-enabled]]
+            [clojure.tools.logging :as log]
+            [anvil.dispatcher.core :as dispatcher])
   (:import (com.webauthn4j.data.client.challenge DefaultChallenge)
            (com.webauthn4j.server ServerProperty)
            (com.webauthn4j.authenticator AuthenticatorImpl)
@@ -29,8 +29,8 @@
   (let [email (or email
                   (binding [util/*client-request?* false]
                     (let [{:keys [user_table]} (get-props-with-named-user-table)
-                          user-row-id (or (get-in @util/*session-state* [:users :logged-in-id]) (get-in @util/*session-state* [:users :mfa-reset-user-id]))
-                          user-row ((tables/Table "get_by_id") [user_table {}] {} user-row-id)]
+                          v1-row-id-str (or (get-in @util/*session-state* [:users :logged-in-id]) (get-in @util/*session-state* [:users :mfa-reset-user-id]))
+                          user-row (get-user-row-by-id user_table v1-row-id-str)]
                       (get (row-to-map user-row) "email")))
                   (throw+ {:anvil/server-error "Email address not provided and could not be inferred"}))
         challenge (String. ^bytes (b64/encode (random/bytes 32)))]
@@ -151,3 +151,8 @@
         (catch Exception e
           (log/trace (str "Fido assertion validation failed. This could be because a different MFA method matched on the same user.\n" (.getMessage e)))
           false)))))
+
+(swap! dispatcher/native-rpc-handlers merge
+       {"anvil.private.users.begin_fido_attestation"    (util/wrap-native-fn begin-fido-attestation)
+        "anvil.private.users.validate_fido_attestation" (util/wrap-native-fn validate-fido-attestation)
+        "anvil.private.users.begin_fido_assertion"      (util/wrap-native-fn begin-fido-assertion)})

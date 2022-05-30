@@ -33,6 +33,10 @@ class PasswordNotAcceptable(anvil.server.AnvilWrappedError):
 class MFARequired(AuthenticationFailed):
     pass
 
+#!defClass(anvil.users,MFAException)!:
+class MFAException(AuthenticationFailed):
+    pass
+
 #!defClass(anvil.users,PasswordResetRequested)!:
 class PasswordResetRequested(anvil.server.AnvilWrappedError):
     pass

@@ -65,7 +65,9 @@
   ;; This is used for things that aren't user-visible App Secrets, but are stored per-app in the YAML
   ;; (eg Custom SMTP passwords). In the app server you should never try to call this function;
   ;; there should be nice config flags for providing the required information instead.
-  (throw (UnsupportedOperationException.)))
+  (throw (UnsupportedOperationException.
+           (format "Attempted to decrypt an encrypted value ('%s') from the anvil.works hosted platform. This should be specified in the App Server configuration instead."
+                   secret-id))))
 
 (defn encrypt-str-with-global-key [key-specialisation plaintext]
   (runtime-secrets/encrypt-str @secret-key (str key-specialisation ":" plaintext)))

@@ -7,8 +7,11 @@
             [anvil.runtime.conf :as runtime-conf])
   (:import (java.util.concurrent ArrayBlockingQueue TimeUnit ThreadPoolExecutor RejectedExecutionException AbstractExecutorService)
            (org.httpkit PrefixThreadFactory)
-           (java.util Timer TimerTask)
-           (java.time Instant)))
+           (java.util Timer TimerTask Date)
+           (java.time Instant)
+           (java.io IOException)
+           (java.text SimpleDateFormat)
+           (java.lang.management ThreadInfo)))
 
 ;;(clj-logging-config.log4j/set-logger! :level :trace)
 
@@ -16,18 +19,21 @@
 (def SLOW-HANDLER-TIME-MS 500)
 (def MAX-QUEUE-SIZE 20480)
 
-(def ^:private task-info (ThreadLocal.))
-(defn set-task-info!
-  ([type n] (set-task-info! type n nil))
-  ([type n tags]
-   (.set task-info {:type (name type), :name (if (keyword? n) (.substring (str n) 1) n), :tags tags})))
-
 (defonce TASK-LOCK (Object.))
 (defonce task-queue (atom [nil]))
 (defonce n-threads-waiting (atom 0))
 (defonce n-threads-running (atom 0))
 (defonce max-task-queue (atom {}))
 (defonce execution-stats (atom {}))
+(defonce thread-stats (atom {}))
+
+(def ^:private task-info (ThreadLocal.))
+(defn set-task-info!
+  ([type n] (set-task-info! type n nil))
+  ([type n tags]
+   (let [info {:type (name type), :name (if (keyword? n) (.substring (str n) 1) n), :tags tags}]
+     (swap! thread-stats assoc (.getName (Thread/currentThread)) info)
+     (.set task-info info))))
 
 (defn run-one-task! [timeout]
   (let [[_ [task enqueue-time] tags]
@@ -53,6 +59,7 @@
           (let [execution-time-nanos (- (System/nanoTime) start-time)
                 task-info (.get task-info)]
             ;; TODO record usage by task
+            (swap! thread-stats assoc-in [(.getName (Thread/currentThread)) :duration-ms] (/ execution-time-nanos 1e6))
             (swap! task-queue (fn [[queue]] [(hrr-queue/hrr-penalise queue tags execution-time-nanos)]))
             (swap! execution-stats
                    (fn update
@@ -100,6 +107,7 @@
       (dotimes [_ n-to-add] (launch-thread!)))))
 
 (defonce ^:private pool-expand-timer (Timer. true))
+(def ^:dynamic *already-expands* false)
 
 (defn with-expanding-threadpool-when-slow* [body-fn]
   (let [running (atom true)
@@ -112,9 +120,12 @@
                                                (swap! thread-pool disj (Thread/currentThread)))))]
                         (swap! largest-pool-size max (count (swap! thread-pool conj t)))
                         (.start t)))]
-    (.schedule pool-expand-timer expand-task (long SLOW-HANDLER-TIME-MS))
+    (when-not *already-expands*
+      ;; This is our first call to with-expanding-threadpool-when-slow in this call stack.
+      (.schedule pool-expand-timer expand-task (long SLOW-HANDLER-TIME-MS)))
     (try
-      (body-fn)
+      (binding [*already-expands* true]
+        (body-fn))
       (finally
         (.cancel expand-task)
         (reset! running false)))))
@@ -170,6 +181,45 @@
              (metrics/set! :api/task-queue-length-total (hrr-queue/hrr-size (first @task-queue)))
              (Thread/sleep 1000))))
 
+;; Debugging: Dump thread dumps whenever the worker pool queue gets too big
+
+(defn ThreadInfo->str [^ThreadInfo thread-info]
+  (apply str (.getThreadName thread-info) " " (.getThreadState thread-info) "\n"
+         (for [s (.getStackTrace thread-info)]
+           (str "    at " s "\n"))))
+
+(defn thread-dump-str []
+  (->> (.dumpAllThreads (java.lang.management.ManagementFactory/getThreadMXBean) true true)
+       (sort-by #(.toLowerCase (.getThreadName %)))
+       (filter #(re-find #"anvil" (.getThreadName %)))
+       (map ThreadInfo->str)
+       (interpose "\n")
+       (apply str)))
+
+(defn dump-threads! []
+  (let [filename (str "/shared/threads-" (.format (SimpleDateFormat. "yyyy-MM-dd_HH-mm-ss")
+                                                  (Date.)) ".dump")
+        thread-dump (thread-dump-str)]
+    (try
+      (spit filename thread-dump)
+      (catch IOException e
+        (log/warn "Could not write thread dump to" filename ":" (str e))))))
+
+(defn- check-and-dump-stack-traces-when-overloaded []
+  (let [queue-length (hrr-queue/hrr-size (first @task-queue))]
+    (when (>= queue-length 250)
+      (log/warn "Worker pool queue contains" queue-length "tasks")
+      (dump-threads!)
+      (Thread/sleep 120000))
+    (Thread/sleep 5000)))
+
+(defonce _thread-dumper-thread
+         (spawn-thread!
+           (try
+             (while true
+               (check-and-dump-stack-traces-when-overloaded))
+             (catch Exception e
+               (log/error e "Error checking for worker pool overload")))))
 
 ;; Analysis fuctions
 
@@ -181,11 +231,17 @@
   (let [[stats] (swap-vals! execution-stats (constantly {}))]
     (swap! execution-status-history (fn [h]
                                       (cons [(Instant/now) stats] (doall (take 1440 h)))))))
+(defonce thread-status-history (atom '()))
+(defn- rotate-thread-summary! []
+  (let [[stats] (swap-vals! thread-stats (constantly {}))]
+    (swap! thread-status-history (fn [h]
+                                   (cons [(Instant/now) stats] (doall (take 1440 h)))))))
 
 (defonce -rotate-load-summary-thread
          (spawn-thread!
            (while true
              (rotate-load-summary!)
+             (rotate-thread-summary!)
              (Thread/sleep 60000))))
 
 (defn get-top-level-load
@@ -198,8 +254,17 @@
      (reverse)
      (take 10))))
 
-(defn get-top-level-load-at-time [t]
+(defn get-stats-at-time [t]
   (let [inst (Instant/parse t)
         [time stats] (first (filter (fn [[t s]] (.isAfter t inst)) (reverse @execution-status-history)))]
+    [time stats]))
+
+(defn get-thread-stats-at-time [t]
+  (let [inst (Instant/parse t)
+        [time stats] (first (filter (fn [[t s]] (.isAfter t inst)) (reverse @thread-status-history)))]
+    (pprint [time stats])))
+
+(defn get-top-level-load-at-time [t]
+  (let [[time stats] (get-stats-at-time t)]
     (println (str "Load at " time ":"))
     (pprint (get-top-level-load stats))))

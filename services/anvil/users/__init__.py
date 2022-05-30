@@ -1,7 +1,20 @@
 import anvil.server
 from anvil import *
-from .exceptions import UserExists, AuthenticationFailed, EmailNotConfirmed, AccountIsNotEnabled, PasswordNotAcceptable, MFARequired, PasswordResetRequested, TooManyPasswordFailures
+from .exceptions import UserExists, AuthenticationFailed, EmailNotConfirmed, AccountIsNotEnabled, PasswordNotAcceptable, MFARequired, MFAException, PasswordResetRequested, TooManyPasswordFailures
 from .config import get_client_config
+
+def _to_user_row(user):
+    if type(user) is list:
+        from anvil.tables.v2._row import Row
+        user = Row._create_from_trusted(*user)
+    return user
+
+def _to_row_ref(user):
+    from anvil.tables import _get_config
+    if _get_config().get("enable_v2"):
+        from anvil.tables.v2._refs import to_ref
+        user = to_ref(user)
+    return user
 
 #!suggestAttr(anvil.users,login_with_form)!0:
 
@@ -17,15 +30,18 @@ anvil.server._register_exception_type("anvil.users.AccountIsNotEnabled", Account
 anvil.server._register_exception_type("anvil.users.TooManyPasswordFailures", TooManyPasswordFailures)
 anvil.server._register_exception_type("anvil.users.PasswordNotAcceptable", PasswordNotAcceptable)
 anvil.server._register_exception_type("anvil.users.MFARequired", MFARequired)
+anvil.server._register_exception_type("anvil.users.MFAException", MFAException)
 anvil.server._register_exception_type("anvil.users.PasswordResetRequested", PasswordResetRequested)
 
 #!defFunction(anvil.users,_,email,password,[remember=False])!2: "Log in with the specified email address and password. Raises anvil.users.AuthenticationFailed exception if the login failed.\n\nBy default, login status is not remembered between sessions; set remember=True to remember login status." ["login_with_email"]
 def login_with_email(email, password, remember=False, mfa=None):
-    return anvil.server.call("anvil.private.users.login_with_email", email, password, remember=remember, mfa=mfa)
+    u = anvil.server.call("anvil.private.users.login_with_email", email, password, remember=remember, mfa=mfa)
+    return _to_user_row(u)
 
 #!defFunction(anvil.users,_,email,password,[remember=False])!2: "Sign up for a new account with the specified email address and password. Raises anvil.users.UserExists if an account is already registered with this email address.\n\nBy default, login status is not remembered between sessions; set remember=True to remember login status." ["signup_with_email"]
 def signup_with_email(email, password, remember=False):
-    return anvil.server.call("anvil.private.users.signup_with_email", email, password, remember=remember)
+    u = anvil.server.call("anvil.private.users.signup_with_email", email, password, remember=remember)
+    return _to_user_row(u)
 
 #!defFunction(anvil.users,_,email_address)!2: "Send a password-reset email to the specified user" ["send_password_reset_email"]
 def send_password_reset_email(email):
@@ -42,11 +58,13 @@ def reset_password(old_password, new_password):
 
 if is_server_side():
     def get_user(allow_remembered=True):
-        return anvil.server.call("anvil.private.users.get_current_user", allow_remembered=allow_remembered)
+        user = anvil.server.call("anvil.private.users.get_current_user", allow_remembered=allow_remembered)
+        return _to_user_row(user)
 
     #!defFunction(anvil.users,_,user_row,[remember=False])!2: "Set the specified user object (a row from a Data Table) as the current logged-in user. It must be a row from the users table. By default, login status is not remembered between sessions." ["force_login"]
     def force_login(user, remember=False):
-        return anvil.server.call("anvil.private.users.force_login", user, remember=remember)
+        u = anvil.server.call("anvil.private.users.force_login", _to_row_ref(user), remember=remember)
+        return _to_user_row(u)
 
     def _fail(fname):
         def f(*args, **kwargs):
@@ -62,14 +80,16 @@ else:
     #!defFunction(anvil.users,_,[allow_remembered=True])!2: "Get the row from the users table that corresponds to the currently logged-in user. If allow_remembered is true (the default), the user may have logged in in a previous session. Returns None if no user is logged in." ["get_user"]
     def get_user(allow_remembered=True):
         try:
-            return anvil.server.call("anvil.private.users.get_current_user", allow_remembered=allow_remembered)
+            user = anvil.server.call("anvil.private.users.get_current_user", allow_remembered=allow_remembered)
         except MFARequired:
             # This should only happen if the user has arrived with a login token and needs to configure MFA
             mfa.configure_mfa_with_form()
             return None
         except PasswordResetRequested:
             change_password_with_form(False)
-            return anvil.server.call("anvil.private.users.get_current_user", allow_remembered=allow_remembered)
+            user = anvil.server.call("anvil.private.users.get_current_user", allow_remembered=allow_remembered)
+        
+        return _to_user_row(user)
 
 
     def force_login(user, remember=False):
@@ -82,7 +102,8 @@ else:
 
         import anvil.google.auth
         if anvil.google.auth.login(additional_scopes):
-            return anvil.server.call("anvil.private.users.login_with_google", remember=remember)
+            u = anvil.server.call("anvil.private.users.login_with_google", remember=remember)
+            return _to_user_row(u)
 
     #!defFunction(anvil.users,!,[additional_scopes],[remember=False])!2: "Sign up for a new account with the email address associated with the user's Google account. Prompts the user to authenticate with Google, then registers a new user with that email address. Raises anvil.users.UserExists if this email address is already registered; returns new user or None if cancelled.\n\nadditional_scopes: If supplied, these are passed on to anvil.google.auth.login().\n\nBy default, login status is not remembered between sessions; set remember=True to remember login status." ["signup_with_google"]
     def signup_with_google(additional_scopes=None, remember=False):
@@ -94,7 +115,8 @@ else:
 
         import anvil.google.auth
         if anvil.google.auth.login(additional_scopes):
-            return anvil.server.call("anvil.private.users.signup_with_google", remember=remember)
+            u = anvil.server.call("anvil.private.users.signup_with_google", remember=remember)
+            return _to_user_row(u)
 
     #!defFunction(anvil.users,!,[additional_scopes],[remember=False])!2: "Log in with a Facebook account. Prompts the user to authenticate with Facebook, then logs in with their Facebook email address (if that user exists). Returns None if the login was cancelled or we have no record of this user.\n\nadditional_scopes: If supplied, these are passed on to anvil.facebook.auth.login().\n\nBy default, login status is not remembered between sessions; set remember=True to remember login status." ["login_with_facebook"]
     def login_with_facebook(additional_scopes=None, remember=False):
@@ -103,7 +125,8 @@ else:
 
         import anvil.facebook.auth
         if anvil.facebook.auth.login(additional_scopes):
-            return anvil.server.call("anvil.private.users.login_with_facebook", remember=remember)
+            u = anvil.server.call("anvil.private.users.login_with_facebook", remember=remember)
+            return _to_user_row(u)
 
     #!defFunction(anvil.users,!,[additional_scopes],[remember=False])!2: "Sign up for a new account with the email address associated with the user's Facebook account. Prompts the user to authenticate with Facebook, then registers a new user with that email address. Raises anvil.users.UserExists if this email address is already registered; returns new user or None if cancelled.\n\nadditional_scopes: If supplied, these are passed on to anvil.facebook.auth.login().\n\nBy default, login status is not remembered between sessions; set remember=True to remember login status." ["signup_with_facebook"]
     def signup_with_facebook(additional_scopes=None, remember=False):
@@ -115,7 +138,8 @@ else:
 
         import anvil.facebook.auth
         if anvil.facbeook.auth.login(additional_scopes):
-            return anvil.server.call("anvil.private.users.signup_with_facebook", remember=remember)
+            u = anvil.server.call("anvil.private.users.signup_with_facebook", remember=remember)
+            return _to_user_row(u)
 
     #!defFunction(anvil.users,!,[additional_scopes],[remember=False])!2: "Log in with a Microsoft account. Prompts the user to authenticate with Microsoft, then logs in with their Microsoft email address (if that user exists). Returns None if the login was cancelled or we have no record of this user.\n\nadditional_scopes: If supplied, these are passed on to anvil.microsoft.auth.login().\n\nBy default, login status is not remembered between sessions; set remember=True to remember login status." ["login_with_microsoft"]
     def login_with_microsoft(additional_scopes=None, remember=False):
@@ -124,7 +148,8 @@ else:
 
         import anvil.microsoft.auth
         if anvil.microsoft.auth.login(additional_scopes):
-            return anvil.server.call("anvil.private.users.login_with_microsoft", remember=remember)
+            u = anvil.server.call("anvil.private.users.login_with_microsoft", remember=remember)
+            return _to_user_row(u)
 
     #!defFunction(anvil.users,!,[additional_scopes],[remember=False])!2: "Sign up for a new account with the email address associated with the user's Microsoft account. Prompts the user to authenticate with Microsoft, then registers a new user with that email address. Raises anvil.users.UserExists if this email address is already registered; returns new user or None if cancelled.\n\nadditional_scopes: If supplied, these are passed on to anvil.microsoft.auth.login().\n\nBy default, login status is not remembered between sessions; set remember=True to remember login status." ["signup_with_microsoft"]
     def signup_with_microsoft(additional_scopes=None, remember=False):
@@ -136,7 +161,8 @@ else:
 
         import anvil.microsoft.auth
         if anvil.microsoft.auth.login(additional_scopes):
-            return anvil.server.call("anvil.private.users.signup_with_microsoft", remember=remember)
+            u = anvil.server.call("anvil.private.users.signup_with_microsoft", remember=remember)
+            return _to_user_row(u)
 
     #!defFunction(anvil.users,!,[remember=False])!2: "Log in via a SAML Identity Provider. Prompts the user to authenticate with SAML, then logs in with their email address (if that user exists). Returns None if the login was cancelled or we have no record of this user.\n\nBy default, login status is not remembered between sessions; set remember=True to remember login status." ["login_with_saml"]
     def login_with_saml(remember=False):
@@ -145,7 +171,8 @@ else:
 
         import anvil.saml.auth
         if anvil.saml.auth.login():
-            return anvil.server.call("anvil.private.users.login_with_saml", remember=remember)
+            u = anvil.server.call("anvil.private.users.login_with_saml", remember=remember)
+            return _to_user_row(u)
 
     #!defFunction(anvil.users,!,[remember=False])!2: "Sign up for a new account with the email address associated with the user's SAML account. Prompts the user to authenticate via SAML, then registers a new user with that email address. Raises anvil.users.UserExists if this email address is already registered; returns new user or None if cancelled.\n\nBy default, login status is not remembered between sessions; set remember=True to remember login status." ["signup_with_saml"]
     def signup_with_saml(additional_scopes=None, remember=False):
@@ -157,7 +184,8 @@ else:
 
         import anvil.saml.auth
         if anvil.saml.auth.login(additional_scopes):
-            return anvil.server.call("anvil.private.users.signup_with_saml", remember=remember)
+            u = anvil.server.call("anvil.private.users.signup_with_saml", remember=remember)
+            return _to_user_row(u)
 
     # Disable documentation for raven functions for now.
     #defFunction(anvil.users,!,[remember=False])!2: "Log in with a Raven account. Prompts the user to authenticate with Raven, then logs in with their Raven account (if that user exists). Returns None if the login was cancelled or we have no record of this user. By default, login status is not remembered between sessions." ["login_with_raven"]
@@ -167,7 +195,8 @@ else:
 
         import raven.auth
         if raven.auth.login():
-            return anvil.server.call("anvil.private.users.login_with_raven", remember=remember)
+            u = anvil.server.call("anvil.private.users.login_with_raven", remember=remember)
+            return _to_user_row(u)
 
     #defFunction(anvil.users,!,[remember=False])!2: "Sign up for a new account with the email address associated with the user's Raven account. Prompts the user to authenticate with Raven, then registers a new user with that email address. Raises anvil.users.UserExists if this email address is already registered; returns new user or None if cancelled. By default, login status is not remembered between sessions." ["signup_with_raven"]
     def signup_with_raven(remember=False):
@@ -179,7 +208,8 @@ else:
 
         import raven.auth
         if raven.auth.login():
-            return anvil.server.call("anvil.private.users.signup_with_raven", remember=remember)
+            u = anvil.server.call("anvil.private.users.signup_with_raven", remember=remember)
+            return _to_user_row(u)
 
 
     _label_style = {}
@@ -371,7 +401,7 @@ else:
                     if get_client_config().get("confirm_email", False):
                         alert("We've sent a confirmation email to " + email_box.text + ". Open your inbox and click the link to complete your signup.", title="Confirm your Email", buttons=[("OK", None, "primary")])
                     
-                    return user
+                    return _to_user_row(user)
 
                 else:
                     raise Exception("Invalid configuration for Users service")

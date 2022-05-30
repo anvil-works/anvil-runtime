@@ -3,10 +3,13 @@ let v = null;
 let o = v?.u?.k?.l;
 let x = new Promise((y) => y());
 let f = async () => { await x; let {xyz1, ...rtd} = {xyz1: 42, f:7}; };
+v ??= 1;
 window.RSVP = require('rsvp');
 
 require("./messages");
 require("./extra-python-modules.js");
+
+import { offlineStatusMessageHandler } from "./app_online";
 
 if (navigator.userAgent.indexOf("Trident/") > -1) {
     window.isIE = true;
@@ -20,6 +23,8 @@ var componentModule = require("./components");
 var PyDefUtils = require("PyDefUtils");
 window.PyDefUtils = PyDefUtils;
 
+const eventWarnings = new Set();
+
 function initComponentsOnForm(components, pyForm, eventBindingsByName) {
     var componentsByName = {
         "": pyForm,
@@ -27,12 +32,17 @@ function initComponentsOnForm(components, pyForm, eventBindingsByName) {
     var childrenByName = {};
     eventBindingsByName = eventBindingsByName || {};
 
-    var addHandler = function(pyComponent, pyHandler, eventName) {
-        // pyHandler is a method.
-
-        var aeh = Sk.abstr.gattr(pyComponent,new Sk.builtin.str("add_event_handler"));
-
-        PyDefUtils.pyCall(aeh, [new Sk.builtin.str(eventName), pyHandler]);
+    const _ADD_EVENT_HANDLER_STR = new Sk.builtin.str("add_event_handler");
+    function addHandler(pyComponent, pyHandler, eventName) {
+        const addEventHandler = Sk.abstr.gattr(pyComponent, _ADD_EVENT_HANDLER_STR);
+        try {
+            PyDefUtils.pyCall(addEventHandler, [new Sk.builtin.str(eventName), pyHandler]);
+        } catch (e) {
+            // bad yaml event name - ignore ValueError
+            if (!(e instanceof Sk.builtin.ValueError)) {
+                throw e;
+            }
+        }
     }
 
     var fns = [Sk.builtin.none.none$];
@@ -62,20 +72,43 @@ function initComponentsOnForm(components, pyForm, eventBindingsByName) {
 
             // Add event handlers.
 
-            var bindings = eventBindingsByName[name]
-            for (var evt in bindings) {
+            const bindings = eventBindingsByName[name];
+
+            for (const evt in bindings) {
                 const pyHandler = Sk.generic.getAttr.call(pyForm, new Sk.builtin.str(bindings[evt])); // use generic getattr for performance
-                if (pyHandler === undefined) {
-                    if (window.anvilParams?.inIDE) {
-                        // only do this if we're in the IDE.
-                        Sk.builtin.print([`Warning: ${pyForm.tp$name}.${bindings[evt]} does not exist. Trying to set the '${evt}' event of self${name ? '.' + name : ''} from ${pyForm.tp$name}.`]); 
-                    }
-                } else if (Sk.builtin.checkCallable(pyHandler)) {
+                if (Sk.builtin.checkCallable(pyHandler)) {
                     addHandler(pyComponent, pyHandler, evt);
+                    continue;
+                }
+                if (!window.anvilParams?.inIDE) {
+                    // only do warnings in the IDE
+                    continue;
+                }
+                if (!(evt in pyComponent._anvil.eventTypes) && !(evt in (pyComponent._anvil.customComponentEventTypes ?? {}))) {
+                    // ignore this event - bad yaml definition
+                    continue;
+                }
+                const warningPath = `${pyForm.tp$name}.${bindings[evt]}`;
+                if (eventWarnings.has(warningPath)) {
+                    // we've already warned about this componenent don't do it again
+                    // (could be a component in a repeating panel)
+                    continue;
+                }
+                eventWarnings.add(warningPath);
+                let warningMsg;
+                if (pyHandler === undefined) {
+                    warningMsg = `Warning: ${warningPath} does not exist. Trying to set the '${evt}' event handler of self${
+                        name ? "." + name : ""
+                    } from ${pyForm.tp$name}.`;
                 } else {
                     // Trying to set the event handler to an attribute - ignore but give a warning - e.g. Form1.tooltip
-                    Sk.builtin.print([`Warning: ${pyForm.tp$name}.${bindings[evt]} is not a valid handler for the '${evt}' event of self${name ? '.' + name : ''} from ${pyForm.tp$name}. It should be a callable function (found type '${Sk.abstr.typeName(pyHandler)}')`]);
+                    warningMsg = `Warning: ${warningPath} is not a valid handler for the '${evt}' event of self${
+                        name ? "." + name : ""
+                    } from ${pyForm.tp$name}. It should be a callable function (found type '${Sk.abstr.typeName(
+                        pyHandler
+                    )}')`;
                 }
+                Sk.builtin.print([warningMsg]);
             }
         }
         return Sk.builtin.none.none$;
@@ -113,21 +146,18 @@ function loadApp(app, appId, appOrigin, preloadModules) {
         childList: true,
         subtree: true,
     });
-    observer.observe($('#alert-modal')[0], {
-        childList: true,
-        subtree: true
-    });
 
     $(window).on("resize", onResize);
 
-    var showingWatcher = undefined;
-    $('.modal').on("show.bs.modal", function() {
-        if (showingWatcher) { clearInterval(showingWatcher); showingWatcher=undefined; }
-        showingWatcher = setInterval(onResize);
-    }).on('shown.bs.modal', function() {
-        if (showingWatcher) { clearInterval(showingWatcher); showingWatcher=undefined; }
+    const modalObserver = new MutationObserver(onResize);
+
+    $(document).on('shown.bs.modal', ".modal", function () {
+        modalObserver.observe(this, { childList: true, subtree: true });
         onResize();
-    }).on('hidden.bs.modal', function() {
+    }).on('hidden.bs.modal', ".modal", () => {
+        if (!$('.modal:visible').length) {
+            modalObserver.disconnect();
+        }
         onResize();
     });
 
@@ -233,17 +263,16 @@ function loadApp(app, appId, appOrigin, preloadModules) {
         const file = Sk.builtinFiles?.files[x];
         if (file === undefined) {
             throw "File not found: '" + x + "'";
-        } else if (file === 1 || file === 2 || file === 3) {
+        } else if (typeof file === "number") {
             // slow path we need to do a fetch
             return Sk.misceval.promiseToSuspension(
                 new Promise((resolve, reject) => {
                     // while we support IE don't use fetch since fetch is not polyfilled by core-js
                     const xhr = new XMLHttpRequest();
-                    xhr.open(
-                        "GET",
-                        window.anvilCDNOrigin + `/runtime/js/lib/skulpt-stdlib-${file}.json?buildTime=0`,
-                        true
-                    );
+                    // this variable is created in runner.html - we create it there so that a sha can be added
+                    // when this file includes a sha value it can be aggressively cached by the browser
+                    const fetchUrl = window.anvilSkulptLib.replace("file-number", file);
+                    xhr.open("GET", fetchUrl, true);
                     xhr.onload = function () {
                         const newFiles = JSON.parse(this.responseText);
                         Object.assign(Sk.builtinFiles.files, newFiles);
@@ -265,6 +294,13 @@ function loadApp(app, appId, appOrigin, preloadModules) {
 
     var sendLog = function(details) { console.log(details); };
 
+    var flushLog = function() {
+        if (accumulatingPrints) {
+            sendLog({print: accumulatingPrints});
+            accumulatingPrints = null;
+        }
+    }    
+
     var stdout = function(text, fromServer) {
         if (text != "\n") {
             if (!firstMsg) { firstMsg = +new Date(); }
@@ -278,10 +314,7 @@ function loadApp(app, appId, appOrigin, preloadModules) {
         if (!fromServer) {
             if (accumulatingPrints === null) {
                 accumulatingPrints = "";
-                setTimeout(function() {
-                    sendLog({print: accumulatingPrints});
-                    accumulatingPrints = null;
-                });
+                setTimeout(flushLog);
             }
             accumulatingPrints += text;
         }
@@ -387,6 +420,7 @@ function loadApp(app, appId, appOrigin, preloadModules) {
             anvilVersion: window.anvilVersion,
         };
 
+        flushLog();
         sendLog({ error: err });
 
         $("#error-indicator .output").text(errorObj.tp$name + ": " + args[0]);
@@ -414,6 +448,7 @@ function loadApp(app, appId, appOrigin, preloadModules) {
             anvilVersion: window.anvilVersion,
         };
 
+        flushLog();
         sendLog({ error: err });
 
         $("#error-indicator .output").text(errormsg || "Unhandled runtime error");
@@ -494,8 +529,20 @@ function loadApp(app, appId, appOrigin, preloadModules) {
 
     // Inject the theme HTML assets into the HtmlTemplate component
     anvilModule["HtmlTemplate"].$_anvilThemeAssets = (app.theme && app.theme.html) || {};
-    // Inject them theme colour scheme into the Component class
-    window.anvilThemeColors = anvilModule["Component"].$_anvilThemeColors = (app.theme && app.theme.color_scheme) || {};
+    // keeping this around as a js object. We convert to a python dict in app.theme_colors
+    // parallels designer.html and also anvil-extras uses this in the designer for dynamic colors.
+    window.anvilThemeColors = (app.theme && app.theme.color_scheme) || {};
+    window.anvilThemeVars = (app.theme && app.theme.vars) || {};
+
+    if (window.isIE) {
+        // oh no we can't have theme colors as vars so replace all the vars that were loaded with the colors
+        const styleSheet = document.querySelector('style[title="theme.css"');
+        let text = styleSheet.textContent;
+        for (let [themeName, themeVar] of Object.entries(window.anvilThemeVars)) {
+            text = text.replace(new RegExp(`var\\(${themeVar}\\)`, "g"), window.anvilThemeColors[themeName]);
+        }
+        styleSheet.textContent = text;
+    }
 
     window.anvilCustomComponentProperties = {}; // {'depId:class_name' => properties}
     var defineForm = function(f, anvilModule, topLevelPackage, depId=null) {
@@ -1055,6 +1102,12 @@ function loadApp(app, appId, appOrigin, preloadModules) {
     var mediaModule = require("./modules/media")();
     PyDefUtils.loadModule("anvil.media", mediaModule);
 
+    try {
+        Sk.misceval.retryOptionalSuspensionOrThrow(Sk.importModule("anvil.tables", false, true));
+    } catch (e) {
+        console.log("Failed to preload anvil.tables", e);
+    }
+
     for (let pm of (preloadModules || [])) {
         Sk.misceval.retryOptionalSuspensionOrThrow(Sk.importModule(pm, false, true));
     }
@@ -1132,8 +1185,11 @@ function openForm(formName) {
 
 function openMainModule(moduleName) {
     let fullName = window.anvilAppMainPackage + "." + moduleName;
-    return Sk.misceval.asyncToPromise(() => Sk.importModuleInternal_(fullName, false, "__main__", undefined, undefined, false, true))
-            .catch((e) => window.onerror(undefined, undefined, undefined, undefined, e));
+    window.anvilAppMainModule = moduleName;
+    // since we import as __main__ portable classes won't work
+    return Sk.misceval
+        .asyncToPromise(() => Sk.importModuleInternal_(fullName, false, "__main__", undefined, undefined, false, true))
+        .catch((e) => window.onerror(undefined, undefined, undefined, undefined, e));
 }
 
 function printComponents(printId, printKey) {
@@ -1206,12 +1262,6 @@ var appLoaded = false;
 
 window.loadApp = function(params, preloadModules) {
     window.anvilParams = params;
-    window.anvilOnline = {
-        onLine: navigator.onLine,
-        serviceWorkerAgrees: true,
-        lastCheck: 0,
-        OFFLINE_TIMEOUT: 5000,
-    };
 
     var appOrigin = params["appOrigin"];
     if (appLoaded) { console.log("Rejected duplicate app load"); return {}; }
@@ -1221,28 +1271,10 @@ window.loadApp = function(params, preloadModules) {
         .catch((error) => {
             console.error('Service worker registration failed:', error);
         });
-        // the service worker takes care of a false positive
-        navigator.serviceWorker.onmessage = (event) => {
-            if (event.data && event.data.type === "OFFLINE_STATUS") {
-                const onLine = event.data.onLine;
-                if ((navigator.onLine && !onLine) || !window.anvilOnline.serviceWorkerAgrees) {
-                    // then the service worker disagrees with the navigator
-                    window.anvilOnline.onLine = onLine;
-                    window.anvilOnline.serviceWorkerAgrees = false;
-                    window.anvilOnline.lastCheck = Date.now();
-                }
-            }
-        };
+        // the service worker takes care of our offlineStuatus
+        navigator.serviceWorker.onmessage = offlineStatusMessageHandler;
     }
 
-    // these events are fired on change of online/offline status
-    window.addEventListener("online", () => {
-        // switching from offline to online probably isn't a false positive
-        window.anvilOnline.onLine = true;
-    });
-    window.addEventListener("offline", () => {
-        window.anvilOnline.onLine = false;
-    });
 
 
     var appLoadPromise = loadApp(params["app"], params["appId"], appOrigin, preloadModules);
@@ -1263,10 +1295,23 @@ window.openForm = openForm;
 window.openMainModule = openMainModule;
 window.printComponents = printComponents;
 
-$("#error-indicator").on("click", function() {
+$("#error-indicator").on("click", function () {
     $("#error-indicator .output").show();
     $("#error-indicator .message").hide();
-})
+});
+
+
+$(window).on("_anvil-call", function (e, resolve, reject) {
+    const gotElement = " Got " + (this[Symbol.toStringTag] ?? this) + " element.";
+    reject(
+        new Sk.builtin.RuntimeError(
+            "anvil.call() first argument should be a child DOM element of the Form instance you wish to call the function on. " +
+                "The DOM element provided has no parent Form instance." +
+                gotElement
+        )
+    );
+});
+
 
 window.anvil = {
     call: function(jsThis, functionName/*, arg1, arg2, ... */) {

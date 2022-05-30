@@ -20,6 +20,7 @@ description: |
   #### Arguments to `add_component`:
   \* `x`: How far across the component is from the left-hand edge
   \* `y`: How far down the component is from the top edge
+  \* `width`: Optional, the width of the component.
 
 */
 

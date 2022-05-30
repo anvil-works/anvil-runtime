@@ -71,10 +71,10 @@ $ npm run watch
 On the server side, you can set up a sample configuration file, and start the standalone App Server as a lein REPL:
 
 ```bash
-$ cd server/standalone
+$ cd server/app-server
 $ mkdir test-files/
 $ cp anvil.conf.yaml.SAMPLE test-files/anvil.conf.yaml
-$ lein run repl
+$ lein repl
 ```
 
 

@@ -1,0 +1,11 @@
+name: Files
+prelude: 
+  server: "import anvil.files\nfrom anvil.files import data_files"
+path_whitelist:
+  - files/__init__.py
+client_config_properties: []
+server_config_properties:
+  - name: files_table
+    type: string
+    description: The python_name of the table in which files are stored
+

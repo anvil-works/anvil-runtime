@@ -5,11 +5,10 @@
             [crypto.random :as random]
             [anvil.dispatcher.native-rpc-handlers.util :as util]
             [one-time.qrgen :as ot-qr]
-            [anvil.runtime.tables.rpc :as tables]
-            [anvil.dispatcher.native-rpc-handlers.users.util :as users-util :refer [get-props-with-named-user-table
-                                                                                    get-user-and-check-enabled
-                                                                                    get-and-create-columns
-                                                                                    row-to-map]])
+            [anvil.dispatcher.native-rpc-handlers.users.util :refer [get-props-with-named-user-table
+                                                                     get-user-row-by-id
+                                                                     row-to-map]]
+            [anvil.dispatcher.core :as dispatcher])
   (:import (anvil.dispatcher.types BlobMedia)
            (java.util Date)))
 
@@ -17,8 +16,8 @@
   (let [email (or email
                   (binding [util/*client-request?* false]
                     (let [{:keys [user_table]} (get-props-with-named-user-table)
-                          user-row-id (or (get-in @util/*session-state* [:users :logged-in-id]) (get-in @util/*session-state* [:users :mfa-reset-user-id]))
-                          user-row ((tables/Table "get_by_id") [user_table {}] {} user-row-id)]
+                          v1-row-id-str (or (get-in @util/*session-state* [:users :logged-in-id]) (get-in @util/*session-state* [:users :mfa-reset-user-id]))
+                          user-row (get-user-row-by-id user_table v1-row-id-str)]
                       (get (row-to-map user-row) "email")))
                   (throw+ {:anvil/server-error "Email address not provided and could not be inferred"}))
         secret (ot/generate-secret-key)]
@@ -35,3 +34,7 @@
         t (System/currentTimeMillis)
         valid? #(ot/is-valid-totp-token? (try (Integer/parseInt code) (catch Exception _ 0)) secret {:date (Date. ^long %)})]
     (some valid? [t (+ t 30000) (- t 30000)])))
+
+(swap! dispatcher/native-rpc-handlers merge
+       {"anvil.private.users.totp.generate_secret" (util/wrap-native-fn generate-totp-secret)
+        "anvil.private.users.totp.validate_code"   (util/wrap-native-fn validate-totp-code)})

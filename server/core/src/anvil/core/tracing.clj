@@ -1,6 +1,7 @@
 (ns anvil.core.tracing
   (:require [clojure.tools.logging :as log]
-            [anvil.util :as util])
+            [anvil.util :as util]
+            [anvil.runtime.app-log :as app-log])
   (:import (io.opentelemetry.api.trace Span StatusCode)
            (io.opentelemetry.context Context)
            (io.opentelemetry.api GlobalOpenTelemetry)
@@ -82,9 +83,12 @@
                (.getTraceId))
              info))
 
-(defn get-trace-id [span]
-  (when span
-    (.getTraceId (.getSpanContext span))))
+(defn get-trace-id
+  ([]
+   (get-trace-id (get-current-span)))
+  ([span]
+   (when span
+     (.getTraceId (.getSpanContext span)))))
 
 (defmacro with-parent-span [span & body]
   `(if ~span
@@ -106,6 +110,11 @@
           ~@body
           (finally
             (end-span! span#)))))))
+
+(defmacro with-recorded-span [[name & args] & body]
+  `(with-span [~name ~@args]
+     (app-log/record-trace! nil (get-trace-id) ~name)
+     ~@body))
 
 (defn set-span-status! [status]
   "Set the status of the current span. :OK or :ERROR"

@@ -1,0 +1,27 @@
+{
+    "compilerOptions": {
+        "target": "ESNext",
+        "lib": [
+            "dom",
+            "dom.iterable",
+            "esnext"
+        ],
+        "allowJs": true,
+        "noEmit": true,
+        "module": "ESNext",
+        "jsx": "preserve",
+        "moduleResolution": "node",
+        "esModuleInterop": true,
+        "strict": true,
+        "forceConsistentCasingInFileNames": true,
+        "isolatedModules": true,
+        "allowUmdGlobalAccess": true,
+    },
+    "include": [
+        "./",
+    ],
+    "exclude": [
+        "node_modules",
+        "./PyDefUtils.js"
+    ]
+}

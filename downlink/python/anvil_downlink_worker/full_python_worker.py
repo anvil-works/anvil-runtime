@@ -45,8 +45,8 @@ def dbg(s):
     sys.stderr.flush()
 
 
-def send_reqresp(r, collect_capabilities=None):
-    _serialise.serialise(r, write_pipe, collect_capabilities=collect_capabilities)
+def send_reqresp(r, collect_capabilities=None, remote_is_trusted=False):
+    _serialise.serialise(r, write_pipe, collect_capabilities=collect_capabilities, remote_is_trusted=remote_is_trusted)
 
 _threaded_server.send_reqresp = send_reqresp
 
@@ -67,7 +67,8 @@ def run():
                 raise _server.SerializationError("Cannot use BlobMedia objects in task state.")
 
             try:
-                sjson = _server.fill_out_media({'id': msg['id'], 'response': anvil.server.task_state}, err)
+                sjson = _server.fill_out_media({'id': msg['id'], 'response': anvil.server.task_state}, err,
+                                               remote_is_trusted=False)
                 json.dumps(sjson)
             except (TypeError, _server.SerializationError) as e:
                 write_pipe({'id': msg['id'], 'error': {'type': 'anvil.server.SerializationError', 'message': "Illegal value in a anvil.server.task_state. " + e.args[0]}})

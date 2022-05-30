@@ -1,7 +1,7 @@
 (defproject anvil-runtime "latest"
   :min-lein-version "2.8.1"
   :repositories {"anvil" "file:../maven_repository"}
-  :dependencies [[org.clojure/clojure "1.10.3"]
+  :dependencies [[org.clojure/clojure "1.11.1"]
                  [compojure "1.6.1"]
 
                  ; Everything depends on different versions of Jackson. Force this one.
@@ -16,9 +16,9 @@
                  [ring/ring-json "0.5.0"]
                  [ring-cors "0.1.13"]
 
-                 [com.cemerick/friend "0.2.1"]
+                 [com.cemerick/friend "0.2.3"]
 
-                 [friend-oauth2 "0.1.1"]
+                 [clojusc/friend-oauth2 "0.2.0" :exclusions [ch.qos.logback/logback-classic]]
                  [org.clojure/data.json "0.2.5"]
                  [org.clojure/data.xml "0.0.8"]
                  [org.clojure/data.zip "0.1.1"]
@@ -32,21 +32,18 @@
                  [org.clojure/java.jdbc "0.7.10"]
                  [org.postgresql/postgresql "42.2.8"]
 
-                 [org.eclipse.jgit "4.3.1.201605051710-r"]
-                 [org.apache.sshd/sshd-core "1.2.0"]
-
                  [javax.mail/mail "1.4.4"]
 
                  [com.stripe/stripe-java "11.5.1"]
 
                  [org.clojure/tools.logging "0.4.1"]
-                 [org.slf4j/slf4j-log4j12 "1.7.1"]
-                 [log4j "1.2.17" :exclusions [javax.mail/mail javax.jms/jms com.sun.jdmk/jmxtools com.sun.jmx/jmxri]]
-                 [clj-logging-config "1.9.12"]
+                 [org.slf4j/slf4j-reload4j "1.7.36"]
+                 [ch.qos.reload4j/reload4j "1.2.19" :exclusions [javax.mail/mail javax.jms/jms com.sun.jdmk/jmxtools com.sun.jmx/jmxri]]
+                 [clj-logging-config "1.9.12" :exclusions [log4j]]
 
                  [slingshot "0.12.2"]
 
-                 [org.clojure/core.async "0.4.474"]
+                 [org.clojure/core.async "1.5.648"]
                  [org.clojure/core.cache "0.8.2"]
 
                  [org.senatehouse/expect-call "0.3.0"]
@@ -61,7 +58,7 @@
 
                  [one-time "0.4.0"]
                  [me.grison/cljwebauthn "0.1.2"]
-                 [com.webauthn4j/webauthn4j-core "0.11.1.RELEASE"]
+                 [com.webauthn4j/webauthn4j-core "0.11.1.RELEASE" :exclusions [org.slf4j/slf4j-api]]
 
                  [org.subethamail/subethasmtp "3.1.7"]
                  [org.apache.james.jdkim/apache-jdkim "0.2" :extension "pom" :exclusions [[org.apache.geronimo.javamail/geronimo-javamail_1.4_mail]]]
@@ -77,7 +74,8 @@
 
                  [malabarba/lazy-map "1.3"]
 
-                 [com.onelogin/java-saml "2.5.0"]
+                 [com.onelogin/java-saml "2.5.0" :exclusions [org.slf4j/slf4j-api]]
+                 [medley "1.4.0"]
 
                  [io.opentelemetry/opentelemetry-sdk]]
   :bom {:import [[io.opentelemetry/opentelemetry-bom "1.7.0"]]}

@@ -31,6 +31,14 @@ PyDefUtils.staticmethod = function(pyFunc) {
     return new Sk.builtin.staticmethod(pyFunc);
 }
 
+PyDefUtils.keywordArrayToHashMap = function (pyKwarray) {
+    const kwargs = {};
+    for (let i = 0; i < pyKwarray.length; i += 2) {
+        kwargs[pyKwarray[i].toString()] = pyKwarray[i + 1];
+    }
+    return kwargs;
+};
+
 // Skulpt functions that take keyword arguments must be marked with the
 // co_kwargs property, and will receive an array of alternating keys and values
 // as their first argument. withKwargs() takes a Javascript function that
@@ -61,10 +69,7 @@ PyDefUtils.withRawKwargs = function(f) {
 
 PyDefUtils.funcWithRawKwargsDict = function(f) {
     var rf = function(pyKwarray, more_function_args) {
-        var kwargs = {}
-        for(var i = 0; i < pyKwarray.length - 1; i+=2)
-            kwargs[pyKwarray[i].toString()] = pyKwarray[i+1];
-
+        const kwargs = PyDefUtils.keywordArrayToHashMap(pyKwarray);
         return f.apply(this, [kwargs].concat(Array.prototype.slice.call(arguments, 1)));
     };
     rf.co_kwargs = true;
@@ -361,7 +366,9 @@ PyDefUtils.createElement = function createElement (tag, _props, ...children) {
     });
 
     children.forEach((child) => {
-        if (typeof child === "string") {
+        if (child === null) {
+            // pass
+        } else if (typeof child === "string") {
             element.appendChild(document.createTextNode(child));
         } else {
             const [childEl, childDef] = child;
@@ -417,12 +424,30 @@ PyDefUtils.callAsync = (...args) =>
         throw e;
     });
 
+// When we internally call asyncToPromise,
+// we ignore the first optional supsension
+// this is perfect for event handlers that may have not fired since the previous Sk.lastYield
+// otherwise handlers may immediately throw an optional Sk.yield suspension (if Sk.yieldLimit is configured)
+//
+// Note we could continue to resume optional suspensions in a while loop
+// (see WrappedPyCallable)
+// but since the next optional suspension we hit
+// will be the result of long running code we only ignore the first one.
+function ignoreFirstOptionalSuspension(susp) {
+    if (susp instanceof Sk.misceval.Suspension && susp.optional) {
+        susp = susp.resume();
+    }
+    return susp;
+}
+
 // This is really "suspensionToPromise."
-PyDefUtils.asyncToPromise = (fn) =>
-    Sk.misceval.asyncToPromise(fn, PyDefUtils.suspensionHandlers).catch((e) => {
+PyDefUtils.asyncToPromise = (fn) => {
+    const suspendablefn = () => ignoreFirstOptionalSuspension(fn());
+    return Sk.misceval.asyncToPromise(suspendablefn).catch((e) => {
         // unhandled errors are caught by window.onunhandledrejection
         throw e;
     });
+};
 
 // Raise the named event with the specified arguments
 // (expects a Javascript object as first parameter, keys are JS, vals are Python if pyVal is true, otherwise JS.
@@ -692,11 +717,26 @@ PyDefUtils.applyRole = (role, domNode = null) => {
 PyDefUtils.getColor = (v) => {
     v = Sk.builtin.checkNone(v) ? "" : v.toString();
     const m = v.match(/^theme:(.*)$/);
-    if (m) {
-        v = window.anvilThemeColors[m[1]] || "";
+    if (!m) {
+        return v;
+    } else if (!window.isIE) {
+        const cssVar = window.anvilThemeVars[m[1]];
+        return cssVar ? `var(${cssVar})` : "";
+    } else {
+        return window.anvilThemeColors[v] || ""
     }
-    return v;
-}
+};
+
+PyDefUtils.loadScript = (url) => {
+    const script = document.createElement("script");
+    script.src = url;
+    const p = new Promise((resolve, reject) => {
+        script.onload = resolve;
+        script.onerror = reject;
+    });
+    document.body.appendChild(script);
+    return p;
+};
 
 PyDefUtils.getOuterStyle = function getOuterStyle({ align, font_size, font, bold, italic, underline, background, foreground, border, height, width }) {
     const style = {};
@@ -1918,9 +1958,13 @@ class WrappedPyObj {
 
 function WrappedPyCallable(obj) {
     const wrapped =(...args) => {
-        const ret = Sk.misceval.chain(obj.tp$call(args.map((x) => Sk.ffi.toPy(x))), (res) => PyDefUtils.remapToJsOrWrap(res));
-        if (ret instanceof Sk.misceval.Suspension) {
-            return Sk.misceval.asyncToPromise(() => ret);
+        let ret = Sk.misceval.chain(obj.tp$call(args.map((x) => Sk.ffi.toPy(x))), (res) => PyDefUtils.remapToJsOrWrap(res));
+        while (ret instanceof Sk.misceval.Suspension) {
+            // ignore all optinal suspensions for a python wrapped callable sent to javascript
+            if (!ret.optional) {
+                return Sk.misceval.asyncToPromise(() => ret);
+            }
+            ret = ret.resume();
         }
         return ret;
     };

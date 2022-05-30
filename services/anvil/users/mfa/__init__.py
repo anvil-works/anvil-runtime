@@ -1,7 +1,44 @@
 import anvil.server
 from anvil import *
-from ..exceptions import AuthenticationFailed
+from ..exceptions import AuthenticationFailed, MFAException
 from ..config import get_client_config
+from anvil.js import window
+
+def replace(s, pattern, replacement):
+    return window.String.prototype.replaceAll.call(s, window.RegExp(pattern, "g"), replacement)
+
+class PhoneBox(TextBox):
+
+    def __init__(self, **properties):
+        TextBox.__init__(self, **properties)
+        self.valid_number = None
+        self.type="tel"
+        self.add_event_handler("focus", self.on_focus)
+        self.add_event_handler("lost_focus", self.on_blur)
+        self.add_event_handler("pressed_enter", self.on_blur)
+
+    def on_focus(self, **e):
+        self.placeholder = "(123) 456 7890" if window.navigator.language == "en-US" else "+1 000 0..."
+
+    def on_blur(self, **e):
+        self.validate()
+
+    def validate(self):
+        leadingPlus = self.text.startswith("+")
+        self.text = replace(self.text, "[^0-9]", "")
+        if leadingPlus:
+            if len(self.text) > 3: # What's a valid minimum length?
+                self.text = "+" + self.text
+                self.valid_number = self.text
+            else:
+                self.valid_number = None
+        else:
+            if len(self.text) == 10:
+                self.valid_number = "+1" + self.text
+                self.text = "(" + self.text[0:3] + ") " + self.text[3:6] + " " + self.text[6:]
+            else:
+                self.valid_number = None
+
 
 #!defFunction(anvil.users,_,email_address)!2: "Send a two-factor authentication reset email to the specified user." ["send_mfa_reset_email"]
 def send_mfa_reset_email(email):
@@ -29,6 +66,10 @@ else:
     def get_totp_mfa_login(code):
         return {"type": "totp", "code": code}
 
+    #!defFunction(anvil.users.mfa,_,code)!2: "Get an MFA login object representing a Twilio Verify token. This can be passed to the login_with_email function as the mfa argument." ["get_twilio_mfa_login"]
+    def get_twilio_mfa_login(code):
+        return {"type": "twilio-verify", "code": code}
+
     #!defFunction(anvil.users.mfa,_,email_address)!2: "Generate a TOTP secret that can be added as two-factor authentication for the current user." ["generate_totp_secret"]
     def generate_totp_secret(email):
         return anvil.server.call("anvil.private.users.totp.generate_secret", email)
@@ -36,6 +77,18 @@ else:
     #!defFunction(anvil.users.mfa,_,mfa_method,code)!2: "Validate the given TOTP code against the given MFA method from a User row." ["validate_totp_code"]
     def validate_totp_code(mfa_method, code):
         return anvil.server.call("anvil.private.users.totp.validate_code", mfa_method, code)
+
+    #!defFunction(anvil.users.mfa,_,phone)!2: "Generate a Twilio MFA method from the provided phone number." ["generate_twilio_mfa_method"]
+    def generate_twilio_mfa_method(phone):
+        return anvil.server.call("anvil.private.users.twilio.generate_mfa_method", phone)
+
+    #!defFunction(anvil.users.mfa,_, mfa_method, channel)!2: "Send a Twilio Verify token using the given MFA method from a User row." ["send_twilio_token"]
+    def send_twilio_token(mfa_method, channel):
+        return anvil.server.call("anvil.private.users.twilio.send_verification_token", mfa_method, channel)
+
+    #!defFunction(anvil.users.mfa,_, mfa_method, token)!2: "Validate the given Twilio Verify token against the given MFA method from a User row." ["check_twilio_token"]
+    def check_twilio_token(mfa_method, token):
+        return anvil.server.call("anvil.private.users.twilio.check_verification_token", mfa_method, token)
 
     #!defFunction(anvil.users.mfa,_,password,mfa_method,[clear_existing=False])!2: "Add an MFA method to the current user by passing the user's password and the mfa method, optionally clearing all existing methods." ["add_mfa_method"]
     def add_mfa_method(password, method, clear_existing=False):
@@ -45,67 +98,151 @@ else:
     def get_available_mfa_types(email, password):
         return anvil.server.call("anvil.private.users.get_available_mfa_types", email, password)
 
+    #!defFunction(anvil.users.mfa,_)!2: "Get all the enabled MFA types for this app." ["get_enabled_mfa_types"]
+    def get_enabled_mfa_types():
+        return anvil.server.call("anvil.private.users.get_enabled_mfa_types")
+
     def _configure_mfa(email, mfa_error, require_password, allow_cancel, confirm_button_text):
-        totp_config = generate_totp_secret(email)
-        totp_secret = totp_config['secret']
-        qr_code = totp_config['qr_code']
-        mfa_methods = {
-            'totp': totp_config['mfa_method'],
-        }
+        mfa_types = get_enabled_mfa_types()
+        selected_mfa_type = None
+        mfa_methods = {}
+        password_error = None
+        password_box = TextBox(placeholder="Current password", align="center", hide_text=True)
 
         while True:
-
             mfa_panel = LinearPanel()
-            mfa_panel.add_component(Label(text="This app requires 2-factor authentication to log in."))
 
-            def signup_with_fido(**e):
-                result = create_fido_mfa_method(email)
-                if result:
-                    mfa_methods['fido'] = result
-                    mfa_panel.raise_event("x-close-alert", value='fido')
-
-            if webauthn.is_webauthn_available():
-                fido_link = Link(text="Use hardware token",icon="fa:lock")
-                fido_link.set_event_handler("click", signup_with_fido)
-                mfa_panel.add_component(fido_link)
-            else:
-                mfa_panel.add_component(Label(text="Hardware token unavailable", icon="fa:lock", tooltip="Is this page running in an iframe or an unsupported browser?"))
-
-            mfa_panel.add_component(Label(text="Alternatively, scan this QR-code with your Authenticator app and then enter the current code below to continue."))
-            mfa_panel.add_component(Image(source=qr_code, display_mode="fill_width"))
-
-            totp_box = TextBox(placeholder="Enter 6-digit code", align="center", font="monospace")
-            totp_box.set_event_handler("pressed_enter", lambda **e: mfa_panel.raise_event("x-close-alert", value='totp'))
-
-            password_box = TextBox(placeholder="Current password", align="center", hide_text=True)
-            password_box.set_event_handler("show", lambda **e: password_box.focus())
-            password_box.set_event_handler("pressed_enter", lambda **e: totp_box.focus())
-
-            if require_password:
+            if require_password and not password_box.text:
+                password_box.remove_from_parent()
                 mfa_panel.add_component(password_box)
-                password_box.set_event_handler("show", lambda **e: password_box.focus())
+                if password_error:
+                    mfa_panel.add_component(Label(foreground="red", align="center", spacing_below="none", text=password_error))
+
+            if not selected_mfa_type:
+
+                mfa_panel.add_component(Label(text="This app requires 2-factor authentication to log in."))
+
+
+                if "fido" in mfa_types:
+                    def signup_with_fido(**e):
+                        result = create_fido_mfa_method(email)
+                        if result:
+                            mfa_methods['fido'] = result
+                            mfa_panel.raise_event("x-close-alert", value='fido')
+
+                    if webauthn.is_webauthn_available():
+                        fido_link = Link(text="Use hardware token",icon="fa:lock")
+                        fido_link.set_event_handler("click", signup_with_fido)
+                        mfa_panel.add_component(fido_link)
+                    else:
+                        mfa_panel.add_component(Label(text="Hardware token unavailable", icon="fa:lock", tooltip="Is this page running in an iframe or an unsupported browser?"))
+
+                if "totp" in mfa_types:
+                    totp_link = Link(text="Use Authenticator app", icon="fa:qrcode")
+                    totp_link.set_event_handler("click", lambda **e: mfa_panel.raise_event("x-close-alert", value='select-totp'))
+                    mfa_panel.add_component(totp_link)
+
+                if "twilio-verify" in mfa_types:
+                    twilio_link = Link(text="Use phone number", icon="fa:phone")
+                    twilio_link.set_event_handler("click", lambda **e: mfa_panel.raise_event("x-close-alert", value='select-twilio'))
+                    mfa_panel.add_component(twilio_link)
+
             else:
-                totp_box.set_event_handler("show", lambda **e: totp_box.focus())
+                back_link = Link(text="Choose another method", icon="fa:arrow-left")
+                back_link.set_event_handler("click", lambda **e: mfa_panel.raise_event("x-close-alert", value='back'))
+                mfa_panel.add_component(back_link)
 
-            mfa_panel.add_component(totp_box)
+                if selected_mfa_type == "totp":
+                    totp_config = generate_totp_secret(email)
+                    totp_secret = totp_config['secret']
+                    qr_code = totp_config['qr_code']
+                    mfa_methods['totp'] = totp_config['mfa_method']
 
+                    mfa_panel.add_component(Label(text="Scan this QR-code with your Authenticator app and then enter the current code below to continue."))
+                    mfa_panel.add_component(Image(source=qr_code, display_mode="fill_width"))
 
+                    totp_box = TextBox(placeholder="Enter 6-digit code", align="center", font="monospace")
+                    totp_box.set_event_handler("show", lambda **e: totp_box.focus())
+                    totp_box.set_event_handler("pressed_enter", lambda **e: mfa_panel.raise_event("x-close-alert"))
+                    mfa_panel.add_component(totp_box)
+
+                elif selected_mfa_type == "twilio-verify":
+                    if not mfa_methods.get('twilio-verify'):
+                        phone_box = PhoneBox(placeholder="Enter your phone number", align="center")
+                        phone_box.add_event_handler("pressed_enter", lambda **e: mfa_panel.raise_event("x-close-alert"))
+                        #phone_box.add_event_handler("lost_focus", lambda **e: print(phone_box.valid_number))
+                        #mfa_panel.add_component(Label(text="Enter your phone number", align="center"))
+                        mfa_panel.add_component(phone_box)
+                    else:
+                        twilio_box = TextBox(placeholder="Enter 6-digit code", align="center", font="monospace")
+                        twilio_box.set_event_handler("pressed_enter", lambda **e: mfa_panel.raise_event("x-close-alert"))
+                        twilio_box.set_event_handler("show", lambda **e: twilio_box.focus())
+                        mfa_panel.add_component(twilio_box)                            
+
+                        sms_link = Link(text="Resend Text Message", icon="fa:commenting-o")
+                        phone_link = Link(text="Call Me instead", icon="fa:phone")
+                        sms_link.set_event_handler("click", lambda **e: mfa_panel.raise_event("x-close-alert", value='resend-sms'))
+                        phone_link.set_event_handler("click", lambda **e: mfa_panel.raise_event("x-close-alert", value='call'))
+                        mfa_panel.add_component(sms_link)
+                        mfa_panel.add_component(phone_link)
 
             if mfa_error:
                 mfa_panel.add_component(Label(foreground="red", bold=True, spacing_below="none", text=mfa_error))
 
-            maybe_cancel_button = [("Cancel", None)] if allow_cancel else []
-            mfa = alert(mfa_panel, title="2-Factor Authentication", buttons=[(confirm_button_text, 'totp', 'success')] + maybe_cancel_button, dismissible=bool(allow_cancel))
-            if mfa == 'totp': 
+            maybe_cancel_button = [("Cancel", 'cancel')] if allow_cancel else []
+            m = alert(mfa_panel, title="2-Factor Authentication", buttons=[(confirm_button_text, True, 'success')] + maybe_cancel_button, dismissible=bool(allow_cancel))
+            if m == 'cancel':
+                return None, ""
+            elif require_password and not password_box.text: # TODO: Also validate password
+                password_error = "Please enter your password"
+            elif m == 'back':
+                selected_mfa_type = None
+                mfa_error = None
+            elif m == 'select-totp':
+                mfa_error = None
+                mfa_methods['totp'] = None
+                selected_mfa_type = 'totp'
+            elif m == 'select-twilio':
+                mfa_error = None
+                mfa_methods['twilio-verify'] = None
+                selected_mfa_type = 'twilio-verify'
+
+            elif selected_mfa_type == 'totp':
                 if validate_totp_code(mfa_methods['totp'], totp_box.text):
                     return mfa_methods['totp'], password_box.text
                 else:
                     mfa_error = "Incorrect code entered. Please try again."
-                    continue
-            elif mfa == 'fido':
+            elif selected_mfa_type == 'fido':
                 return mfa_methods['fido'], password_box.text
+            elif selected_mfa_type == 'twilio-verify':
+                mfa_error = None
+                if m == 'resend-sms':
+                    channel = "sms"
+                    mfa_methods['twilio-verify'] = None
+                    mfa_error = "Text message resent"
+                elif m == 'call':
+                    channel = "call"
+                    mfa_methods['twilio-verify'] = None
+                    mfa_error = "Calling you now"
+                else:
+                    channel = "sms"
+
+                if not mfa_methods.get('twilio-verify'):
+                    if phone_box.valid_number:
+                        mfa_methods['twilio-verify'] = generate_twilio_mfa_method(phone_box.valid_number)
+                        try:
+                            send_twilio_token(mfa_methods['twilio-verify'], channel)
+                        except MFAException as e:
+                            mfa_error = e.message
+                    else:
+                        mfa_error = "Please enter a valid phone number."
+                else:
+                    if check_twilio_token(mfa_methods['twilio-verify'], twilio_box.text):
+                        return mfa_methods['twilio-verify'], password_box.text
+                    else:
+                        mfa_error = "Incorrect code entered. Please try again."
             else:
-                return None, ""
+                mfa_error = None
 
 
     #!defFunction(anvil.users.mfa,!,email_address, password)!2: "Display a form to collect two-factor authentication credentials from the user currently logging in by passing the function their email and password." ["mfa_login_with_form"]
@@ -115,6 +252,16 @@ else:
         mfa_types = get_available_mfa_types(email, password)
 
         maybe_login_button = []
+
+        error_label = Label(foreground="red", bold=True, spacing_below="none",visible=False)
+        mfa_panel.add_component(error_label)
+        def error(text):
+            error_label.text = text
+            error_label.visible = True
+
+        def clear_error():
+            error_label.visible = False
+            error_label.text = ""
         
         if 'totp' in mfa_types:
             totp_box = TextBox(placeholder="Enter 6-digit code", align="center", font="monospace")
@@ -138,6 +285,40 @@ else:
             else:
                 mfa_panel.add_component(Label(text="Hardware token unavailable", icon="fa:lock", tooltip="Is this page running in an iframe or an unsupported browser?"))
 
+        if 'twilio-verify' in mfa_types:
+            
+            def use_phone(**e):
+                error("Calling you now")
+                try:
+                    send_twilio_token(None, "call")
+                except MFAException as e:
+                    error(e.message)
+            def use_sms(display_sent=True, **e):
+                if display_sent:
+                    error("Text message resent")
+                try:
+                    send_twilio_token(None, "sms")
+                except MFAException as e:
+                    error(e.message)
+
+            use_sms(False)
+
+            twilio_box = TextBox(placeholder="Enter 6-digit code", align="center", font="monospace")
+            twilio_box.set_event_handler("pressed_enter", lambda **e: mfa_panel.raise_event('x-close-alert', value=get_twilio_mfa_login(twilio_box.text)))
+            twilio_box.set_event_handler("show", lambda **e: twilio_box.focus())
+            mfa_panel.add_component(Label(text="Please enter the 6-digit code we sent to the phone number we have on file"))
+            mfa_panel.add_component(twilio_box)
+
+            sms_link = Link(text="Resend Text Message", icon="fa:commenting-o")
+            phone_link = Link(text="Call Me instead", icon="fa:phone")
+            sms_link.set_event_handler("click", use_sms)
+            phone_link.set_event_handler("click", use_phone)
+            mfa_panel.add_component(sms_link)
+            mfa_panel.add_component(phone_link)
+
+            maybe_login_button = [("Log In", 'twilio', 'success')]
+
+
 
         if not mfa_types:
             mfa_panel.add_component(Label(text="No authentication methods available."))
@@ -151,6 +332,8 @@ else:
 
         if r == 'totp':
             return get_totp_mfa_login(totp_box.text)
+        elif r == 'twilio':
+            return get_twilio_mfa_login(twilio_box.text)
         else:
             return r
 
