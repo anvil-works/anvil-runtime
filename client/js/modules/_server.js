@@ -47,7 +47,7 @@ export const SerializationInfo = buildNativeClass("anvil.server.SerializeInfo", 
     },
     slots: {
         $r() {
-            /** @todo adjust for public API along with _server.py */
+            /** TODO: adjust for public API along with _server.py */
             return new pyStr(`SerializationInfo<${objectRepr(this.$txData)}, ${objectRepr(this.$localData)}>`);
         },
         tp$as_sequence_or_mapping: true,

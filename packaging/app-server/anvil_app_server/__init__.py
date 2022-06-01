@@ -127,7 +127,7 @@ def psql():
 
     has_pgcli = False
     try:
-        import shutilxxx
+        import shutil
         if shutil.which("pgcli"):
             has_pgcli = True
     except ImportError:

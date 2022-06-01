@@ -165,7 +165,8 @@ class Browser:
                     if is_interesting_network_request(request):
                         outstanding_network_requests[requestId] = request
 
-                def network_request_failed(requestId, **kwargs):
+                def network_request_failed(requestId, errorText, **kwargs):
+                    print(errorText, outstanding_network_requests[requestId]['request']['url'])
                     outstanding_network_requests.pop(requestId,None)
 
                 def network_request_finished(requestId, **kwargs):

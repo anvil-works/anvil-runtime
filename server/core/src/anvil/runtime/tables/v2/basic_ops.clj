@@ -248,8 +248,10 @@
                                    :tables         tables})))
 
 (defn- render-transmitted-value [tables table-id row-data col-name]
-  (when-let [json-value (get row-data (keyword col-name))]
-    (table-types/render-column-value tables table-id col-name json-value)))
+  (let [json-value (get row-data (keyword col-name))]
+    (when-not (nil? json-value)
+      (table-types/render-column-value tables table-id col-name json-value))))
+
 
 (defn- dict-row-data [row-data cap fetching-cols cols render-value]
   (reduce (fn [row-dict [i {col-name :name}]]

@@ -129,6 +129,7 @@
 
 (defn search-delete [_kw cap]
   (let [tables (util-v2/get-tables)
+        _ (util-v2/ensure-search-permission! tables cap util-v2/WRITE)
         [view-spec {:keys [search]} _cursor] (unwrap-search-cap cap nil)]
     (updates/delete-from-query! (db) tables view-spec search)))
 

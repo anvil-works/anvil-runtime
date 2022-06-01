@@ -85,6 +85,11 @@
   (let [[_ _ {:keys [id perm]} _] (types/unwrap-capability row-cap ["_" "t" :ANY {:r :ANY}])]
     (ensure-access! tables id perm required-level true)))
 
+(defn ensure-search-permission! [tables search-cap required-level]
+  (let [search-scope ["_" "t" :ANY {:search :ANY, :fetch :ANY, :order :ANY, :chunk :ANY} :ANY]
+        [_ _ {:keys [id perm]} _] (types/unwrap-capability search-cap search-scope)]
+    (ensure-access! tables id perm required-level false)))
+
 (defn get-default-view-cols [tables table-id restrictions]
   (let [columns (get-in tables table-id :columns)
         col-names (keys columns)]

@@ -502,11 +502,26 @@
 
 ;; TODO: Implement within-node session hooks for server-initiated events
 
-(defonce register-session-listener! (fn [session callbacks] nil))
+; Map of session-id -> cookie -> {session, callbacks}
+(defonce listeners (atom {}))
+(defonce last-cookie (atom 0))
 
-(defonce unregister-session-listener! (fn [session cookie] nil))
+(defonce register-session-listener! (fn [session callbacks]
+                                      (when-let [session-id (id-when-persisted session)] ;; Could we ever want to do this if the session hasn't been persisted?
+                                        (let [cookie (swap! last-cookie inc)]
+                                          (swap! listeners assoc-in [session-id cookie] {:session   session
+                                                                                         :callbacks callbacks})
+                                          cookie))))
 
-(defonce notify-session-update! (fn [session] nil))
+(defonce unregister-session-listener! (fn [session cookie]
+                                        (when-let [session-id (id-when-persisted session)]
+                                          (swap! listeners util/dissoc-in-or-remove [session-id cookie]))))
+
+;; TODO: Session invalidation should really be implemented directly in the runtime, without the need for listeners.
+(defonce notify-session-update! (fn [session]
+                                  (when-let [session-id (id-when-persisted session)]
+                                    (doseq [[_ {:keys [session _callbacks]}] (get @listeners session-id)]
+                                      (deref-db session)))))
 
 (defonce send-event! (fn [app-id env-id session-id event] nil))
 
