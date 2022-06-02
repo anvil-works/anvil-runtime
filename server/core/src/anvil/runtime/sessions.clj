@@ -167,7 +167,8 @@
                 (catch #(and (instance? SQLException %) (= "40001" (.getSQLState %))) _e
                   ;; Retry on conflict (can't recur from a (catch) block, so we do this silly (or) thing.)
                   nil))
-              (recur))))))
+              (recur)))
+        (log/trace "Wrote session" (get-id this) "to DB"))))
   (swap [this f var1] (.swap this #(f % var1)))
   (swap [this f var1 var2] (.swap this #(f % var1 var2)))
   (swap [this f var1 var2 more] (.swap this #(apply f % var1 var2 more)))
@@ -292,6 +293,7 @@
 (defn load-session-by-id-without-authentication [id]
   (cache/lookup session-cache id
                 #(when-let [{:keys [state last_seen]} (first (jdbc/query util/db ["SELECT state, last_seen FROM runtime_sessions WHERE session_id = ?" id]))]
+                   (log/trace "Loaded session" id "from DB")
                    (->DBSession id (atom {:val (edn/read-string edn-options state), :db-last-seen (.getTime last_seen) :last-read (System/currentTimeMillis)}) (atom {})))))
 
 (defn load-session-by-token [token get-valid-tokens-from-session]
@@ -507,19 +509,20 @@
 (defonce last-cookie (atom 0))
 
 (defonce register-session-listener! (fn [session callbacks]
-                                      (when-let [session-id (id-when-persisted session)] ;; Could we ever want to do this if the session hasn't been persisted?
+                                      (when-let [session-id (get-id session)]
                                         (let [cookie (swap! last-cookie inc)]
                                           (swap! listeners assoc-in [session-id cookie] {:session   session
                                                                                          :callbacks callbacks})
                                           cookie))))
 
 (defonce unregister-session-listener! (fn [session cookie]
-                                        (when-let [session-id (id-when-persisted session)]
+                                        (when-let [session-id (get-id session)]
                                           (swap! listeners util/dissoc-in-or-remove [session-id cookie]))))
 
 ;; TODO: Session invalidation should really be implemented directly in the runtime, without the need for listeners.
 (defonce notify-session-update! (fn [session]
-                                  (when-let [session-id (id-when-persisted session)]
+                                  (when-let [session-id (get-id session)]
+                                    (cache/evict! session-cache session-id) ;; So that new requests don't hit a stale cache
                                     (doseq [[_ {:keys [session _callbacks]}] (get @listeners session-id)]
                                       (deref-db session)))))
 

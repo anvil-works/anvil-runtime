@@ -5,7 +5,8 @@
             [clojure.tools.logging :as log]
             [anvil.dispatcher.serialisation.core :as serialiser]
             [anvil.dispatcher.native-rpc-handlers.util :as util]
-            [anvil.runtime.secrets :as runtime-secrets]))
+            [anvil.runtime.secrets :as runtime-secrets]
+            [anvil.runtime.sessions :as sessions]))
 
 (clj-logging-config.log4j/set-logger! :level :info)
 
@@ -86,6 +87,7 @@
 
     (reset! *rpc-cookies-updated?* true)
     (swap! session assoc-in [:cookies type] new-serialised-cookie-value)
+    (sessions/notify-session-update! session)
     (log/trace "New cookie:" new-map)
     nil))
 
