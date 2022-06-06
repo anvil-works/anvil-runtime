@@ -64,7 +64,7 @@ module.exports = {
                             [
                                 "@babel/preset-react",
                                 {
-                                    pragma: "PyDefUtils.createElement",
+                                    pragma: "PyDefUtils.h",
                                 },
                             ],
                         ],

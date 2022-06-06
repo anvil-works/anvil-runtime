@@ -416,7 +416,7 @@ else:
                 log_in_instead_link.visible = False
                 continue
 
-            return user
+            return _to_user_row(user)
 
     #!defFunction(anvil.users,!,[show_signup_option=True],[remember_by_default=True],[allow_remembered=True],[allow_cancel=False])!2: "Display a login form and allow user to log in. Returns user object if logged in, or None if cancelled.\n\nshow_signup_option: if True, the form will also show the option to sign up for a new account.\n\nremember_by_default: if True, the 'remember me' checkbox will be enabled by default.\n\nallow_remembered: if False, users with remembered login status will still be required to log in.\n\nallow_cancel: if True, the login form has a Cancel button that the user can use to dismiss the form." ["login_with_form"]
     def login_with_form(show_signup_option=True,remember_by_default=True, allow_remembered=True, allow_cancel=False):
@@ -562,23 +562,23 @@ else:
                 if ar == 'google':
                     user = anvil.server.call("anvil.private.users.login_with_google", remember=remember)
                     if user or allow_cancel:
-                        return user
+                        return _to_user_row(user)
                 elif ar == 'facebook':
                     user = anvil.server.call("anvil.private.users.login_with_facebook", remember=remember)
                     if user or allow_cancel:
-                        return user
+                        return _to_user_row(user)
                 elif ar == 'microsoft':
                     user = anvil.server.call("anvil.private.users.login_with_microsoft", remember=remember)
                     if user or allow_cancel:
-                        return user
+                        return _to_user_row(user)
                 elif ar == 'saml':
                     user = anvil.server.call("anvil.private.users.login_with_saml", remember=remember)
                     if user or allow_cancel:
-                        return user
+                        return _to_user_row(user)
                 elif ar == 'raven':
                     user = anvil.server.call("anvil.private.users.login_with_raven", remember=remember)
                     if user or allow_cancel:
-                        return user
+                        return _to_user_row(user)
                 elif ar == 'email_token':
                     target_email = _email_token_login_with_form(email_box.text if email_box else "")
                     if target_email:

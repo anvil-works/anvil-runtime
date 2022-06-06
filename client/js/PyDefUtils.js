@@ -344,14 +344,14 @@ const appendChild = (parent, child, def) => {
     }
 };
 
-PyDefUtils.createElement = function createElement (tag, _props, ...children) {
+PyDefUtils.h = PyDefUtils.createElement = function createElement (tag, _props, ..._children) {
     if (typeof tag === "function") {
-        return tag(_props, ...children);
+        return tag(_props, ..._children);
     }
-    const {refName, _children, style, className, ...props} = _props || {};
+    const {refName, children, style, className, ...props} = _props || {};
     const element = document.createElement(tag);
     const def = { [refName]: element };
-    children = _children || children;
+    _children = children || _children;
 
     if (style) {
         element.style.cssText = style;
@@ -365,7 +365,7 @@ PyDefUtils.createElement = function createElement (tag, _props, ...children) {
         element.setAttribute(propName, propValue == null ? propValue : propValue.toString() );
     });
 
-    children.forEach((child) => {
+    _children.forEach((child) => {
         if (child === null) {
             // pass
         } else if (typeof child === "string") {
@@ -833,7 +833,7 @@ PyDefUtils.OuterElement = ({refName, style, className, ...props}, ...children) =
     const outerStyle = PyDefUtils.getOuterStyle(props) + (style ? " " + style : "");
     const outerAttrs = PyDefUtils.getOuterAttrs(props);
     return (
-        <div refName={refName || "outer"} className={outerClass} style={outerStyle} {...outerAttrs} _children={children}/>
+        <div refName={refName || "outer"} className={outerClass} style={outerStyle} {...outerAttrs} children={children}/>
     );
 
 }

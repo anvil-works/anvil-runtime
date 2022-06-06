@@ -46,7 +46,7 @@
            (when-let [oldest-to-keep ^java.sql.Timestamp (:start_time (last (jdbc/query util/db ["SELECT start_time FROM background_tasks WHERE completion_status IS NOT NULL ORDER BY start_time DESC LIMIT 1000"])))]
              (clean-all-finished-tasks-older-than! (.getTime oldest-to-keep)))
            (let [new-id (str/lower-case (random/base32 25))]
-             (map->BackgroundTask (first (jdbc/query util/db ["INSERT INTO background_tasks (id,session,routing,task_name,debug,start_time,last_seen_alive) VALUES (?,?,?::jsonb,?,FALSE,NOW(),NOW()) RETURNING *"
+             (map->BackgroundTask (first (jdbc/query util/db ["INSERT INTO background_tasks (id,session_id,routing,task_name,debug,start_time,last_seen_alive) VALUES (?,?,?::jsonb,?,FALSE,NOW(),NOW()) RETURNING *"
                                                               new-id session-id (json/write-str (name impl)) task-name]))))))
 
 (defonce list-background-tasks

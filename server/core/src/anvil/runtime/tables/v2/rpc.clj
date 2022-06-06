@@ -8,7 +8,7 @@
     [anvil.runtime.tables.v2.search :as search-v2]
     [anvil.runtime.tables.v2.updates :as updates]
     [anvil.runtime.tables.v2.csv :as csv]
-    [anvil.runtime.tables.v2.util :as util-v2]
+    [anvil.runtime.tables.v2.util :as util-v2 :refer [unwrap-cap-with-perm!]]
     [clojure.java.jdbc :as jdbc]
     [clojure.pprint :as pprint]
     [clojure.string :as string]
@@ -53,10 +53,8 @@
 
 (defn table-list-columns [_kwargs table-cap]
     (let [tables (util-v2/get-tables)
-          [_ _ {:keys [id cols]}] (types/unwrap-capability table-cap ["_" "t" :ANY])
-          _ (util-v2/ensure-table-permission! tables table-cap util-v2/READ)
+          [{:keys [id cols]}] (unwrap-cap-with-perm! tables table-cap :table util-v2/READ)
           all-cols (get-in tables [id :columns])]
-
       (for [[name col] (if cols
                          (select-keys all-cols cols)
                          all-cols)]
@@ -65,7 +63,7 @@
 
 (defn table-get-view [_kwargs table-cap new-perm only-cols query-args query-kwargs]
   (let [tables (util-v2/get-tables)
-        [_ _ {table-id :id :keys [cols perm restrict]}] (types/unwrap-capability table-cap ["_" "t" :ANY])
+        [{table-id :id :keys [cols perm restrict]}] (util-v2/unwrap-cap table-cap :table)
         current-cols (basic-ops/get-col-names table-id tables cols)
         VIEW-NAMES {"rwc" "cascading writable", "rw" "read-write", "r" "read-only"}
         ;; Conditions for "are they allowed to do this?":
@@ -106,17 +104,11 @@
         new-cap (types/->Capability ["_" "t" new-view-spec])]
     [new-cap (util-v2/str-view-key new-view-spec)]))
 
-(defn table-get-page [])
-
 (def CHUNK-SIZE 100)
-
-(defn- unwrap-search-cap [search-cap cursor]
-  (let [scope ["_" "t" :ANY {:search :ANY, :fetch :ANY, :order :ANY, :chunk :ANY} cursor]]
-    (nnext (types/unwrap-capability search-cap scope))))
 
 (defn search-get-page [_kws cap & _args]
   (let [tables (util-v2/get-tables)
-        [view-spec search-spec cursor] (unwrap-search-cap cap :ANY)
+        [view-spec search-spec cursor] (util-v2/unwrap-cap cap :search)
         {:keys [search fetch order chunk]} search-spec
         chunk-size (or chunk CHUNK-SIZE)
         [table-data row-ids cursor] (search-v2/get-page tables (db) view-spec fetch search order chunk-size cursor)]
@@ -124,20 +116,17 @@
 
 (defn search-get-length [_kws cap]
   (let [tables (util-v2/get-tables)
-        [view-spec {:keys [search] :as search-spec} cursor] (unwrap-search-cap cap nil)]
+        [view-spec {:keys [search] :as _search-spec} _cursor] (util-v2/unwrap-cap cap :search)]
     (search-v2/count-rows tables (db) view-spec search)))
 
 (defn search-delete [_kw cap]
   (let [tables (util-v2/get-tables)
-        _ (util-v2/ensure-search-permission! tables cap util-v2/WRITE)
-        [view-spec {:keys [search]} _cursor] (unwrap-search-cap cap nil)]
+        [view-spec {:keys [search]} _cursor] (unwrap-cap-with-perm! tables cap :search util-v2/WRITE)]
     (updates/delete-from-query! (db) tables view-spec search)))
 
 (defn- setup-search [table-cap search-args query-kws]
   (let [tables (util-v2/get-tables)
-        _ (util-v2/ensure-table-permission! tables table-cap util-v2/READ)
-
-        [_ _ {:keys [id cols restrict] :as view-spec}] (types/unwrap-capability table-cap ["_" "t" :ANY])
+        [{:keys [id cols restrict] :as view-spec}] (unwrap-cap-with-perm! tables table-cap :table util-v2/READ) 
         _ (assert id)
         cols (basic-ops/get-col-names id tables cols)
         [search-options query-args] (search-v2/get-search-options tables view-spec search-args)
@@ -168,10 +157,8 @@
 
 (defn table-add-rows [_kw table-cap rows]
   (let [tables (util-v2/get-tables)
-        _ (util-v2/ensure-table-permission! tables table-cap util-v2/WRITE)
-        [_ _ {table-id :id :keys [perm cols restrict] :as view-spec}] (types/unwrap-capability table-cap ["_" "t" :ANY])
+        [{table-id :id :keys [perm cols restrict] :as view-spec}] (unwrap-cap-with-perm! tables table-cap :table util-v2/WRITE)
         new-row-ids (updates/do-insert! (db) (quota-ctx) (can-auto-create?) tables view-spec rows)]
-
     [(for [row-id new-row-ids]
        [row-id (types/->Capability ["_" "t" view-spec {:r row-id}])])
      (basic-ops/get-table-spec table-id tables perm nil cols)]))
@@ -182,18 +169,15 @@
 
 (defn row-update [_kw row-cap values]
   (let [tables (util-v2/get-tables)
-        [_ _ view-spec {row-id :r}] (types/unwrap-capability row-cap ["_" "t" :ANY {:r :ANY}])]
-    (util-v2/ensure-row-permission! tables row-cap util-v2/WRITE)
+        [view-spec {row-id :r}] (unwrap-cap-with-perm! tables row-cap :row util-v2/WRITE)]
     (updates/do-update! (db) (quota-ctx) (can-auto-create?) tables view-spec [{:row-id row-id :values values}])
     nil))
 
 (defn row-batch-update [_kw updates]
   (let [tables (util-v2/get-tables)
         all-updates (->> (for [[row-cap update] updates
-                               :let [[_ _ view-spec {row-id :r}] (types/unwrap-capability row-cap ["_" "t" :ANY {:r :ANY}])]]
-                           (do
-                             (util-v2/ensure-row-permission! tables row-cap util-v2/WRITE)
-                             {:view-spec view-spec :row-id row-id :values update}))
+                               :let [[view-spec {row-id :r}] (unwrap-cap-with-perm! tables row-cap :row util-v2/WRITE)]]
+                           {:view-spec view-spec :row-id row-id :values update})
                          (group-by :view-spec))]
     (doseq [[view-spec updates] all-updates]
       (updates/do-update! (db) (quota-ctx) (can-auto-create?) tables view-spec updates))))
@@ -201,10 +185,8 @@
 (defn row-batch-delete [_kw row-caps]
   (let [tables (util-v2/get-tables)
         all-deletions (->> (for [row-cap row-caps
-                                 :let [[_ _ view-spec {row-id :r}] (types/unwrap-capability row-cap ["_" "t" :ANY {:r :ANY}])]]
-                             (do
-                               (util-v2/ensure-row-permission! tables row-cap util-v2/WRITE)
-                               {:view-spec view-spec, :row-id row-id}))
+                                 :let [[view-spec {row-id :r}] (unwrap-cap-with-perm! tables row-cap :row util-v2/WRITE)]]
+                             {:view-spec view-spec, :row-id row-id})
                            (group-by :view-spec))]
     (doseq [[view-spec deletions] all-deletions]
       (updates/do-delete! (db) (quota-ctx) tables view-spec (map :row-id deletions)))))
@@ -217,7 +199,7 @@
 
 (defn row-fetch [_kw row-cap col-names]
   (let [tables (util-v2/get-tables)
-        [_ _ view-spec {row-id :r}] (types/unwrap-capability row-cap ["_" "t" :ANY {:r :ANY}])]
+        [view-spec {row-id :r}] (util-v2/unwrap-cap row-cap :row)]
     (if-let [table-data (do-row-fetch tables view-spec row-id col-names)]
       table-data
       (throw+ (util-v2/general-tables-error "This row has been deleted" "anvil.tables.RowDeleted")))))
@@ -230,10 +212,9 @@
 
 (defn table-get-row-by-id [{fetch-request :fetch :as _kws} table-cap row-id]
   (let [tables (util-v2/get-tables)
-        [_ _ {table-id :id :as view-spec}] (types/unwrap-capability table-cap ["_" "t" :ANY])
+        [{table-id :id :as view-spec}] (unwrap-cap-with-perm! tables table-cap :table util-v2/READ)
         row-id (basic-ops/validate-clean-row-id row-id table-id)
         requested-cols (validate-fetch-request fetch-request)]
-    (util-v2/ensure-table-permission! tables table-cap util-v2/READ)
     (when row-id
       (when-let [table-data (do-row-fetch tables view-spec row-id requested-cols)]
         ;; we need to return the row-id since we've cleaned it
@@ -241,9 +222,8 @@
 
 (defn table-has-row? [_kw table-cap row-id]
   (let [tables (util-v2/get-tables)
-        [_ _ {table-id :id}] (types/unwrap-capability table-cap ["_" "t" :ANY])
+        [{table-id :id}] (unwrap-cap-with-perm! tables table-cap :table util-v2/READ)
         row-id (basic-ops/validate-clean-row-id row-id table-id)]
-    (util-v2/ensure-table-permission! tables table-cap util-v2/READ)
     (boolean (when row-id
                (seq (jdbc/query (db) ["SELECT 1 FROM app_storage_data WHERE table_id=? AND id=?" table-id row-id]))))))
 
@@ -256,13 +236,12 @@
 
 (defn table-to-csv [_kw table-cap]
   (let [tables (util-v2/get-tables)
-        [_ _ view-spec] (types/unwrap-capability table-cap ["_" "t" :ANY])]
-    (util-v2/ensure-table-permission! tables table-cap util-v2/READ)
+        [view-spec] (unwrap-cap-with-perm! tables table-cap :table util-v2/READ)]
     (get-csv-lazy-media tables view-spec nil)))
 
 (defn search-to-csv [_kw search-cap]
   (let [tables (util-v2/get-tables)
-        [view-spec {:keys [search] :as search-spec} cursor] (unwrap-search-cap search-cap :ANY)]
+        [view-spec {:keys [search] :as _search-spec} _cursor] (util-v2/unwrap-cap search-cap :search)]
     (get-csv-lazy-media tables view-spec search)))
 
 (defn serve-csv-lazy-media [media-id]
@@ -309,10 +288,3 @@
        )
 
 (swap! lazy-media/managers assoc "query-csv-v2" (rpc-util/wrap-lazy-media-server serve-csv-lazy-media))
-
-;; Changes:
-;; - The names ✅
-;; - table.get_view argument order ✅
-;; - slice needs a whole-search cap ✅
-;; - search.index doc needs updating ✅
-;; - column IDs aren't ints

@@ -65,8 +65,9 @@
   ([tables table-id required-level row?]
    (let [name (get-in tables [table-id :name])
          name (if name (str " table '" name "'") " this table")]
-     (throw+ {:anvil/server-error (str "Permission denied: Cannot " (condp = required-level WRITE "write to" READ "read from" "access") (when row? " row from") name " from "
+     (throw+ {:anvil/server-error (str "Cannot " (condp = required-level WRITE "write to" READ "read from" "access") (when row? " row from") name " from "
                                        (if rpc-util/*client-request?* "client" "server") " code.")
+              :type               "anvil.server.PermissionDenied"
               :docId              "data_tables_permissions"
               :docLinkTitle       "Learn about Data Table permissions"}))))
 
@@ -75,26 +76,6 @@
                 (has-ambient-level? tables table-id required-level))
     (throw-permission-denied! tables table-id required-level row?)))
 
-(defn ensure-table-permission! [tables table-cap required-level]
-  (if (nil? table-cap)
-    (throw-permission-denied!)
-    (let [[_ _ {:keys [id perm]}] (types/unwrap-capability table-cap ["_" "t" :ANY])]
-      (ensure-access! tables id perm required-level false))))
-
-(defn ensure-row-permission! [tables row-cap required-level]
-  (let [[_ _ {:keys [id perm]} _] (types/unwrap-capability row-cap ["_" "t" :ANY {:r :ANY}])]
-    (ensure-access! tables id perm required-level true)))
-
-(defn ensure-search-permission! [tables search-cap required-level]
-  (let [search-scope ["_" "t" :ANY {:search :ANY, :fetch :ANY, :order :ANY, :chunk :ANY} :ANY]
-        [_ _ {:keys [id perm]} _] (types/unwrap-capability search-cap search-scope)]
-    (ensure-access! tables id perm required-level false)))
-
-(defn get-default-view-cols [tables table-id restrictions]
-  (let [columns (get-in tables table-id :columns)
-        col-names (keys columns)]
-    (when-not (= ()))))
-
 (defn generate-column-id []
   (.replace (random/base64 8) \/ \_))
 
@@ -102,3 +83,21 @@
   (->> view-spec
        (into (sorted-map))
        (util/write-json-str)))
+
+(def table-scope ["_" "t" :ANY])
+(def row-scope ["_" "t" :ANY {:r :ANY}])
+(def search-scope ["_" "t" :ANY {:search :ANY, :fetch :ANY, :order :ANY, :chunk :ANY} :ANY])
+(def scope-type {:table table-scope :row row-scope :search search-scope})
+
+(defn unwrap-cap [cap type]
+  {:pre [(#{:table :row :search} type)]}
+  (let [scope (get scope-type type)
+        [_ _ & unwrapped] (types/unwrap-capability cap scope)]
+    unwrapped))
+
+(defn unwrap-cap-with-perm! [tables cap type required-level]
+  (when (and (= type :table) (nil? cap))
+    (throw-permission-denied!))
+  (let [[{:keys [id perm]} :as unwrapped] (unwrap-cap cap type)]
+    (ensure-access! tables id perm required-level (= type :row))
+    unwrapped))

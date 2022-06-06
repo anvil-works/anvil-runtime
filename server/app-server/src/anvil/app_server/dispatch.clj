@@ -118,10 +118,10 @@
                                        (fn [{{:keys [func live-object]} :call}]
                                          (when-not live-object
                                            (if-let [matching-uplinks (->> (map second @uplink-registrations)
-                                                                            (filter #(when (re-matches (:func %) func)
-                                                                                       (:executor %)))
-                                                                            (seq))]
-                                             (rand-nth matching-uplinks)
+                                                                          (filter #(when (re-matches (:func %) func)
+                                                                                     (:executor %)))
+                                                                          (seq))]
+                                             (:executor (rand-nth matching-uplinks))
                                              (when (some #(re-matches % func) (map second @stale-uplink-funcs))
                                                (reset! dispatcher/*stale-uplink?* true)
                                                nil)))))

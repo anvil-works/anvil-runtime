@@ -27,7 +27,7 @@ grep -Pv '# BUILD:OMIT\s*$' setup.py > python-package-release/setup.py
 
 TIME=$(date +%Y%m%d-%H%M%S)
 
-sed -i '' s/.SNAPSHOT./.$TIME./ python-package-release/anvil_app_server/__init__.py 
+sed -i='' s/.SNAPSHOT./.$TIME./ python-package-release/anvil_app_server/__init__.py 
 
 aws s3 cp ../../server/app-server/target/anvil-app-server.jar s3://anvil-public-assets/app-server/anvil-app-server.$TIME.jar
 aws s3api put-object-acl --bucket anvil-public-assets --key app-server/anvil-app-server.$TIME.jar --acl public-read

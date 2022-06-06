@@ -24,7 +24,8 @@ CREATE TABLE background_tasks (id text not null,
                                final_state jsonb,
                                start_time timestamp not null default now(),
                                last_seen_alive timestamp not null default now(),
-                               debug boolean default false);
+                               debug boolean default false,
+                               session_id text);
 CREATE INDEX background_tasks_idx ON background_tasks (id);
 
 -- Session records

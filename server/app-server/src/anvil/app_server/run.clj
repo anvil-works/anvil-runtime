@@ -2,7 +2,6 @@
   (:use [org.httpkit.server :only [run-server]]
         [slingshot.slingshot]
         [ring.middleware.defaults :refer [wrap-defaults site-defaults]]
-        [ring.middleware.session.memory :only [memory-store]]
         [clojure.pprint])
   (:require [anvil.app-server.conf :as conf]
             [anvil.app-server.tables :as tables]
@@ -170,8 +169,8 @@
 
 
 (app-log/set-log-impl! {:record-session! (fn record-session! [session log-data]
-                                           (log/info "[SESSION]" (-> session :client :type) (runtime-sessions/get-id session) log-data))
-                        :record-event!   (fn [session trace-id type log-text data]
+                                           (log/info "[SESSION]" (-> @session :client :type) (runtime-sessions/get-id session) log-data))
+                        :record-event!   (fn [_session _trace-id type log-text data]
                                            (condp contains? type
                                              #{"client_err" "err"}
                                              (log/error (apply str
