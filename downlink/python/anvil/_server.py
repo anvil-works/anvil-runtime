@@ -10,6 +10,7 @@ import re
 import json
 import math
 import anvil.tz
+import functools
 
 _do_call = None
 
@@ -20,7 +21,7 @@ POS_INFINITY = float("inf")
 NEG_INFINITY = float("-inf")
 
 _value_types = {}
-_serialization_helpers = {} # {module_name: helper_fn}, entry removed once helper_fn has been run once.
+_serialization_helpers = {} # {module_name: helper_fn}
 
 class LiveObjectProxy(anvil.LiveObject):
 
@@ -462,8 +463,8 @@ class LazyMedia(anvil.Media):
         except AnvilWrappedError as e:
             raise _deserialise_exception(e.error_obj)
 
-    def get_url(self, is_download=True):
-        return anvil.server.call("anvil.private.get_lazy_media_url", self, is_download)
+    def get_url(self, download=True):
+        return anvil.server.call("anvil.private.get_lazy_media_url", self, download)
 
     def get_content_type(self):
         try:
@@ -754,6 +755,8 @@ def reconstruct_val(v, known_liveobject_methods, reconstruct_data_media=None):
             return v["value"]
         elif t == "ValueType":
             return v["typeName"]
+        elif t == "ClassType":
+            return v["typeName"]
 
     raise Exception("Server module cannot accept an object of type '%s'" % v["type"][0])
 
@@ -870,6 +873,21 @@ def _module_prefixes(module):
     module_parts = module.split(".")
     return [".".join(module_parts[:i]) for i in range(1, len(module_parts)+1)]
 
+_called_serialization_helpers = set()
+
+def _check_and_call_serialization_helper(cls_fullname):
+    "checks if a class has a registered helper, calls the helper if it exists (once)"
+    if cls_fullname in _called_serialization_helpers:
+        return False
+
+    for prefix in _module_prefixes(cls_fullname):
+        if prefix in _serialization_helpers:
+            _serialization_helpers[prefix](cls_fullname)
+            _called_serialization_helpers.add(cls_fullname)
+            return True
+
+    return False
+
 
 def fill_out_media(json, handle_media_fn, collect_capabilities=None, remote_is_trusted=False):
     obj_descr = []
@@ -882,35 +900,39 @@ def fill_out_media(json, handle_media_fn, collect_capabilities=None, remote_is_t
 
         t_json = type(_json)
 
-        cls_fullname = t_json.__module__ + "." + t_json.__name__
-        for prefix in _module_prefixes(cls_fullname):
-            if prefix in _serialization_helpers:
-                _serialization_helpers[prefix](cls_fullname)
-                break
-
-
         if hasattr(_json, "SERIALIZATION_INFO"):
             type_name, tp = _json.SERIALIZATION_INFO
-            if type_name not in _value_types or t_json is not tp:
+            valid_type_name = type_name in _value_types
+
+            if valid_type_name and tp is _json:
+                _json = None
+                obj_descr.append({
+                    "type": ["ClassType"],
+                    "path": list(path),
+                    "typeName": type_name
+                })
+
+            elif not valid_type_name or t_json is not tp:
                 raise SerializationError("Cannot serialize %s (must be registered with @anvil.server.portable_class) at msg%s" % (t_json, _repr_path(path)))
-            serialization_info._set_default_key(type_name)
+            else:
+                serialization_info._set_default_key(type_name)
 
-            try:
-                serialize = _json.__serialize__
-            except AttributeError:
-                def serialize(_):
-                    return _json.__dict__
+                try:
+                    serialize = _json.__serialize__
+                except AttributeError:
+                    def serialize(_):
+                        return _json.__dict__
 
-            content = serialize(serialization_info)
+                content = serialize(serialization_info)
 
-            _json = do_fom(content)
+                _json = do_fom(content)
 
-            # Append this afterwards, so we deserialise our content first
-            obj_descr.append({
-                "type": ["ValueType"],
-                "path": list(path),
-                "typeName": type_name
-            })
+                # Append this afterwards, so we deserialise our content first
+                obj_descr.append({
+                    "type": ["ValueType"],
+                    "path": list(path),
+                    "typeName": type_name
+                })
 
         elif isinstance(_json, dict):
             _json = dict(_json)
@@ -964,10 +986,11 @@ def fill_out_media(json, handle_media_fn, collect_capabilities=None, remote_is_t
             serialised_val["path"] = list(path)
             obj_descr.append(serialised_val)
             _json = None
+        elif _check_and_call_serialization_helper(t_json.__module__ + "." + t_json.__name__):
+            _json = do_fom(_json)
         elif 'numpy' in sys.modules and hasattr(sys.modules['numpy'], 'generic') and isinstance(_json, sys.modules['numpy'].generic):
 
-            import numpy
-            _json = numpy.asscalar(_json)
+            _json = _json.item() # convert
 
         elif not (isinstance(_json, string_type) or _json is None or _json is True or _json is False or isinstance(_json, (int, long_type)) or isinstance(_json, float)):
 
@@ -1065,6 +1088,24 @@ def parsedatetime(s):
 
     return d.replace(tzinfo=anvil.tz.tzoffset(minutes=total_minutes))
 
+def _retrieve_portable_class(type_name, d):
+    value_type = _value_types.get(type_name)
+    if value_type is not None:
+        return value_type
+    # Try importing the relevant module
+    i = type_name.rfind('.')
+    if i != -1:
+        # TODO do we filter what we can specify as import? I don't *think* this is dangerous...
+        if not _check_and_call_serialization_helper(type_name):
+            module_name = type_name[:i]
+            importlib.import_module(module_name)
+        value_type = _value_types.get(type_name)
+
+    if value_type is None:
+        raise SerializationError("No such serializable type: %s at msg%s" % (type_name, _repr_path(d["path"])))
+
+    return value_type
+
 
 def _reconstruct_objects(json, reconstruct_data_media, hold_back_value_types=False, collect_capabilities=None, remote_is_trusted=False):
     known_liveobject_methods = {}
@@ -1073,7 +1114,7 @@ def _reconstruct_objects(json, reconstruct_data_media, hold_back_value_types=Fal
     if "objects" in json:
         held_back_objects = []
         for d in json["objects"]:
-            if hold_back_value_types and "ValueType" in d["type"]:
+            if hold_back_value_types and ("ValueType" in d["type"] or "ClassType" in d["type"]):
                 held_back_objects.append(d)
                 continue
 
@@ -1094,24 +1135,7 @@ def _reconstruct_objects(json, reconstruct_data_media, hold_back_value_types=Fal
                 if "ValueType" in d["type"]:
                     # Hack: The "reconstructed value" here is actually just the type name
                     type_name = reconstructed
-                    value_type = _value_types.get(type_name)
-                    if value_type is None:
-                        # Try importing the relevant module
-                        i = type_name.rfind('.')
-                        if i != -1:
-                            # TODO do we filter what we can specify as import? I don't *think* this is dangerous...
-                            for prefix in _module_prefixes(type_name):
-                                if prefix in _serialization_helpers:
-                                    _serialization_helpers[prefix](type_name)
-                                    break
-                            else:
-                                module_name = type_name[:i]
-                                importlib.import_module(module_name)
-                            value_type = _value_types.get(type_name)
-
-                        if value_type is None:
-                            raise SerializationError("No such serializable type: %s at msg%s" % (type_name, _repr_path(d["path"])))
-
+                    value_type = _retrieve_portable_class(type_name, d)
                     try:
                         reconstruct = value_type.__new_deserialized__
                     except AttributeError:
@@ -1128,6 +1152,8 @@ def _reconstruct_objects(json, reconstruct_data_media, hold_back_value_types=Fal
                     serialization_info._set_txdata_available(d["path"][0] != 'vt_global')
                     serialization_info._set_default_key(type_name)
                     last_obj[key] = reconstruct(last_obj[key], serialization_info)
+                elif "ClassType" in d["type"]:
+                    last_obj[key] = _retrieve_portable_class(reconstructed, d)
                 else:
                     last_obj[key] = reconstructed
 
@@ -1263,12 +1289,14 @@ class CallContext(object):
             self.client = CallContext.ClientInfo()
             self.client.type = client.get('type')
             self.client.ip = client.get('ip')
+            self.background_task_id = client.get('background-task-id')
             l = client.get('location')
             self.client.location = CallContext.Location(l) if l else None
             self.remote_caller = CallContext.StackFrame(call_stack[0] if call_stack else client)
         else:
             self.client = None
             self.remote_caller = None
+            self.background_task_id = None
 
     __init__ = _setup
 
@@ -1345,7 +1373,7 @@ def register(fn, name=None, name_prefix=None, require_user=None):
 
     return fn
 
-
+#!defFunction(anvil.server,%,[name], [require_user])!2: {anvil$args: {fn_or_name: "The name by which you want to call your function from the client.", require_user: "Allows you to verify whether a user is logged in. Can be a boolean or a function."}, anvil$helpLink: "server#calling-server-functions-from-client-code", $doc: "When applied to a function as a decorator, the function becomes available from the client side."} ["callable"]
 def callable(fn_or_name=None, require_user=None):
     if fn_or_name is None or isinstance(fn_or_name, string_type):
         return lambda f: register(f, fn_or_name, require_user=require_user)
@@ -1365,8 +1393,10 @@ def callable_as(name):
     print("@callable_as is deprecated. Please use @callable directly.")
     return lambda f: register(f, name)
 
+
+
 def http_endpoint(path, require_credentials=False, authenticate_users=False, authenticate_user=False,
-                  methods=["GET","POST"], enable_cors=False, cross_site_session=False):
+                  methods=["GET","POST"], enable_cors=False, cross_site_session=False, _task_prefix="http"):
     def decorator(fn):
         path_parts = []
         def register_path_part(s):
@@ -1406,7 +1436,14 @@ def http_endpoint(path, require_credentials=False, authenticate_users=False, aut
                     d["Access-Control-Allow-Origin"] = same_app_alternate_origin
                 if enable_cors or same_app_alternate_origin and \
                         "access-control-allow-headers" not in [h.lower() for h in d.keys()]:
-                    d["Access-Control-Allow-Headers"] = "content-type"
+                    allow_headers = ["content-type"]
+                    for k in headers.keys():
+                        if k.lower() == "access-control-request-headers":
+                            hs = [h.strip().lower() for h in headers[k].split(",")]
+                            allow_headers += [h for h in hs if h not in allow_headers]
+
+                    d["Access-Control-Allow-Headers"] = ", ".join(allow_headers)
+
                 return d
 
             if method not in methods:
@@ -1451,10 +1488,13 @@ def http_endpoint(path, require_credentials=False, authenticate_users=False, aut
                         "body":    response,
                         "headers": add_cross_origin_to_header_dict({})}
 
-        register(wrapped_fn, path_regex, "http")
+        register(wrapped_fn, path_regex, _task_prefix)
 
         return fn
     return decorator
+
+
+wellknown_endpoint = functools.partial(http_endpoint, _task_prefix = "http-wellknown")
 
 
 class AnvilCookie(object):
@@ -1520,6 +1560,7 @@ def get_client_session(session_id):
 
 
 # Get the ID of the current session
+#!defFunction(anvil.server,%)!2: "Returns the current session's ID." ["get_session_id"]
 def get_session_id():
     return anvil.server.call("anvil.private.get_session_id")
 
@@ -1536,3 +1577,30 @@ def unsubscribe(channel):
 
 def get_subscriptions():
     return anvil.server.call("anvil.private.get_subscriptions")
+
+
+def plotly_serialization_helper(class_fullname):
+    name_parts = class_fullname.split(".")
+    module_name = ".".join(name_parts[:-1])
+    class_name = name_parts[-1]
+
+    module = importlib.import_module(module_name)
+    cls = getattr(module, class_name)
+
+    if not hasattr(cls, '__serialize__'):
+        # print(f"Registering {cls}")
+        def serialize(self, global_data):
+            # print("Serialising %s on downlink" % type(self))
+            return self.to_plotly_json()
+
+        @staticmethod
+        def new_deserialized(data, global_data):
+            # print("Deserialising %s on downlink" % cls)
+            return cls(data)
+
+        cls.__serialize__ = serialize
+        cls.__new_deserialized__ = new_deserialized
+        portable_class(cls, class_fullname)
+
+
+_serialization_helpers["plotly.graph_objs"] = plotly_serialization_helper

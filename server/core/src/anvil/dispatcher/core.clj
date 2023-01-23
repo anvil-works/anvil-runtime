@@ -9,13 +9,13 @@
             [anvil.util :as util]
             [crypto.random :as random]
             [anvil.runtime.app-log :as app-log]
+            [anvil.runtime.accounting :as accounting]
             [anvil.dispatcher.types :as types]
             [anvil.metrics :as metrics]
             [anvil.core.tracing :as tracing]
             [clojure.string :as str]
             [anvil.runtime.sessions :as sessions])
   (:import (io.opentelemetry.api.trace Span StatusCode)))
-
 
 (clj-logging-config.log4j/set-logger! :level :warn)
 
@@ -44,6 +44,9 @@
 ;; Native RPC functions and LiveObject backends are registered by name
 (defonce native-rpc-handlers (atom {}))
 (defonce native-live-object-backends (atom {}))
+
+;; Native RPC functions for table access only
+(defonce db-only-native-rpc-handlers (atom {}))
 
 (defonce default-background-wrapper (atom nil))
 
@@ -176,9 +179,7 @@
             metrics-timer (atom nil)
             wrapped-respond! (fn [resp]
                                (when (and use-quota? (= 1 (swap! clock-stopped inc)))
-                                 (quota/decrement! session-state environment nil
-                                                   :server-time
-                                                   (/ (double (- (System/currentTimeMillis) start-time)) 1000)))
+                                 (accounting/record-platform-server-use! session-state (/ (double (- (System/nanoTime) start-time)) 1000000000.0)))
 
                                (when-let [stop-timer! @metrics-timer]
                                  (stop-timer!))
@@ -213,17 +214,26 @@
                       request
                       (assoc request :thread-id (str (name (or origin :unknown)) "-" (random/base64 18))))
 
-            executor (or (util/with-meta-when {:executor :native}
-                           (if live-object
-                             (get @native-live-object-backends (:backend live-object))
-                             (get @native-rpc-handlers func)))
+            ;; TODO: We will create a permissions system where executors/dispatch handlers
+            ;;       gate which things you're allowed to call based on your permissions.
+            ;;       For now, we hard-code the first use case, which is "table uplink keys
+            ;;       can only access table functions"
+            executor (if (= origin :db-read-uplink)
+                       (util/with-meta-when {:executor :native}
+                         (or (when-not live-object
+                               (get @db-only-native-rpc-handlers func))
+                             {:fn (fn [req return-path] (respond! return-path {:error {:message (str "Illegal call target for DB uplink") :type "anvil.server.PermissionDenied"}}))}))
+                       (or (util/with-meta-when {:executor :native}
+                             (if live-object
+                               (get @native-live-object-backends (:backend live-object))
+                               (get @native-rpc-handlers func)))
 
-                         (some #(% request) (second @dispatch-handlers))
+                           (some #(% request) (second @dispatch-handlers))
 
-                         (do
-                           (respond! return-path {:error {:message (str "Internal server error: Server runtime not available.")}})
-                           (log/error (str "Internal server error: Server runtime not available for app " app-id " when calling " func))
-                           (throw+ {:anvil/server-error "Internal server error: Server runtime not available."})))
+                           (do
+                             (respond! return-path {:error {:message (str "Internal server error: Server runtime not available.")}})
+                             (log/error (str "Internal server error: Server runtime not available for app " app-id " when calling " func))
+                             (throw+ {:anvil/server-error "Internal server error: Server runtime not available."}))))
 
             _ (when (not= "anvil.private.echo" func)
                 (log/trace "Using executor:" executor))

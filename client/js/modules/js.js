@@ -1,6 +1,8 @@
 "use strict";
 
-/**
+const { anvilServerMod, anvilMod } = require("../utils");
+
+/*#
 id: js_module
 docs_url: /docs/server#advanced
 title: JS Interop Module
@@ -39,15 +41,22 @@ module.exports = function () {
     var PyDefUtils = require("PyDefUtils");
 
     const call_js = PyDefUtils.callJs.bind(null, null);
-    const servermod = PyDefUtils.getModule("anvil.server");
-
     const dummyProxy = proxy({});
     const newProxy = lookupSpecial(dummyProxy, pyStr.$new);
     const ProxyType = dummyProxy.constructor;
 
     async function getModule(url) {
         // we can't use import(url.toString()) because webpack won't support expressions in import statements
-        const mod = await new Function("return import(" + JSON.stringify(url.toString()) + ")").call();
+        // we want "./_/theme/..." and "/_/theme" to do the obvious thing
+        // since runner.js loads from cdnOrigin we adjust the import to be absolute rather than relative
+        url = url.toString();
+        if (url.startsWith("./_/theme/")) {
+            url = url.slice(1);
+        }
+        if (url.startsWith("/_/theme/")) {
+            url = window.anvilAppOrigin + url;
+        }
+        const mod = await new Function("return import(" + JSON.stringify(url) + ")").call();
         return proxy(mod);
     }
 
@@ -76,8 +85,14 @@ module.exports = function () {
         $flags: { OneArg: true },
     });
 
-    const portable_class = servermod.tp$getattr(new pyStr("portable_class"));
-    PyDefUtils.pyCall(portable_class, [ProxyType, new pyStr("anvil.js.ProxyType")]);
+    /*!defMethod(anvil.js.ProxyType instance)!2*/ "The type of a JavaScript object in when accessed in Python code"; "__init__";
+    /*!defClass(anvil.js,ProxyType)!*/
+    pyMod.ProxyType = ProxyType;
+
+    if (!ANVIL_IN_DESIGNER) {
+        // has to work in designer
+        PyDefUtils.pyCall(anvilServerMod.portable_class, [ProxyType, new pyStr("anvil.js.ProxyType")]);
+    }
 
     function exceptionReporter(e) {
         window.onerror(null, null, null, null, e);
@@ -131,8 +146,8 @@ module.exports = function () {
         get_dom_node: {
             $name: "get_dom_node",
             $meth(component) {
-                if (component._anvil && component._anvil.domNode) {
-                    return proxy(component._anvil.domNode);
+                if (component.anvil$hooks) {
+                    return Sk.misceval.chain(component.anvil$hooks.setupDom(), proxy);
                 } else if (component.valueOf() instanceof Element) {
                     // we're a proxy DOM node so just return the object back to the user
                     return component;
@@ -184,7 +199,7 @@ module.exports = function () {
                 const args = name ? [blob, name] : [blob];
                 // use internal call to BlobMedia where the first argument can be a BlobMedia object
                 // the name can also be a js string
-                return PyDefUtils.pyCallOrSuspend(anvil.BlobMedia, args);
+                return PyDefUtils.pyCallOrSuspend(anvilMod.BlobMedia, args);
             },
             $doc: "Convert a javascript Blob, ArrayBuffer, Uint8Array or an Array of these types to an anvil BlobMedia object. If a Blob, or Array of Blobs, is passed the content_type will be inferred.",
             $flags: {
@@ -286,12 +301,6 @@ module.exports = function () {
         return oldLookup.call(this, pyName);
     };
     objectSetItem(Sk.sysmodules, new pyStr("anvil.js.window"), pyMod.window);
-    const anvil = {
-        get BlobMedia() {
-            delete this.BlobMedia;
-            return (this.BlobMedia = Sk.importModule("anvil").tp$getattr(new pyStr("BlobMedia")));
-        },
-    };
 
     pyMod.ExternalError = ExternalError;
     /*!defMethod(_,)!2*/ ({

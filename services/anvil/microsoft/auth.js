@@ -49,16 +49,24 @@ var $builtinmodule = window.memoise('anvil.microsoft.auth', function() {
         if (PyDefUtils.isPopupOK()) {
             doLogin();
         } else {
-            $("#microsoftLogInButton").off("click"); // Just in case they didn't click it last time.
-            $("#microsoftLogInButton").one("click", doLogin);
-            $("#microsoftCancelButton").off("click");
-            $("#microsoftCancelButton").one("click", function() {
-                $("#microsoft-login-modal").one("hidden.bs.modal.alertclear", function() {
-                    loginCallbackResolve.reject("MODAL_CANCEL")
-                });
+            const modal = new window.anvilModal({
+                id: "microsoft-login-modal",
+                backdrop: "static",
+                keyboard: false,
+                dismissible: false,
+                title: "Log in with Microsoft",
+                body: "You are about to log in to this app with Microsoft",
+                buttons: [
+                    {
+                        text: "Cancel",
+                        onClick: () => {
+                            modal.once("hidden", () => loginCallbackResolve.reject("MODAL_CANCEL"));
+                        },
+                    },
+                    { text: "Log in", style: "success", onClick: doLogin },
+                ],
             });
-
-            $('#microsoft-login-modal').modal({backdrop: 'static', keyboard: false});
+            modal.show();
         }
     }
 
@@ -93,7 +101,7 @@ var $builtinmodule = window.memoise('anvil.microsoft.auth', function() {
 
         // TODO: Try immediate auth before we do anything else. If that fails, then...
 
-        loginCallbackResolve = RSVP.defer();
+        loginCallbackResolve = PyDefUtils.defer();
 
         displayLogInModal(Sk.ffi.remapToJs(pyAdditionalScopes || []));
 

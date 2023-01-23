@@ -3,7 +3,7 @@ import time
 import anvil.server
 
 from ._base_classes import Row, SearchIterator, Table
-from ._config import get_client_config as _get_config
+from . import _config
 from ._errors import NoSuchColumnError, QuotaExceededError, RowDeleted, TableError, TransactionConflict
 from ._helpers import _hash_wrapper
 
@@ -30,15 +30,17 @@ class AppTables(object):
     def __setattr__(self, name, val):
         raise Exception("app_tables is read-only")
 
+_set_class = object.__dict__["__class__"].__set__
 
 def _lazy_replace_class(self):
-    set_class = object.__dict__["__class__"].__set__
-    if _get_config().get("enable_v2"):
+    if _config.get_client_config().get("enable_v2"):
         from . import v2
-
-        set_class(self, type(v2.app_tables))
+        v2._app_tables._clear_cache()
+        _set_class(self, type(v2.app_tables))
     else:
-        set_class(self, AppTables)
+        AppTables.cache = None
+        _set_class(self, AppTables)
+
 
 
 def _wrap_dunder(method):
@@ -62,7 +64,7 @@ class _LazyAppTables(object):
 class _LazyContext(object):
     def __enter__(self):
         global batch_update, batch_delete
-        if not _get_config().get("enable_v2"):
+        if not _config.get_client_config().get("enable_v2"):
             batch_update.__class__ = batch_delete.__class__ = type(None)
             return self.__enter__()
 
@@ -77,6 +79,11 @@ class _LazyContext(object):
     def __exit__(self, *args):
         assert not isinstance(self, _LazyContext)
         return self.__exit__(*args)
+
+
+def _clear_cache():
+    _config.reset_config()
+    _set_class(app_tables, _LazyAppTables)
 
 
 #!defModuleAttr(anvil.tables)!1:
@@ -96,7 +103,7 @@ batch_delete = _LazyContext()
 
 
 def get_table_by_id(table_id):
-    if _get_config().get("enable_v2"):
+    if _config.get_client_config().get("enable_v2"):
         from .v2 import get_table_by_id
 
         return get_table_by_id(table_id)

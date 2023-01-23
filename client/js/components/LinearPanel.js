@@ -1,8 +1,9 @@
 "use strict";
 
 var PyDefUtils = require("PyDefUtils");
+import { isInvisibleComponent } from "./helpers";
 
-/**
+/*#
 id: linearpanel
 docs_url: /docs/client/components/containers#linearpanel
 title: LinearPanel
@@ -34,7 +35,7 @@ description: |
 module.exports = (pyModule) => {
 
     pyModule["LinearPanel"] = PyDefUtils.mkComponentCls(pyModule, "LinearPanel", {
-        base: pyModule["Container"],
+        base: pyModule["ClassicContainer"],
 
         properties: PyDefUtils.assembleGroupProperties(/*!componentProps(LinearPanel)!1*/ ["layout", "containers", "appearance", "tooltip", "user data"]),
 
@@ -55,45 +56,33 @@ module.exports = (pyModule) => {
 
             /*!defMethod(_,component,[index=None])!2*/ "Add a component to this LinearPanel, in the 'index'th position. If 'index' is not specified, adds to the bottom."
             $loc["add_component"] = PyDefUtils.funcWithKwargs(function (kwargs, self, component) {
-                pyModule["Container"]._check_no_parent(component);
+                pyModule["ClassicContainer"]._check_no_parent(component);
 
                 let celt;
-                const element = component._anvil.element;
                 const idx = kwargs["index"];
 
                 return Sk.misceval.chain(
-                    null,
-                    () => {
-                        if (component._anvil.metadata.invisible) {
-                            return;
+                    component.anvil$hooks.setupDom(),
+                    element => {
+                        if (isInvisibleComponent(component)) {
+                            return pyModule["ClassicContainer"]._doAddComponent(self, component);
                         }
 
                         [celt] = <ContainerElement />;
-                        celt.appendChild(element[0]);
+                        celt.appendChild(element);
                         const lpul = self._anvil.elements.lpul;
-                        if (typeof idx === "number") {
-                            if (idx < lpul.children.length) {
-                                lpul.insertBefore(celt, lpul.children[idx]);
-                                return;
-                            }
+                        const children = lpul.children;
+                        if (typeof idx === "number" && idx < children.length) {
+                            lpul.insertBefore(celt, lpul.children[idx]);
+                        } else {
+                            lpul.appendChild(celt);
                         }
-                        lpul.appendChild(celt);
-                    },
-                    () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs),
-                    () => {
-                        // Now that we've added it to our components array, move it to the right position.
-                        if (typeof idx === "number") {
-                            const c = self._anvil.components.pop(); // pop off this new component (pushed on by super.add_component())
-                            self._anvil.components.splice(idx, 0, c);
-                        }
-                        const rmFn = component._anvil.parent.remove;
-                        component._anvil.parent.remove = () => {
-                            if (celt) {
+                        return pyModule["ClassicContainer"]._doAddComponent(self, component, kwargs, {
+                            detachDom() {
+                                $(element).detach();
                                 celt.remove();
-                            }
-                            return rmFn();
-                        };
-                        return Sk.builtin.none.none$;
+                            },
+                        });
                     }
                 );
             });

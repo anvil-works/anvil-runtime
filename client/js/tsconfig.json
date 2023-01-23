@@ -10,12 +10,15 @@
         "noEmit": true,
         "module": "ESNext",
         "jsx": "preserve",
+        "jsxFactory": "PyDefUtils.h",
         "moduleResolution": "node",
         "esModuleInterop": true,
         "strict": true,
+        // "noImplicitAny": false,
         "forceConsistentCasingInFileNames": true,
         "isolatedModules": true,
         "allowUmdGlobalAccess": true,
+        "sourceMap": true
     },
     "include": [
         "./",

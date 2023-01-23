@@ -4,12 +4,13 @@ let o = v?.u?.k?.l;
 let x = new Promise((y) => y());
 let f = async () => { await x; let {xyz1, ...rtd} = {xyz1: 42, f:7}; };
 v ??= 1;
-window.RSVP = require('rsvp');
 
 require("./messages");
 require("./extra-python-modules.js");
 
 import { offlineStatusMessageHandler } from "./app_online";
+import Modal from "./modules/modal";
+import { anvilMod, anvilServerMod } from "./utils";
 
 if (navigator.userAgent.indexOf("Trident/") > -1) {
     window.isIE = true;
@@ -22,6 +23,7 @@ window.memoise = (key, fn) => () => (memos[key] || (memos[key] = fn()));
 var componentModule = require("./components");
 var PyDefUtils = require("PyDefUtils");
 window.PyDefUtils = PyDefUtils;
+window.anvilRuntimeVersion = 2;
 
 const eventWarnings = new Set();
 
@@ -182,12 +184,12 @@ function loadApp(app, appId, appOrigin, preloadModules) {
     };
 
     let fillOutModules = (app, topLevelPackage) => {
-        for (var i in app.forms) {
+        for (let i in app.forms) {
             var f = app.forms[i];
             appModules[getFilePath(f.class_name, f.is_package, topLevelPackage)] = f.code;
         }
 
-        for (var i in app.modules) {
+        for (let i in app.modules) {
             var m = app.modules[i];
             appModules[getFilePath(m.name, m.is_package, topLevelPackage)] = m.code;
         }
@@ -353,8 +355,6 @@ function loadApp(app, appId, appOrigin, preloadModules) {
         window.onerror(null, null, null, null, event.reason);
     };
 
-    RSVP.on('error', e => window.onunhandledrejection({reason: e}));
-
 
     window.onerror = function (errormsg, url, line, col, errorObj) {
         if (typeof errormsg === "string" && errormsg.indexOf("__gCrWeb.autofill.extractForms") > -1) {
@@ -385,47 +385,45 @@ function loadApp(app, appId, appOrigin, preloadModules) {
     }
 
 
-    function handlePythonError(errorObj) {
-        const args = Sk.ffi.remapToJs(errorObj.args);
+    function handlePythonError(pyErrorObj) {
+        const args = Sk.ffi.toJs(pyErrorObj.args);
+        const msg = args[0];
+        const errorObj = pyErrorObj._anvil?.errorObj;
+        const traceback = pyErrorObj.traceback;
+        let type;
+        if (errorObj) {
+            type = errorObj.type;
+        } else {
+            type = pyErrorObj.tp$name;
+        }
 
         if (window.anvilOnPythonException) {
-            const errorMsg = {
-                fn: "pythonError",
-                traceback: errorObj.traceback,
-                type: errorObj.tp$name,
-                msg: args[0],
-            };
-
-            if (errorObj._anvil && errorObj._anvil.errorObj) {
-                errorMsg.type = errorObj._anvil.errorObj.type;
-                errorMsg.errorObj = errorObj._anvil.errorObj;
-            }
-
+            const errorMsg = { fn: "pythonError", traceback, type, msg, errorObj };
             window.anvilOnPythonException(errorMsg);
         }
 
-        console.log("Python exception: " + errorObj.tp$name + ": " + args[0]);
-        if (errorObj.nativeError) {
-            console.log(errorObj.nativeError);
+        console.log("Python exception: " + type + ": " + msg);
+        if (pyErrorObj.nativeError) {
+            console.log(pyErrorObj.nativeError);
         } else {
-            console.log(errorObj);
+            console.log(pyErrorObj);
         }
 
-        const err = {
-            type: errorObj.tp$name,
-            trace: errorObj.traceback.map(({ filename, lineno }) => [filename, lineno]),
-            message: args[0],
-            jsTrace: errorObj.nativeError && errorObj.nativeError.stack,
-            bindingErrors: errorObj._anvil && errorObj._anvil.errorObj && errorObj._anvil.errorObj.bindingErrors,
+        const error = {
+            type,
+            trace: traceback.map(({ filename, lineno }) => [filename, lineno]),
+            message: msg,
+            jsTrace: pyErrorObj.nativeError?.stack,
+            bindingErrors: errorObj?.bindingErrors,
             anvilVersion: window.anvilVersion,
         };
 
         flushLog();
-        sendLog({ error: err });
+        sendLog({ error });
 
-        $("#error-indicator .output").text(errorObj.tp$name + ": " + args[0]);
+        $("#error-indicator .output").text(type + ": " + msg);
         if (hasCustomHandler()) {
-            customHandlerHandler(errorObj);
+            customHandlerHandler(pyErrorObj);
         } else {
             showErrorPopup();
         }
@@ -471,24 +469,26 @@ function loadApp(app, appId, appOrigin, preloadModules) {
     };
 
     const showRefreshSessionModal = () => {
-        $("#session-expired-modal button.refresh")
-            .off("click")
-            .on("click", () => {
-                window.location.reload();
-            });
-
-        const currentModal = $(".modal:visible");
-        if (currentModal.length === 0) {
-            $("#session-expired-modal").modal("show");
-        } else if (currentModal[0].id != "session-expired-modal") {
-            currentModal
-                .one("hidden.bs.modal", () => {
-                    $("#session-expired-modal").modal("show");
-                })
-                .modal("hide");
-        } else {
-            // pass we're already visible
+        if (document.getElementById("session-expired-modal")) {
+            // we're already on the screen
+            return;
         }
+        const modal = new Modal({
+            id: "session-expired-modal",
+            large: false,
+            title: "Session Expired",
+            body: "Your session has timed out. Please refresh the page to continue.",
+            buttons: [
+                {
+                    text: "Refresh now",
+                    style: "danger",
+                    onClick: () => {
+                        window.location.reload();
+                    },
+                },
+            ],
+        });
+        modal.show();
     };
 
     function hasCustomHandler() {
@@ -526,6 +526,10 @@ function loadApp(app, appId, appOrigin, preloadModules) {
     var anvilModule = require("./modules/anvil")(appOrigin, uncaughtExceptions);
 
     componentModule.defineSystemComponents(anvilModule);
+
+    // Runner v2: "ClassicComponent" is "Component"; "ClassicContainer" is "Container"
+    anvilModule["Component"] = anvilModule["ClassicComponent"];
+    anvilModule["Container"] = anvilModule["ClassicContainer"];
 
     // Inject the theme HTML assets into the HtmlTemplate component
     anvilModule["HtmlTemplate"].$_anvilThemeAssets = (app.theme && app.theme.html) || {};
@@ -716,7 +720,9 @@ function loadApp(app, appId, appOrigin, preloadModules) {
                                                 try {
                                                     Sk.compile(readCode, "update_binding.py", "exec", true);
                                                     readCompiledOk = true;
-                                                } catch(e) {}
+                                                } catch(e) {
+                                                    // throw below
+                                                }
                                                 if (readCompiledOk) {
                                                     throw new Sk.builtin.SyntaxError("Can't assign to data binding expression for " + binding.component_name + "." + binding.property + ", but writeback is enabled for this data binding.");
                                                 }
@@ -826,8 +832,10 @@ function loadApp(app, appId, appOrigin, preloadModules) {
 
                     const d = Sk.abstr.lookupSpecial(self, Sk.builtin.str.$dict);
                     try {
-                        Sk.abstr.objectDelItem(d, new Sk.builtin.str("_serialization_key"))
-                    } catch(e) {}
+                        Sk.abstr.objectDelItem(d, new Sk.builtin.str("_serialization_key"));
+                    } catch(e) {
+                        // ignore
+                    }
 
                     let a = new Sk.builtin.dict();
                     for (let n in self._anvil.props) {
@@ -1056,7 +1064,7 @@ function loadApp(app, appId, appOrigin, preloadModules) {
     window.anvilServiceClientConfig = {}; // {path => config}
     for (let appService of app.services) {
         var serviceSource = appService.source.replace(/^\/runtime/, window.anvilCDNOrigin + "/runtime");
-        var m = /((.*\/)([^\/]*))\.yml/g.exec(serviceSource);
+        var m = /((.*\/)([^/]*))\.yml/g.exec(serviceSource);
         var serviceName = m[3];
         var serviceUrl = m[1];
         var serviceOrigin = m[2];
@@ -1101,6 +1109,8 @@ function loadApp(app, appId, appOrigin, preloadModules) {
 
     var mediaModule = require("./modules/media")();
     PyDefUtils.loadModule("anvil.media", mediaModule);
+
+    PyDefUtils.loadModule("anvil.code_completion_hints", require("./modules/code-completion-hints")());
 
     try {
         Sk.misceval.retryOptionalSuspensionOrThrow(Sk.importModule("anvil.tables", false, true));
@@ -1178,8 +1188,7 @@ function loadApp(app, appId, appOrigin, preloadModules) {
 }
 
 function openForm(formName) {
-    let anvilModule = PyDefUtils.getModule("anvil");
-    let openForm = anvilModule.tp$getattr(new Sk.builtin.str("open_form"))
+    const openForm = anvilMod.open_form;
     return PyDefUtils.callAsync(openForm, undefined, undefined, undefined, new Sk.builtin.str(formName));
 }
 
@@ -1196,21 +1205,19 @@ function printComponents(printId, printKey) {
     window.outstandingPrintDelayPromises = {};
 
     return PyDefUtils.asyncToPromise(() => {
-        let anvilModule = PyDefUtils.getModule("anvil");
-        let openForm = anvilModule.tp$getattr(new Sk.builtin.str("open_form"))
-        let serverModule = PyDefUtils.getModule("anvil.server");
-        let callFn = serverModule.tp$getattr(new Sk.builtin.str("call"));
+        const openForm = anvilMod.open_form;
+        const callFn = anvilServerMod.call;
         return Sk.misceval.chain(
             Sk.misceval.callsimOrSuspend(callFn, new Sk.builtin.str("anvil.private.pdf.get_component"), new Sk.builtin.str(printId), new Sk.builtin.str(printKey)),
             pyOpenFormTuple => Sk.misceval.applyOrSuspend(openForm, pyOpenFormTuple.v[1], undefined, [], pyOpenFormTuple.v[0].v),
             () => {
                 $("#loadingSpinner").hide(); 
-                console.log(`Print delay promises: ${JSON.stringify(Object.keys(outstandingPrintDelayPromises))}`);
-                return Object.values(outstandingPrintDelayPromises).map(d => d.promise);
+                console.log(`Print delay promises: ${JSON.stringify(Object.keys(window.outstandingPrintDelayPromises))}`);
+                return Object.values(window.outstandingPrintDelayPromises).map(d => d.promise);
             }
         );
     })
-    .then(RSVP.all)
+    .then((promises) => Promise.all(promises))
     .then(() => {
         delete window.outstandingPrintDelayPromises;
         console.log("READY_TO_PRINT"); // pdf_renderer.py is waiting for this exact output.        
@@ -1266,13 +1273,26 @@ window.loadApp = function(params, preloadModules) {
     var appOrigin = params["appOrigin"];
     if (appLoaded) { console.log("Rejected duplicate app load"); return {}; }
 
-    if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register(`${appOrigin}/_/service-worker`, {scope: `${appOrigin}`})
-        .catch((error) => {
-            console.error('Service worker registration failed:', error);
-        });
-        // the service worker takes care of our offlineStuatus
-        navigator.serviceWorker.onmessage = offlineStatusMessageHandler;
+    if ("serviceWorker" in navigator) {
+
+        navigator.serviceWorker.onmessage = (e) => {
+            if (!e.data?.type) return;
+            if (e.data.type === "CDN_ORIGIN") {
+                navigator.serviceWorker.controller?.postMessage({ cdnOrign: window.anvilCDNOrigin });
+            } else {
+                offlineStatusMessageHandler(e);
+            }
+        };
+
+        navigator.serviceWorker
+            .register(`${appOrigin}/_/service-worker`, { scope: `${appOrigin}` })
+            .then((reg) => {
+                const sw = reg.installing ?? reg.waiting ?? reg.active;
+                sw?.postMessage({ cdnOrign: window.anvilCDNOrigin });
+            })
+            .catch((error) => {
+                console.error("Service worker registration failed:", error);
+            });
     }
 
 

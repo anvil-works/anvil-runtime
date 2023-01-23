@@ -51,6 +51,8 @@
        :runtime-common-url                  (:origin conf)
        :db                                  {:classname      "org.postgresql.Driver"
                                              :connection-uri (:database conf)}
+       :db-transaction-timeout              (* (or (:data-table-txn-timeout conf) 10) 1000)
+       :db-pool-params                      (update runtime-conf/db-pool-params :maxPoolSize #(or (:db-connection-pool-size conf) %))
        :force-data-table-views-for-everyone true
        :restrict-email-domains?             false
        :force-secure-cookies?               (:https-origin? conf)

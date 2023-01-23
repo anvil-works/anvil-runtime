@@ -1,5 +1,5 @@
 from __future__ import absolute_import
-import sys, imp, importlib
+import ast, sys, imp, importlib
 
 # The downlink may need to coexist with the Uplink (for example in the standalone App Server).
 # In these deployments, the downlink's version of the 'anvil' module is shipped as
@@ -68,6 +68,8 @@ class SimpleLoader(object):
         if 'code' in self._module:
             try:
                 do_exec(compile(self._module['code'], real_name.replace(".", "/") + '.py', 'exec'), mod.__dict__)
+            except ErrorLoadingUserCode as e:
+                raise
             except Exception as e:
                 raise ErrorLoadingUserCode(e)
 
@@ -91,7 +93,8 @@ class AppModuleFinder(object):
         for form in app_spec.get('forms', []):
             self._modules[prefix + form['class_name']] = form
 
-            if app_spec.get('runtime_options', {}).get('version', 0) < 2:
+            runtime_version = app_spec.get('runtime_options', {}).get('version', 0)
+            if runtime_version < 2:
                 template_mod = sys.modules['anvil']
             else:
                 modname = prefix + form['class_name']
@@ -105,7 +108,9 @@ class AppModuleFinder(object):
                     self._modules[modname] = {'module_object': template_mod}
 
             leaf_name = form['class_name'].split(".")[-1]
-            setattr(template_mod, leaf_name+"Template", _form_templating.mk_template_class(form))
+            if runtime_version < 3:
+                # TODO: Decide whether we want this in runtime V3. Right now it explodes on forms without containers.
+                setattr(template_mod, leaf_name+"Template", _form_templating.mk_template_class(form))
 
 
     def set_app(self, app_spec):
@@ -184,6 +189,25 @@ def load_app_modules():
 
 repl_scopes = {}
 
+def run_repl(code, scope):
+    module_ast = ast.parse(code, "<input>", "exec")
+    node_list = module_ast.body
+
+    if not node_list:
+        return
+
+    if isinstance(node_list[-1], ast.Expr):
+        to_run_exec, to_run_interactive = node_list[:-1], node_list[-1:]
+    else:
+        to_run_exec, to_run_interactive = node_list, []
+
+    if to_run_exec:
+        cobj = compile(ast.Module(to_run_exec, type_ignores=[]), "<input>", "exec")
+        do_exec(cobj, scope)
+    if to_run_interactive:
+        cobj = compile(ast.Interactive(to_run_interactive), "<input>", "single")
+        do_exec(cobj, scope)
+
 
 def handle_incoming_call(msg, send_to_host):
     if msg['type'].startswith("LAUNCH_BACKGROUND"):
@@ -199,18 +223,21 @@ def handle_incoming_call(msg, send_to_host):
     # This part happens out here because uplinks can't do REPLs:
     run_fn = None
     if msg['type'] == "LAUNCH_REPL":
-        repl_scopes[msg['id']] = {}
-
         def run_fn():
             send_to_host({'output': "Application loaded\n", 'id': msg['id']})
             raise _threaded_server.SendNoResponse
 
-    elif msg['type'] == "REPL_COMMAND":
-        scope = repl_scopes.get(msg['repl'], {})
+    elif msg["type"] == "REPL_COMMAND":
+        # adding __package__ allows relative imports to work in the repl
+        # we add the repl scope now if it doesn't exist
+        # since we don't have the package name when we launch the repl
+        # for convenience we include anvil (which also adds anvil.server)
+        scope = repl_scopes.setdefault(
+            msg["repl"], {"anvil": anvil, "__package__": module_finder.get_main_package() or None}
+        )
 
         def run_fn():
-            cobj = compile(msg['command'], "<input>", "single")
-            do_exec(cobj, scope)
+            run_repl(msg['command'], scope)
 
     elif msg['type'] == "TERMINATE_REPL":
         repl_scopes.pop(msg['repl'], None)

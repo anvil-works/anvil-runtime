@@ -2,7 +2,7 @@
 
 var PyDefUtils = require("PyDefUtils");
 
-/**
+/*#
 id: fileloader
 docs_url: /docs/client/components/basic#fileloader
 title: FileLoader
@@ -79,6 +79,11 @@ module.exports = (pyModule) => {
             background: {
                 set(s, e, v) {
                     s._anvil.elements.label.style.backgroundColor = PyDefUtils.getColor(v);
+                },
+            },
+            underline: {
+                set(s, e, v) {
+                    s._anvil.elements.label.style.textDecoration = isTrue(v) ? "underline" : "";
                 },
             },
             foreground: {
@@ -180,11 +185,11 @@ module.exports = (pyModule) => {
             },
         }),
 
-        element({ bold, font_size, border, background, foreground, multiple, enabled, file_types, ...props }) {
+        element({ bold, font_size, border, background, foreground, multiple, enabled, file_types, underline, ...props }) {
             const outerStyle = PyDefUtils.getOuterStyle(props);
             const outerClass = PyDefUtils.getOuterClass(props) + (isTrue(enabled) ? "" : " anvil-disabled");
             const outerAttrs = PyDefUtils.getOuterAttrs(props);
-            const labelStyle = PyDefUtils.getOuterStyle({ bold, font_size, border, background, foreground });
+            const labelStyle = PyDefUtils.getOuterStyle({ bold, font_size, border, background, foreground, underline });
             const { icon, icon_align } = props;
             const inputAttrs = {};
             if (isTrue(multiple)) {
@@ -211,7 +216,7 @@ module.exports = (pyModule) => {
         },
 
         locals($loc) {
-            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Component"], (self) => {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicComponent"], (self) => {
                 self._anvil.files = new Sk.builtin.list([]);
                 self._anvil.firstFile = Sk.builtin.none.none$;
 

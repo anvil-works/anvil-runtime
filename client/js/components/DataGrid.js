@@ -1,8 +1,9 @@
 "use strict";
 
 var PyDefUtils = require("PyDefUtils");
+import { isInvisibleComponent } from "./helpers";
 
-/**
+/*#
 id: datagrid
 docs_url: /docs/client/components/data-grids
 title: DataGrid
@@ -67,7 +68,6 @@ description: |
 module.exports = function(pyModule) {
 
     const { isTrue } = Sk.misceval;
-    const inDesigner = window.anvilInDesigner;
 
     let nextGridId = 0;
 
@@ -86,7 +86,7 @@ module.exports = function(pyModule) {
                 description: "A list of columns to display in this Data Grid.",
                 set(s, e, v) {
                     s._anvil.jsCols = Sk.ffi.toJs(v);
-                    return updateColumns(s, e);
+                    updateColumns(s, e);
                     // Gendoc blows up if we reference the function directly, so wrap it.
                 },
                 getJS(s, e) {
@@ -102,7 +102,8 @@ module.exports = function(pyModule) {
                 exampleValue: true,
                 description: "Whether to display an automatic header at the top of this Data Grid.",
                 set(s, e, v) {
-                    return updateColumns(s, e);
+                    updateColumns(s, e);
+                    s._anvil.onUpdateAutoHeader?.();
                 },
             },
 
@@ -126,8 +127,8 @@ module.exports = function(pyModule) {
             },
             wrap_on: /*!componentProp(DataGrid)!1*/ {
                 name: "wrap_on",
-                type: "string",
-                enum: ["never", "mobile", "tablet"],
+                type: "enum",
+                options: ["never", "mobile", "tablet"],
                 description: "The largest display on which to wrap columns in this DataGrid",
                 defaultValue: new Sk.builtin.str("never"),
                 pyVal: true,
@@ -212,55 +213,47 @@ module.exports = function(pyModule) {
 
             /*!defMethod(_,component,[index=None],[pinned=False])!2*/ "Add a component to this DataGrid, in the 'index'th position. If 'index' is not specified, adds to the bottom."
             $loc["add_component"] = PyDefUtils.funcWithKwargs(function add_component(kwargs, self, component) {
-                pyModule["Container"]._check_no_parent(component);
+                pyModule["ClassicContainer"]._check_no_parent(component);
                 
                 const { index, pinned, slot } = kwargs;
 
                 return Sk.misceval.chain(
-                    undefined,
-                    () => {
-                        if (component._anvil.metadata.invisible) {
-                            return;
+                    component.anvil$hooks.setupDom(),
+                    (celt) => {
+                        if (isInvisibleComponent(component)) {
+                            return pyModule["ClassicContainer"]._doAddComponent(self, component);
                         }
 
-                        const celt = component._anvil.domNode;
                         const childPanel = self._anvil.elements.childPanel;
 
-                        component._anvil.dataGrid = self;
+                        if (component._anvil) {
+                            // TODO: How would you do this in the new world?
+                            component._anvil.dataGrid = self;
+                        }
                         // celt.classList.toggle("hide-while-paginating", !pinned);
 
-                        if (typeof index === "number") {
-                            const elts = self._anvil.elements.childPanel.children;
-                            if (index < elts.length) {
-                                childPanel.insertBefore(celt, elts[index]);
-                                return;
-                                // else fall through and insert at the end
-                            }
-                        }
+                        const elts = self._anvil.elements.childPanel.children;
                         if (slot === "footer") {
                             self._anvil.elements.footerSlot.appendChild(celt);
+                        } else if (typeof index === "number" && index < elts.length) {
+                            childPanel.insertBefore(celt, elts[index]);
                         } else {
                             childPanel.appendChild(celt);
                         }
-                    },
-                    () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs),
-                    () => {
-                        // Now that we've added it to our components array, move it to the right position.
-                        if (typeof index === "number") {
-                            const c = self._anvil.components.pop(); // pop off this new component (pushed on by super.add_component())
-                            self._anvil.components.splice(index, 0, c);
-                        }
-                        const rmFn = component._anvil.parent.remove;
-                        component._anvil.parent.remove = () => {
-                            delete component._anvil.dataGrid;
-                            return Sk.misceval.chain(rmFn(), () => PyDefUtils.pyCallOrSuspend(self.tp$getattr(new Sk.builtin.str("repaginate"))));
-                        };
+                        return pyModule["ClassicContainer"]._doAddComponent(self, component, kwargs, {
+                            afterRemoval() {
+                                if (component._anvil) {
+                                    delete component._anvil.dataGrid;
+                                }
+                                return PyDefUtils.pyCallOrSuspend(self.tp$getattr(new Sk.builtin.str("repaginate")));
+                            },
+                        });
                     },
                     () => PyDefUtils.pyCallOrSuspend(self.tp$getattr(new Sk.builtin.str("jump_to_first_page")))
                 );
             });
 
-            // This shares an annoying amount of code with Container.js
+            // This shares an annoying amount of code with ClassicContainer.js
             // (apart from the conditional slicing off of the automatic header)
             $loc["__serialize__"] = PyDefUtils.mkSerializePreservingIdentity(function (self) {
                 const v = [];
@@ -316,7 +309,7 @@ module.exports = function(pyModule) {
 
         self._anvil.updateColStyles(cols);
 
-        if (inDesigner && self._anvil.updateConfigHeader) {
+        if (ANVIL_IN_DESIGNER && self._anvil.updateConfigHeader) {
             self._anvil.updateConfigHeader();
         }
 

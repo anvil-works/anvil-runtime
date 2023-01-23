@@ -1,8 +1,14 @@
 "use strict";
 
+import {PyHooks, ComponentTag, Component, initComponentSubclass, EMPTY_DESIGN_INFO} from "./Component";
+import {designerApi} from "../runner/component-designer-api";
+import {pyFunc} from "../@Sk";
+import {s_x_anvil_propagate_page_added, s_x_anvil_propagate_page_removed, s_x_anvil_propagate_page_shown} from "../runner/py-util";
+
 var PyDefUtils = require("PyDefUtils");
 
 module.exports = (pyModule) => {
+    // TODO: pyModule["ComponentTag"] = ComponentTag
     pyModule["ComponentTag"] = Sk.misceval.buildClass(
         pyModule,
         ($gbl, $loc) => {
@@ -13,6 +19,152 @@ module.exports = (pyModule) => {
         []
     );
 
+    const createHookShim = (component) => {
+        if (ANVIL_IN_DESIGNER) {
+            return {
+                // Return an implementation of the new JS API (anvil$hooks) that's backed off the old implementation (component._anvil)
+                setupDom() { return component._anvil.domNode; },
+                get domElement() { return component._anvil.domNode; },
+                setDataBindingListener(listenFn) { component._anvil.dataBindingWriteback = listenFn; },
+                // Designer hooks
+                setPropertyValues(updates) {
+                    for (const [propName, value] of Object.entries(updates)) {
+                        component._anvil.setPropJS(propName, value);
+                    }
+                    designerApi.updateComponentProperties(component, Object.fromEntries(Object.entries(updates).map(([name, _]) => [name, component._anvil.getPropJS(name)]), {}));
+                },
+                updateDesignName(name) {
+                    component._anvil.designName = name;
+                    component._anvil.updateDesignName?.(component);
+                },
+                getDesignInfo(asLayout) {
+                    if (asLayout) {
+                        return EMPTY_DESIGN_INFO;
+                    }
+    
+                    const info = {
+                        propertyDescriptions: component._anvil.propTypes.map(
+                            ({
+                                name,
+                                type,
+                                group,
+                                description,
+                                important,
+                                options,
+                                designerHint,
+                                multiline,
+                                deprecated,
+                            }) => ({
+                                name,
+                                type,
+                                group,
+                                description,
+                                important,
+                                options,
+                                designerHint,
+                                multiline,
+                                deprecated,
+                            })
+                        ),
+                        events: component._anvil.eventTypes,
+                        interactions: component._anvil.designerInteractions || [],
+                        propertyValues: Object.fromEntries(
+                            Object.entries(component._anvil.props).map(([name, pyVal]) => [name, Sk.ffi.toJs(pyVal)])
+                        ),
+                    };
+    
+                    const inlineEditProp = component._anvil.propTypes.find(({inlineEditElement}) => inlineEditElement);
+    
+                    if (inlineEditProp) {
+                        info.interactions.push({
+                            type: "whole_component",
+                            name: "Edit text",
+                            icon: "edit",
+                            callbacks: {execute() {
+                                    component._anvil.inlineEditing = true;
+                                    component._anvil.updateDesignName?.(component);
+                                    designerApi.startInlineEditing(
+                                        component,
+                                        inlineEditProp,
+                                        component._anvil.elements[inlineEditProp.inlineEditElement],
+                                        {
+                                            onFinished: () => {
+                                                component._anvil.inlineEditing = false;
+                                                component._anvil.updateDesignName?.(component);
+                                            },
+                                        }
+                                    );
+                                }},
+                            default: true,
+                        });
+                    }
+
+                    const heightAdjustment = component._anvil.propTypes.find(({ name }) => name === "height");
+                    if (heightAdjustment) {
+                        // Canvas, TextArea, Image, GoogleMap, Plot, Spacer, XYPanel
+                        const oldSetHeight = component._anvil.propMap["height"].set;
+
+                        component._anvil.propMap["height"].set = (s, e, v) => {
+                            oldSetHeight?.(s, e, v);
+                            designerApi.notifyBoundsChanged(s);
+                        };
+
+                        let originalHeight;
+                        let element = component.anvil$hooks.domElement;
+
+                        info.interactions.push({
+                            type: "handle",
+                            position: "bottom",
+                            direction: "y",
+                            callbacks: {
+                                grab() {
+                                    // use clientHeight since the prop might be a css value
+                                    originalHeight = element.clientHeight;
+                                },
+                                drag(relX, relY) {
+                                    component._anvil.setPropJS("height", originalHeight + relY);
+                                },
+                                drop(relX, relY) {
+                                    const newHeight = originalHeight + relY;
+                                    component._anvil.setPropJS("height", newHeight);
+                                    designerApi.updateComponentProperties(component, { height: newHeight }, {});
+                                },
+                            },
+                        });
+                    }
+
+                    return info;
+                },
+                getContainerDesignInfo(child) {
+                    return {
+                        layoutPropertyDescriptions: component._anvil.layoutPropTypes?.map(
+                            ({ name, type, description, options }) => ({
+                                name,
+                                type,
+                                options,
+                                description,
+                            })
+                        ),
+                    };
+                },
+            }
+        } else {
+            return {
+                setupDom() {
+                    return component._anvil.domNode;
+                },
+                get domElement() {
+                    return component._anvil.domNode;
+                },
+                setDataBindingListener(listenFn) {
+                    component._anvil.dataBindingWriteback = listenFn;
+                },
+            };
+        }
+    };
+
+    // TODO: implement anvilComponent$setParent
+
     // We use buildNativeClass to ensure that all instances of subclasses of Component follow prototypical inheritance
     // this is enforced by python. It is the reason why you get layout conflicts when trying to inherit from str and int
     // in javascript land the winner of __base__ is the next class on the prototypical chain
@@ -22,17 +174,19 @@ module.exports = (pyModule) => {
     // class C(B, A): pass
     // C.__base__ # A (A is the winer of __base__)  in javascript C instanceof Component // true
     // an alternative would be to implement slots and give Component a __slots__ attribute. This does the same thing as above. 
-    const inDesigner = window.anvilInDesigner;
 
-    pyModule["Component"] = Sk.abstr.buildNativeClass("anvil.Component", {
-        constructor: function Component() {
-            this._anvil = {}; // note a pure instance of Component doesn't have a __dict__, all subclasses do however.
+    pyModule["ClassicComponent"] = Sk.abstr.buildNativeClass("anvil.ClassicComponent", {
+        constructor: function ClassicComponent() {
+            this._anvil = createAnvil(this); // note a pure instance of Component doesn't have a __dict__, all subclasses do however.
+            this.anvil$hooks = createHookShim(this);
+            this._Component = {allowedEvents: new Set(), eventHandlers: {}, tag: new ComponentTag()};
         },
+        base: Component,
         slots: {
             tp$new(args, kwargs) {
-                const cls = this.constructor; // this is the prototype of an Anvil Component Class (this.prototype.tp$new)
-                const self = new cls();
+                const self = Component.prototype.tp$new.call(this, []);
                 const _anvil = (self._anvil = createAnvil(self));
+                self.anvil$hooks = createHookShim(self);
 
                 kwargs = kwargs || [];
                 const propsToInit = {};
@@ -68,6 +222,7 @@ module.exports = (pyModule) => {
                 _anvil.eventTypes = eventTypes;
                 _anvil.layoutPropTypes = layoutPropTypes;
                 _anvil.dataBindingProp = dataBindingProp;
+
 
 
                 // We have discussed passing self to createElement. 
@@ -109,7 +264,7 @@ module.exports = (pyModule) => {
                 if (args.length) {
                     throw new Sk.builtin.TypeError("Component constructor takes keyword arguments only");
                 }
-                if (inDesigner) {
+                if (ANVIL_IN_DESIGNER || designerApi.inDesigner) {
                     return;
                 }
                 kwargs = kwargs || [];
@@ -152,7 +307,7 @@ module.exports = (pyModule) => {
             },
         },
         methods: {
-            /*!defBuiltinMethod(,event_name, handler_func:callable)!2*/
+            // The original, _anvil-dependent implementation of events, for compatibility
             "set_event_handler": {
                 $meth: function (pyEventName, pyHandler) {
                     const eventName = this.$verifyEventName(pyEventName, "set event handler for");
@@ -169,7 +324,6 @@ module.exports = (pyModule) => {
                 $flags: { MinArgs: 2, MaxArgs: 2 },
                 $doc: "Set a function to call when the 'event_name' event happens on this component. Using set_event_handler removes all other handlers. Setting the handler function to None removes all handlers.",
             },
-            /*!defBuiltinMethod(,event_name, handler_func:callable)!2*/
             "add_event_handler": {
                 $meth: function (pyEventName, pyHandler) {
                     const eventName = this.$verifyEventName(pyEventName, "set event handler");
@@ -181,7 +335,6 @@ module.exports = (pyModule) => {
                 $flags: { MinArgs: 2, MaxArgs: 2 },
                 $doc: "Add an event handler function to be called when the event happens on this component. Event handlers will be called in the order they are added. Adding the same event handler multiple times will mean it gets called multiple times.",
             },
-            /*!defBuiltinMethod(,event_name, [handler_func:callable])!2*/
             "remove_event_handler": {
                 $meth: function (pyEventName, pyHandler) {
                     const eventName = this.$verifyEventName(pyEventName, "remove event handler");
@@ -211,7 +364,6 @@ module.exports = (pyModule) => {
                 $flags: { MinArgs: 1, MaxArgs: 2 },
                 $doc: "Remove a specific event handler function for a given event. Calling remove_event_handler with just the event name will remove all the handlers for this event",
             },
-            /*!defBuiltinMethod(,event_name,**event_args)!2*/
             "raise_event": {
                 $meth: function (args, kws) {
                     Sk.abstr.checkOneArg("raise_event", args);
@@ -226,27 +378,6 @@ module.exports = (pyModule) => {
                 $flags: { FastCall: true },
                 $doc: "Trigger the event on this component. Any keyword arguments are passed to the handler function.",
             },
-            /*!defBuiltinMethod(_)!2*/
-            "remove_from_parent": {
-                $meth: function () {
-                    if (this._anvil.parent) {
-                        return this._anvil.parent.remove();
-                    }
-                    return Sk.builtin.none.none$;
-                },
-                $flags: { NoArgs: true },
-                $doc: "Remove this component from its parent container.",
-            },
-            /*!defBuiltinMethod(,smooth=False)!2*/
-            "scroll_into_view": {
-                $meth: function (smooth) {
-                    this._anvil.domNode.scrollIntoView({ behavior: Sk.misceval.isTrue(smooth) ? "smooth" : "instant", block: "center", inline: "center" });
-                    return Sk.builtin.none.none$;
-                },
-                $flags: { NamedArgs: ["smooth"], Defaults: [Sk.builtin.bool.false$] },
-                $doc: "Scroll the window to make sure this component is in view.",
-            },
-            /*!defBuiltinMethod(tuple_of_event_handlers, event_name)!2*/
             "get_event_handlers": {
                 $meth: function (eventName) {
                     eventName = this.$verifyEventName(eventName, "get event handlers");
@@ -257,28 +388,11 @@ module.exports = (pyModule) => {
             },
         },
         getsets: {
-            parent: {
-                $get() {
-                    return this._anvil.parent ? this._anvil.parent.pyObj : Sk.builtin.none.none$;
-                },
-                $set() {
-                    throw new Sk.builtin.AttributeError("Cannot set a '" + this.tp$name + "' component's parent this way - use 'add_component' on the container instead");
-                },
-            },
             __name__: {
                 $get() {
                     return Sk.abstr.lookupSpecial(this.ob$type, Sk.builtin.str.$name);
                 },
             },
-            tag: {
-                $get() {
-                    return this._anvil.props.tag || Sk.builtin.none.none$;
-                },
-                $set(val) {
-                    this._anvil.props.tag = val;
-                },
-                $doc: "Use this property to store any extra information about this component",
-            }
         },
         proto: {
             // just use the self version
@@ -307,7 +421,7 @@ module.exports = (pyModule) => {
                 if (!Sk.builtin.checkCallable(pyHandler)) {
                     throw new Sk.builtin.TypeError(`The '${eventName}' event handler added to ${this.tp$name} must be a callable, not type '${Sk.abstr.typeName(pyHandler)}'`);
                 }
-            }
+            },
         },
         flags: {
             sk$klass: true // tell skulpt we can be treated like a regular klass for tp$setatttr
@@ -315,23 +429,36 @@ module.exports = (pyModule) => {
     });
 
     PyDefUtils.initComponentClassPrototype(
-        pyModule["Component"],
+        pyModule["ClassicComponent"],
         PyDefUtils.assembleGroupProperties(["user data"]),
         [], // events
         () => <div />, // element
         [] // layoutProps
     );
 
-    /*!defClass(anvil,Component)!*/
-    
+    // Because __init_subclass__ isn't a thing for native types
+    initComponentSubclass(pyModule["ClassicComponent"]);
+
+
 
     function createAnvil(self) {
         let show, hide;
-        return {
+        const _anvil = {
             element: null, // will be created in Component.__new__
             domNode: null, // will be created in Component.__new__
             elements: null, // will be a dict of {refName: domNode}
-            parent: null, // will be {pyObj: parent_component, remove: fn}
+            // for compatibility
+            // parent: null, // will be {pyObj: parent_component, removeFn: fn}
+            get parent() {
+                const internalParent = self._Component.parent ?? null;
+                return internalParent && {
+                    pyObj: internalParent.pyParent,
+                    removeFn: () => internalParent.remove.forEach(f => f()),
+                };
+            },
+            set parent({pyObj, removeFn}) {
+                self.anvilComponent$setParent(pyObj, removeFn);
+            },
             eventTypes: {},
             eventHandlers: {},
             props: {},
@@ -342,12 +469,11 @@ module.exports = (pyModule) => {
             metadata: {},
             defaultWidth: null,
             onPage: false,
-            delayAddedToPage: false,
+            delayAddingChildrenToPage: false,
             components: [],
             addedToPage() {
                 show = show || PyDefUtils.raiseEventOrSuspend.bind(null, {}, self, "show");
                 self._anvil.onPage = true;
-                self._anvil.delayAddedToPage = false;
                 return Sk.misceval.chain(null, self._anvil.pageEvents.add || (() => {}), show);
             },
             removedFromPage() {
@@ -427,6 +553,12 @@ module.exports = (pyModule) => {
             dataBindingProp: null,
 
         };
+
+        _anvil.eventHandlers[s_x_anvil_propagate_page_added.toString()] = [PyDefUtils.funcFastCall(() => _anvil.addedToPage())];
+        _anvil.eventHandlers[s_x_anvil_propagate_page_removed.toString()] = [PyDefUtils.funcFastCall(() => _anvil.removedFromPage())];
+        _anvil.eventHandlers[s_x_anvil_propagate_page_shown.toString()] = [PyDefUtils.funcFastCall(() => _anvil.shownOnPage())];
+
+        return _anvil;
     }
 };
 

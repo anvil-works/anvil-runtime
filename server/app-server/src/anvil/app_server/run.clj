@@ -222,7 +222,7 @@
       (context "/_/downlink" [] downlink/handle-incoming-ws)
       (context "/_/uplink" [] uplink/handle-incoming-ws))
     "*")
-  runtime/runtime-common-routes
+  #'runtime/runtime-common-routes
   (wrap-constant-app
     (runtime-sessions/with-app-session
       (routes
@@ -285,6 +285,8 @@
                               [nil "--auto-migrate" "Migrate data tables schema automatically"]
                               [nil "--ignore-invalid-schema" "Ignore invalid data tables schema and run anyway"]
                               [nil "--database DB-URL" "Database URL"]
+                              [nil "--data-table-txn-timeout SECONDS" "Data Table Transactions left idle for this long will time out. Default: 10"]
+                              [nil "--db-connection-pool-size SIZE" "The maximum size of the DB connection pool. Default: 2*CPU cores (size of thread pool)"]
                               [nil "--app DIRECTORY" "Load and run the specified app"]
                               [nil "--dep-id ID=PACKAGE" "Associate a dependency app ID with its package name"
                                :validate require-equals :assoc-fn update-map-with-equals]
@@ -293,6 +295,7 @@
                               [nil "--encryption-key NAME=VALUE" "Pass an app encryption key"
                                :validate require-equals :assoc-fn update-map-with-equals]
                               [nil "--downlink-key KEY" "Authentication key for a separately launched downlink"]
+                              [nil "--downlink-worker-timeout SECONDS" "Timeout for server code running in embedded downlink. Default: 30"]
                               [nil "--uplink-key KEY" "Key to connect server (privileged) uplinks to this app"]
                               [nil "--client-uplink-key KEY" "Key to connect client (unprivileged) uplinks to this app"]
                               [nil "--shell" "Launch an interactive Python shell (connected via the Uplink)"]
@@ -368,6 +371,8 @@
         specified-downlink-key? (:downlink-key options)
         options (update-in options [:downlink-key] #(or % (random/base32 32)))
 
+        options (update-in options [:downlink-worker-timeout] #(or % "30"))
+
         options (update-in options [:ip] #(or % "0.0.0.0"))
 
         coerce-number #(cond (number? %) %
@@ -378,6 +383,10 @@
         options (update-in options [:smtp-port] coerce-number)
 
         options (update-in options [:smtp-server-port] #(or (coerce-number %) 25))
+
+        options (update-in options [:data-table-txn-timeout] coerce-number)
+
+        options (update-in options [:db-connection-pool-size] coerce-number)
 
         options (update-in options [:origin] #(or (when %
                                                     (.replaceAll (str %) "/$" ""))
@@ -519,7 +528,7 @@
 
     ;; If they didn't specify a downlink key, we start our own!
     (when-not specified-downlink-key?
-      (dispatch/launch-downlink! (:downlink-key options) "localhost" http-port))
+      (dispatch/launch-downlink! (:downlink-key options) "localhost" http-port (:downlink-worker-timeout options)))
 
     (when (:shell options)
       (Thread/sleep 1000)

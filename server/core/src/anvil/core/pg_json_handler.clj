@@ -2,6 +2,7 @@
   "Shamelessly ripped off from http://hiim.tv/clojure/2014/05/15/clojure-postgres-json/"
   (:require [clojure.java.jdbc :as jdbc]
             [clojure.data.json :as json]
+            [anvil.runtime.accounting]
             [anvil.util :as util])
   (:import org.postgresql.util.PGobject
            (clojure.lang IPersistentMap IPersistentVector)))
@@ -26,4 +27,5 @@
       (condp = type
         "json" (json/read-str value :key-fn keyword)
         "jsonb" (json/read-str value :key-fn keyword)
+        "account" (anvil.runtime.accounting/read-account value)
         value))))

@@ -107,6 +107,7 @@ class Connection(WebSocketClient):
         self._key = key
         self._last_keepalive_reply = time.time()
         self._last_activity = time.time()
+        self._idle_timeout_timer = None
 
         threading.Timer(30, self.check_keepalives).start()
 
@@ -114,8 +115,10 @@ class Connection(WebSocketClient):
         self._last_activity = time.time()
 
     def reset_idle_timer(self):
+        if self._idle_timeout_timer:
+            self._idle_timeout_timer.cancel()
         if IDLE_TIMEOUT_SECONDS:
-            threading.Timer(IDLE_TIMEOUT_SECONDS, self.idle_timeout).start()
+            self._idle_timeout_timer = threading.Timer(IDLE_TIMEOUT_SECONDS, self.idle_timeout).start()
 
     def idle_timeout(self):
         if is_idle() and self._last_activity < time.time() - IDLE_TIMEOUT_SECONDS:
@@ -252,6 +255,12 @@ class Connection(WebSocketClient):
                     connection.send_with_header(
                         {'error': {'type': 'anvil.server.NotRunningTask', 'message': 'No such task running'},
                          'id': data['id']})
+
+            elif type == "SET_IDLE_TIMEOUT":
+                global IDLE_TIMEOUT_SECONDS
+                IDLE_TIMEOUT_SECONDS = data['timeout']
+                self.reset_idle_timer()
+                print("Resetting idle timeout to", data['timeout'])
 
             elif type == "CHUNK_HEADER":
                 if data['requestId'] in workers_by_id:
@@ -451,7 +460,7 @@ def init_pdf_worker():
 
 if RUNTIME_ID == "pdf-renderer":
     init_pdf_worker()
-elif RUNTIME_ID.endswith('-sandbox'):
+elif RUNTIME_ID.endswith('-sandbox') and not os.getenv("FAKE_SANDBOX"):
     from . import pypy_sandbox
     launch_worker = pypy_sandbox.launch
 else:

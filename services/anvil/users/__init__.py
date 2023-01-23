@@ -10,8 +10,8 @@ def _to_user_row(user):
     return user
 
 def _to_row_ref(user):
-    from anvil.tables import _get_config
-    if _get_config().get("enable_v2"):
+    from anvil.tables._config import get_client_config
+    if get_client_config().get("enable_v2"):
         from anvil.tables.v2._refs import to_ref
         user = to_ref(user)
     return user

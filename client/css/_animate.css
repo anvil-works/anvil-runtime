@@ -1,0 +1,73 @@
+/* 
+Necessary classes for Notification animation
+See animate.css v3.5.1
+https://github.com/animate-css/animate.css/blob/3.5.1/animate.css
+*/
+.aw-animated {
+    -webkit-animation-duration: .3s;
+    animation-duration: .3s; /* Originally 1s */
+    -webkit-animation-fill-mode: both;
+    animation-fill-mode: both;
+}
+
+@-webkit-keyframes aw-fadeInDown {
+    from {
+        opacity: 0;
+        -webkit-transform: translate3d(0, -100%, 0);
+        transform: translate3d(0, -100%, 0);
+    }
+
+    to {
+        opacity: 1;
+        -webkit-transform: none;
+        transform: none;
+    }
+}
+
+@keyframes aw-fadeInDown {
+    from {
+        opacity: 0;
+        -webkit-transform: translate3d(0, -100%, 0);
+        transform: translate3d(0, -100%, 0);
+    }
+
+    to {
+        opacity: 1;
+        -webkit-transform: none;
+        transform: none;
+    }
+}
+
+.aw-fadeInDown {
+    -webkit-animation-name: aw-fadeInDown;
+    animation-name: aw-fadeInDown;
+}
+
+@-webkit-keyframes aw-fadeOutUp {
+    from {
+        opacity: 1;
+    }
+
+    to {
+        opacity: 0;
+        -webkit-transform: translate3d(0, -100%, 0);
+        transform: translate3d(0, -100%, 0);
+    }
+}
+
+@keyframes aw-fadeOutUp {
+    from {
+        opacity: 1;
+    }
+
+    to {
+        opacity: 0;
+        -webkit-transform: translate3d(0, -100%, 0);
+        transform: translate3d(0, -100%, 0);
+    }
+}
+
+.aw-fadeOutUp {
+    -webkit-animation-name: aw-fadeOutUp;
+    animation-name: aw-fadeOutUp;
+}

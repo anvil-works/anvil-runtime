@@ -22,8 +22,8 @@
 
   <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/bootstrap.css?buildTime=0" crossorigin/>
   <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/bootstrap-theme.min.css?buildTime=0" crossorigin/>
-  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/runner.css?buildTime=0" crossorigin/>
-  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/daterangepicker.css?buildTime=0" crossorigin/>
+  <link rel="stylesheet" href="{{cdn-origin}}/runtime/dist/runner.min.css?buildTime=0" crossorigin/>
+  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/daterangepicker.min.css?buildTime=0" crossorigin/>
   <link rel="stylesheet" href="{{cdn-origin}}/runtime/node_modules/animate.css/animate.min.css?buildTime=0" crossorigin/>
 
   <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/font-awesome.min.css?buildTime=0" crossorigin/>
@@ -77,168 +77,6 @@
 <div id="loadingSpinner"></div>
 
 
-<!-- Session expired modal -->
-
-<div id="session-expired-modal" class="modal fade">
-  <div class="modal-dialog modal-sm">
-    <div class="modal-content">
-      <div class="modal-header">
-        <button type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span><span class="sr-only">Close</span></button>
-        <h4 class="modal-title">Session Expired</h4>
-      </div>
-      <div class="modal-body">
-        Your session has timed out. Please refresh the page to continue.
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-danger refresh">Refresh Now</button>
-      </div>
-    </div><!-- /.modal-content -->
-  </div><!-- /.modal-dialog -->
-</div><!-- /.modal -->
-
-
-<!-- Google API log-in modal -->
-
-<div id="google-login-modal" class="modal fade">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h4 class="modal-title">Log in with Google</h4>
-      </div>
-      <div class="modal-body text-center">
-        <button id="googleLogInButton" type="button" class="btn" data-dismiss="modal"><img src="{{cdn-origin}}/runtime/img/google-signin-buttons/btn_google_signin_light_normal_web.png?buildTime=0" crossorigin/></button>
-      </div>
-      <div class="modal-footer">
-        <button id="googleCancelButton" type="button" class="btn btn-default" data-dismiss="modal">Cancel</button>
-      </div>
-    </div><!-- /.modal-content -->
-  </div><!-- /.modal-dialog -->
-</div><!-- /.modal -->
-
-<!-- Facebook API log-in modal -->
-
-<div id="facebook-login-modal" class="modal fade">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h4 class="modal-title">Log in with Facebook</h4>
-      </div>
-      <div class="modal-body">
-        <p>You are about to log in to this app with Facebook</p>
-      </div>
-      <div class="modal-footer">
-        <button id="facebookCancelButton" type="button" class="btn btn-default" data-dismiss="modal">Cancel</button>
-        <button id="facebookLogInButton" type="button" class="btn btn-success" data-dismiss="modal">Log in</button>
-      </div>
-    </div><!-- /.modal-content -->
-  </div><!-- /.modal-dialog -->
-</div><!-- /.modal -->
-
-<!-- Microsoft log-in modal -->
-
-<div id="microsoft-login-modal" class="modal fade">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h4 class="modal-title">Log in with Microsoft</h4>
-      </div>
-      <div class="modal-body">
-        <p>You are about to log in to this app with Microsoft</p>
-      </div>
-      <div class="modal-footer">
-        <button id="microsoftCancelButton" type="button" class="btn btn-default" data-dismiss="modal">Cancel</button>
-        <button id="microsoftLogInButton" type="button" class="btn btn-success" data-dismiss="modal">Log in</button>
-      </div>
-    </div><!-- /.modal-content -->
-  </div><!-- /.modal-dialog -->
-</div><!-- /.modal -->
-
-<!-- SAML log-in modal -->
-
-<div id="saml-login-modal" class="modal fade">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h4 class="modal-title">Log in with SAML</h4>
-      </div>
-      <div class="modal-body">
-        <p>You are about to log in to this app with SAML</p>
-      </div>
-      <div class="modal-footer">
-        <button id="samlCancelButton" type="button" class="btn btn-default" data-dismiss="modal">Cancel</button>
-        <button id="samlLogInButton" type="button" class="btn btn-success" data-dismiss="modal">Log in</button>
-      </div>
-    </div><!-- /.modal-content -->
-  </div><!-- /.modal-dialog -->
-</div><!-- /.modal -->
-
-<!-- Raven log-in modal -->
-
-<div id="raven-login-modal" class="modal fade">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <button type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span><span class="sr-only">Close</span></button>
-        <h4 class="modal-title">Log in with Raven</h4>
-      </div>
-      <div class="modal-body">
-        <p>You are about to log in to this app with Raven</p>
-      </div>
-      <div class="modal-footer">
-        <button id="ravenCancelButton" type="button" class="btn btn-default" data-dismiss="modal">Cancel</button>
-        <button id="ravenLogInButton" type="button" class="btn btn-success" data-dismiss="modal">Log in</button>
-      </div>
-    </div><!-- /.modal-content -->
-  </div><!-- /.modal-dialog -->
-</div><!-- /.modal -->
-
-<!-- Stripe checkout modal -->
-
-<div id="stripe-checkout-modal" class="modal fade">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <button type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span><span class="sr-only">Close</span></button>
-        <h4 class="modal-title">Pay Online</h4>
-      </div>
-      <div class="modal-body">
-        <p>You are about to make an online payment.</p>
-      </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-default" data-dismiss="modal">Cancel</button>
-        <button id="stripeContinue" type="button" class="btn btn-success" data-dismiss="modal">Continue to payment screen</button>
-      </div>
-    </div><!-- /.modal-content -->
-  </div><!-- /.modal-dialog -->
-</div><!-- /.modal -->
-
-<!-- Kerberos Login modal -->
-
-<div id="kerberos-login-modal" class="modal fade">
-  <div class="modal-dialog modal-sm">
-    <div class="modal-content">
-      <div class="modal-header">
-        <button type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span><span class="sr-only">Close</span></button>
-        <h4 class="modal-title">Kerberos Authentication</h4>
-      </div>
-      <div class="modal-body">
-        <p>Please enter your username and password</p>
-        <form class="">
-          <input id="kerberos-username" type="text" placeholder="Username" class="form-control" />
-          <input id="kerberos-password" type="password" placeholder="Password" class="form-control" />
-        </form>
-      </div>
-      <div class="modal-footer">
-        <button id="kerberosCancel" type="button" class="btn btn-default" data-dismiss="modal">Cancel</button>
-        <button id="kerberosLogin" type="button" class="btn btn-success" data-dismiss="modal">Log in</button>
-      </div>
-    </div><!-- /.modal-content -->
-  </div><!-- /.modal-dialog -->
-</div><!-- /.modal -->
-
-
-
-
     <div id="error-indicator">
         <div style="float:left; width: 40px">
             <i class="glyphicon glyphicon-warning-sign" style="float:left; width: 40px;"></i>
@@ -257,22 +95,19 @@
   <script src="{{cdn-origin}}/runtime/node_modules/bootstrap/dist/js/bootstrap.min.js?buildTime=0" crossorigin></script>
   <script src="{{cdn-origin}}/runtime/node_modules/moment/min/moment.min.js?buildTime=0" crossorigin></script>
   <script src="{{cdn-origin}}/runtime/node_modules/moment-timezone/builds/moment-timezone-with-data-2012-2022.min.js?buildTime=0" crossorigin></script>
-  <script src="{{cdn-origin}}/runtime/js/lib/daterangepicker.js?buildTime=0" crossorigin></script>
+  <script src="{{cdn-origin}}/runtime/js/lib/daterangepicker.min.js?buildTime=0" crossorigin></script>
   <script src="{{cdn-origin}}/runtime/js/lib/b64.js?buildTime=0" crossorigin></script>
   <script src="{{cdn-origin}}/runtime/js/lib/bootstrap-notify.min.js?buildTime=0" crossorigin></script>
 
   <script src="{{cdn-origin}}/runtime/node_modules/js-yaml/dist/js-yaml.min.js?buildTime=0" crossorigin></script>
-  <script src="{{cdn-origin}}/runtime/js/lib/mutationobserver.min.js?buildTime=0" crossorigin></script>
 
 <!--   <script src="{{cdn-origin}}/runtime/node_modules/core-js-bundle/minified.js?buildTime=0" crossorigin></script>
  -->
 
-  <script src="{{cdn-origin}}/runtime/js/lib/unorm.js?buildTime=0" crossorigin></script>
-
   <script src="{{cdn-origin}}/runtime/js/lib/skulpt.min.js?buildTime=0" crossorigin></script>
   <script src="{{cdn-origin}}/runtime/js/lib/skulpt-stdlib.js?buildTime=0" crossorigin></script>
 
-  <script src="{{cdn-origin}}/runtime/js/runner.bundle.js?buildTime=0" crossorigin></script>
+  <script src="{{cdn-origin}}/runtime/dist/runner.bundle.js?buildTime=0" crossorigin></script>
 
   {{extra-snippets}}
   <script>

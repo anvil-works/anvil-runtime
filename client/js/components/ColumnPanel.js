@@ -1,8 +1,11 @@
 "use strict";
 
+import { getRandomStr } from "../utils";
+import { isInvisibleComponent } from "./helpers";
+
 var PyDefUtils = require("PyDefUtils");
-var utils = require("utils");
-/**
+
+/*#
 id: columnpanel
 docs_url: /docs/client/components/containers#columnpanel
 title: ColumnPanel
@@ -29,7 +32,7 @@ module.exports = (pyModule) => {
 
 
     pyModule["ColumnPanel"] = PyDefUtils.mkComponentCls(pyModule, "ColumnPanel", {
-        base: pyModule["Container"],
+        base: pyModule["ClassicContainer"],
 
         properties: PyDefUtils.assembleGroupProperties(/*!componentProps(ColumnPanel)!1*/ ["layout", "containers", "appearance", "user data", "tooltip"], {
             col_widths: /*!componentProp(ColumnPanel)!1*/ {
@@ -50,8 +53,8 @@ module.exports = (pyModule) => {
 
             wrap_on: /*!componentProp(ColumnPanel)!1*/ {
                 name: "wrap_on",
-                type: "string",
-                enum: ["never", "mobile", "tablet"],
+                type: "enum",
+                options: ["never", "mobile", "tablet"],
                 description: "The largest display on which to wrap columns in this panel",
                 defaultValue: new Sk.builtin.str("mobile"),
                 pyVal: true,
@@ -74,8 +77,8 @@ module.exports = (pyModule) => {
             col_spacing: /*!componentProp(ColumnPanel)!1*/ {
                 name: "col_spacing",
                 description: "Space between columns",
-                type: "string",
-                enum: ["none", "tiny", "small", "medium", "large", "huge"],
+                type: "enum",
+                options: ["none", "tiny", "small", "medium", "large", "huge"],
                 defaultValue: new Sk.builtin.str("medium"),
                 pyVal: true,
                 important: false,
@@ -117,8 +120,8 @@ module.exports = (pyModule) => {
         ],
 
         locals($loc) {
-            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Container"], (self) => {
-                self._anvil.panelId = utils.getRandomStr(6);
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicContainer"], (self) => {
+                self._anvil.panelId = getRandomStr(6);
                 self._anvil.rows = {};
                 self._anvil.cols = {};
 
@@ -131,14 +134,14 @@ module.exports = (pyModule) => {
 
                     return {
                         col_widths: (basedOn && basedOn.col_widths) || {},
-                        grid_position: utils.getRandomStr(6) + "," + utils.getRandomStr(6),
+                        grid_position: getRandomStr(6) + "," + getRandomStr(6),
                         full_width_row: basedOn && basedOn.full_width_row,
                     };
                 };
 
                 self._anvil.setLayoutProperties = function (pyChild, layoutProperties) {
                     const ps = {};
-                    // Assume this only gets called from the designer, so pyChild will have a name.
+                    // Assume this only gets called from the designer, so pyChild will have a name (and be a ClassicComponent)
                     const name = pyChild._anvil.componentSpec.name;
                     ps[name] = layoutProperties;
 
@@ -171,7 +174,7 @@ module.exports = (pyModule) => {
 
 
             $loc["clear"] = new Sk.builtin.func(function (self) {
-                return Sk.misceval.chain(Sk.misceval.callsimOrSuspend(pyModule["Container"].tp$getattr(new Sk.builtin.str("clear")), self), function () {
+                return Sk.misceval.chain(Sk.misceval.callsimOrSuspend(pyModule["ClassicContainer"].tp$getattr(new Sk.builtin.str("clear")), self), function () {
                     self._anvil.element.empty();
                     self._anvil.rows = {};
                     self._anvil.cols = {};
@@ -284,25 +287,27 @@ module.exports = (pyModule) => {
 
             /*!defMethod(_,component,full_width_row=False,**layout_props)!2*/ "Add a component to the bottom of this ColumnPanel. Useful layout properties:\n\n  full_width_row = True|False\n  row_background = [colour]"
             $loc["add_component"] = new PyDefUtils.funcWithKwargs(function (kwargs, self, component) {
-                pyModule["Container"]._check_no_parent(component);
+                pyModule["ClassicContainer"]._check_no_parent(component);
                 let currentColContainer = undefined;
 
                 return Sk.misceval.chain(
-                    undefined,
-                    () => {
-                        if (component._anvil.metadata.invisible) {
-                            return;
+                    component.anvil$hooks.setupDom(),
+                    (rawComponentElement) => {
+                        if (isInvisibleComponent(component)) {
+                            return pyModule["ClassicContainer"]._doAddComponent(self, component);
                         }
 
-                        const componentElement = component._anvil.element;
+                        const componentElement = $(rawComponentElement);
 
-                        component._anvil.layoutProps = kwargs;
+                        if (component._anvil) { // this had better be for the designer's benefit only
+                            component._anvil.layoutProps = kwargs;
+                        }
                         const { grid_position: gridPos, full_width_row, row_background } = kwargs;
                         const panelId = self._anvil.panelId;
                         const wrap_on = self._anvil.props["wrap_on"];
                         const props = { panelId, wrap_on, full_width_row, row_background };
 
-                        const levels = gridPos?.split(" ") || [utils.getRandomStr(6) + "," + utils.getRandomStr(6)];
+                        const levels = gridPos?.split(" ") || [getRandomStr(6) + "," + getRandomStr(6)];
                         for (const level of levels) {
                             const [rowId, colId] = level.split(",");
 
@@ -328,27 +333,16 @@ module.exports = (pyModule) => {
                         }
 
                         componentElement.data("anvil-panel-child-idx", self._anvil.components.length);
+                        componentElement.data("anvil-panel-grid-pos", gridPos);
                         componentElement.addClass("belongs-to-" + panelId);
 
                         const [paddingElement] = <div refName="padding" className={"col-padding belongs-to-" + panelId + " col-padding-" + self._anvil.getPropJS("col_spacing")} />;
                         currentColContainer.appendChild(paddingElement);
                         paddingElement.appendChild(componentElement[0]);
 
-                        component._anvil.delayAddedToPage = true;
-                    },
-                    () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs),
-                    () => {
-                        const rmFn = component._anvil.parent.remove;
-                        component._anvil.parent.remove = () => {
-                            if (currentColContainer !== undefined) {
-                                currentColContainer.remove();
-                            }
-                            return rmFn();
-                        }
-
-                        if (self._anvil.onPage) return component._anvil.addedToPage();
-                    },
-                    () => Sk.builtin.none.none$
+                        return pyModule["ClassicContainer"]._doAddComponent(self, component, kwargs,
+                            {detachDom: () => currentColContainer?.remove?.()});
+                    }
                 );
             });
         },

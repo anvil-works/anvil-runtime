@@ -1,8 +1,9 @@
 "use strict";
 
 var PyDefUtils = require("PyDefUtils");
+const { datetimeMod, tzMod } = require("../utils");
 
-/**
+/*#
 id: datepicker
 docs_url: /docs/client/components/basic#datepicker
 title: DatePicker
@@ -53,23 +54,13 @@ description: |
 
 module.exports = (pyModule) => {
 
-    const datetime = Sk.importModule("datetime");
     const {isTrue} = Sk.misceval;
     const {checkString} = Sk.builtin;
 
-    const dateStr = new Sk.builtin.str("date");
-    const datetimeStr = new Sk.builtin.str("datetime");
-    const pyDatetime = datetime.tp$getattr(datetimeStr);
-    const pyDate = datetime.tp$getattr(dateStr);
+    const pyDatetime = datetimeMod.datetime;
+    const pyDate = datetimeMod.date;
     const strftimeStr = new Sk.builtin.str("strftime");
 
-    const tz = {
-        get tzoffset() {
-            delete this.tzoffset;
-            const tz = PyDefUtils.getModule("anvil.tz");
-            return (this.tzoffset = tz.tp$getattr(new Sk.builtin.str("tzoffset")));
-        },
-    };
 
     // See http://momentjs.com/docs/#/displaying/format/
     const pythonformatToMomentJS = {
@@ -144,6 +135,7 @@ module.exports = (pyModule) => {
             autoUpdateInput: false,
             minDate: minDate,
             maxDate: maxDate,
+            drops: "auto",
 
             // The following may have been modified.
             locale: {
@@ -246,7 +238,7 @@ module.exports = (pyModule) => {
 
                     // The datePicker gives us moments that are already in the timezone of the browser.
                     if (isTrue(self._anvil.props["pick_time"])) {
-                        const tzinfo = PyDefUtils.pyCall(tz.tzoffset, [], ["minutes", Sk.ffi.remapToPy(self._anvil.dateMoment.utcOffset())]);
+                        const tzinfo = PyDefUtils.pyCall(tzMod.tzoffset, [], ["minutes", Sk.ffi.remapToPy(self._anvil.dateMoment.utcOffset())]);
                         dateArray.push(tzinfo);
                         return PyDefUtils.pyCall(
                             pyDatetime,
@@ -354,7 +346,7 @@ module.exports = (pyModule) => {
         },
 
         locals($loc) {
-            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Component"], (self) => {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicComponent"], (self) => {
                 self._anvil.picker = $(self._anvil.elements.input);
                 self._anvil.elements.icon.addEventListener("click", () => {
                     if (isTrue(self._anvil.getProp("enabled"))) {
@@ -366,6 +358,7 @@ module.exports = (pyModule) => {
                 updatePicker(self);
             });
 
+            /*!defMethod(_)!2*/ "Set the keyboard focus to this DatePicker"
             $loc["focus"] = new Sk.builtin.func(function focus(self) {
                 self._anvil.picker.trigger("focus");
                 return Sk.builtin.none.none$;

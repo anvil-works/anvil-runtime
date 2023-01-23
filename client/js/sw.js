@@ -1,74 +1,104 @@
-let log = true;
+/// <reference lib="WebWorker" />
 
-let ACTIVE_CACHE = 'v0';
-let OFFLINE_TIMEOUT = 5000;
+// NB: the service worker may become passive in long running apps
+// when the service worker 'wakes up' this script will re-run
+// i.e. we can't trust local variables to persist
+const log = false;
+
+const ACTIVE_CACHE = "v0";
+const OFFLINE_TIMEOUT = 5000;
 
 let lastOffline = 0;
 
-let cleanupOldCaches = async () => {
-    for (let key of await caches.keys()) {
+const cleanupOldCaches = async () => {
+    for (const key of await caches.keys()) {
         if (key !== ACTIVE_CACHE) {
             console.log("Removing old service worker cache:", key);
             await caches.delete(key);
         }
     }
+};
+
+let cdnOrign = "https://";
+/// Are we able to fetch this URL
+const isExpectedToFetch = (e) => {
+    return e.request.url.startsWith(cdnOrign);
+};
+
+self.onmessage = (e) => {
+    const data = e.data;
+    if (data?.cdnOrign) {
+        cdnOrign = data.cdnOrign;
+    }
+};
+
+async function requestCdnOrigin() {
+    const clients = await self.clients.matchAll({
+        includeUncontrolled: true,
+        type: "window",
+    });
+    const client = clients?.filter((c) => c.visibilityState === "visible")[0];
+    client?.postMessage({ type: "CDN_ORIGIN" });
 }
 
+// we may have 'woken up' so ask the client for the CDN Origin
+requestCdnOrigin();
 
-let _fetch = async e => {
-
-    let cache = await caches.open(ACTIVE_CACHE);
-    let match = await cache.match(e.request);
+const _fetch = async (e) => {
+    const cache = await caches.open(ACTIVE_CACHE);
+    const match = await cache.match(e.request);
 
     if (!navigator.onLine || lastOffline > Date.now() - OFFLINE_TIMEOUT) {
         // Shortcut: Use cache if a request recently failed for something in the cache.
         if (match) {
-            log && console.log("Fast offline cache hit:", e.request.url);
+            log && console.debug("Fast offline cache hit:", e.request.url);
             return match;
         } else {
-            log && console.log("Fast offline cache miss:", e.request.url);
+            log && console.debug("Fast offline cache miss:", e.request.url);
         }
     }
 
     try {
-        let resp = await fetch(e.request.clone());
+        const resp = await fetch(e.request.clone());
         lastOffline = 0;
 
         // Allow caching anything that comes back with the X-Anvil-Cacheable header
         if (e.request.method === "GET" && resp.status === 200 && resp.headers.has("X-Anvil-Cacheable")) {
-            log && console.log("Caching:", e.request.url);
+            log && console.debug("Caching:", e.request.url);
             cache.put(e.request, resp.clone());
         } else {
-            log && console.log("Not caching:", e.request.url);
+            log && console.debug("Not caching:", e.request.url);
             cache.delete(e.request);
         }
         updateOnlineStatus(e, true);
         return resp;
     } catch (err) {
-        updateOnlineStatus(e, false);
-        
+        if (match || isExpectedToFetch(e)) {
+            updateOnlineStatus(e, false);
+        }
+
         if (match) {
             lastOffline = Date.now();
             console.log("Serving Anvil resources from Service Worker cache");
-            log && console.log("Offline cache hit:", e.request.url);
+            log && console.debug("Offline cache hit:", e.request.url);
             return match;
         } else {
-            log && console.log("Offline cache miss:", e.request.url);
+            log && console.debug("Offline cache miss:", e.request.url);
             throw err;
         }
     }
 };
 
-addEventListener('install', e => {
-    console.log("Service Worker installed with scope:", registration.scope);
+self.addEventListener("install", (e) => {
+    console.log("Service Worker installed with scope:", self.registration.scope);
 });
 
-addEventListener('activate', e => {
+self.addEventListener("activate", (e) => {
     e.waitUntil(cleanupOldCaches());
 });
 
-addEventListener('fetch', e => {
-    e.respondWith(_fetch(e))
+self.addEventListener("fetch", (e) => {
+    e.respondWith(_fetch(e));
 });
 
 let navigatorTrusted = true;
@@ -86,7 +116,7 @@ async function updateOnlineStatus(e, onLine) {
 }
 
 async function postOfflineStatus(e, onLine) {
-    const client = await clients.get(e.clientId);
+    const client = await self.clients.get(e.clientId);
     if (!client) return;
     client.postMessage({ type: "OFFLINE_STATUS", onLine });
 }

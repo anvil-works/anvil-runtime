@@ -321,7 +321,7 @@ The available column types are listed below, along with their corresponding pyth
 * `date` - A Python `datetime.date`
 * `datetime` - A Python `datetime.datetime`
 * `simpleObject` - Can hold Python strings, numbers, dicts, lists or `None` (ie JSON data)
-* `media` - Binary data (an Anvil [Media object](https://anvil.works/docs/media))
+* `media` - Binary data (an Anvil [Media object](https://anvil.works/docs/working-with-files/media))
 * `liveObject` - A row from another table
 * `liveObjectArray` - A list of rows from another table
 
@@ -514,7 +514,7 @@ This provides access to the following:
 * [Authentication](https://anvil.works/docs/integrations/google/authenticating-users) - Log users in with their Google accounts
 * [Drive](https://anvil.works/docs/integrations/google/google-drive) - Read and write files from your own Google Drive, and the Google Drives of your users (with permission)
 * [Google Sheets](https://anvil.works/docs/integrations/google/google-drive#google-sheets) - Anvil has a Python API for accessing worksheets, fields, rows and cells in Google Sheets
-* [GMail](https://anvil.works/docs/integrations/google/gmail) - You can send email with your GMail account (although consider the Anvil [Email Service](email))
+* [Gmail](https://anvil.works/docs/integrations/google/gmail) - You can send email with your Gmail account (although consider the Anvil [Email Service](email))
 * [Google REST APIs](https://anvil.works/docs/integrations/google/google-rest-apis) - You can easily get and refresh an access token to use with Google's many REST APIs. Then you can use `requests` or `anvil.http.request` to make calls to these APIs.
 
 

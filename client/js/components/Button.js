@@ -3,7 +3,7 @@
 import { setHandled } from "./events";
 var PyDefUtils = require("PyDefUtils");
 
-/**
+/*#
 id: button
 docs_url: /docs/client/components/basic#button
 module: Anvil Components
@@ -34,7 +34,7 @@ module.exports = (pyModule) => {
             {
                 align: {
                     defaultValue: new Sk.builtin.str("center"),
-                    enum: ["left", "center", "right", "full"],
+                    options: ["left", "center", "right", "full"],
                     set(s, e, v) {
                         v = v.toString();
                         if (v === "full") {
@@ -52,6 +52,7 @@ module.exports = (pyModule) => {
                     dataBindingProp: true,
                     multiline: true,
                     suggested: true,
+                    inlineEditElement: 'text',
                 },
                 font_size: {
                     set(s, e, v) {
@@ -140,7 +141,7 @@ module.exports = (pyModule) => {
         },
 
         locals($loc) {
-            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Component"], (self) => {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicComponent"], (self) => {
                 $(self._anvil.elements.button).on(
                     "click",
                     PyDefUtils.funcWithPopupOK((e) => {

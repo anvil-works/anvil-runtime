@@ -1,8 +1,9 @@
 "use strict";
 import { setHandled, isHandled } from "./events";
 var PyDefUtils = require("PyDefUtils");
+const { isTrue } = Sk.misceval;
 
-/**
+/*#
 id: link
 docs_url: /docs/client/components/basic#link
 title: Link
@@ -40,8 +41,6 @@ description: |
 
 module.exports = (pyModule) => {
 
-    const { isTrue } = Sk.misceval;
-
     pyModule["Link"] = PyDefUtils.mkComponentCls(pyModule, "Link", {
         base: pyModule["ColumnPanel"],
 
@@ -56,6 +55,7 @@ module.exports = (pyModule) => {
                     holder.textContent = v;
                     holder.style.display = v ? "inline-block" : "none";
                 },
+                inlineEditElement: 'holder',
             },
             url: /*!componentProp(Link)!1*/ {
                 name: "url",
@@ -113,6 +113,10 @@ module.exports = (pyModule) => {
             const outerAttrs = PyDefUtils.getOuterAttrs(props);
             const initialText = (props.text = Sk.builtin.checkNone(props.text) ? "" : props.text.toString());
             const colSpacing = " col-padding-" + col_spacing.toString();
+            let underlineStyle = "";
+            if (isTrue(props.underline)) {
+                underlineStyle = "text-decoration: underline;";
+            }
             return (
                 <a
                     refName="outer"
@@ -123,7 +127,7 @@ module.exports = (pyModule) => {
                     style={outerStyle}
                     {...outerAttrs}>
                     <PyDefUtils.IconComponent side="left" {...props} />
-                    <div refName="holder" className="link-text" style={`display: ${ initialText ? 'inline-block' : 'none'}`}>
+                    <div refName="holder" className="link-text" style={`display: ${ initialText ? 'inline-block' : 'none'}; ${underlineStyle}`}>
                         {Sk.builtin.checkNone(props.text) ? "" : props.text.toString()}
                     </div>
                     <PyDefUtils.IconComponent side="right" {...props} />

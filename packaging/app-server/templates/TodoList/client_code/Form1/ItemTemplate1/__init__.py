@@ -8,7 +8,7 @@ class ItemTemplate1(ItemTemplate1Template):
     # Set Form properties and Data Bindings.
     self.init_components(**properties)
 
-    # Any code you write here will run when the form opens.
+    # Any code you write here will run before the form opens.
 
     # Create a CheckBox and add it to column "B" of the DataGrid on Form1
     self.completed_box = CheckBox(checked=self.item['complete'], align="center")

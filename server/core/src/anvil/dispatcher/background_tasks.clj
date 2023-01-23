@@ -352,6 +352,7 @@
         log-ctx (merge {:app-session new-session}
                        (select-keys request [:app-id :environment]))
         task (create-background-task-record environment impl func (sessions/get-id new-session))
+        _ (swap! new-session assoc-in [:client :background-task-id] (:id task))
 
         return-path {:update!  (fn [{:keys [output]}]
                                  (when output

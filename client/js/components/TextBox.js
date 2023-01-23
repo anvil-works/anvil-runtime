@@ -2,7 +2,7 @@
 
 var PyDefUtils = require("PyDefUtils");
 
-/**
+/*#
 id: textbox
 docs_url: /docs/client/components/basic#textbox
 title: TextBox
@@ -51,6 +51,7 @@ module.exports = (pyModule) => {
                 },
                 allowBindingWriteback: true,
                 suggested: true,
+                inlineEditElement: 'input'
             },
             placeholder: /*!componentProp(TextBox)!1*/ {
                 name: "placeholder",
@@ -77,8 +78,8 @@ module.exports = (pyModule) => {
             },
             type: /*!componentProp(TextBox)!1*/ {
                 name: "type",
-                type: "string",
-                enum: ["text", "number", "email", "tel", "url"],
+                type: "enum",
+                options: ["text", "number", "email", "tel", "url"],
                 description: "What type of data will be entered into this box?",
                 defaultValue: new Sk.builtin.str("text"),
                 pyVal: true,
@@ -134,7 +135,7 @@ module.exports = (pyModule) => {
         },
 
         locals($loc) {
-            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Component"], (self) => {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicComponent"], (self) => {
                 self._anvil.element
                     .on("propertychange change keyup paste input", function (e) {
                         if (e.type !== "change")

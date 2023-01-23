@@ -1,6 +1,6 @@
-/**
+/*#
 id: image_module
-docs_url: /docs/media/image-manipulation
+docs_url: /docs/working-with-files/media/image-manipulation
 title: Image Module
 description: |
   ```python
@@ -32,6 +32,8 @@ description: |
 
   To rotate an image clockwise by some number of degrees, use the `rotate` method.
 */
+
+const { anvilMod } = require("../utils");
 
 
 // TODO: Make use of media._anvilCachedImage, as used in Canvas drawImage
@@ -145,11 +147,11 @@ module.exports = function() {
                 img.onload = function() {
                     var w = img.naturalWidth;
                     var h = img.naturalHeight;
-
+                    let scale;
                     if (w >= h) {
-                        var scale = maxSize / w;
+                        scale = maxSize / w;
                     } else {
-                        var scale = maxSize / h;
+                        scale = maxSize / h;
                     }
                     if (scale >= 1) {
                         resolve(pyImg);
@@ -181,9 +183,8 @@ module.exports = function() {
 
                     var blob = dataURItoBlob(small);
 
-                    var anvil = PyDefUtils.getModule("anvil");
 
-                    var PyBlobMedia = anvil.tp$getattr(new Sk.builtin.str("BlobMedia"));
+                    var PyBlobMedia = anvilMod["BlobMedia"];
 
                     resolve(PyDefUtils.callAsync(PyBlobMedia, undefined, undefined, undefined, blob));
                 }
@@ -247,9 +248,8 @@ module.exports = function() {
                         }
 
                         var blob = dataURItoBlob(newImgDataURL);
-                        var anvil = PyDefUtils.getModule("anvil");
 
-                        var PyBlobMedia = anvil.tp$getattr(new Sk.builtin.str("BlobMedia"));
+                        var PyBlobMedia = anvilMod["BlobMedia"];
 
                         resolve(PyDefUtils.callAsync(PyBlobMedia, undefined, undefined, undefined, blob));
                     }

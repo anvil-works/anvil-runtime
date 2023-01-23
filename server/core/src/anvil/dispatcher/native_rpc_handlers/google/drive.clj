@@ -96,7 +96,7 @@
     (let [resp (request {:url    (str "https://www.googleapis.com/drive/v2/files/"
                                       file-id
                                       "/revisions"
-                                      "?pageToken=" page-token)
+                                      (when (not-empty page-token) (str "?pageToken=" (codec/url-encode page-token))))
                          :method :get} creds)]
 
       (update-in resp ["items"] multi-whitelist!-and-lazy-media creds wl-access))))

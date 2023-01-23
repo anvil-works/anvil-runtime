@@ -41,13 +41,12 @@ class Cell(ApiItem):
     #!defAttr()!1: {name:"input_value",type:"string",description:"The value that was entered into the cell"}
     def __setattr__(self, name, value):
         if name == "value" or name == "input_value":
+            input_value = str(value)
+            rv = rpc.call("anvil.private.google.sheets.v4.update_cell", self._other["capability"], input_value)
 
-            val = rpc.call("anvil.private.google.sheets.v4.update_cell", self._other["capability"], value)
+            self._obj["input_value"] = input_value
+            self._obj["value"] = rv
 
-            self._obj["input_value"] = str(value)
-            self._obj["value"] = val
-
-            return val
         else:
             object.__setattr__(self, name, value)
 
@@ -66,9 +65,10 @@ class Row(ApiItem):
         return self._other["data"][self._other["fields_old"].get(key, key)]
 
     def __setitem__(self, key, value):
+        input_value = str(value)
         key = self._other["fields_old"].get(key, key)
         if key in self._other["data"]:
-            rpc.call("anvil.private.google.sheets.v4.update_cell", self._other["capability"].narrow([index_to_col(self._other["fields"].index(key) + 1)]), value)
+            rpc.call("anvil.private.google.sheets.v4.update_cell", self._other["capability"].narrow([index_to_col(self._other["fields"].index(key) + 1)]), input_value)
         else:
             raise KeyError(key)
 

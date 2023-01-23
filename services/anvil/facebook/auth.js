@@ -49,16 +49,20 @@ var $builtinmodule = window.memoise('anvil.facebook.auth', function() {
         if (PyDefUtils.isPopupOK()) {
             doLogin();
         } else {
-            $("#facebookLogInButton").off("click"); // Just in case they didn't click it last time.
-            $("#facebookLogInButton").one("click", doLogin);
-            $("#facebookCancelButton").off("click");
-            $("#facebookCancelButton").one("click", function() {
-                $("#facebook-login-modal").one("hidden.bs.modal.alertclear", function() {
-                    loginCallbackResolve.reject("MODAL_CANCEL")
-                });
+            const modal = new window.anvilModal({
+                id: "facebook-login-modal",
+                backdrop: "static",
+                keyboard: false,
+                dismissible: false,
+                title: "Log in with Facebook",
+                body: "You are about to log in to this app with Facebook",
+                buttons: [
+                    { text: "Cancel", onClick: () => loginCallbackResolve.reject("MODAL_CANCEL") },
+                    { text: "Log in", style: "success", onClick: doLogin },
+                ],
             });
-
-            $('#facebook-login-modal').modal({backdrop: 'static', keyboard: false});
+            modal.once("hidden", () => loginCallbackResolve.reject("MODAL_CANCEL"));
+            modal.show();
         }
     }
 
@@ -93,7 +97,7 @@ var $builtinmodule = window.memoise('anvil.facebook.auth', function() {
 
         // TODO: Try immediate auth before we do anything else. If that fails, then...
 
-        loginCallbackResolve = RSVP.defer();
+        loginCallbackResolve = PyDefUtils.defer();
 
         displayLogInModal(Sk.ffi.remapToJs(pyAdditionalScopes || []));
 

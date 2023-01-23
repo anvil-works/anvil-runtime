@@ -2,7 +2,7 @@
 
 var PyDefUtils = require("PyDefUtils");
 
-/**
+/*#
 id: datarowpanel
 docs_url: /docs/client/components/containers#datarowpanel
 title: DataRowPanel
@@ -20,10 +20,9 @@ module.exports = function(pyModule) {
     const { isTrue } = Sk.misceval;
     const str_add_component = new Sk.builtin.str("add_component");
     const str_remove_from_parent = new Sk.builtin.str("remove_from_parent");
-    const inDesigner = window.anvilInDesigner;
 
     pyModule["DataRowPanel"] = PyDefUtils.mkComponentCls(pyModule, "DataRowPanel", {
-        base: pyModule["Container"],
+        base: pyModule["ClassicContainer"],
 
         properties: PyDefUtils.assembleGroupProperties(/*!componentProps(DataRowPanel)!2*/ ["text", "layout", "containers", "appearance", "tooltip", "user data"], {
             visible: {
@@ -84,7 +83,7 @@ module.exports = function(pyModule) {
         element: (props) => <PyDefUtils.OuterElement className="anvil-container anvil-data-row-panel" {...props} />,
 
         locals($loc) {
-            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Container"], (self) => {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicContainer"], (self) => {
                 self._anvil.pageEvents = {
                     add() {
                         // TODO: Cope with not finding a parent data grid.
@@ -94,7 +93,7 @@ module.exports = function(pyModule) {
                         }
                     },
                     remove() {
-                        if (self._anvil.parent === null) {
+                        if (!self._anvil.parent) {
                             self._anvil.dataGrid = undefined;
                             self._anvil.updateDataGridId = true;
                         }
@@ -122,35 +121,30 @@ module.exports = function(pyModule) {
 
             /*!defMethod(_,component,[column=None])!2*/ "Add a component to the specified column of this DataRowPanel. TODO: If 'column' is not specified, adds the component full-width."
             $loc["add_component"] = new PyDefUtils.funcWithKwargs(function (kwargs, self, component) {
-                pyModule["Container"]._check_no_parent(component);
+                pyModule["ClassicContainer"]._check_no_parent(component);
 
                 const colId = kwargs.column;
                 return Sk.misceval.chain(
-                    undefined,
-                    () => {
+                    component.anvil$hooks.setupDom(),
+                    (childElt) => {
                         const { colEl, autoRow } = self._anvil.getColumn(colId);
                         if (autoRow !== null && autoRow !== component) {
                             PyDefUtils.pyCall(autoRow.tp$getattr(str_remove_from_parent));
                         }
-                        colEl.appendChild(component._anvil.domNode);
+                        colEl.appendChild(childElt);
                         if (self._anvil.dataGrid !== undefined) {
                             component._anvil.dataGrid = self._anvil.dataGrid;
                         }
-                    },
-                    () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs),
-                    () => {
-                        let oldRemove = component._anvil.parent.remove;
-                        component._anvil.parent.remove = () => {
-                            let r = oldRemove();
-                            return Sk.misceval.chain(
-                                component._anvil.isAutoRow || self._anvil.updateColumns(),
-                                // TODO: Repaginate.
-                                () => r
-                            );
-                        };
+                        return pyModule["ClassicContainer"]._doAddComponent(self, component, kwargs,
+                            {detachDom: () => {
+                                childElt.parentElement?.removeChild?.(childElt);
+                                if (!component._anvil?.isAutoRow) {
+                                    self._anvil.updateColumns();
+                                }
+                            }});
                     },
                     () => {
-                        if (component._anvil.paginate) {
+                        if (component._anvil?.paginate) {
                             // We only need to repaginate ourselves if the component we just added understands pagination.
                             // if we have a child that can paginate we can't cache the pagination result!
                             Object.defineProperty(self._anvil, "cachedPagination", {
@@ -237,8 +231,8 @@ module.exports = function(pyModule) {
         if (dataGrid === undefined) {
             const parent = self._anvil.parent;
             dataGrid =
-                (parent && parent.pyObj._anvil.dataGrid) ||
-                ((inDesigner || parent) &&
+                (parent && parent.pyObj._anvil?.dataGrid) ||
+                ((ANVIL_IN_DESIGNER || parent) &&
                     self._anvil.element.closest(".anvil-data-grid").data("anvilPyComponent"));
             if (dataGrid) {
                 self._anvil.dataGrid = dataGrid;
@@ -316,7 +310,7 @@ module.exports = function(pyModule) {
                 // This column is in the wrong place. Swap in the right one
                 dataRowEl.insertBefore(colEl, currentEl);
             } 
-            if (inDesigner || updateData || updateEl) {
+            if (ANVIL_IN_DESIGNER || updateData || updateEl) {
                 if (column.extraCol) {
                     column.extraCol = false;
                     colEl.classList.remove("extra-column");
@@ -417,7 +411,7 @@ module.exports = function(pyModule) {
 
                     let childIdx = -1;
                     let rowQuotaForChildren = self._anvil.pagination.rowQuota - rowsRequiredForSelf;
-                    if (updatedChild && updatedChild._anvil.pagination) {
+                    if (updatedChild && updatedChild._anvil?.pagination) {
                         childIdx = self._anvil.components.findIndex((c) => c.component === updatedChild);
                         rowQuotaForChildren = self._anvil.lastChildPagination.reduce(
                             (remaining, child, idx) => (child && idx < childIdx ? remaining - child[0] : remaining),
@@ -471,10 +465,10 @@ module.exports = function(pyModule) {
                                 self._anvil.pagination.done = false;
                             }
 
-                            let parent = self._anvil.parent && self._anvil.parent.pyObj;
+                            let parent = self._anvil.parent?.pyObj;
                             const quota = [self._anvil.pagination.startAfter, self._anvil.pagination.rowQuota];
 
-                            if (updatedChild && updatedChild._anvil.pagination && parent && parent._anvil.paginate) {
+                            if (updatedChild?._anvil?.pagination && parent?._anvil?.paginate) {
                                 return Sk.misceval.chain(parent._anvil.paginate(self), () => {
                                     const ret = [self._anvil.pagination.rowsDisplayed, self._anvil.pagination.stoppedAt, self._anvil.pagination.done];
                                     self._anvil.cachedPagination[quota.toString()] = ret;

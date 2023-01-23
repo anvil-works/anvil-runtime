@@ -9,7 +9,7 @@ module.exports = function() {
     const pyMod = { __name__: new Sk.builtin.str("base64") };
 
     const ni = new Sk.builtin.func(function() {
-    	throw new Sk.builtin.NotImplementedError("The 'base64' module in Anvil forms is limited to simple use of b64encode() and b64decode(). For full functionality, use a server module.");
+        throw new Sk.builtin.NotImplementedError("The 'base64' module in Anvil forms is limited to simple use of b64encode() and b64decode(). For full functionality, use a server module.");
     });
 
     pyMod["b32encode"] = ni;

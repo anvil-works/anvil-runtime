@@ -19,25 +19,25 @@ var $builtinmodule = window.memoise('anvil.users.mfa.webauthn', function() {
     });
 
     mod["create"] = new Sk.builtin.func(function(pyOptions) {
-        var options = Sk.ffi.remapToJs(pyOptions);
+        var options = Sk.ffi.toJs(pyOptions);
 
         options.publicKey.challenge = base64DecToArr(options.publicKey.challenge);
         options.publicKey.user.id = base64DecToArr(options.publicKey.user.id);
 
         return PyDefUtils.suspensionFromPromise(getCredentials().create(options).then(function(r) {
-            return {
+            return Sk.ffi.toPy({
                 attestationObject: base64EncArr(new Uint8Array(r.response.attestationObject)),
                 clientDataJSON: base64EncArr(new Uint8Array(r.response.clientDataJSON)),
-            };
+            });
         }).catch(function(e) {
             // TODO debug for Bridget
             console.log("webauthn failed/cancelled:", e);
-            return null;
+            return Sk.ffi.toPy(null);
         }));
     });
 
     mod["get"] = new Sk.builtin.func(function(pyOptions) {
-        var options = Sk.ffi.remapToJs(pyOptions);
+        var options = Sk.ffi.toJs(pyOptions);
 
         options.publicKey.challenge = base64DecToArr(options.publicKey.challenge);
         for (var i in options.publicKey.allowCredentials) {
@@ -45,13 +45,13 @@ var $builtinmodule = window.memoise('anvil.users.mfa.webauthn', function() {
         }
 
         return PyDefUtils.suspensionFromPromise(getCredentials().get(options).then(function(r) {
-            return {
+            return Sk.ffi.toPy({
                 authenticatorData: base64EncArr(new Uint8Array(r.response.authenticatorData)),
                 clientDataJSON: base64EncArr(new Uint8Array(r.response.clientDataJSON)),
                 signature: base64EncArr(new Uint8Array(r.response.signature)),
-            };
+            });
         }).catch(function(e) {
-            return null;
+            return Sk.ffi.toPy(null);
         }));
     });
 

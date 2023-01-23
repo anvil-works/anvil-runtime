@@ -2,7 +2,7 @@
 
 var PyDefUtils = require("PyDefUtils");
 
-/**
+/*#
 id: textarea
 docs_url: /docs/client/components/basic#textarea
 title: TextArea
@@ -23,7 +23,6 @@ description: |
 
 module.exports = (pyModule) => {
     const { isTrue } = Sk.misceval;
-    const inDesigner = window.anvilInDesigner;
 
     pyModule["TextArea"] = PyDefUtils.mkComponentCls(pyModule, "TextArea", {
         properties: PyDefUtils.assembleGroupProperties(/*!componentProps(TextArea)!2*/ ["layout", "height", "text", "interaction", "appearance", "tooltip", "user data"], {
@@ -65,6 +64,7 @@ module.exports = (pyModule) => {
                 allowBindingWriteback: true,
                 multiline: true,
                 suggested: true,
+                inlineEditElement: 'outer',
             },
             height: {
                 set(s, e, v) {
@@ -95,7 +95,7 @@ module.exports = (pyModule) => {
                 defaultValue: Sk.builtin.bool.false$,
                 pyVal: true,
                 set(self, e, v) {
-                    self._anvil.taAutoExpand = isTrue(v) && !inDesigner;
+                    self._anvil.taAutoExpand = isTrue(v) && !ANVIL_IN_DESIGNER;
                     if (self._anvil.taAutoExpand) {
                         setHeightToContent(self, e);
                     } else {
@@ -134,7 +134,7 @@ module.exports = (pyModule) => {
         },
 
         locals($loc) {
-            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Component"], (self) => {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicComponent"], (self) => {
                 self._anvil.element
                     .on("propertychange change keyup paste input", function (e) {
                         const elt = self._anvil.element;
@@ -154,7 +154,7 @@ module.exports = (pyModule) => {
                     .on("blur", function (e) {
                         self._anvil.dataBindingWriteback(self, "text").finally(() => setTimeout(() => PyDefUtils.raiseEventAsync({}, self, "lost_focus")));
                     });
-                self._anvil.taAutoExpand = isTrue(self._anvil.props["auto_expand"]) && !inDesigner;
+                self._anvil.taAutoExpand = isTrue(self._anvil.props["auto_expand"]) && !ANVIL_IN_DESIGNER;
                 self._anvil.taHeight = self._anvil.props["height"].toString();
                 const text = self._anvil.props["text"];
                 self._anvil.lastChangeVal = Sk.builtin.checkNone(text) ? "" : text.toString();

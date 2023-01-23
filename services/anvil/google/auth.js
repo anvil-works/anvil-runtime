@@ -91,16 +91,26 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
         if (PyDefUtils.isPopupOK()) {
             doLogin();
         } else {
-            $("#googleLogInButton").off("click"); // Just in case they didn't click it last time.
-            $("#googleLogInButton").one("click", doLogin);
-            $("#googleCancelButton").off("click");
-            $("#googleCancelButton").one("click", function() {
-                $("#google-login-modal").one("hidden.bs.modal.alertclear", function() {
-                    loginCallbackResolve.reject("MODAL_CANCEL")
-                });
-            });
+            const body = `<button type="button" class="btn" data-dismiss="modal">
+                    <img src="${window.anvilCDNOrigin}/runtime/img/google-signin-buttons/btn_google_signin_light_normal_web.png?buildTime=0" crossorigin/>
+                </button>`;
 
-            $('#google-login-modal').modal({backdrop: 'static', keyboard: false})
+            const modal = new window.anvilModal({
+                id: "google-login-modal",
+                backdrop: "static",
+                keyboard: false,
+                dismissible: false,
+                title: "Log in with Google",
+                body: true,
+                buttons: [{ text: "Cancel", onClick: () => {
+                    modal.once("hidden", () => loginCallbackResolve.reject("MODAL_CANCEL"));
+                }}],
+            });
+            const { modalBody } = modal.elements;
+            modalBody.innerHTML = body;
+            modalBody.firstElementChild.addEventListener("click", doLogin);
+            modalBody.style.textAlign = "center";
+            modal.show();
         }
     }
 
@@ -151,7 +161,7 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
 
         // TODO: Try immediate auth before we do anything else. If that fails, then...
 
-        loginCallbackResolve = RSVP.defer();
+        loginCallbackResolve = PyDefUtils.defer();
 
         displayLogInModal(Sk.ffi.remapToJs(pyAdditionalScopes || []));
 

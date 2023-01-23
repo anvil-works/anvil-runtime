@@ -15,6 +15,7 @@
 
 
                               (prometheus/gauge :api/active-worker-threads-total) ;; TODO: Max, avg
+                              (prometheus/gauge :api/waiting-worker-threads-total) ;; TODO: Max, avg
                               (prometheus/gauge :api/max-thread-pool-size-total)
                               (prometheus/gauge :api/task-queue-length-total) ;; TODO: Max, avg
                               (prometheus/histogram :api/task-queue-wait-seconds {:buckets DEFAULT-BUCKETS})

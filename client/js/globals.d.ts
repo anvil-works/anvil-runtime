@@ -1,0 +1,1 @@
+declare let ANVIL_IN_DESIGNER: boolean;

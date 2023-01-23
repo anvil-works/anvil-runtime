@@ -3,7 +3,7 @@
 var PyDefUtils = require("PyDefUtils");
 
 
-/**
+/*#
 id: dropdown
 docs_url: /docs/client/components/basic#dropdown
 module: Anvil Components
@@ -47,7 +47,7 @@ module.exports = (pyModule) => {
         properties: PyDefUtils.assembleGroupProperties(/*!componentProps(DropDown)!2*/ ["layout", "interaction", "text", "appearance", "user data", "tooltip"], {
             align: {
                 defaultValue: new Sk.builtin.str("full"),
-                enum: ["left", "center", "right", "full"],
+                options: ["left", "center", "right", "full"],
                 set(s, e, v) {
                     v = v.toString();
                     if (v === "full") {
@@ -217,7 +217,7 @@ module.exports = (pyModule) => {
         },
 
         locals($loc) {
-            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Component"], (self) => {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicComponent"], (self) => {
                 self._anvil.invalidItemElement = $("<option />").text("<Invalid value>").val(-1);
 
                 self._anvil.select = $(self._anvil.elements.select).on("change", (e) => {

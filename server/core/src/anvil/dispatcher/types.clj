@@ -48,6 +48,8 @@
 
 (defrecord SerializedPythonObject [type value])
 
+(defrecord SerializedPythonClass [type])
+
 (def gen-live-object-mac)
 (def gen-cap-mac)
 

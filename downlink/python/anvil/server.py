@@ -29,7 +29,8 @@ from ._server import (register,
                       BackgroundTaskError,
                       BackgroundTaskNotFound,
                       BackgroundTaskKilled,
-                      http_endpoint, 
+                      http_endpoint,
+                      wellknown_endpoint,
                       api_request as request, 
                       HttpResponse, 
                       cookies,
@@ -43,8 +44,13 @@ from ._server import (register,
 
 from . import _threaded_server, _server
 
-
-def call(fn_name, *args, **kwargs):
+#!defFunction(anvil.server,%, function_name, **kwargs)!2: "Allows you to call server-side functions from the client. It requires the name of the function that you want to call, passed as a string. Any extra arguments are passed through to the server function." ["call"]
+def call(*args, **kwargs):
+    if not args:
+        raise TypeError("anvil.server.call() expects atleast 1 argument")
+    fn_name, args = args[0], args[1:]
+    if not isinstance(fn_name, str):
+        raise TypeError("first argument to anvil.server.call() must be as str, got '" + type(fn_name).__name__ + "'")
     try:
         return _threaded_server.do_call(args, kwargs, fn_name=fn_name)
     except _server.AnvilWrappedError as e:
@@ -91,7 +97,7 @@ task_state = _server.NotABackgroundTaskState()
 
 #!defClass(anvil.server,%HttpRequest)!0:
 
-#!defModuleAttr(anvil.server)!1: {name: "%request", pyType: "anvil.server.HttpRequest instance", description: "Contains information about the current HTTP API request."}
+#!defModuleAttr(anvil.server)!1: {name: "%request", pyType: "anvil.server.HttpRequest instance", description: "Contains information about the current HTTP API request. It's an instance of `anvil.server.HttpRequest`."}
 
 #!defAttr()!1: {name: "status", type: "number", description: "The status code for this HTTP response. Default is 200."}
 #!defAttr()!1: {name: "body", type: "any", description: "The body of this HTTP response. Can be a string, a Media object, or any JSON-able value."}
@@ -103,6 +109,7 @@ task_state = _server.NotABackgroundTaskState()
 #!defAttr()!1: {name: "client", pyType: "anvil.server.CallContext.ClientInfo instance", description: "An object that describes the client that initiated the current session. This can be a browser, an HTTP endpoint request, an uplink script, a background task, or an incoming email."}
 #!defAttr()!1: {name: "type", type: "string", description: "The execution environment this code is running in. May be 'browser', 'server_module' or 'uplink'"}
 #!defAttr()!1: {name: "remote_caller", pyType: "anvil.server.CallContext.StackFrame instance", description: "An object describing the code that called this @anvil.server.callable function, where it was running, and whether it is trusted (server-side) or un-trusted (input from a browser, HTTP or other remote code)"}
+#!defAttr()!1: {name: "background_task_id", type: "string", description: "The ID of the currently running background task, if there is one."}
 #!defClass(anvil.server,#CallContext)!0:
 
 #!defAttr()!1: {name: "ip", type: "string", description: "The IP address of the client that initiated this session."}
@@ -123,7 +130,9 @@ task_state = _server.NotABackgroundTaskState()
 #!defAttr()!1: {name: "country", type: "string"}
 #!defClass(anvil.server,#CallContext.Location)!0:
 
-#!defModuleAttr(anvil.server)!1: {name: "context", pyType: "anvil.server.CallContext instance", description: "Contains information about what triggered the currently running code."}
+#!defModuleAttr(anvil.server)!1: {name: "context", pyType: "anvil.server.CallContext instance", description: "Contains information about what triggered the currently running code. It's an instance of `anvil.server.CallContext`."}
+
+#!defModuleAttr(anvil.server)!1: {name: "session", pyType: "dict instance", description: "A dictionary that contains information about a specific session. It can store anything that a server function can return, except for Media objects."}
 
 #!defFunction(anvil.server [uplink],#,key,[init_session=None],[quiet=False])!2: {$doc: "Connect your uplink script to your anvil app.", anvil$args: {keys: "The key is a unique string and should be kept private. You can generate a new key from inside your anvil app.", init_session: "If you pass a function to the init_session keyword parameter, it will be called after the uplink connection is established, but before any other interaction", quiet: "Set quiet to True to surpress connection output. Errors will still be displayed."}, anvil$helpLink: "/docs/uplink"} ["connect"]
 

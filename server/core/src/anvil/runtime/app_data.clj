@@ -4,7 +4,7 @@
             [anvil.util :as util]
             [crypto.random :as random]
             [clojure.string :as str])
-  (:use     slingshot.slingshot)
+  (:use slingshot.slingshot)
   (:import (org.apache.commons.codec.binary Base64)))
 
 (clj-logging-config.log4j/set-logger! :level :debug)
@@ -38,7 +38,7 @@
 
 (def set-app-storage-impl! (util/hook-setter #{get-app-info-insecure get-app-info-with-can-depend
                                                get-app-content get-app-environment-by-email-hostname get-version-spec-for-environment
-                                               get-valid-origins  get-default-app-origin get-default-api-origin
+                                               get-valid-origins get-default-app-origin get-default-api-origin
                                                get-default-hostnames
                                                get-shared-cookie-key abuse-caution? get-extra-rendering-info}))
 
@@ -57,7 +57,7 @@
                          version-key-secret))
       (.substring 0 16)))
 
-(defn version-key-valid? [app-id  access-key version key]
+(defn version-key-valid? [app-id access-key version key]
   (= (util/sha-256 key) (util/sha-256 (generate-version-key app-id access-key version))))
 
 
@@ -93,12 +93,19 @@
         (is-dev? dep-version-spec) {:branch "master"}
         :else {:branch "published", :fallback-branch "master"}))
 
+(defn get-all-assets [app-content]
+  (apply concat (get-in app-content [:theme :assets])
+         (for [[id {:keys [assets]}] (:dependency_code app-content)]
+           (->> assets
+                (map #(assoc % :dep-id id))))))
+
 (defn get-app-content-with-dependencies [app-info version-spec]
   ;; Do a recursive dependency lookup on the app
   (let [app (get-app-content app-info version-spec)]
     (loop [loaded-deps {}
            dependency-versions {}
            dep-order '()
+           seen-assets (into #{} (map :name (get-in app [:content :theme :assets])))
            [{:keys [depending-app app_id version]} & more-deps-to-process :as deps-to-process]
            (->> (:dependencies (:content app))
                 (map #(assoc % :depending-app (:id app-info))))]
@@ -115,7 +122,7 @@
           (cond
             ;; App doesn't exist?
             (not dep-info)
-            (recur (assoc loaded-deps app_id {:error "App dependency not found"}) dependency-versions dep-order more-deps-to-process)
+            (recur (assoc loaded-deps app_id {:error "App dependency not found"}) dependency-versions dep-order seen-assets more-deps-to-process)
 
             ;; Already loaded a different version of this app?
             (when-let [prev (get loaded-deps app_id)]
@@ -133,31 +140,38 @@
                                                      (report-version version) " version of \"" (:name dep-info) "\" (" app_id "), but"
                                                      " \"" (:name prev-depending) "\" (" (:depending_app prev) ") depends on the "
                                                      (report-version (:version-spec prev)) " version)")})
-                     dependency-versions dep-order more-deps-to-process))
+                     dependency-versions dep-order seen-assets more-deps-to-process))
 
             ;; Already loaded the same version of this app?
             (or (get loaded-deps app_id) (= app_id (:id app-info)))
-            (recur loaded-deps dependency-versions dep-order more-deps-to-process)
+            (recur loaded-deps dependency-versions dep-order seen-assets more-deps-to-process)
 
             ;; Not allowed to see this app?
             (not (:can_depend dep-info))
-            (recur (assoc loaded-deps app_id {:error "Permission denied when loading app dependency"}) dependency-versions dep-order more-deps-to-process)
+            (recur (assoc loaded-deps app_id {:error "Permission denied when loading app dependency"}) dependency-versions dep-order seen-assets more-deps-to-process)
 
             ;; All good - load the app!
             :else
             (let [full-app (get-app-content dep-info (if-let [commit-id (get-in version-spec [:dependency-commit-ids app_id])]
                                                        {:commit-id commit-id}
                                                        (version-spec->git-map version)))
-                  dep-content (:content full-app)]
+                  dep-content (:content full-app)
+                  {dep-assets false, overridden-dep-assets true} (->> (get-in dep-content [:theme :assets])
+                                                                      (group-by #(contains? seen-assets (:name %))))]
               ;;(println depending-app "(" (:name dep-info) ") -> " (:id dep-info) " (" (:name dep-info) ") version " version " / " version-sha "/" (:version full-app))
               (recur (assoc loaded-deps app_id
                                         (-> (select-keys dep-content [:forms :modules :server_modules :package_name :secrets :native_deps :runtime_options])
                                             (assoc :version-spec (clean-version-spec version)
                                                    :commit-id (:version full-app)
                                                    :depending_app depending-app
-                                                   :name (:name dep-info))))
+                                                   :name (:name dep-info)
+                                                   :assets dep-assets
+                                                   :overriden_assets (map :name overridden-dep-assets)
+                                                   :form_templates (get-in dep-content [:theme :templates])
+                                                   :color_scheme (get-in dep-content [:theme :parameters :color_scheme]))))
                      (assoc dependency-versions app_id (:version full-app))
                      (cons app_id dep-order)
+                     (into seen-assets (map :name dep-assets))
                      (concat more-deps-to-process (map #(assoc % :depending-app app_id) (:dependencies dep-content)))))))))))
 
 
@@ -177,24 +191,32 @@
        :id (:id app-info)))))
 
 ; Shims required to apply to apps with runtime version < n
-(def css-shims [{:version 1
+(def css-shims [{:version     1
                  :description "Add padding to ColumnPanels by default."
-                 :shim ".anvil-panel-section-container { padding: 0 15px; }"}])
+                 :shim        ".anvil-panel-section-container { padding: 0 15px; }"}])
 
 
 (defn- make-var [{name :name}]
   (str "--anvil-color-" (str/replace name #"[^A-z0-9]" "-") "-" (random/hex 2)))
 
 
-(defn app->style [{{runtime-version :version :or {runtime-version 0}} :runtime_options
-                   {:keys [assets] :as theme}                           :theme
-                   :as                                                  _yaml}
-                  app-id session-state flags]
-  (when-let [css-b64 (->> assets
+(defn app->style [yaml app-id session-state flags]
+  (when-let [css-b64 (->> (get-all-assets yaml)
                           (filter #(= (:name %) "theme.css"))
                           (first)
                           (:content))]
-    (let [theme-colors (get-in theme [:parameters :color_scheme :colors])
+    (let [runtime-version (or (get-in yaml [:runtime_options :version]) 0)
+          theme-colors (reduce (fn [final-colors dep-colors]
+                                 ;; Add colours from the app and then each dependency, in reverse order.
+                                 ;; Ignore colours that we've already seen, so the app wins, then
+                                 ;; the last dependency, then the penultimate one, etc...
+                                 (concat final-colors (filter (fn [{name :name}]
+                                                                (not (some #(= (:name %) name) final-colors)))
+                                                              dep-colors)))
+                               []
+                               (concat [(get-in yaml [:theme :parameters :color_scheme :colors])]
+                                       (for [dep-id (reverse (:dependency_order yaml))]
+                                         (get-in yaml [:dependency_code dep-id :color_scheme :colors]))))
           theme-var-map (into {} (for [theme-col theme-colors]
                                    [(:name theme-col) (make-var theme-col)]))
           css (String. (Base64/decodeBase64 ^String css-b64))
@@ -217,7 +239,7 @@
        :css-shims     shims
        :root-vars     root-vars
        :theme-vars    theme-var-map
-       :primary-color (or (:color (first (filter #(not (.startsWith (:name %) "A")) (get-in theme [:parameters :color_scheme :colors]))))
+       :primary-color (or (:color (first (filter #(not (.startsWith (:name %) "A")) theme-colors)))
                           "#2ab1eb")})))
 
 (defn sanitised-app-and-style-for-client
@@ -227,7 +249,7 @@
          app (get-app app-info version-spec allow-errors?)
          yaml (:content app)
          only-version (fn [runtime-options] (merge {:version 0}
-                                                   (select-keys runtime-options [:version :client_version])))]
+                                                   (select-keys runtime-options [:version :client_version :no_jquery :preview_v3])))]
 
      [app-info
       (-> (select-keys yaml [:name :package_name :forms :modules :startup :startup_form :services :theme :dependency_code :dependency_order :allow_embedding :metadata :runtime_options])
@@ -235,7 +257,7 @@
           (update-in [:theme] (fn [theme]
                                 {:html
                                  (into {}
-                                       (for [{:keys [name content]} (:assets theme)
+                                       (for [{:keys [name content]} (get-all-assets yaml)
                                              :when (.endsWith ^String name ".html")]
                                          [name (String. (Base64/decodeBase64 ^String content))]))
                                  :color_scheme
@@ -250,6 +272,8 @@
 
       (app->style yaml id app-session-state flags)
       (apply str
+             (when (get-in yaml [:runtime_options :preview_v3])
+               "\n<style>\n  @import url({{cdn-origin}}/runtime/css/bootstrap.css) layer(bootstrap);\n  @import url({{cdn-origin}}/runtime/css/bootstrap-theme.min.css) layer(bootstrap);\n</style>\n")
              (reverse
                (cons
                  (get-in yaml [:native_deps :head_html])

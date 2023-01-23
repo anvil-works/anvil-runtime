@@ -23,6 +23,7 @@
                    :server (or server-access "full")
                    :client (or client-access "none"))]
       (jdbc/insert! (db) "app_storage_access" access)
+      (table-util/update-table-views! (db) id {})
       {:id id, :name name,
        :access access})))
 

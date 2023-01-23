@@ -14,7 +14,7 @@
         [slingshot.slingshot])
   (:import (java.util LinkedList Arrays)
            (clojure.lang Counted)
-           (anvil.dispatcher.types MediaDescriptor Media SerialisableForRpc ChunkedStream Date DateTime SerializedPythonObject)
+           (anvil.dispatcher.types MediaDescriptor Media SerialisableForRpc ChunkedStream Date DateTime SerializedPythonObject SerializedPythonClass)
            (java.io InputStream)
            (java.time.format DateTimeFormatter)
            (java.time ZoneOffset)))
@@ -58,6 +58,11 @@
        [disassembled-dict (doall (concat dict-objects [{:path     path
                                                         :type     ["ValueType"]
                                                         :typeName (:type data)}]))])
+     
+     (instance? SerializedPythonClass data)
+     [nil [{:path path
+            :type ["ClassType"]
+            :typeName (:type data)}]]
 
      (map? data)
      (reduce (fn [[json data] [k v]]
@@ -188,7 +193,8 @@
                   "DateTime"   #(DateTime. (:value obj))
                   "Long"       #(BigInteger. ^String (:value obj))
                   "Float"      #(Double/parseDouble (:value obj))
-                  "ValueType"  #(:typeName obj)}]
+                  "ValueType"  #(:typeName obj)
+                  "ClassType"  #(:typeName obj)}]
 
     (if-let [handler (some handlers type)]
       (let [deserialised-obj (handler)]
@@ -299,8 +305,9 @@
            (reduce (fn [json {:keys [path] :as obj}]
                      (let [path (map #(if (string? %) (keyword %) %) path)
                            deserialised-obj (assemble-object outstanding-media (:id payload) serialisation-config known-liveobject-methods obj)]
-                       (if (= (:type obj) ["ValueType"])
-                         (assoc-in json path (SerializedPythonObject. deserialised-obj (get-in json path)) #_(with-meta (get-in json path) {:anvil/type deserialised-obj}))
+                       (condp = (:type obj)
+                         ["ValueType"] (assoc-in json path (SerializedPythonObject. deserialised-obj (get-in json path)) #_(with-meta (get-in json path) {:anvil/type deserialised-obj}))
+                         ["ClassType"] (assoc-in json path (SerializedPythonClass. deserialised-obj))
                          (assoc-in json path deserialised-obj))))
                    (dissoc payload :objects)
                    (:objects payload))))

@@ -76,7 +76,10 @@ def merge_row_data(row_id, row_data, g_table_rows, g_table_spec, row_cache_spec)
     if row_type is list:
         # g_row_data must also be a compact list if row_data is a list
         # they must have the same length at this stage since we know the cache specs match
-        merge_compact(row_data, g_row_data)
+        if g_row_type is list:
+            # fail safe sanity check
+            merge_compact(row_data, g_row_data)
+        
     elif g_row_type is dict:
         # then the previously serialized reference to this row
         # didn't match the g_cache_spec
@@ -126,7 +129,7 @@ def merge_dict_with_compact(row_data, g_row_data, row_cache_spec, g_cache_spec):
         if not is_cached:
             continue
 
-        if row_data[i] != g_val:
+        if i in row_data and row_data[i] != g_val:
             row_data.pop(i)
 
     return row_data

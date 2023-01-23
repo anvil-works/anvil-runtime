@@ -232,10 +232,14 @@
                           (.toFormatter)
                           (.withZone (ZoneId/of "UTC"))))
 
+(defn datetime->instant [datetime]
+  (when-let [val (:datetime-string datetime)]
+    (.toInstant (OffsetDateTime/parse val reduce-formatter))))
+
 (defn reduce-datetime [val]
-  (when-let [val (:datetime-string val)]
-    (let [instant (.toInstant (OffsetDateTime/parse val reduce-formatter))
-          offset (.substring val (- (count val) 5))]
+  (when-let [instant (datetime->instant val)]
+    (let [datetime-str (:datetime-string val)
+          offset (.substring datetime-str (- (count datetime-str) 5))]
       (-> (DateTimeFormatter/ofPattern (str "yyyy-MM-dd'A'HH:mm:ss.SSSSSS'" offset "'"))
           (.withZone (ZoneOffset/UTC))
           (.format instant)))))
@@ -379,7 +383,7 @@
         (try
           (.close ^Connection (:connection (:db-map tx)))
           (catch Exception _))
-        (util/rollback-quota-changes! (:anvil-quota-rollback-state tx))))))
+        (util/rollback-quota-changes! (:anvil-quota-rollback-state (:db-map tx)))))))
 
 (defn start-transaction-tidy-timer []
   (.start (Thread. ^Runnable

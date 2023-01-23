@@ -38,6 +38,7 @@ from ._server import (register,
                       BackgroundTaskNotFound,
                       BackgroundTaskKilled,
                       http_endpoint, 
+                      wellknown_endpoint,
                       api_request as request, 
                       HttpResponse, 
                       Capability,
@@ -366,6 +367,8 @@ def disconnect():
         _connection = None
     if c:
         try:
+            import anvil.tables
+            anvil.tables._clear_cache()
             c.close()
         except:
             pass
@@ -399,6 +402,8 @@ _server._do_call = _do_call
 
 
 def call(fn_name, *args, **kwargs):
+    if not isinstance(fn_name, str):
+        raise TypeError("first argument to anvil.server.call() must be as str, got '" + type(fn_name).__name__ + "'")
     try:
         return _do_call(args, kwargs, fn_name=fn_name)
     except _server.AnvilWrappedError as e:

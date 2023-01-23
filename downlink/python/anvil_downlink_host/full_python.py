@@ -310,7 +310,11 @@ class Worker:
             send_with_header({"id": id, "response": None})
             return
 
-        self.to_worker.send(msg, bindata)
+        try:
+            self.to_worker.send(msg, bindata)
+        except (BrokenPipeError, EOFError) as e:
+            print("Host got {}: {} sending to worker, terminating.".format(type(e).__name__, e))
+            self.proc.terminate()
 
         def outbound_done():
             self.outbound_ids.pop(id, None)

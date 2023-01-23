@@ -17,7 +17,8 @@
     [anvil.dispatcher.serialisation.lazy-media :as lazy-media]
     [clojure.data.json :as json]
     [anvil.util :as util]
-    [anvil.runtime.tables.v2.search :as search])
+    [anvil.runtime.tables.v2.search :as search]
+    [clojure.set :as set])
   (:import (anvil.dispatcher.types SerializedPythonObject)))
 
 (clj-logging-config.log4j/set-logger! :level :trace)
@@ -54,14 +55,58 @@
 (defn table-list-columns [_kwargs table-cap]
     (let [tables (util-v2/get-tables)
           [{:keys [id cols]}] (unwrap-cap-with-perm! tables table-cap :table util-v2/READ)
-          all-cols (get-in tables [id :columns])]
-      (for [[name col] (if cols
-                         (select-keys all-cols cols)
-                         all-cols)]
+          all-cols (get-in tables [id :columns])
+          available-cols (->> (if cols
+                                (select-keys all-cols cols)
+                                all-cols)
+                              (sort-by (fn [[name col]] name))
+                              (sort-by (fn [[name col]] (:ui-order col))))]
+      (for [[name col] available-cols]
         (-> (select-keys col [:id :type :table_id])
             (assoc :name name)))))
 
-(defn table-get-view [_kwargs table-cap new-perm only-cols query-args query-kwargs]
+(defn- equality-val? [v]
+  (not (and (instance? SerializedPythonObject v)
+            (not= (:type v) "anvil.tables.v2._RowRef"))))
+
+(defn- get-new-cap-cols [allowed-cols query-kws current-cap-cols]
+  ;; we already know that all the query kws are valid from parsing the query earlier
+  (let [new-cols (reduce-kv (fn [s k v]
+                              (if (equality-val? v)
+                                (disj s (name k))
+                                s))
+                            allowed-cols query-kws)]
+    (if (identical? allowed-cols new-cols)
+      current-cap-cols
+      (sort new-cols))))
+
+(defn validate-only-cols! [only-cols allowed-cols is-view]
+  (when-not (vector? only-cols)
+    (throw+ (util-v2/general-tables-error "invalid query argument for q.only_cols")))
+  (if (every? allowed-cols only-cols)
+    only-cols
+    (throw+ (util-v2/general-tables-error
+              (str "Column " (->> only-cols
+                                  (remove allowed-cols)
+                                  (string/join ", "))
+                   (if is-view " is not available in this view" " does not exist in this table"))))))
+
+(defn- only-cols-from-arg [allowed-cols arg is-view]
+  (when (and (instance? SerializedPythonObject arg) (= (:type arg) "anvil.tables.query.only_cols"))
+    (-> arg
+        :value
+        :cols
+        (validate-only-cols! allowed-cols is-view)
+        sort)))
+
+(defn- get-only-cols [allowed-cols query-args is-view]
+  (reduce (fn [[only-cols query-args] arg]
+            (if-let [new-only-cols (only-cols-from-arg allowed-cols arg is-view)]
+              [new-only-cols query-args]
+              [only-cols (conj query-args arg)]))
+          [nil []] query-args))
+
+(defn table-get-view [_kws table-cap new-perm _only-cols query-args query-kws]
   (let [tables (util-v2/get-tables)
         [{table-id :id :keys [cols perm restrict]}] (util-v2/unwrap-cap table-cap :table)
         current-cols (basic-ops/get-col-names table-id tables cols)
@@ -78,31 +123,34 @@
         _ (when-not has-required-permission?
             (throw+ (util-v2/general-tables-error (str "You do not have permission to create a " (VIEW-NAMES new-perm) " view of this table here"))))
 
-        ;; 2. The cols are no less restricted than the current column restriction.
-        ;; If only-cols is nil then it inherits cols
+        _ (when (and (= new-perm "rwc") rpc-util/*client-request?*)
+            (throw+ (util-v2/general-tables-error (str "Cannot create cascading writable view on the client."))))
+
+        ;; 2. Parse the query to validate the query-args and query-kws
         allowed-cols (set current-cols)
-        new-cap-cols (cond
-                       (nil? only-cols) cols
-                       (every? allowed-cols only-cols) only-cols
-                       :else (throw+ (util-v2/general-tables-error
-                                       (str "Column " (->> only-cols
-                                                           (remove allowed-cols)
-                                                           (string/join ", "))
-                                            (if cols " is not available in this view" " does not exist in this table")))))
+        ;; extract and validate q.only-cols from the query args - (last writer wins)
+        [only-cols query-args] (get-only-cols allowed-cols query-args cols)
 
-        ;; Great, we're allowed. Create a new capability and view key, and return them.
-
-        new-restrict (when (or query-args query-kwargs)
+        new-restrict (when (or query-args query-kws)
                        ;; Restrictions can apply to any cols accessible in the *parent* table/view (ie current-cols)
-                       (search-v2/parse-query tables table-id allowed-cols query-args query-kwargs))
+                       (search-v2/parse-query tables table-id allowed-cols query-args query-kws))
         combined-restrict (if (and restrict new-restrict)
                             (search-v2/both-queries restrict new-restrict)
                             (or restrict new-restrict))
+
+        ;; 3. Great, the query is valid - get the new-cap-cols only-if there were no q.only_cols() defined in the query-args
+        new-cap-cols (or only-cols (get-new-cap-cols allowed-cols query-kws cols))
+
         new-view-spec (merge {:id table-id :perm new-perm}
                              (when new-cap-cols {:cols new-cap-cols})
                              (when combined-restrict {:restrict combined-restrict}))
         new-cap (types/->Capability ["_" "t" new-view-spec])]
     [new-cap (util-v2/str-view-key new-view-spec)]))
+
+(defn table-delete-all [_kw cap]
+  (let [tables (util-v2/get-tables)
+        [view-spec] (unwrap-cap-with-perm! tables cap :table util-v2/WRITE)]
+    (updates/delete-from-query! (db) tables view-spec nil)))
 
 (def CHUNK-SIZE 100)
 
@@ -256,35 +304,37 @@
   ([] (NOT-IMPLEMENTED! nil))
   ([note] (throw+ (old-tables-util/general-tables-error (str "Not implemented" (when note (str ": " note)))))))
 
-(swap! dispatcher/native-rpc-handlers merge
-       {"anvil.private.tables.v2.get_app_tables"        (wrap-native-fn get-app-tables)
-        "anvil.private.tables.v2.get_table_by_id"       (wrap-native-fn get-table-by-id)
+(def tables-v2-rpc-handlers
+  {"anvil.private.tables.v2.get_app_tables"        (wrap-native-fn get-app-tables)
+   "anvil.private.tables.v2.get_table_by_id"       (wrap-native-fn get-table-by-id)
 
-        "anvil.private.tables.v2.table.get_view"        (wrap-native-fn table-get-view)
-        "anvil.private.tables.v2.table.delete_all_rows" (wrap-native-fn (fn [_kws table-cap] (NOT-IMPLEMENTED!)))
-        "anvil.private.tables.v2.table.add_rows"        (wrap-native-fn table-add-rows)
-        "anvil.private.tables.v2.table.add_row"         (wrap-native-fn table-add-row)
-        "anvil.private.tables.v2.table.get_row"         (wrap-native-fn table-get-row)
-        "anvil.private.tables.v2.table.get_row_by_id"   (wrap-native-fn table-get-row-by-id)
-        "anvil.private.tables.v2.table.has_row"         (wrap-native-fn table-has-row?)
-        "anvil.private.tables.v2.table.list_columns"    (wrap-native-fn table-list-columns)
-        "anvil.private.tables.v2.table.to_csv"          (wrap-native-fn table-to-csv)
-        "anvil.private.tables.v2.table.search"          (wrap-native-fn table-search)
+   "anvil.private.tables.v2.table.get_view"        (wrap-native-fn table-get-view)
+   "anvil.private.tables.v2.table.delete_all_rows" (wrap-native-fn table-delete-all)
+   "anvil.private.tables.v2.table.add_rows"        (wrap-native-fn table-add-rows)
+   "anvil.private.tables.v2.table.add_row"         (wrap-native-fn table-add-row)
+   "anvil.private.tables.v2.table.get_row"         (wrap-native-fn table-get-row)
+   "anvil.private.tables.v2.table.get_row_by_id"   (wrap-native-fn table-get-row-by-id)
+   "anvil.private.tables.v2.table.has_row"         (wrap-native-fn table-has-row?)
+   "anvil.private.tables.v2.table.list_columns"    (wrap-native-fn table-list-columns)
+   "anvil.private.tables.v2.table.to_csv"          (wrap-native-fn table-to-csv)
+   "anvil.private.tables.v2.table.search"          (wrap-native-fn table-search)
 
-        "anvil.private.tables.v2.search.next_page"      (wrap-native-fn search-get-page)
-        "anvil.private.tables.v2.search.slice"          (wrap-native-fn (fn [_kws search-cap start stop step] (NOT-IMPLEMENTED! "Need a cap on the whole search")))
-        "anvil.private.tables.v2.search.index"          (wrap-native-fn (fn [_kws search-cap idx] (NOT-IMPLEMENTED! "Not documented what this is")))
-        "anvil.private.tables.v2.search.to_csv"         (wrap-native-fn search-to-csv)
-        "anvil.private.tables.v2.search.get_length"     (wrap-native-fn search-get-length)
-        "anvil.private.tables.v2.search.delete_all"     (wrap-native-fn search-delete)
+   "anvil.private.tables.v2.search.next_page"      (wrap-native-fn search-get-page)
+   "anvil.private.tables.v2.search.slice"          (wrap-native-fn (fn [_kws search-cap start stop step] (NOT-IMPLEMENTED! "Need a cap on the whole search")))
+   "anvil.private.tables.v2.search.index"          (wrap-native-fn (fn [_kws search-cap idx] (NOT-IMPLEMENTED! "Not documented what this is")))
+   "anvil.private.tables.v2.search.to_csv"         (wrap-native-fn search-to-csv)
+   "anvil.private.tables.v2.search.get_length"     (wrap-native-fn search-get-length)
+   "anvil.private.tables.v2.search.delete_all"     (wrap-native-fn search-delete)
 
 
-        "anvil.private.tables.v2.row.can_auto_create"   (wrap-native-fn (fn [_kws] (can-auto-create?)))
-        "anvil.private.tables.v2.row.fetch"             (wrap-native-fn row-fetch)
-        "anvil.private.tables.v2.row.update"            (wrap-native-fn row-update)
-        "anvil.private.tables.v2.row.batch_delete"      (wrap-native-fn row-batch-delete)
-        "anvil.private.tables.v2.row.delete"            (wrap-native-fn (fn [_kws row-cap] (row-batch-delete _kws [row-cap])))
-        "anvil.private.tables.v2.row.batch_update"      (wrap-native-fn row-batch-update)}
-       )
+   "anvil.private.tables.v2.row.can_auto_create"   (wrap-native-fn (fn [_kws] (can-auto-create?)))
+   "anvil.private.tables.v2.row.fetch"             (wrap-native-fn row-fetch)
+   "anvil.private.tables.v2.row.update"            (wrap-native-fn row-update)
+   "anvil.private.tables.v2.row.batch_delete"      (wrap-native-fn row-batch-delete)
+   "anvil.private.tables.v2.row.delete"            (wrap-native-fn (fn [_kws row-cap] (row-batch-delete _kws [row-cap])))
+   "anvil.private.tables.v2.row.batch_update"      (wrap-native-fn row-batch-update)})
+
+(swap! dispatcher/native-rpc-handlers merge tables-v2-rpc-handlers)
+(swap! dispatcher/db-only-native-rpc-handlers merge tables-v2-rpc-handlers)
 
 (swap! lazy-media/managers assoc "query-csv-v2" (rpc-util/wrap-lazy-media-server serve-csv-lazy-media))

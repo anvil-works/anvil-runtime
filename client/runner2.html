@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js runner">
+<head>
+  <base href="{{canonical-url}}/">
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta http-equiv="expires" content="0">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="never"> <!-- Yes, this is "legacy", but Safari and Edge don't support 'no-referrer' yet -->
+
+  <meta name="og:title" content="{{app-name}}">
+  <meta name="og:type" content="website">
+  <meta name="og:url" content="{{canonical-url}}">
+  <meta name="og:image" content="{{social-image}}">
+  <!--<xmeta name="og:image:width" content="400">-->
+  <!--<xmeta name="og:image:height" content="400">-->
+  <!--<xmeta name="og:site_name" content="Anvil">-->
+  <meta name="og:description" content="{{social-description}}">
+
+
+  <title>{{app-title}}</title>
+
+<!--  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/bootstrap.css?buildTime=0" crossorigin/>-->
+<!--  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/bootstrap-theme.min.css?buildTime=0" crossorigin/>-->
+  <style>.modal { display: none; }</style>
+  <link rel="stylesheet" href="{{cdn-origin}}/runtime/dist/runner.min.css?buildTime=0" crossorigin/>
+  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/daterangepicker.min.css?buildTime=0" crossorigin/>
+  <!-- <link rel="stylesheet" href="{{cdn-origin}}/runtime/node_modules/animate.css/animate.min.css?buildTime=0" crossorigin/> -->
+
+  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/font-awesome.min.css?buildTime=0" crossorigin/>
+
+  <style>
+    #loadingSpinner {
+      background-image: url({{cdn-origin}}/runtime/img/loading.gif);
+    }
+
+    .plotly-loading-spinner {
+      background-image: url({{cdn-origin}}/runtime/img/loading.gif);
+    }
+  </style>
+
+  <!-- Favicon things -->
+
+  <link rel="icon" href="{{favicon}}">
+  <link rel="manifest" href="{{manifest-url}}?buildTime=0">
+  <link rel="apple-touch-icon" href="{{social-image}}">
+  <meta name="apple-mobile-web-app-title" content="{{app-title}}">
+  <meta name="application-name" content="{{app-title}}">
+  <meta name="msapplication-TileColor" content="#2b5797">
+  <meta name="msapplication-TileImage" content="{{ms-tile-image}}">
+  <meta name="theme-color" content="{{theme-color}}">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+
+  <style>{{shim-css}}</style>
+  <style>{{root-vars}}</style>
+  <style title="theme.css">{{theme-css}}</style>
+
+  <script src="{{cdn-origin}}/runtime/node_modules/jquery/dist/jquery.min.js?buildTime=0" crossorigin></script>
+  <script src="{{cdn-origin}}/runtime/node_modules/jquery-migrate/dist/jquery-migrate.min.js?buildTime=0" crossorigin></script>
+
+  {{head-html}}
+</head>
+<body class="{{body-class}}">
+<div id="anvil-header">
+  <a href="https://anvil.works/?utm_source=app_banner" target="_blank" class="cta"><span class="hidden-xs">Build web apps for free with</span><span class="visible-xs-inline">Built with</span> Anvil</a>
+  <a href="https://anvil.works/?utm_source=app_banner" target="_blank"><span class="hidden-xs">Built with </span><img src="{{cdn-origin}}/runtime/img/logo-35.png?buildTime=0" crossorigin></a>
+</div>
+
+<a id="anvil-badge" href="https://anvil.works/?utm_source=app_banner" target="_blank">
+  <img src="{{cdn-origin}}/runtime/img/made-with-anvil.png?buildTime=0" crossorigin>
+</a>
+
+<div class="anvil-root-container">
+  <div id="appGoesHere"></div>
+</div>
+
+<div id="loadingSpinner"></div>
+
+
+<div id="error-indicator">
+  <div style="float:left; width: 40px">
+    <i class="glyphicon glyphicon-warning-sign" style="float:left; width: 40px;"></i>
+  </div>
+  <div style="float:right;">
+    <a class="glyphicon glyphicon-remove" href="#" onclick="$('#error-indicator').hide(); return false;"></a>
+  </div>
+  <div class="headline">This app has experienced an error</div>
+  <div class="message">Click for more information</div>
+  <pre class="output"></pre>
+  <div style="clear:both"></div>
+</div>
+
+<script src="{{cdn-origin}}/runtime/node_modules/html5-boilerplate/dist/js/vendor/modernizr-3.8.0.min.js?buildTime=0" crossorigin></script>
+
+<!--<script src="{{cdn-origin}}/runtime/node_modules/bootstrap/dist/js/bootstrap.min.js?buildTime=0" crossorigin></script>-->
+<script src="{{cdn-origin}}/runtime/node_modules/moment/min/moment.min.js?buildTime=0" crossorigin></script>
+<script src="{{cdn-origin}}/runtime/node_modules/moment-timezone/builds/moment-timezone-with-data-2012-2022.min.js?buildTime=0" crossorigin></script>
+<script src="{{cdn-origin}}/runtime/js/lib/daterangepicker.min.js?buildTime=0" crossorigin></script>
+<script src="{{cdn-origin}}/runtime/js/lib/b64.js?buildTime=0" crossorigin></script>
+<script src="{{cdn-origin}}/runtime/js/lib/bootstrap-notify.min.js?buildTime=0" crossorigin></script>
+
+<script src="{{cdn-origin}}/runtime/node_modules/js-yaml/dist/js-yaml.min.js?buildTime=0" crossorigin></script>
+
+<!--   <script src="{{cdn-origin}}/runtime/node_modules/core-js-bundle/minified.js?buildTime=0" crossorigin></script>
+ -->
+
+<script src="{{cdn-origin}}/runtime/js/lib/skulpt.min.js?buildTime=0" crossorigin></script>
+<script src="{{cdn-origin}}/runtime/js/lib/skulpt-stdlib.js?buildTime=0" crossorigin></script>
+
+<script src="{{cdn-origin}}/runtime/dist/runner2.bundle.js?buildTime=0" crossorigin></script>
+
+{{extra-snippets}}
+<script>
+  window.anvilCDNOrigin = "{{cdn-origin}}";
+  window.anvilAppOrigin = "{{canonical-url}}";
+  window.anvilSessionToken = "{{session-token}}";
+  window.anvilVersion = "{{anvil-version}}";
+  window.anvilAppInfo = {{app-info-object}};
+  window.anvilGoogleApiKey = "{{google-api-key}}";
+  // docker-platform-server-base script adds sha's in html files - we put this variable here so that we can aggrissively cache the std-lib files
+  // the std-lib is loaded dynamically in runner.js
+  window.anvilSkulptLib = "{{cdn-origin}}/runtime/js/lib/skulpt-stdlib-file-number.json?buildTime=0";
+
+  // NB: We will need to preserve things other than ?s= at some point.
+  window.history.replaceState(window.history.state || {}, "Anvil App", document.location.origin + document.location.pathname + document.location.hash);
+
+  // {{load-app-code}}
+</script>
+</body>
+</html>

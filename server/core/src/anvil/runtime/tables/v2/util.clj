@@ -42,7 +42,9 @@
          (for [{:keys [table_id columns client server] :as tbl} (tables-util/get-all-table-access-records table-mapping)]
            (let [columns (for [[id column] columns]
                            (-> (table-types/get-type-from-db-column column)
-                               (assoc :name (:name column) :id (util/preserve-slashes id))))]
+                               (assoc :name (:name column)
+                                      :id (util/preserve-slashes id)
+                                      :ui-order (get-in column [:admin_ui :order]))))]
              [table_id (-> (select-keys tbl [:name :python_name])
                            (assoc :columns (into {} (for [col columns]
                                                       [(:name col) col]))
@@ -53,7 +55,10 @@
   (select-keys col [:type :table_id]))
 
 (defn get-ambient-level [tables table-id]
-  (get-in tables [table-id (if rpc-util/*client-request?* :client :server)]))
+  (let [level (get-in tables [table-id (if rpc-util/*client-request?* :client :server)])]
+    (if (and level (= :db-read-uplink (:origin rpc-util/*req*)))
+      (min level READ)
+      level)))
 
 (defn has-ambient-level? [tables table-id required-level]
   (let [my-level (get-ambient-level tables table-id)]

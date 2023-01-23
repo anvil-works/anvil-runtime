@@ -29,7 +29,7 @@ $ brew install openjdk pgcli
 
 On Windows systems, you can install [Amazon Corretto](https://aws.amazon.com/corretto/). Any version is OK (Java 8 minimum).
 
-To enable [PDF rendering support](https://anvil.works/docs/media/creating_pdfs) (Linux only), you will need both Chrome and Ghostscript installed. On Debian-based systems, you can do:
+To enable [PDF rendering support](https://anvil.works/docs/working-with-files/creating-pdf-files) (Linux only), you will need both Chrome and Ghostscript installed. On Debian-based systems, you can do:
 
 ```bash
 $ wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb

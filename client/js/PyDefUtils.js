@@ -1,5 +1,7 @@
 "use strict";
 
+const { defer } = require("./utils");
+
 var PyDefUtils = {};
 
 // A little hack to make a Javascript-implemented Python module
@@ -15,7 +17,7 @@ PyDefUtils.loadModule = function(name, modvars) {
 
     // If it's a submodule, we assume the parent has already
     // been loaded, and add it as an attribute to the parent
-    var dottedSplit = /^(.*)\.([^\.]+)$/.exec(name);
+    var dottedSplit = /^(.*)\.([^.]+)$/.exec(name);
     if (dottedSplit) {
         var parent = PyDefUtils.getModule(dottedSplit[1]);
         parent.$d[dottedSplit[2]] = pyModule;
@@ -82,8 +84,8 @@ PyDefUtils.funcFastCall = (f) => {
     return new Sk.builtin.func(f);
 }
 
-/**currently this is faster than what skulpt does (it should be what skulpt does!) */
-PyDefUtils.pyCall = (func, args, kwargs) => Sk.misceval.retryOptionalSuspensionOrThrow(Sk.misceval.callsimOrSuspendArray(func, args, kwargs));
+
+PyDefUtils.pyCall = Sk.misceval.callsimArray;
 
 PyDefUtils.pyCallOrSuspend = Sk.misceval.callsimOrSuspendArray;
 
@@ -118,7 +120,7 @@ var remapToJSWithWrapper = function(obj, keySeq, unknownTypeWrapper, firstLookWr
         }
         return ret;
     } else if (obj instanceof Sk.builtin.list || obj instanceof Sk.builtin.tuple) {
-        var ret = [];
+        const ret = [];
         for (var i=0; i < obj.v.length; i++) {
             keySeq.push(i);
             ret.push(remapToJSWithWrapper(obj.v[i], keySeq, unknownTypeWrapper, firstLookWrapper));
@@ -136,16 +138,16 @@ var remapToJSWithWrapper = function(obj, keySeq, unknownTypeWrapper, firstLookWr
     } else if (typeof obj === "string") {
         return obj;
     } else if (typeof obj === "object" && Object.getPrototypeOf(obj) === Object.prototype) {
-        var ret = {};
-        for (var i in obj) {
+        const ret = {};
+        for (let i in obj) {
             keySeq.push(i);
             ret[i] = remapToJSWithWrapper(obj[i], keySeq, unknownTypeWrapper, firstLookWrapper);
             keySeq.pop();
         }
         return ret;
     } else if(obj instanceof Array) {
-        var ret = []
-        for (var i=0; i < obj.length; i++) {
+        const ret = [];
+        for (let i=0; i < obj.length; i++) {
             keySeq.push(i);
             ret.push(remapToJSWithWrapper(obj[i], keySeq, unknownTypeWrapper, firstLookWrapper));
             keySeq.pop();
@@ -153,7 +155,7 @@ var remapToJSWithWrapper = function(obj, keySeq, unknownTypeWrapper, firstLookWr
         return ret;
     } else {
         // Not JSONable
-        var w = unknownTypeWrapper(obj, keySeq);
+        const w = unknownTypeWrapper(obj, keySeq);
         if (w === undefined) {
             throw new Sk.builtin.Exception("Cannot accept '" + ((obj && obj.tp$name) ? obj.tp$name : typeof(obj)) + "' object here (x" + pythonifyPath(keySeq) + ")");
         }
@@ -166,9 +168,10 @@ PyDefUtils.remapToJs = function(pyObj, unknownTypeWrapper, firstLookWrapper) {
 }
 
 
-PyDefUtils.mkComponentCls = function mkComponentCls(anvilModule, name, { base, properties, events, layouts, element, locals }) {
+PyDefUtils.mkComponentCls = function mkComponentCls(anvilModule, name, params) {
+    let { base, properties, events, layouts, element, locals, kwargs } = params;
     let bases;
-    base = base || anvilModule["Component"];
+    base = base || anvilModule["ClassicComponent"];
     if (Array.isArray(base)) {
         bases = base;
     } else {
@@ -187,7 +190,9 @@ PyDefUtils.mkComponentCls = function mkComponentCls(anvilModule, name, { base, p
             PyDefUtils.mkGettersSetters($loc, properties, anvilModule);
         },
         name,
-        bases
+        bases,
+        undefined,
+        kwargs
     );
 
     PyDefUtils.initComponentClassPrototype(ComponentCls, properties, events, element, layouts);
@@ -198,7 +203,6 @@ PyDefUtils.mkComponentCls = function mkComponentCls(anvilModule, name, { base, p
 
 PyDefUtils.mkNew = (superClass, callback) => {
 
-    superClass = superClass;
     const superNew = Sk.abstr.typeLookup(superClass, Sk.builtin.str.$new);
 
     return PyDefUtils.funcFastCall(function __new__(args, kwargs) {
@@ -239,7 +243,7 @@ PyDefUtils.initComponentClassPrototype = function (ComponentClass, properties, e
         propMap[name] = { ...entry };
         const propType = { name, type, description, group };
         [
-            "enum",
+            "options",
             "nullable",
             "multiline",
             "important",
@@ -250,6 +254,8 @@ PyDefUtils.initComponentClassPrototype = function (ComponentClass, properties, e
             "hideFromDesigner",
             "allowBindingWriteback",
             "showInDesignerWhen",
+            "inlineEditElement",
+            "designerHint",
         ].forEach((prop) => {
             if (entry[prop]) {
                 propType[prop] = entry[prop];
@@ -348,7 +354,7 @@ PyDefUtils.h = PyDefUtils.createElement = function createElement (tag, _props, .
     if (typeof tag === "function") {
         return tag(_props, ..._children);
     }
-    const {refName, children, style, className, ...props} = _props || {};
+    const {refName, children, style, className, innerHTML, ...props} = _props || {};
     const element = document.createElement(tag);
     const def = { [refName]: element };
     _children = children || _children;
@@ -359,6 +365,9 @@ PyDefUtils.h = PyDefUtils.createElement = function createElement (tag, _props, .
     if (className) {
         element.className = className;
     }
+    if (innerHTML) {
+        element.innerHTML = innerHTML;
+    }
 
     Object.keys(props).forEach((propName) => {
         const propValue = props[propName];
@@ -366,10 +375,10 @@ PyDefUtils.h = PyDefUtils.createElement = function createElement (tag, _props, .
     });
 
     _children.forEach((child) => {
-        if (child === null) {
-            // pass
-        } else if (typeof child === "string") {
+        if (typeof child === "string" || typeof child === "number") {
             element.appendChild(document.createTextNode(child));
+        } else if (child === true || !child) {
+            // pass
         } else {
             const [childEl, childDef] = child;
             element.appendChild(childEl);
@@ -380,6 +389,8 @@ PyDefUtils.h = PyDefUtils.createElement = function createElement (tag, _props, .
     return [element, def];
 };
 
+// useful helper - used by auth.js files so needs to be accessible via window
+PyDefUtils.defer = defer;
 
 PyDefUtils.suspensionFromPromise = function(p) {
     var newSuspension = new Sk.misceval.Suspension();
@@ -419,7 +430,7 @@ PyDefUtils.callAsyncWithoutDefaultError = function() {
 };
 
 PyDefUtils.callAsync = (...args) =>
-    Sk.misceval.callAsync(PyDefUtils.suspensionHandle, ...args).catch((e) => {
+    Sk.misceval.callAsync(PyDefUtils.suspensionHandlers, ...args).catch((e) => {
         // unhandled errors are caught by window.onunhandledrejection
         throw e;
     });
@@ -449,6 +460,7 @@ PyDefUtils.asyncToPromise = (fn) => {
     });
 };
 
+// CLASSIC COMPONENTS ONLY:
 // Raise the named event with the specified arguments
 // (expects a Javascript object as first parameter, keys are JS, vals are Python if pyVal is true, otherwise JS.
 PyDefUtils.raiseEventOrSuspend = function(eventArgs, self, eventName) {
@@ -513,6 +525,7 @@ PyDefUtils.whileOrSuspend = function(testFn, bodyFn, elseFn) {
     }
 
     function gotTestResult(testResult) {
+        // eslint-disable-next-line no-constant-condition
         while (true) {
             if (testResult instanceof Sk.misceval.Suspension) {
                 return new Sk.misceval.Suspension(gotTestResult, testResult);
@@ -561,61 +574,68 @@ PyDefUtils.setAttrsFromDict = function (obj, dict) {
         (pyItem) => obj.tp$setattr(pyItem.v[0], pyItem.v[1], true));
 }
 
-PyDefUtils.mkNewDeserializedPreservingIdentity = function(deserialize, newFn) {
-    return new Sk.builtin.classmethod(new Sk.builtin.func((cls, pyData, pyGlobals) => {
-            let pyClsname = new Sk.builtin.str(cls.anvil$serializableName);
-            // JS object in a Python dict - the outside world should never see it
-            let jsCache;
-            try {
-                jsCache = pyGlobals.mp$subscript(pyClsname);
-                //console.log("Cache hit for", pyClsname.v, "in", Sk.builtin.repr(pyGlobals));
-            } catch(e) {
-                //console.log("Cache miss for", pyClsname.v, "in", Sk.builtin.repr(pyGlobals));
-                jsCache = {}
-                pyGlobals.mp$ass_subscript(pyClsname, jsCache);
-                //console.log("New cache:", Sk.builtin.repr(pyGlobals));
-            }
-            let myId = pyData.v[0].v;
-            let obj = jsCache[myId];
-            if (!obj) {
-                //console.log("Constructing a fresh", cls.tp$name);
-                obj = jsCache[myId] = newFn ? newFn(cls) : Sk.misceval.callsim(cls);
-            }
+// Temporary, to get form init half-working enough to test layouts: Separate this out so it will work with
+// buildNativeClass
+PyDefUtils.mkNewDeserializedPreservingIdentityInner = (deserialize, newFn) => (cls, pyData, pyGlobals) => {
+    let pyClsname = new Sk.builtin.str(cls.anvil$serializableName);
+    // JS object in a Python dict - the outside world should never see it
+    let jsCache;
+    try {
+        jsCache = pyGlobals.mp$subscript(pyClsname);
+        //console.log("Cache hit for", pyClsname.v, "in", Sk.builtin.repr(pyGlobals));
+    } catch(e) {
+        //console.log("Cache miss for", pyClsname.v, "in", Sk.builtin.repr(pyGlobals));
+        jsCache = {}
+        pyGlobals.mp$ass_subscript(pyClsname, jsCache);
+        //console.log("New cache:", Sk.builtin.repr(pyGlobals));
+    }
+    let myId = pyData.v[0].v;
+    let obj = jsCache[myId];
+    if (!obj) {
+        //console.log("Constructing a fresh", cls.tp$name);
+        obj = jsCache[myId] = newFn ? newFn(cls) : Sk.misceval.callsim(cls);
+    }
 
-            if (pyData.v.length <= 1) {
-                //console.log("Returning from cache:", cls.tp$name);
-                return obj;
-            } else if (deserialize) {
-                //console.log("Custom deserializing", cls.tp$name);
-                return Sk.misceval.chain(deserialize(obj, pyData.v[1], pyGlobals), () => obj);
-            } else {
-                //console.log("Default deserializing", cls.tp$name);
-                return Sk.misceval.chain(PyDefUtils.setAttrsFromDict(obj, pyData.v[1]), () => obj);
-            }
-        })
-    );
+    if (pyData.v.length <= 1) {
+        //console.log("Returning from cache:", cls.tp$name);
+        return obj;
+    } else if (deserialize) {
+        //console.log("Custom deserializing", cls.tp$name);
+        return Sk.misceval.chain(deserialize(obj, pyData.v[1], pyGlobals), () => obj);
+    } else {
+        //console.log("Default deserializing", cls.tp$name);
+        return Sk.misceval.chain(PyDefUtils.setAttrsFromDict(obj, pyData.v[1]), () => obj);
+    }
 };
 
+PyDefUtils.mkNewDeserializedPreservingIdentity = function(deserialize, newFn) {
+    return new Sk.builtin.classmethod(new Sk.builtin.func(PyDefUtils.mkNewDeserializedPreservingIdentityInner(deserialize, newFn)));
+};
+
+// ClassicComponent ONLY
+PyDefUtils.mkSerializePreservingIdentityInner = (serialize) => (self, pyGlobals) => {
+    let lsk = self._anvil.$lastSerialKey;
+    if (lsk && lsk.pyGlobals === pyGlobals) { return new Sk.builtin.list([lsk.pyId]); }
+
+    let clsname = self.constructor.anvil$serializableName;
+    let pyMaxKey = new Sk.builtin.str(clsname+"_max");
+    let pyMyId;
+    try {
+        pyMyId = pyGlobals.mp$subscript(pyMaxKey);
+    } catch (e) {
+        pyMyId = new Sk.builtin.int_(0);
+    }
+    pyGlobals.mp$ass_subscript(pyMaxKey, new Sk.builtin.int_(pyMyId.v+1));
+
+    self._anvil.$lastSerialKey = {pyId: pyMyId, pyGlobals: pyGlobals};
+
+    let val = serialize ? serialize(self) : Sk.abstr.lookupSpecial(self, Sk.builtin.str.$dict);
+    return Sk.misceval.chain(val, (val) =>  new Sk.builtin.list([pyMyId, val]));
+};
+
+// ClassicComponent ONLY
 PyDefUtils.mkSerializePreservingIdentity = function(serialize) {
-    return new Sk.builtin.func((self, pyGlobals) => {
-        let lsk = self._anvil.$lastSerialKey;
-        if (lsk && lsk.pyGlobals === pyGlobals) { return new Sk.builtin.list([lsk.pyId]); }
-
-        let clsname = self.constructor.anvil$serializableName;
-        let pyMaxKey = new Sk.builtin.str(clsname+"_max");
-        let pyMyId;
-        try {
-            pyMyId = pyGlobals.mp$subscript(pyMaxKey);
-        } catch (e) {
-            pyMyId = new Sk.builtin.int_(0);
-        }
-        pyGlobals.mp$ass_subscript(pyMaxKey, new Sk.builtin.int_(pyMyId.v+1));
-
-        self._anvil.$lastSerialKey = {pyId: pyMyId, pyGlobals: pyGlobals};
-        
-        let val = serialize ? serialize(self) : Sk.abstr.lookupSpecial(self, Sk.builtin.str.$dict);
-        return Sk.misceval.chain(val, (val) =>  new Sk.builtin.list([pyMyId, val]));
-    });
+    return new Sk.builtin.func(PyDefUtils.mkSerializePreservingIdentityInner(serialize));
 };
 
 const { isTrue } = Sk.misceval;
@@ -665,7 +685,7 @@ PyDefUtils.getOuterClass = function getOuterClass({
 const hasUnits = /[a-zA-Z%]/g
 PyDefUtils.cssLength = (len) => (len === "default" || !len ? "" : ("" + len).match(hasUnits) ? len : len + "px");
 
-const ROLE_REGEX = /[^A-Za-z0-9_\-]/g
+const ROLE_REGEX = /[^A-Za-z0-9_-]/g
 
 /** Cleans roles for css and returns the roles as list of strings. If a domNode is provided the classList and anvil-role attribute is updated. */
 PyDefUtils.applyRole = (role, domNode = null) => {
@@ -678,7 +698,7 @@ PyDefUtils.applyRole = (role, domNode = null) => {
         // pass
     } else if (Array.isArray(role)) {
         for (let r of role) {
-            if (!typeof r === "string") {
+            if (!(typeof r === "string")) {
                 throw new Sk.builtin.TypeError("role must be None, a string, or a list of strings");
             }
             newRoles.push(r.replace(ROLE_REGEX, ""));
@@ -860,10 +880,11 @@ var propertyGroups = {
         },
         align: {
             name: "align",
-            type: "string",
-            enum: ["left", "center", "right"],
+            type: "enum",
+            options: ["left", "center", "right"],
             description: "Align this component's text",
             defaultValue: new Sk.builtin.str("left"),
+            designerHint: 'align-horizontal',
             pyVal: true,
             set(s, e, v) {
                 v = v.toString();
@@ -904,6 +925,7 @@ var propertyGroups = {
             defaultValue: Sk.builtin.bool.false$,
             pyVal: true,
             exampleValue: true,
+            designerHint: 'font-bold',
             set(s, e, v) {
                 e.css("font-weight", isTrue(v) ? "bold" : "");
             },
@@ -915,6 +937,7 @@ var propertyGroups = {
             defaultValue: Sk.builtin.bool.false$,
             pyVal: true,
             exampleValue: true,
+            designerHint: 'font-italic',
             set(s, e, v) {
                 e.css("font-style", isTrue(v) ? "italic" : "");
             },
@@ -926,6 +949,7 @@ var propertyGroups = {
             defaultValue: Sk.builtin.bool.false$,
             pyVal: true,
             exampleValue: true,
+            designerHint: 'font-underline',
             set(s, e, v) {
                 e.add(e.children("span, div")).css("text-decoration", isTrue(v) ? "underline" : "");
             },
@@ -983,10 +1007,10 @@ var propertyGroups = {
         icon_align: {
             name: "icon_align",
             description: "The alignment of the icon on this component. Set to 'top' for a centred icon on a component with no text.",
-            type: "string",
+            type: "enum",
             defaultValue: new Sk.builtin.str("left"),
             pyVal: true,
-            enum: ["left_edge", "left", "top", "right", "right_edge"],
+            options: ["left_edge", "left", "top", "right", "right_edge"],
             set(s, e, v) {
                 var remove = ["right_edge-icon", "left_edge-icon", "top-icon", "right-icon", "left-icon"].join(" ");
 
@@ -1006,8 +1030,8 @@ var propertyGroups = {
     align: {
         align: {
             name: "align",
-            type: "string",
-            enum: ["left", "center", "right"],
+            type: "enum",
+            options: ["left", "center", "right"],
             description: "Align this component's content",
             defaultValue: new Sk.builtin.str("center"),
             set(s, e, v) {
@@ -1025,6 +1049,7 @@ var propertyGroups = {
             defaultValue: Sk.builtin.str.$empty,
             pyVal: true,
             exampleValue: "#ff0000",
+            designerHint: 'background-color',
             set(s, e, v) {
                 s._anvil.domNode.style.backgroundColor = PyDefUtils.getColor(v);
             },
@@ -1036,6 +1061,7 @@ var propertyGroups = {
             defaultValue: Sk.builtin.str.$empty,
             pyVal: true,
             exampleValue: "#ff0000",
+            designerHint: 'foreground-color',
             set(s, e, v) {
                 s._anvil.domNode.style.color = PyDefUtils.getColor(v);
             },
@@ -1047,6 +1073,7 @@ var propertyGroups = {
             defaultValue: Sk.builtin.str.$empty,
             pyVal: true,
             exampleValue: "1px solid #888888",
+            designerHint: 'border',
             set(s, e, v) {
                 e.css("border", isTrue(v) ? v.toString() : "");
             },
@@ -1059,6 +1086,7 @@ var propertyGroups = {
             defaultValue: Sk.builtin.bool.true$,
             pyVal: true,
             exampleValue: false,
+            designerHint: 'visible',
             set(s, e, v) {
                 // Don't just set "display" property - this needs to behave differently in
                 // designer and runner.
@@ -1097,6 +1125,7 @@ var propertyGroups = {
             defaultValue: Sk.builtin.bool.true$,
             pyVal: true,
             exampleValue: false,
+            designerHint: 'visible',
             set(s, e, v) {
                 // Don't just set "display" property - this needs to behave differently in
                 // designer and runner.
@@ -1124,6 +1153,7 @@ var propertyGroups = {
             defaultValue: Sk.builtin.bool.true$,
             pyVal: true,
             exampleValue: false,
+            designerHint: 'enabled',
             set(s, e, v) {
                 const domNode = s._anvil.domNode;
                 const toDisable = domNode.querySelector(".to-disable");
@@ -1171,8 +1201,8 @@ var propertyGroups = {
 
         spacing_above: {
             name: "spacing_above",
-            type: "string",
-            enum: ["none", "small", "medium", "large"],
+            type: "enum",
+            options: ["none", "small", "medium", "large"],
             defaultValue: new Sk.builtin.str("small"),
             pyVal: true,
             description: "The vertical space above this component.",
@@ -1191,8 +1221,8 @@ var propertyGroups = {
         },
         spacing_below: {
             name: "spacing_below",
-            type: "string",
-            enum: ["none", "small", "medium", "large"],
+            type: "enum",
+            options: ["none", "small", "medium", "large"],
             defaultValue: new Sk.builtin.str("small"),
             pyVal: true,
             description: "The vertical space below this component.",
@@ -1695,8 +1725,11 @@ PyDefUtils.calculateHeight = function() {
     });
 
     return reportHeight;
-}
+};
+
 PyDefUtils.addHeightHandle = function(_anvil) {
+    // only relevant in the designer
+    if (!ANVIL_IN_DESIGNER) return;
 
     _anvil.getHandles = function() {
         var offset = _anvil.element.offset();
@@ -1743,8 +1776,8 @@ PyDefUtils.addHeightHandle = function(_anvil) {
         };
 
         return r;
-    }
-}
+    };
+};
 
 // Problem: We can only pop up windows (eg Google auth) in response to synchronous events.
 // Track whether we are currently executing a synchronous event.
@@ -1768,29 +1801,29 @@ PyDefUtils.isPopupOK = function() { return popupOK; }
 //
 // This function may suspend, and returns:
 // {getUrl: <function->url>, release: <function>, blob: <maybe-blob>}
-PyDefUtils.getUrlForMedia = function(pyMedia) {
+PyDefUtils.getUrlForMedia = function(pyMedia, kws=[]) {
 
-    var wrapBlob = function(blob) {
-        var url = null;
+    const wrapBlob = (blob) => {
+        let url = null;
         return {
-            getUrl: function() {
+            getUrl() {
                 if (url === null) {
                     url = window.URL.createObjectURL(blob);
                 }
                 return url;
             },
-            release: function() {
+            release() {
                 if (url !== null) {
                     window.URL.revokeObjectURL(url);
                     url = null;
                 }
             },
-            blob: blob,
+            blob,
         };
     };
 
     if (!pyMedia || pyMedia === Sk.builtin.none.none$) {
-        return {getUrl: () => "", release: () => {}};
+        return { getUrl: () => "", release: () => {} };
     }
 
     if (pyMedia._data instanceof Blob) {
@@ -1799,30 +1832,27 @@ PyDefUtils.getUrlForMedia = function(pyMedia) {
     }
 
     // Does it already have a permanent URL?
+    const getMediaUrl = Sk.abstr.gattr(pyMedia, new Sk.builtin.str("get_url"));
 
-    return Sk.misceval.chain(Sk.abstr.gattr(pyMedia, new Sk.builtin.str("url"), true), function (pyUrl) {
-
+    return Sk.misceval.chain(Sk.misceval.callsimOrSuspendArray(getMediaUrl, [], kws), (pyUrl) => {
         if (pyUrl instanceof Sk.builtin.str) {
-
-            return {getUrl: () => pyUrl.v, release: function() {}};
-
+            return { getUrl: () => pyUrl.toString(), release() {} };
         } else {
-            var contentType;
+            let contentType;
 
             // No. Ick. We pull the content out as a binary JS string, then turn it
             // into a Blob.
 
             return Sk.misceval.chain(
                 Sk.abstr.gattr(pyMedia, new Sk.builtin.str("content_type"), true),
-                function (ct) {
+                (ct) => {
                     contentType = ct;
                     return Sk.misceval.callsimOrSuspend(Sk.abstr.gattr(pyMedia, new Sk.builtin.str("get_bytes")));
                 },
-                function (c) {
+                (c) => {
                     const bytes = PyDefUtils.getUint8ArrayFromPyBytes(c);
-                    var blob = new Blob([bytes], {type: contentType.v});
+                    const blob = new Blob([bytes], { type: contentType.toString() });
                     return wrapBlob(blob);
-
                 }
             );
         }
@@ -1860,7 +1890,7 @@ PyDefUtils.repaginateChildren = (self, skip, startAfter, remainingRowQuota) => {
     // Iterate through my components, asking them to paginate in turn until we run out of rows.
     return Sk.misceval.chain(undefined,
         () => Sk.misceval.iterArray(pyComponents, ({component, layoutProperties}, idx) => {
-            if (layoutProperties.pinned && component._anvil.paginate) {
+            if (layoutProperties.pinned && component._anvil?.paginate) {
                 component._anvil.pagination = {
                     startAfter: null,
                     rowQuota: remainingRowQuota,
@@ -1877,8 +1907,8 @@ PyDefUtils.repaginateChildren = (self, skip, startAfter, remainingRowQuota) => {
         }, /* idx = */ 0),
         () => Sk.misceval.iterArray(pyComponents, ({component, layoutProperties}, idx) => {
 
-            // We only care about this component if it has a paginate function.
-            if (!layoutProperties.pinned && component._anvil.paginate) {
+            // We only care about this component if it's a ClassicComponet with a paginate function.
+            if (!layoutProperties.pinned && component._anvil?.paginate) {
 
                 // We need to display this child if we're either past the resume point or if the resume 
                 // point *is* this child and it wasn't done.
@@ -1954,7 +1984,7 @@ class WrappedPyObj {
         this.$isPyWrapped = true;
         this.unwrap = () => obj;
     }
-};
+}
 
 function WrappedPyCallable(obj) {
     const wrapped =(...args) => {
@@ -1997,12 +2027,18 @@ PyDefUtils.callJs = (pyComponent, pyFnName, ...pyArgs) => {
 
         try {
             var fn = Function(`return (${fnName})`)();
-
-            return fn.apply(pyComponent && pyComponent._anvil.element, args);
+            let domElement = pyComponent?.anvil$hooks?.domElement;
+            if (window.anvilParams.runtimeVersion < 3) {
+                // backwards compatability - jQuery wrapped domElements
+                domElement &&= $(domElement);
+            }
+            return fn.apply(domElement, args);
         } catch (e) {
             if (e instanceof ReferenceError && e.message.indexOf(fnName) !== -1) {
                 let msg = `Could not find global JS function '${fnName}'.`;
-                if (pyComponent && !pyComponent._anvil.onPage) {
+                // This hint is only available in ClassicComponents - but that's probably OK because this mechanism
+                // is deprecated anyway.
+                if (pyComponent?._anvil && !pyComponent._anvil.onPage) {
                     msg += " This form is not currently visible - to call functions defined in its HTML on load, use call_js in the form 'show' event handler."
                 }
                 throw new Sk.builtin.NameError(msg);
@@ -2022,7 +2058,7 @@ PyDefUtils.callJs = (pyComponent, pyFnName, ...pyArgs) => {
 
 PyDefUtils.delayPrint = key => {
     if (window.outstandingPrintDelayPromises) {
-        window.outstandingPrintDelayPromises[key] = RSVP.defer();
+        window.outstandingPrintDelayPromises[key] = defer();
     }
 };
 

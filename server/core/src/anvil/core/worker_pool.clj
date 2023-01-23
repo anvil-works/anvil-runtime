@@ -32,7 +32,7 @@
   ([type n] (set-task-info! type n nil))
   ([type n tags]
    (let [info {:type (name type), :name (if (keyword? n) (.substring (str n) 1) n), :tags tags}]
-     (swap! thread-stats assoc (.getName (Thread/currentThread)) info)
+     (swap! thread-stats update (.getName (Thread/currentThread)) merge info)
      (.set task-info info))))
 
 (defn run-one-task! [timeout]
@@ -51,6 +51,7 @@
       (.set task-info nil)
       (try
         (swap! n-threads-running inc)
+        (swap! thread-stats update (.getName (Thread/currentThread)) assoc :last-run (System/currentTimeMillis))
         (.run ^Runnable task)
         (catch Exception e
           (.printStackTrace e))
@@ -59,7 +60,7 @@
           (let [execution-time-nanos (- (System/nanoTime) start-time)
                 task-info (.get task-info)]
             ;; TODO record usage by task
-            (swap! thread-stats assoc-in [(.getName (Thread/currentThread)) :duration-ms] (/ execution-time-nanos 1e6))
+            (swap! thread-stats update (.getName (Thread/currentThread)) assoc :duration-ms (/ execution-time-nanos 1e6))
             (swap! task-queue (fn [[queue]] [(hrr-queue/hrr-penalise queue tags execution-time-nanos)]))
             (swap! execution-stats
                    (fn update
@@ -177,6 +178,7 @@
          (spawn-thread!
            (while true
              (metrics/set! :api/active-worker-threads-total @n-threads-running)
+             (metrics/set! :api/waiting-worker-threads-total @n-threads-waiting)
              (metrics/set! :api/max-thread-pool-size-total (get-worker-pool-size))
              (metrics/set! :api/task-queue-length-total (hrr-queue/hrr-size (first @task-queue)))
              (Thread/sleep 1000))))

@@ -2,7 +2,7 @@
 
 var PyDefUtils = require("PyDefUtils");
 
-/**
+/*#
 id: image
 docs_url: /docs/client/components/basic#image
 title: Image
@@ -50,12 +50,12 @@ module.exports = (pyModule) => {
 
             display_mode: /*!componentProp(Image)!1*/ {
                 name: "display_mode",
-                type: "string",
+                type: "enum",
                 priority: 2,
                 important: true,
                 defaultValue: new Sk.builtin.str("shrink_to_fit"),
                 pyVal: true,
-                enum: ["shrink_to_fit", "zoom_to_fill", "fill_width", "original_size"],
+                options: ["shrink_to_fit", "zoom_to_fill", "fill_width", "original_size"],
                 description: "Determines how the image's size should be adjusted to fit the size of this Image component",
                 initialize: true,
                 set(self, element, v) {
@@ -84,8 +84,8 @@ module.exports = (pyModule) => {
                 name: "horizontal_align",
                 priority: 3,
                 group: "Image Display",
-                type: "string",
-                enum: ["left", "center", "right"],
+                type: "enum",
+                options: ["left", "center", "right"],
                 description: "Position the image horizontally within this component",
                 defaultValue: new Sk.builtin.str("center"),
                 pyVal: true,
@@ -103,10 +103,10 @@ module.exports = (pyModule) => {
                 name: "vertical_align",
                 group: "Image Display",
                 important: true,
-                type: "string",
+                type: "enum",
                 defaultValue: new Sk.builtin.str("center"),
                 pyVal: true,
-                enum: ["top", "center", "bottom"],
+                options: ["top", "center", "bottom"],
                 description: "Position the image vertically within this component",
                 set(self, element, v) {
                     if (self._anvil.onPage) {
@@ -180,7 +180,7 @@ module.exports = (pyModule) => {
         },
 
         locals($loc) {
-            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Component"], (self) => {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicComponent"], (self) => {
                 self._anvil.pageEvents = {
                     remove() {
                         if (self._anvil.urlHandle) {

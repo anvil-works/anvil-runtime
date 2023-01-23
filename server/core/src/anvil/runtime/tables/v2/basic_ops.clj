@@ -131,7 +131,7 @@
         (do
           (when-not (allowed? col-name)
             (throw+ (util-v2/general-tables-error
-                      (str "No column called '" col-name "' exists in " (when cols (str "this view of "))
+                      (str "No such column '" col-name "' exists in " (when cols (str "this view of "))
                            "table '" (get-in tables [table-id :name]) "'"))))
           (when request
             col-name)))

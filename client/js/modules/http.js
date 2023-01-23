@@ -1,6 +1,8 @@
 "use strict";
 
-/**
+import { anvilMod, anvilServerMod, globalSuppressLoading } from "../utils";
+
+/*#
 id: http_module
 docs_url: /docs/http-apis/making-http-requests
 title: HTTP Module
@@ -74,7 +76,7 @@ description: |
   links to other sites, or URL-encoding [URL hash parameters](#anvil_module) in an Anvil app.
 includes: [http_module_browser_restrictions]
 */
-/**
+/*#
 id: http_module_browser_restrictions
 docs_url: /docs/http-apis/making-http-requests#browser-restrictions
 title: Browser HTTP restrictions
@@ -95,171 +97,207 @@ description: |
 
   2. Make the request from a server module instead. Server modules don't run in the web browser, so they don't have any of the browser's limitations.
 */
-module.exports = function() {
+module.exports = function () {
+    const {
+        builtin: {
+            str: pyStr,
+            Exception: pyException,
+            ValueError: pyValueError,
+            TypeError: pyTypeError,
+            func: pyFunc,
+            checkString,
+            pyCheckArgs,
+            pyCheckType,
+            bytes: pyBytes,
+            none: { none$: pyNone },
+        },
+        abstr: { sattr: pySetAttr },
+        ffi: { toPy, toJs },
+        misceval: { buildClass, promiseToSuspension, callsimArray: pyCall },
+    } = Sk;
 
-    var pyMod = {"__name__": new Sk.builtin.str("http")};
-    var PyDefUtils = require("PyDefUtils");
+    const pyMod = { __name__: new pyStr("http") };
+    const PyDefUtils = require("PyDefUtils");
 
-    var xmlmod = PyDefUtils.getModule("anvil.xml");
-    var anvilmod = PyDefUtils.getModule("anvil");
-    var servermod = PyDefUtils.getModule("anvil.server");
-    const pyNone = Sk.builtin.none.none$;
-
-    pyMod["url_encode"] = pyMod["encode_uri_component"] = new Sk.builtin.func(function(c) {
-        Sk.builtin.pyCheckArgs("url_encode", arguments, 1, 1);
-        Sk.builtin.pyCheckType("url_encode", "string_to_encode", Sk.builtin.checkString(c));
-        return Sk.ffi.toPy(encodeURIComponent(Sk.ffi.toJs(c)));
+    pyMod["url_encode"] = pyMod["encode_uri_component"] = new pyFunc(function(c) {
+        pyCheckArgs("url_encode", arguments, 1, 1);
+        pyCheckType("url_encode", "string_to_encode", checkString(c));
+        return toPy(encodeURIComponent(toJs(c)));
     });
 
-    pyMod["UrlEncodingError"] = Sk.misceval.buildClass(pyMod, function($gbl, $loc) {
-    }, "UrlEncodingError", [Sk.builtin.Exception]);
-    Sk.misceval.callsim(servermod.tp$getattr(new Sk.builtin.str("_register_exception_type")), new Sk.builtin.str("anvil.http.UrlEncodingError"), pyMod["UrlEncodingError"]);
+    pyMod["UrlEncodingError"] = buildClass(pyMod, ($gbl, $loc) => {}, "UrlEncodingError", [pyException]);
+    pyCall(anvilServerMod["_register_exception_type"], [
+        new pyStr("anvil.http.UrlEncodingError"),
+        pyMod["UrlEncodingError"],
+    ]);
 
-    pyMod["url_decode"] = new Sk.builtin.func(function(s) {
-        Sk.builtin.pyCheckArgs("url_decode", arguments, 1, 1);
-        Sk.builtin.pyCheckType("url_decode", "string_to_decode", Sk.builtin.checkString(s));
+    pyMod["url_decode"] = new pyFunc(function(s) {
+        pyCheckArgs("url_decode", arguments, 1, 1);
+        pyCheckType("url_decode", "string_to_decode", checkString(s));
         try {
-            return Sk.ffi.toPy(decodeURIComponent(Sk.ffi.toJs(s)));
-        } catch(_e) {
-            throw Sk.misceval.callsim(pyMod["UrlEncodingError"]);
+            return toPy(decodeURIComponent(toJs(s)));
+        } catch (_e) {
+            throw pyCall(pyMod["UrlEncodingError"]);
         }
     });
 
-    pyMod["json_stringify"] = new Sk.builtin.func(function(obj) {
-        return Sk.ffi.toPy(JSON.stringify(Sk.ffi.toJs(obj)));
-    });
+    pyMod["json_stringify"] = new pyFunc((obj) => toPy(JSON.stringify(toJs(obj))));
 
-    pyMod["b64_encode"] = new Sk.builtin.func(function(s) {
-        return Sk.ffi.toPy(btoa(Sk.ffi.toJs(s)));
-    });
+    pyMod["b64_encode"] = new pyFunc((s) => toPy(btoa(toJs(s))));
 
-    pyMod["b64_decode"] = new Sk.builtin.func(function(s) {
-        return Sk.ffi.toPy(atob(Sk.ffi.toJs(s)));
-    }); 
+    pyMod["b64_decode"] = new pyFunc((s) => toPy(atob(toJs(s))));
 
-    const ExceptionInit = Sk.builtin.Exception.tp$getattr(Sk.builtin.str.$init);
+    const ExceptionInit = pyException.tp$getattr(pyStr.$init);
 
-    pyMod["HttpError"] = Sk.misceval.buildClass(pyMod, function($gbl, $loc) {
-        $loc["__init__"] = new Sk.builtin.func(function init(self, pyStatus, pyContent, pyMessage) {
-            pyStatus ?? (pyStatus = pyNone);
-            pyContent ?? (pyContent = pyNone);
-            pyMessage ?? (pyMessage = pyNone);
-            Sk.abstr.sattr(self, new Sk.builtin.str("status"), pyStatus);
-            Sk.abstr.sattr(self, new Sk.builtin.str("content"), pyContent);
-            if (pyMessage === pyNone && pyStatus !== pyNone) {
-                pyMessage = Sk.ffi.toPy("HTTP error " + pyStatus.toString());
+    pyMod["HttpError"] = buildClass(pyMod, ($gbl, $loc) => {
+        $loc["__init__"] = new pyFunc(function init(self, pyStatus, pyContent, pyMessage) {
+            pyStatus ??= pyNone;
+            pyContent ??= pyNone;
+            pyMessage ??= pyNone;
+            pySetAttr(self, new pyStr("status"), pyStatus);
+            pySetAttr(self, new pyStr("content"), pyContent);
+            if ((pyMessage === pyNone || pyMessage === pyStr.$empty) && pyStatus !== pyNone) {
+                pyMessage = toPy("HTTP error " + pyStatus.toString());
             }
-            return PyDefUtils.pyCall(ExceptionInit, [self, pyMessage]);
+            return pyCall(ExceptionInit, [self, pyMessage]);
         });
-    }, "HttpError", [Sk.builtin.Exception]);
+        }, "HttpError", [pyException]);
 
-    var pyGetResponse = function(r, xhr, json) {
+    function pyGetResponse(xhr, json, fail=true) {
+        const r = xhr.response;
         if (!(r instanceof ArrayBuffer)) {
-            return Sk.builtin.none.none$;
+            return pyNone;
         }
-        let bytes = new Sk.builtin.bytes(new Uint8Array(r));
+        let bytes = new pyBytes(new Uint8Array(r));
         if (json) {
-            const decode = bytes.tp$getattr(new Sk.builtin.str("decode"));
-            const jsstr = PyDefUtils.pyCall(decode).toString();
-            let json;
+            const decode = bytes.tp$getattr(new pyStr("decode"));
+            const jsstr = pyCall(decode).toString();
+            let json = jsstr;
             try {
                 json = JSON.parse(jsstr);
-            } catch(e) {
-                throw new Sk.builtin.ValueError("Returned data is not valid JSON");
+            } catch (e) {
+                if (fail) {
+                    throw new pyValueError("Returned data is not valid JSON");
+                }
             }
-            return Sk.ffi.toPy(json);
+            return toPy(json);
         } else {
             const contentType = xhr.getResponseHeader("content-type") || "";
             if (!Sk.__future__.python3) {
-                bytes = new Sk.builtin.str(bytes.$jsstr());
+                bytes = new pyStr(bytes.$jsstr());
             }
-            return Sk.misceval.callsim(anvilmod.$d["BlobMedia"], new Sk.builtin.str(contentType), bytes);
+            return pyCall(anvilMod["BlobMedia"], [new pyStr(contentType), bytes]);
         }
-    };
+    }
 
-    // NOTE: `http.request` should be updated to be binary-safe and handle Media objects, like proxy_request used to (check the git history)
-    var request = function(kwargs, pyUrl) {
-
-        if (pyUrl) { kwargs["url"] = Sk.ffi.toJs(new Sk.builtin.str(pyUrl)); }
-
-        if (kwargs["username"] && kwargs["password"]) {
-            kwargs["headers"] = kwargs["headers"] || {}
-            kwargs["headers"]["Authorization"] = "Basic " + btoa(kwargs["username"]+":"+kwargs["password"]);
-        }
-
-        var getContentType = function() {
-            for (var k in kwargs["headers"]) {
-                if (k.toLowerCase() == "content-type") {
-                    return kwargs["headers"][k];
-                }
-            }
-            return undefined;
-        }
-        if (kwargs["json"] && kwargs["data"]) {
-            kwargs["data"] = JSON.stringify(kwargs["data"]);
-            if (!getContentType()) {
-                kwargs["headers"] = kwargs["headers"] || {};
-                kwargs["headers"]["Content-Type"] = "application/json";
+    function getContentType(headers) {
+        for (let k in headers) {
+            if (k.toLowerCase() === "content-type") {
+                return headers[k];
             }
         }
-        let timeout = null;
-        if (kwargs["timeout"]) {
-            timeout = kwargs["timeout"];
+    }
+
+    function request(kws, pyUrl) {
+        if (pyUrl) {
+            kws.url = toJs(new pyStr(pyUrl));
+        }
+        let { url, method="GET", username, password, headers = {}, json, data: body, timeout } = kws;
+        method = String(method).toUpperCase();
+
+        const xhr = new XMLHttpRequest();
+        // set in server.js - allows a user to use with anvil.server.no_loading_indicator
+        const suppressLoading = globalSuppressLoading.value > 0;
+
+        if (username && password) {
+            headers["Authorization"] = "Basic " + btoa(username + ":" + password);
+        }
+
+        const contentType = getContentType(headers);
+        const hasContent = method !== "GET" && method !== "HEAD";
+
+        if (hasContent && body) {
+            let defaultContentType = "application/x-www-form-urlencoded; charset=UTF-8";
+            if (json) {
+                body = JSON.stringify(body);
+                defaultContentType = "application/json";
+            }
+            if (!contentType) {
+                headers["Content-Type"] = defaultContentType;
+            }
+        }
+
+        if (body && typeof body !== "string" && !(body instanceof Uint8Array)) {
+            body = new URLSearchParams(body).toString();
+        }
+
+        if (!hasContent) {
+            try {
+                const _URL = new URL(url);
+                _URL.search = _URL.search || body;
+                url = _URL.toString();
+            } catch (e) {
+                console.error(e);
+            }
+            // can't send data as part of a get request
+            body = undefined;
+        }
+
+        xhr.open(method, url, true);
+
+        for (const header in headers) {
+            xhr.setRequestHeader(header, headers[header]);
+        }
+
+        if (timeout) {
             if (typeof timeout !== "number") {
-                throw new Sk.builtin.TypeError("timeout must be set to a number");
+                throw new pyTypeError("timeout must be set to a number");
             }
-            timeout = timeout * 1000;
+            xhr.timeout = timeout * 1000;
         }
 
-        var params = {
-            url: kwargs["url"],
-            timeout: timeout,
-            method: kwargs["method"],
-            headers: kwargs["headers"],
-            data: kwargs["data"],
-            xhrFields: { responseType: "arraybuffer" },
-            beforeSend: (xhr) => xhr.overrideMimeType("application/x-octet-stream"),
+        xhr.responseType = "arraybuffer";
+        xhr.overrideMimeType("application/x-octet-stream");
+
+        const { promise, resolve, reject } = PyDefUtils.defer();
+
+        const onSuccess = () => {
+            if (!suppressLoading) window.setLoading(false);
+            resolve(pyGetResponse(xhr, json));
         };
-        window.setLoading(true);
-        return PyDefUtils.suspensionPromise(function(resolve, reject) {
-            $.ajax(params).done(function(r, ts, xhr) {
-                window.setLoading(false);
-                resolve(pyGetResponse(r, xhr, kwargs["json"]))
-            }).fail(function(xhr, textStatus, errorThrown) {
-                window.setLoading(false);
-                const status = xhr.status;
-                const content = pyGetResponse(xhr, kwargs["json"]);
-                let message = textStatus || errorThrown;
-                if (message === "error") {
-                    message = null; // instead use a HttpError's nicer message.
-                }
-                reject(PyDefUtils.pyCall(pyMod["HttpError"], [Sk.ffi.toPy(status), content, Sk.ffi.toPy(message)]));
-            });
-        })
-    };
+
+        const onError = (statusText) => {
+            if (!suppressLoading) window.setLoading(false);
+            const status = xhr.status;
+            const content = pyGetResponse(xhr, json, false);
+            let message = statusText ?? xhr.statusText;
+            if (!message || message === "error") {
+                message = null; // instead use a HttpError's nicer message.
+            }
+            reject(pyCall(pyMod["HttpError"], [toPy(status), content, toPy(message)]));
+        };
+
+        xhr.onload = () => {
+            const status = xhr.status;
+            if ((status >= 200 && status < 300) || status === 304) {
+                onSuccess();
+            } else {
+                onError();
+            }
+        };
+        xhr.onerror = onError;
+        xhr.ontimeout = () => onError("timeout");
+
+        if (!suppressLoading) window.setLoading(true);
+        xhr.send(body);
+
+        return promiseToSuspension(promise);
+    }
 
     pyMod["request"] = PyDefUtils.funcWithKwargs(request);
 
-    //pyMod["request_full"] = PyDefUtils.funcWithKwargs(request_full);
-
-    var encodeFormData = function(data) {
-        var s = [];
-        for (var k in data) {
-            if (data[k] !== undefined) {
-                if (typeof(data[k]) == "object") {
-                    for (var kk in data[k]) {
-                        s.push(encodeURIComponent(k+"["+kk+"]")+"="+encodeURIComponent(data[k][kk]));
-                    }
-                } else {
-                    s.push(encodeURIComponent(k)+"="+encodeURIComponent(data[k]));
-                }
-            }
-        }
-        return s.join("&");
-    };
-
     return pyMod;
-}
+};
 
 /*
  * TO TEST:

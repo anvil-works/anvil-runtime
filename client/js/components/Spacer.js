@@ -2,7 +2,7 @@
 
 var PyDefUtils = require("PyDefUtils");
 
-/**
+/*#
 id: spacer
 docs_url: /docs/client/components/basic#spacer
 title: Spacer
@@ -18,7 +18,11 @@ description: |
 
 module.exports = (pyModule) => {
     pyModule["Spacer"] = PyDefUtils.mkComponentCls(pyModule, "Spacer", {
-        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(Spacer)!1*/ ["visibility", "layout", "height", "tooltip", "user data"]),
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(Spacer)!1*/ ["visibility", "layout", "height", "tooltip", "user data"], {
+            height: {
+                defaultValue: new Sk.builtin.str("32"),
+            },
+        }),
 
         events: PyDefUtils.assembleGroupEvents(/*!componentEvents()!2*/ "Spacer", ["universal"]),
 

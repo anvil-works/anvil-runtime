@@ -190,6 +190,9 @@ class SearchIterator(BaseSearchIterator):
 
     __nonzero__ = __bool__
 
+    def refresh(self):
+        self._clear_cache()
+
     def to_csv(self):
         return anvil.server.call(PREFIX + "to_csv", self._cap)
 

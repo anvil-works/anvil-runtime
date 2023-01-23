@@ -16,6 +16,7 @@
   (:import
     (org.apache.commons.codec.binary Base64)
     (java.io InputStream ByteArrayOutputStream)
+    (java.net URI)
     (anvil.dispatcher.types Media BlobMedia MediaDescriptor)
     (java.nio.charset Charset)))
 
@@ -38,6 +39,18 @@
   (with-open [out (ByteArrayOutputStream.)]
     (clojure.java.io/copy in out)
     (.toByteArray out)))
+
+(defn- replace-query [url data]
+  (try
+    (let [uri (URI/create url)]
+      (if (or (.getQuery uri) (not (string? data)))
+        url
+        (str (URI. (.getScheme uri) (.getAuthority uri) (.getPath uri) data (.getFragment uri)))))
+    (catch Exception _e
+      url)))
+
+(defn- has-content [method]
+  (and (not= method :get) (not= method :head)))
 
 (defn request [{:keys [url timeout method headers data username password] :as kwargs}]
   (worker-pool/with-expanding-threadpool-when-slow
@@ -68,6 +81,8 @@
 
                           :else (throw+ (general-http-error (str "Cannot use '" (.getClass data) "' as the body of an HTTP request"))))
 
+          url (if (has-content method) url (replace-query url data))
+
           headers (if c-type
                     (assoc headers "content-type" c-type)
                     headers)
@@ -76,7 +91,7 @@
                        :timeout   timeout
                        :method    method
                        :headers   headers
-                       :body      (when (not= method :get) data)
+                       :body      (when (has-content method) data)
                        :keepalive -1}
 
 

@@ -46,16 +46,24 @@ var $builtinmodule = window.memoise('anvil.saml.auth', function() {
         if (PyDefUtils.isPopupOK()) {
             doLogin();
         } else {
-            $("#samlLogInButton").off("click"); // Just in case they didn't click it last time.
-            $("#samlLogInButton").one("click", doLogin);
-            $("#samlCancelButton").off("click");
-            $("#samlCancelButton").one("click", function() {
-                $("#saml-login-modal").one("hidden.bs.modal.alertclear", function() {
-                    loginCallbackResolve.reject("MODAL_CANCEL")
-                });
+            const modal = new window.anvilModal({
+                id: "saml-login-modal",
+                backdrop: "static",
+                keyboard: false,
+                dismissible: false,
+                title: "Log in with SAML",
+                body: "You are about to log in to this app with SAML",
+                buttons: [
+                    {
+                        text: "Cancel",
+                        onClick: () => {
+                            modal.once("hidden", () => loginCallbackResolve.reject("MODAL_CANCEL"));
+                        },
+                    },
+                    { text: "Log in", style: "success", onClick: doLogin },
+                ],
             });
-
-            $('#saml-login-modal').modal({backdrop: 'static', keyboard: false});
+            modal.show();
         }
     }
 
@@ -90,7 +98,7 @@ var $builtinmodule = window.memoise('anvil.saml.auth', function() {
 
         // TODO: Try immediate auth before we do anything else. If that fails, then...
 
-        loginCallbackResolve = RSVP.defer();
+        loginCallbackResolve = PyDefUtils.defer();
 
         displayLogInModal();
 

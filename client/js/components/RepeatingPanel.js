@@ -1,6 +1,8 @@
 "use strict";
 
-/**
+import {getFormInstantiator} from "../runner/instantiation";
+
+/*#
 id: repeatingpanel
 docs_url: /docs/client/components/repeating-panel
 title: RepeatingPanel
@@ -77,7 +79,6 @@ module.exports = (pyModule, componentsModule) => {
 
     const { checkNone, checkString } = Sk.builtin;
     const { isTrue } = Sk.misceval;
-    const inDesigner = window.anvilInDesigner;
 
 
     pyModule["RepeatingPanel"] = PyDefUtils.mkComponentCls(pyModule, "RepeatingPanel", {
@@ -90,7 +91,7 @@ module.exports = (pyModule, componentsModule) => {
                 description: "The name of the form to repeat for every item",
                 pyVal: true,
                 set(s, e, v) {
-                    return lockingCall(s, () => setItemTemplate(s, e, v));
+                    return lockingCall(s, () => (window.anvilRuntimeVersion === 2) ? setItemTemplateV2(s, e, v) : setItemTemplateV3(s, v));
                 },
             },
 
@@ -118,10 +119,11 @@ module.exports = (pyModule, componentsModule) => {
         ),
 
         locals($loc) {
-            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Component"], (self) => {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicComponent"], (self) => {
                 // we use composition with Container to implement some basic Container functions
                 self._anvil.itemsElement = $(self._anvil.elements.items);
-                self._anvil.pyHiddenContainer = PyDefUtils.pyCall(pyModule["Container"]);
+                self._anvil.pyHiddenContainer = PyDefUtils.pyCall(pyModule["ClassicContainer"]);
+                self._anvil.pyHiddenContainer._anvil.delayAddingChildrenToPage = true;
                 self._anvil.pyHiddenContainer._anvil.overrideParentObj = self;
                 self._anvil.itemCache = [];
                 self._anvil.componentCache = [];
@@ -138,7 +140,13 @@ module.exports = (pyModule, componentsModule) => {
                     },
                 };
 
-                self._anvil.depId = componentsModule.newPythonComponent.dependencyTrace && componentsModule.newPythonComponent.dependencyTrace.depId;
+                // Are we being instantiated from YAML? If so, remember which is "our" app package so we can import
+                // from it when given ambiguous item_template strings.
+                const dependencyTrace = componentsModule.newPythonComponent.dependencyTrace;
+                if (dependencyTrace?.depId) {
+                    // NB: window.anvilAppDependencies isn't defined in the designer
+                    self._anvil.defaultAppPackage = window.anvilAppDependencies?.[dependencyTrace.depId]?.package_name;
+                }
 
                 self._anvil.pagination = {
                     startAfter: null,
@@ -171,13 +179,13 @@ module.exports = (pyModule, componentsModule) => {
                 Object.entries(self._anvil.props).forEach(([propName, propVal]) => {
                     v.push(new Sk.builtin.str(propName), propVal);
                 });
-                v.push(new Sk.builtin.str("_dep_id"), Sk.ffi.remapToPy(self._anvil.depId || null));
+                v.push(new Sk.builtin.str("_default_app_package"), Sk.ffi.toPy(self._anvil.defaultAppPackage ?? null));
                 return new Sk.builtin.dict(v);
             });
 
             $loc["__new_deserialized__"] = PyDefUtils.mkNewDeserializedPreservingIdentity((self, pyData) => {
                 const pop = pyData.tp$getattr(new Sk.builtin.str("pop"));
-                self._anvil.depId = PyDefUtils.pyCall(pop, [new Sk.builtin.str("_dep_id"), Sk.builtin.none.none$]).v;
+                self._anvil.defaultAppPackage = PyDefUtils.pyCall(pop, [new Sk.builtin.str("_default_app_package"), Sk.builtin.none.none$]).valueOf();
                 PyDefUtils.setAttrsFromDict(self, pyData);
             });
         },
@@ -229,10 +237,10 @@ module.exports = (pyModule, componentsModule) => {
 
     let paginate = (self, updatedChild=null) => {
 
-        if (inDesigner) { return [0, null, true]; }
+        if (ANVIL_IN_DESIGNER) { return [0, null, true]; }
 
 
-        if (updatedChild && updatedChild._anvil.pagination) {
+        if (updatedChild?._anvil?.pagination) {
             const i = self._anvil.lastPagination.findIndex(([,,,templateInstance]) => templateInstance == updatedChild);
             self._anvil.lastPagination[i][1] = updatedChild._anvil.pagination.rowsDisplayed;
 
@@ -255,14 +263,14 @@ module.exports = (pyModule, componentsModule) => {
         const addComponent = (pyC) => {
             // pyC is always a new component so we can skip _check_no_parent
             self._anvil.elements.items.appendChild(pyC._anvil.domNode);
-            if (self._anvil.dataGrid) {
+            if (self._anvil.dataGrid && pyC._anvil) {
                 pyC._anvil.dataGrid = self._anvil.dataGrid;
             } 
             return PyDefUtils.pyCallOrSuspend(adder, [pyC]);
         };
 
-        if (!self._anvil.formConstructor || checkNone(self._anvil.formConstructor)) {
-            // We have no constructor. It's either none, or we failed to find one based on the name
+        if (!self._anvil.constructItemTemplate) {
+            // We have no template. It's either none, or we failed to find one based on the name
             PyDefUtils.pyCall(self._anvil.pyHiddenContainer.tp$getattr(new Sk.builtin.str("clear")));
             if (self._anvil.templateFormName) {
                 let message = "";
@@ -353,7 +361,7 @@ module.exports = (pyModule, componentsModule) => {
 
                         if (currentItemIdx === idx) {
                             // We are already displaying the right item at this position. Repaginate it if necessary.
-                            if (templateInstance._anvil.pagination) {
+                            if (templateInstance._anvil?.pagination) {
                                 if (
                                     currentItemRowsDisplayed <= self._anvil.pagination.rowQuota - self._anvil.pagination.rowsDisplayed &&
                                     templateInstance._anvil.pagination.done === true &&
@@ -412,16 +420,14 @@ module.exports = (pyModule, componentsModule) => {
                                     if (idx < componentCache.length) {
                                         return componentCache[idx];
                                     }
-                                    const component = PyDefUtils.pyCallOrSuspend(self._anvil.formConstructor, [], ["item", pyItem]);
-                                    return Sk.misceval.chain(component, (component) => {
+                                    return Sk.misceval.chain(self._anvil.constructItemTemplate(pyItem), (component) => {
                                             self._anvil.componentCache.push(component);
                                             return component;
                                     });
                                 },
                                 (pyComponent) => {
-                                    pyComponent._anvil.delayAddedToPage = true;
                                     return Sk.misceval.chain(addComponent(pyComponent), () => {
-                                        if (pyComponent._anvil.paginate) {
+                                        if (pyComponent._anvil?.paginate) {
                                             pyComponent._anvil.pagination = {
                                                 startAfter: startAfterThisComponent ? childStartAfter : null,
                                                 rowQuota: self._anvil.pagination.rowQuota - self._anvil.pagination.rowsDisplayed,
@@ -480,8 +486,8 @@ module.exports = (pyModule, componentsModule) => {
                 if (PyDefUtils.logPagination) console.groupEnd();
             },
             () => {
-                const parent = self._anvil.parent && self._anvil.parent.pyObj;
-                if (updatedChild && updatedChild._anvil.pagination && parent && parent._anvil.paginate) {
+                const parent = self._anvil.parent?.pyObj;
+                if (updatedChild?._anvil?.pagination && parent?._anvil?.paginate) {
                     return Sk.misceval.chain(parent._anvil.paginate(self), () => [
                         self._anvil.pagination.rowsDisplayed,
                         self._anvil.pagination.stoppedAt,
@@ -505,8 +511,8 @@ module.exports = (pyModule, componentsModule) => {
     }
 
     const repaginateWithParent = (self) => {
-        const parent = self._anvil.parent && self._anvil.parent.pyObj;
-        if (parent && parent._anvil.paginate) {
+        const parent = self._anvil.parent?.pyObj;
+        if (parent?._anvil?.paginate) {
             return Sk.misceval.chain(self._anvil.paginate(), ([rows, stoppedAt, done]) => {
                 return parent._anvil.paginate(self);
             });
@@ -516,7 +522,7 @@ module.exports = (pyModule, componentsModule) => {
     };
 
     const lockingCall = (self, fn) => {
-        if (inDesigner) {
+        if (ANVIL_IN_DESIGNER) {
             // We don't care about thread-safe-ness in the designer.
             return fn();
         } else {
@@ -530,19 +536,19 @@ module.exports = (pyModule, componentsModule) => {
 
 
     // either the template is None, an empty str, a str, or Component
-    // assign the templateFormName, formConstructor and calls repaginate
-    const setItemTemplate = (s, e, v) => {
+    // assign the templateFormName, constructItemTemplate and calls repaginate
+    const setItemTemplateV2 = (s, e, v) => {
         if (!isTrue(v)) {
             s._anvil.templateFormName = "";
-            s._anvil.formConstructor = undefined;
+            s._anvil.constructItemTemplate = undefined;
             return repaginateWithParent(s);
         } else if (checkString(v)) { // Ideally, we would check for isinstance(anvil.Component), but anvil.Component is magically different in dependencies...
             v = v.toString();
 
             s._anvil.templateFormName = v;
-            s._anvil.formConstructor = undefined;
+            s._anvil.constructItemTemplate = undefined;
 
-            if (inDesigner) {
+            if (ANVIL_IN_DESIGNER) {
                 Sk.misceval.callsim(s.tp$getattr(new Sk.builtin.str("_refresh_form")));
                 return;
             }
@@ -550,17 +556,13 @@ module.exports = (pyModule, componentsModule) => {
             s._anvil.missingDependency = false;
 
             let [, depId, className] = v.match(/^(?:([^:]*):)?([^:]*)$/) || [];
-            let dep;
-            depId = depId || s._anvil.depId;
-            if (depId) {
-                dep = window.anvilAppDependencies[depId];
-                if (!dep) {
-                    console.error("Dependency not found when setting RepeatingPanel template: " + depId);
-                    s._anvil.missingDependency = true;
-                    return;
-                }
+            const appPackage = depId ? window.anvilAppDependencies[depId] : (s._anvil.defaultAppPackage || window.anvilAppMainPackage);
+            if (depId && !appPackage) {
+                console.error("Dependency not found when setting RepeatingPanel template: " + depId);
+                s._anvil.missingDependency = true;
+                return;
             }
-            const qualifiedFormName = depId ? `${dep.package_name}.${className}` : `${window.anvilAppMainPackage}.${className}`;
+            const qualifiedFormName = `${appPackage}.${className}`;
             return Sk.misceval.chain(
                 Sk.misceval.tryCatch(
                     () =>
@@ -571,7 +573,7 @@ module.exports = (pyModule, componentsModule) => {
                             const pyFormMod = Sk.sysmodules.mp$subscript(new Sk.builtin.str(qualifiedFormName));
                             const pyFormClass = pyFormMod && pyFormMod.tp$getattr(new Sk.builtin.str(className));
 
-                            s._anvil.formConstructor = pyFormClass;
+                            s._anvil.constructItemTemplate = (pyItem) => Sk.misceval.callsimOrSuspendArray(pyFormClass, [], ["item", pyItem]);
                         }),
                     function catchErr(e) {
                         console.error(e);
@@ -584,10 +586,31 @@ module.exports = (pyModule, componentsModule) => {
             );
         } else {
             s._anvil.templateFormName = "";
-            s._anvil.formConstructor = v;
+            s._anvil.constructItemTemplate = (pyItem) => Sk.misceval.callsimOrSuspendArray(v, [], ["item", pyItem]);
             return repaginateWithParent(s);
         }
-    }
+    };
+
+    // v3 runtime has a much nicer way of dealing with this
+    const setItemTemplateV3 = (self, template) => {
+        self._anvil.templateFormName = Sk.builtin.checkString(template) ? template.toString() : "";
+        self._anvil.constructItemTemplate = undefined;
+        return Sk.misceval.chain(
+            Sk.misceval.tryCatch(() => Sk.misceval.chain(
+                getFormInstantiator(self, template),
+                instantiate => {
+                    console.log("Got instantiator:", instantiate);
+                    self._anvil.constructItemTemplate = pyItem => instantiate(["item", pyItem]);
+                }
+            ), (err) => {
+                console.error(err);
+                if (window.onerror) {
+                    window.onerror(undefined, undefined, undefined, undefined, err);
+                }
+            }),
+            () => repaginateWithParent(self)
+        );
+    };
 
     const setItems = (s, e, v) => {
         s._anvil.itemsCounter++;

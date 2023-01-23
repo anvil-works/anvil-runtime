@@ -26,11 +26,16 @@ class HttpRequestFailed(anvil.server.AnvilWrappedError):
 
 anvil.server._register_exception_type("anvil.http.HttpRequestFailed", HttpRequestFailed)
 
+def _has_content(method):
+    return method != "GET" and method != "HEAD"
+
 #!defFunction(anvil.http,_,url,[method="GET"],[data=None],[json=False],[headers=None],[username=None],[password=None], [timeout=None])!2: "Make an HTTP request to the specified URL.\n\nIf json=True, the response is parsed into Python objects (dicts/lists/etc), and 'data' is JSON-encoded before sending.\n\n'headers' can be a dict of strings to set HTTP headers.\nIf specified, 'username' and 'password' will be used to perform HTTP Basic authentication." ["request"]
 def request(url, method='GET', data=None, headers=None, username=None, password=None, json=False, timeout=None):
+    method = str(method).upper()
+
     if headers is None:
         headers = {}
-    if json and data is not None:
+    if json and data is not None and _has_content(method):
         data = json_mod.dumps(data)
         headers["content-type"] = "application/json"
     if timeout is not None:

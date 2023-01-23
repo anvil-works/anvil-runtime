@@ -1,8 +1,8 @@
 "use strict";
 
-/**
+/*#
 id: richtext
-docs_url: /docs/client/components/basic#richtext
+docs_url: /docs/client/components/containers#richtext
 title: RichText
 tooltip: Learn more about RichText
 description: |
@@ -17,6 +17,7 @@ description: |
 var PyDefUtils = require("PyDefUtils");
 
 import { Remarkable } from "remarkable";
+import { isInvisibleComponent } from "./helpers";
 // import { linkify } from "remarkable/linkify";
 
 // Taken from the default list in the sanitize-html package.
@@ -114,7 +115,7 @@ const sanitizeHtml = (unsafeHtml, escapeBracesInAttrs) => {
             let am;
             let safeAttrs = {};
             while ((am = attrFinder.exec(attrs)) !== null) {
-                //tr (4) ["class=x", "class", "x", undefined, index: 0, input: "class=x", groups: undefined]
+                //tr (4)["class=x", "class", "x", undefined, index: 0, input: "class=x", groups: undefined]
                 let [_, attrName, attrValue, garbage] = am;
                 if (garbage) { break; }
                 attrName = attrName.toLowerCase();
@@ -167,7 +168,7 @@ const mkSlot = (nameAndMaybeFormat) => {
         slotHTML: `<span style="display: inline-block;" x-anvil-slot="${slotName}" className="anvil-always-inline-container"><code class="anvil-slot-name">{${nameAndMaybeFormat}}</code></span>`,
     };
 };
-const slotRegex = /(?:{{)|(?:}})|(?:{([a-zA-Z0-9\-_ :\!\.%&;^<>]*)})/g;
+const slotRegex = /(?:{{)|(?:}})|(?:{([a-zA-Z0-9\-_ :!.%&;^<>]*)})/g;
 
 module.exports = (pyModule) => {
 
@@ -180,10 +181,10 @@ module.exports = (pyModule) => {
         highlight(str, lang) {
             if (typeof hljs === "undefined") return "";
             try {
-                if (lang && hljs.getLanguage(lang)) {
-                    return hljs.highlight(lang, str).value;
+                if (lang && window.hljs.getLanguage(lang)) {
+                    return window.hljs.highlight(lang, str).value;
                 } else {
-                    return hljs.highlightAuto(str).value;
+                    return window.hljs.highlightAuto(str).value;
                 }
             } catch {
                 return ""; // use external default escaping
@@ -207,7 +208,7 @@ module.exports = (pyModule) => {
         } else {
             domNode = self._anvil.domNode;
         }
-        domNode.appendChild(component._anvil.domNode);
+        domNode.appendChild(component.anvil$hooks.domElement);
     };
 
     const updateContent = (self, e) => {
@@ -231,7 +232,7 @@ module.exports = (pyModule) => {
         // Start by detaching them, then later we'll put them back.
         const components = self._anvil.components;
         for (let c of components) {
-            c.component._anvil.element.detach();
+            $(c.component.anvil$hooks.domElement).detach();
         }
 
         let html = rawHtml ? rawHtml.trim() : escapeHtml(rawText);
@@ -246,7 +247,9 @@ module.exports = (pyModule) => {
                 return slotHTML;
             });
             e.querySelectorAll("[x-anvil-slot]").forEach((domNode) => {
-                slots[domNode.getAttribute("x-anvil-slot")].domNode = domNode;
+                const slotName = domNode.getAttribute("x-anvil-slot");
+                slots[slotName].domNode = domNode;
+                slots[slotName].placeHolder = domNode.firstElementChild;
             });
         } else {
             e.innerHTML = html;
@@ -257,7 +260,7 @@ module.exports = (pyModule) => {
         for (let c of components) {
             addComponentToDom(self, c.component, c.layoutProperties);
         }
-    }
+    };
     
     const strClear = new Sk.builtin.str("clear");
     const strAddComponent = new Sk.builtin.str("add_component");
@@ -305,8 +308,8 @@ module.exports = (pyModule) => {
                     self._anvil.populatedDataSlots.push(slotName);
                     // Clear might suspend
                     slotName = new Sk.builtin.str(slotName);
-                    fns.push(() => PyDefUtils.pyCallOrSuspend(clear, [], ["slot", slotName]))
-                    fns.push(() => PyDefUtils.pyCallOrSuspend(add_component, [val], ["slot", slotName]))
+                    fns.push(() => PyDefUtils.pyCallOrSuspend(clear, [], ["slot", slotName]));
+                    fns.push(() => PyDefUtils.pyCallOrSuspend(add_component, [val], ["slot", slotName]));
                 }
             }
         } else if (!(Sk.builtin.checkNone(data))) {
@@ -324,7 +327,7 @@ module.exports = (pyModule) => {
     }
 
     pyModule["RichText"] = PyDefUtils.mkComponentCls(pyModule, "RichText", {
-        base: pyModule["Container"],
+        base: pyModule["ClassicContainer"],
 
         properties: PyDefUtils.assembleGroupProperties(/*!componentProps(RichText)!2*/ ["text", "layout", "appearance", "tooltip", "user data"], {
             text: {omit: true},
@@ -349,13 +352,25 @@ module.exports = (pyModule) => {
             },
             format: /*!componentProp(RichText)!1*/ {
                 name: "format",
-                type: "string",
+                type: "enum",
                 description: "The format of the content of this component.",
-                enum: ["markdown", "plain_text", "restricted_html"],
+                options: ["markdown", "plain_text", "restricted_html"],
                 defaultValue: new Sk.builtin.str("markdown"),
                 pyVal: true,
                 important: true,
                 priority:11,
+                set(s, e) {
+                    updateContent(s, e[0]);
+                },
+            },
+            enable_slots: /*!componentProp(RichText)!1*/ {
+                name: "enable_slots",
+                type: "boolean",
+                description: "If true {braces} in content define slots. If false, braces in content display normally.",
+                defaultValue: Sk.builtin.bool.true$,
+                initialize: true,
+                pyVal: true,
+                priority: 13,
                 set(s,e,v) {
                     updateContent(s, e[0]);
                 },
@@ -373,18 +388,6 @@ module.exports = (pyModule) => {
                     return setData(self, e, data);
                 },
             },
-            enable_slots: /*!componentProp(RichText)!1*/ {
-                name: "enable_slots",
-                type: "boolean",
-                description: "If true {braces} in content define slots. If false, braces in content display normally.",
-                defaultValue: Sk.builtin.bool.true$,
-                initialize: true,
-                pyVal: true,
-                priority: 13,
-                set(s,e,v) {
-                    updateContent(s, e[0]);
-                },
-            },
         }),
 
         events: PyDefUtils.assembleGroupEvents(/*!componentEvents()!2*/ "RichText", ["universal"]),
@@ -395,7 +398,7 @@ module.exports = (pyModule) => {
 
         locals ($loc) {
 
-            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Container"], (self) => {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicContainer"], (self) => {
                 // Store this on self so we can call it from DesignRichText
                 self._anvil.updateContent = updateContent;
             });
@@ -403,10 +406,25 @@ module.exports = (pyModule) => {
 
             /*!defMethod(_,component,slot)!2*/ "Add a component to this panel, in the specified slot"
             $loc["add_component"] = new PyDefUtils.funcWithKwargs(function (kwargs, self, component) {
-                pyModule["Container"]._check_no_parent(component);
-                return Sk.misceval.chain(Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs), () => {
+                pyModule["ClassicContainer"]._check_no_parent(component);
+
+                return Sk.misceval.chain(component.anvil$hooks.setupDom(), (elt) => {
+                    if (isInvisibleComponent(component)) {
+                        return pyModule["ClassicContainer"]._doAddComponent(self, component, kwargs);
+                    }
                     addComponentToDom(self, component, kwargs);
-                    return Sk.builtin.none.none$;
+                    return pyModule["ClassicContainer"]._doAddComponent(self, component, kwargs, {
+                        detachDom() {
+                            elt.remove();
+                            const { slot: slotName } = kwargs;
+                            if (!slotName) return;
+                            const slot = self._anvil.slots[slotName];
+                            if (!slot) return;
+                            if (slot.domNode.children.length) return;
+                            slot.hasComponents = false;
+                            slot.domNode.appendChild(slot.placeHolder);
+                        },
+                    });
                 });
             });
 

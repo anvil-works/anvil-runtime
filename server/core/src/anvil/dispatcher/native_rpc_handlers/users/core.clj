@@ -103,8 +103,16 @@
         user-map (row-to-map user-row)
         {:keys [allow_remember_me remember_me_days] :as props} (get-props-with-named-user-table)
         cookie-type (get-cookie-type props)
-        values-to-set (merge {"last_login" (now-as-table-date)}
-                             (when (contains? user-map "n_password_failures")
+        values-to-set (merge (when (let [last-login (get user-map "last_login")]
+                                     (or (not last-login)
+                                         (try
+                                           (< (-> last-login
+                                                  (tables-util/datetime->instant)
+                                                  (.toEpochMilli))
+                                              (- (System/currentTimeMillis) 5000))
+                                           (catch Exception _ true))))
+                               {"last_login" (now-as-table-date)})
+                             (when (not= 0 (get user-map "n_password_failures" 0))
                                {"n_password_failures" 0}))]
     (swap! util/*session-state* assoc-in [:users :logged-in-id] (user-row->v1-id-str user-row))
     (swap! util/*session-state* update-in [:users] dissoc :partial-logged-in-id)
@@ -140,7 +148,8 @@
         (catch :anvil/cookie-error _e
           nil))
       ;; false-y return from that big (try) means we didn't hit the (update-row!)
-      (set-values-creating-col-if-necessary table-id row-id values-to-set)))
+      (when (not-empty values-to-set)
+        (set-values-creating-col-if-necessary table-id row-id values-to-set))))
 
   user-row)
 
@@ -719,6 +728,11 @@
                   ; We don't care if cookies fail in the users service.
                   nil)))))))))
 
+(defn get-current-user-email [kwargs]
+  (-> (get-current-user kwargs)
+      (row-to-map)
+      (get "email")))
+
 (defn get-last-login-email [_kwargs]
   (let [{:keys [user_table] :as props} (get-props-with-named-user-table)
         cookie-type (get-cookie-type props)]
@@ -730,6 +744,7 @@
 
 (swap! dispatcher/native-rpc-handlers merge
        {"anvil.private.users.get_current_user"          (util/wrap-native-fn get-current-user)
+        "anvil.private.users.get_current_user_email"    (util/wrap-native-fn get-current-user-email)
         "anvil.private.users.get_last_login_email"      (util/wrap-native-fn get-last-login-email)
         "anvil.private.users.logout"                    (util/wrap-native-fn logout)
         "anvil.private.users.login_with_token"          (util/wrap-native-fn login-with-token)

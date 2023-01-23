@@ -98,7 +98,8 @@
                                   (log/warn "About to try sending to a closed" link-name "websocket channel for app" (:app-id serialisable-request) (str "(" (:command serialisable-request) ")")))
 
                                 (try
-                                  (swap! pending-responses assoc call-id {:context context :return-path return-path})
+                                  (when return-path
+                                    (swap! pending-responses assoc call-id {:context context :return-path return-path}))
                                   (serialisation/serialise-to-websocket!
                                     (-> serialisable-request
                                         (assoc :type (or type "CALL")
@@ -108,8 +109,9 @@
                                   (catch Exception e
                                     (log/error e "Error serialising uplink request")
                                     (swap! pending-responses dissoc call-id)
-                                    (dispatcher/respond! return-path {:error {:type "anvil.server.SerializationError" :message (str e)}})))
-                                (when @closed?
+                                    (when return-path
+                                      (dispatcher/respond! return-path {:error {:type "anvil.server.SerializationError" :message (str e)}}))))
+                                (when (and @closed? return-path)
                                   ;; Avoid a race condition. If we were invoked as the connection was closing and we
                                   ;; added ourselves to pending-responses too late, our message could get lost without
                                   ;; an error because disconnection notices were already sent. But @closed is set _before_

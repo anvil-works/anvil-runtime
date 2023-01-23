@@ -5,7 +5,7 @@ var PyDefUtils = require("PyDefUtils");
 
 module.exports = (pyModule) => {
     pyModule["Paginator"] = PyDefUtils.mkComponentCls(pyModule, "Paginator", {
-        base: pyModule["Container"],
+        base: pyModule["ClassicContainer"],
 
         locals($loc) {
             // TODO: Add .anvil-paginator to component element here rather than in each component.
@@ -37,7 +37,7 @@ module.exports = (pyModule) => {
                 }
             }
 
-            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Container"], (self) => {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicContainer"], (self) => {
                 self._anvil.pagination = {
                     startAfter: null,
                     rowQuota: getRowQuota(self),

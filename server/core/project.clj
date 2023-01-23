@@ -15,6 +15,7 @@
                  [ring/ring-devel "1.8.0"]
                  [ring/ring-json "0.5.0"]
                  [ring-cors "0.1.13"]
+                 [bk/ring-gzip "0.3.0"]
 
                  [com.cemerick/friend "0.2.3"]
 
@@ -56,7 +57,7 @@
 
                  [com.google.guava/guava "23.6-jre"]
 
-                 [one-time "0.4.0"]
+                 [one-time "0.7.0"]
                  [me.grison/cljwebauthn "0.1.2"]
                  [com.webauthn4j/webauthn4j-core "0.11.1.RELEASE" :exclusions [org.slf4j/slf4j-api]]
 

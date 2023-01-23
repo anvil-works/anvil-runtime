@@ -1,0 +1,141 @@
+// From bootstrap v3.4.1
+// npm install -g lessc
+// lessc _alert.less _alert.css
+
+@prefix: aw-;
+
+
+//
+// Alerts
+// --------------------------------------------------
+
+//## Define alert colors, border radius, and padding.
+@font-size-base:          14px;
+//** Unit-less `line-height` for use in components like buttons.
+@line-height-base:        1.428571429; // 20/14
+@line-height-computed:    floor((@font-size-base * @line-height-base)); // ~20px
+
+@state-success-text:             #3c763d;
+@state-success-bg:               #dff0d8;
+@state-success-border:           darken(spin(@state-success-bg, -10), 5%);
+
+@state-info-text:                #31708f;
+@state-info-bg:                  #d9edf7;
+@state-info-border:              darken(spin(@state-info-bg, -10), 7%);
+
+@state-warning-text:             #8a6d3b;
+@state-warning-bg:               #fcf8e3;
+@state-warning-border:           darken(spin(@state-warning-bg, -10), 5%);
+
+@state-danger-text:              #a94442;
+@state-danger-bg:                #f2dede;
+@state-danger-border:            darken(spin(@state-danger-bg, -10), 5%);
+
+
+@alert-padding: 15px;
+@alert-border-radius: @border-radius-base;
+@alert-link-font-weight: bold;
+
+@alert-success-bg: @state-success-bg;
+@alert-success-text: @state-success-text;
+@alert-success-border: @state-success-border;
+
+@alert-info-bg: @state-info-bg;
+@alert-info-text: @state-info-text;
+@alert-info-border: @state-info-border;
+
+@alert-warning-bg: @state-warning-bg;
+@alert-warning-text: @state-warning-text;
+@alert-warning-border: @state-warning-border;
+
+@alert-danger-bg: @state-danger-bg;
+@alert-danger-text: @state-danger-text;
+@alert-danger-border: @state-danger-border;
+
+@border-radius-base:        4px;
+
+// Alerts
+
+.alert-variant(@background; @border; @text-color) {
+    color: @text-color;
+    background-color: @background;
+    border-color: @border;
+
+    hr {
+        border-top-color: darken(@border, 5%);
+    }
+
+    // .alert-link {
+    //     color: darken(@text-color, 10%);
+    // }
+}
+
+
+// Base styles
+// -------------------------
+
+.@{prefix}alert {
+    padding: @alert-padding;
+    margin-bottom: @line-height-computed;
+    border: 1px solid transparent;
+    border-radius: @alert-border-radius;
+
+    // Headings for larger alerts
+    h4 {
+        margin-top: 0;
+        color: inherit; // Specified for the h4 to prevent conflicts of changing @headings-color
+    }
+
+    // Provide class for links that match alerts
+    // .alert-link {
+    //     font-weight: @alert-link-font-weight;
+    // }
+
+    // Improve alignment and spacing of inner content
+    >p,
+    >ul {
+        margin-bottom: 0;
+    }
+
+    >p+p {
+        margin-top: 5px;
+    }
+}
+
+// Dismissible alerts
+//
+// Expand the right padding and account for the close button's positioning.
+
+// The misspelled .alert-dismissable was deprecated in 3.2.0.
+.@{prefix}alert-dismissable,
+.@{prefix}alert-dismissible {
+    padding-right: (@alert-padding + 20);
+
+    // Adjust close link position
+    .@{prefix}close {
+        position: relative;
+        top: -2px;
+        right: -21px;
+        color: inherit;
+    }
+}
+
+// Alternate styles
+//
+// Generate contextual modifier classes for colorizing the alert.
+
+.@{prefix}alert-success {
+    .alert-variant(@alert-success-bg; @alert-success-border; @alert-success-text);
+}
+
+.@{prefix}alert-info {
+    .alert-variant(@alert-info-bg; @alert-info-border; @alert-info-text);
+}
+
+.@{prefix}alert-warning {
+    .alert-variant(@alert-warning-bg; @alert-warning-border; @alert-warning-text);
+}
+
+.@{prefix}alert-danger {
+    .alert-variant(@alert-danger-bg; @alert-danger-border; @alert-danger-text);
+}

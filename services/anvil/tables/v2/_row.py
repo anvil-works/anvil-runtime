@@ -12,6 +12,14 @@ _make_refs = None  # for circular imports
 _auto_create_is_enabled = None
 
 
+def _copy(so):
+    if type(so) is list:
+        return [_copy(o) for o in so]
+    if type(so) is dict:
+        return {k: _copy(v) for k, v in so.items()}
+    return so
+
+
 @anvil.server.portable_class
 class Row(BaseRow):
     @classmethod
@@ -169,18 +177,20 @@ class Row(BaseRow):
             val = [row._merge_and_reduce(g_table_data, local_data) for row in val]
         return val
 
-    def _make_row_data(self, g_table_data, local_data, cache_spec, adder):
+    def _make_row_data(self, g_table_data, local_data, cache_spec):
         table_spec = self._spec
         table_cols = table_spec["cols"] if table_spec is not None else []
         cache = self._cache
         # we can't rely on the order of cache in python 2
+        cached_data = []
         for i, (col, is_cached) in enumerate(zip(table_cols, cache_spec)):
             if not is_cached:
                 continue
             name = col["name"]
             val = self._merge_linked(cache[name], col, g_table_data, local_data)
-            adder(i, val)
-        adder(CAP_KEY, self._cap)
+            cached_data.append((i, val))
+        cached_data.append((CAP_KEY, self._cap))
+        return cached_data
 
     def _merge_and_reduce(self, g_table_data, local_data):
         if check_serialized(self, local_data):
@@ -190,36 +200,26 @@ class Row(BaseRow):
 
         # We assert that there is no way for rows from the same view_key to have different col_specs
         # This includes the order
-        # the only thing they may differ on is cached_specs
+        # the only thing they may differ on is cache_specs
         g_table_spec, g_table_rows = init_spec_rows(g_view_data, table_spec, cache_spec)
-        g_row_data = g_table_rows.get(row_id, [])
         g_cache_spec = g_table_spec["cache"] if g_table_spec is not None else None
-        # the local cache spec is always a list
-        # so if the g_gable_spec is None then is_compact will always be False
+
         if table_spec is not None and g_cache_spec is not None:
             is_dirty = self._dirty_spec or len(cache_spec) != len(g_cache_spec)
-            is_compact = not is_dirty and cache_spec == g_cache_spec and type(g_row_data) is list
         else:
             is_dirty = self._dirty_spec
-            is_compact = False
-
-        if is_compact:
-            row_data = []
-
-            def adder(_, val):
-                row_data.append(val)
-
-        else:
-            row_data = {}
-
-            def adder(index, val):
-                row_data[str(index)] = val
 
         if is_dirty:
             g_view_data["dirty_spec"] = True
             cache_spec = []
 
-        self._make_row_data(g_table_data, local_data, cache_spec, adder)
+        cached_data = self._make_row_data(g_table_data, local_data, cache_spec)
+        existing = g_table_rows.get(row_id, [])
+
+        if not is_dirty and cache_spec == g_cache_spec and type(existing) is list:
+            row_data = [val for _, val in cached_data]
+        else:
+            row_data = {str(key): val for key, val in cached_data}
 
         merge_row_data(row_id, row_data, g_table_rows, g_table_spec, cache_spec)
         return int(row_id)
@@ -251,9 +251,9 @@ class Row(BaseRow):
         self._cache_spec = []
         self._has_uncached = True
 
-    def _fill_cache(self, force=False):
-        if force:
-            uncached_keys = None if force is True else force
+    def _fill_cache(self, fetch=None):
+        if fetch is not None:
+            uncached_keys = None if fetch is True else fetch
         elif self._spec is None:
             uncached_keys = None
         elif self._has_uncached:
@@ -262,7 +262,12 @@ class Row(BaseRow):
             return  # no uncached values
 
         table_data = anvil.server.call(PREFIX + "fetch", self._cap, uncached_keys)
-        self._unpack(table_data, table_data[self._view_key]["rows"][self._id])
+        rows = table_data[self._view_key]["rows"]
+        row_data = rows[self._id]
+        # Replace the compact row data with this Row instance
+        # so circular references don't clobber the data while we're unpacking.
+        rows[self._id] = self
+        self._unpack(table_data, row_data)
 
     def _walk_local_items(self, items, missing=NOT_FOUND):
         # We are about to put local items in the cache
@@ -276,7 +281,7 @@ class Row(BaseRow):
             if val is NOT_FOUND:
                 continue
             else:
-                rv[name] = val
+                rv[name] = _copy(val)
             if val is UNCACHED or val is None:
                 continue
             elif type == DATETIME:
@@ -318,6 +323,10 @@ class Row(BaseRow):
     def __getitem__(self, key):
         if not isinstance(key, str):
             raise TypeError("Row columns are always strings, not {}".format(type(key).__name__))
+        if _batcher.batch_update.active:
+            rv = _batcher.batch_update.read(self._cap, key)
+            if key is not NOT_FOUND:
+                return _copy(rv)
         if self._spec is None:
             self._fill_cache()
         hit = self._cache.get(key, NOT_FOUND)
@@ -332,9 +341,9 @@ class Row(BaseRow):
                 # try to force fetch this key - incase we have a bad spec - i.e auto-columns
                 self._fill_cache([key])
         else:
-            return hit
+            return _copy(hit)
         try:
-            return self._cache[key]
+            return _copy(self._cache[key])
         except KeyError:
             raise NoSuchColumnError("No such column '" + key + "'")
 
@@ -372,7 +381,9 @@ class Row(BaseRow):
         # Find all the remaining columns
         num_remaning = len(cols) - len(cached_printable_cols)
 
-        vals = ", ".join("{}={}".format(name, None if val is None else meth(val)) for name, meth, val in cached_printable_cols)
+        vals = ", ".join(
+            "{}={}".format(name, None if val is None else meth(val)) for name, meth, val in cached_printable_cols
+        )
 
         if not num_remaning:
             and_more = ""
@@ -407,17 +418,30 @@ class Row(BaseRow):
             self._fill_cache()
         return self._cache.keys()
 
-    def items(self):
+    def _get_view(self):
         self._fill_cache()
-        return self._cache.items()
+        view = _copy(self._cache)
+        if _batcher.batch_update.active:
+            batched = _batcher.batch_update.get_updates(self._cap)
+            view.update(_copy(batched))
+        return view
+
+    def items(self):
+        return self._get_view().items()
 
     def values(self):
-        self._fill_cache()
-        return self._cache.values()
+        return self._get_view().values()
 
-    def update(self, other=(), **new_items):
-        if other != ():
-            new_items = dict(other, **new_items)
+    def update(*args, **new_items):
+        # avoid name conflicts with columns, could use (self, other, /, **kws)
+        # but positioin only args not available in py2/Skulpt
+        if not args:
+            raise TypeError("method 'update' of 'Row' object needs an argument")
+        elif len(args) > 2:
+            raise TypeError("expected at most 1 argument, got %d" % (len(args) - 1))
+        elif len(args) == 2:
+            new_items = dict(args[1], **new_items)
+        self = args[0]
         if not new_items:
             # backwards compatability hack
             self._clear_cache()
@@ -443,6 +467,16 @@ class Row(BaseRow):
         anvil.server.call(PREFIX + "delete", self._cap)
         self._cap.send_update(False)
 
+    def refresh(self, fetch=None):
+        if fetch is not None:
+            from ..query import fetch_only
+
+            if not isinstance(fetch, fetch_only):
+                raise TypeError("the second argument to refresh should be a q.fetch_only() object")
+            fetch = fetch.spec
+        self._clear_cache()
+        self._fill_cache(fetch)
+
 
 class RowIterator:
     def __init__(self, row):
@@ -457,15 +491,21 @@ class RowIterator:
         if self._fill_required:
             self._row._fill_cache()
             self.__init__(self._row)
-        item = next(self._iter)
-        if item[1] is not UNCACHED:
-            return item
-        self._row._fill_cache()
-        # fill the rest of the cache
-        # since we probably want all the items!
-        key = item[0]
-        # we rely here on the _cache keys not changing during iteration
-        # which works since we've filled it with UNCACHED values that match our expected keys
-        return (key, self._row._cache[key])
+
+        key, value = next(self._iter)
+        if value is UNCACHED:
+            # fill the rest of the cache
+            # since we probably want all the items!
+            # we rely here on the _cache keys not changing during iteration
+            # which works since we've filled it with UNCACHED values that match our expected keys
+            self._row._fill_cache()
+            value = self._row._cache[key]
+
+        if _batcher.batch_update.active:
+            batched = _batcher.batch_update.read(self._row._cap, key)
+            if batched is not NOT_FOUND:
+                value = batched
+
+        return (key, _copy(value))
 
     next = __next__

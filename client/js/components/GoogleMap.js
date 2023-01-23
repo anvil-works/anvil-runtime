@@ -1,8 +1,9 @@
 "use strict";
+/* global google */
 
 var PyDefUtils = require("PyDefUtils");
 
-/**
+/*#
 id: googlemap
 docs_url: /docs/client/components/maps
 title: GoogleMap
@@ -75,7 +76,7 @@ description: |
   Here is a complete list of the available map overlay components, and their most important properties:
 
   \* **`GoogleMap.Marker`** - Mark a particular point on the map. Draws a red pin by default.
-    
+
     Properties
 
     \* **`animation`:** `GoogleMap.Animation` - Specifies the animation of this marker. Set to `GoogleMap.Animation.DROP`, or `GoogleMap.Animation.BOUNCE`.
@@ -87,7 +88,7 @@ description: |
 
 
   \* **`GoogleMap.InfoWindow`** - Display a popup on the map at a particular position.
-    
+
     Properties
 
     \* **`position`:** `GoogleMap.LatLng` - Specifies the position of the popup. Not required if this popup is anchored to a component (see the `open` method, below).
@@ -102,7 +103,7 @@ description: |
 
 
   \* **`GoogleMap.Polyline`** - Draw a line on the map.
-    
+
     Properties
 
     \* **`icons`:** `list of GoogleMap.IconSequence` - Specifies the icons to display along this line.
@@ -113,7 +114,7 @@ description: |
 
 
   \* **`GoogleMap.Polygon`** - Draw a closed polygon on the map.
-    
+
     Properties
 
     \* **`path`:** `list of GoogleMap.LatLng` - A list of vertices.
@@ -123,7 +124,7 @@ description: |
 
 
   \* **`GoogleMap.Rectangle`** - Draw a rectangle on the map.
-    
+
     Properties
 
     \* **`bounds`:** `GoogleMap.LatLngBounds` - Specifies the position and size of this rectangle.
@@ -132,7 +133,7 @@ description: |
 
 
   \* **`GoogleMap.Circle`** - Draw a circle on the map.
-    
+
     Properties
 
     \* **`center`:** `GoogleMap.LatLng` - The position of the circle.
@@ -156,7 +157,7 @@ description: |
   map.map_data.add(GoogleMap.Data.Feature(
     geometry=GoogleMap.Data.Point(
       GoogleMap.LatLng(52.21,0.12))))
-  
+
   map.map_data.add(GoogleMap.Data.Feature(
     geometry=GoogleMap.Data.Point(
       GoogleMap.LatLng(52.201,0.135))))
@@ -182,7 +183,7 @@ description: |
   def get_style(feature):
     point = feature.geometry.get()
     color = 'red' if point.lng() < 0.12 else 'blue'
-    
+
     return GoogleMap.Data.StyleOptions(
       icon=GoogleMap.Symbol(
         path=GoogleMap.SymbolPath.CIRCLE,
@@ -220,7 +221,7 @@ description: |
 
   ```python
   results = GoogleMap.geocode(address="Cambridge, UK")
-  
+
   m = Marker(position=results[0].geometry.location)
   map.add_component(m)
   ```
@@ -269,7 +270,23 @@ description: |
 
 module.exports = function(pyModule) {
 
-// UTILS
+    const {
+        misceval: { isTrue, callsimArray: pyCall, callsimOrSuspendArray: pyCallOrSuspend, chain: chainOrSuspend },
+        builtin: {
+            none: { none$: pyNone },
+            str: pyStr,
+            tuple: pyTuple,
+            isinstance: pyIsInstance,
+            checkString,
+        },
+    } = Sk;
+
+    const S_ADD_COMPONENT = new pyStr("add_component");
+    const S_REMOVE_FROM_PARENT = new pyStr("remove_from_parent");
+    const S_CLEAR = new pyStr("clear");
+
+
+    // UTILS
     const remapTypes = [];
     const lazyEnums = [];
 
@@ -313,110 +330,133 @@ module.exports = function(pyModule) {
         return Sk.misceval.chain(loadGoogleMaps(), ...fn);
     };
 
-    var registerRemapType = function(lazyJsType, pyType) {
-      remapTypes.push({
-        jsType: lazyJsType,
-        pyType: pyType,
-      });
-    };
-    var remapToJs = function remapToJs(pyObj) {
-        return Sk.ffi.toJs(pyObj, {
-            unhandledHook: (pyObj) => {
-                for (let t in remapTypes || []) {
-                    if (pyObj instanceof remapTypes[t].pyType) {
-                        if (pyObj._toJsVal) {
-                            return pyObj._toJsVal();
-                        } else {
-                            return pyObj._jsVal;
-                        }
-                    }
+    function registerRemapType(lazyJsType, pyType) {
+        remapTypes.push({ jsType: lazyJsType, pyType: pyType });
+
+        // implement protocol for Sk.ffi.toJs to convert to a javascript object
+        Object.defineProperty(pyType.prototype, "valueOf", {
+            value() {
+                if (this._toJsVal) {
+                    return this._toJsVal();
+                } else {
+                    return this._jsVal;
                 }
             },
+            writable: true,
         });
-    };
+    }
 
-    var remapToPy = function remapToPy(jsObj) {
-        const proxyHook = (jsObj) => {
-            for (var t in remapTypes || []) {
-                if (jsObj instanceof remapTypes[t].jsType) {
-                    return jsObj._pyVal || Sk.misceval.callsim(remapTypes[t].pyType, jsObj);
+    const unhandledHook = (pyObj) => {
+        for (let remapType of remapTypes || []) {
+            if (pyObj instanceof remapType.pyType) {
+                if (pyObj._toJsVal) {
+                    return pyObj._toJsVal();
+                } else {
+                    return pyObj._jsVal;
                 }
             }
-            return Sk.ffi.proxy(jsObj);
-        };
-        return Sk.ffi.toPy(jsObj, { proxyHook });
+        }
     };
 
-
-    var pyNameToJsName = function(pyName) {
-      return pyName.replace(/_(.)/g, function(_,c) { return c.toUpperCase(); });
+    function remapToJs(pyObj) {
+        return Sk.ffi.toJs(pyObj, {unhandledHook});
     }
 
-    var unwrapKwargs = function(kwargs, into) {
-      into = into || {};
-      for (var k in kwargs) {
-        var unwrappedName = pyNameToJsName(k);
-        into[unwrappedName] = remapToJs(kwargs[k]);
-      }
-      return into;
+    const proxyHook = (jsObj) => {
+        for (const remapType of remapTypes || []) {
+            if (jsObj instanceof remapType.jsType) {
+                return jsObj._pyVal ?? Sk.misceval.callsim(remapType.pyType, jsObj);
+            }
+        }
+        return Sk.ffi.proxy(jsObj);
+    };
+
+    function remapToPy(jsObj) {
+        return Sk.ffi.toPy(jsObj, { proxyHook });
     }
 
-    var registerMethods = function($class, methods) {
-      for (var fn in methods) {
-        var fwk = methods[fn].transformRawArgs ? PyDefUtils.funcWithRawKwargsDict : PyDefUtils.funcWithKwargs;
-        $class[fn] = fwk(function(pyFnName, method, kwargs, self) {
-          var transformArgs = method.transformArgs || method.transformRawArgs || function(kwargs, self/*, arg1, arg2, ... */) { 
-                var a = [];
-                var args = Array.prototype.slice.call(arguments, 2);
-                for (var i in args) {
-                  a.push(remapToJs(args[i]));
+
+    function snakeToCamelCase(pyName) {
+        return pyName.replace(/_(.)/g, (_, c) => c.toUpperCase());
+    }
+
+    function unwrapKwargs(kwargs, into) {
+        into ??= {};
+        for (let k in kwargs) {
+            const unwrappedName = snakeToCamelCase(k);
+            into[unwrappedName] = remapToJs(kwargs[k]);
+        }
+        return into;
+    }
+
+    function registerMethods($class, methods) {
+        for (var fn in methods) {
+            var fwk = methods[fn].transformRawArgs ? PyDefUtils.funcWithRawKwargsDict : PyDefUtils.funcWithKwargs;
+            $class[fn] = fwk(
+                function (pyFnName, method, kwargs, self) {
+                    var transformArgs =
+                        method.transformArgs ||
+                        method.transformRawArgs ||
+                        function (kwargs, self /*, arg1, arg2, ... */) {
+                            var a = [];
+                            var args = Array.prototype.slice.call(arguments, 2);
+                            for (var i in args) {
+                                a.push(remapToJs(args[i]));
+                            }
+                            return a;
+                        };
+                    var transformResult = method.transformResult || remapToPy;
+                    var args = Array.prototype.slice.call(arguments, 2);
+
+                    var unwrappedArgs = transformArgs.apply(null, args);
+
+                    var fnName = method.fn || snakeToCamelCase(pyFnName);
+                    //console.debug("Calling function", fnName, "with args", unwrappedArgs);
+
+                    var jsResult = self._jsVal[fnName].apply(self._jsVal, unwrappedArgs);
+
+                    //console.debug("Got result", jsResult);
+                    return chainOrSuspend(method.callback?.(self), () => transformResult(jsResult));
+                }.bind(null, fn, methods[fn])
+            );
+        }
+    }
+
+    function initFnWithJsObjOrPyArgs(lazyJsType, initFn, afterInitFromJs) {
+        return function (/* kwargs?, self, arg1, arg2, ... */) {
+            var args = Array.prototype.slice.call(arguments, 0);
+            // First argument is either kwargs (a JS object) or self (a python object)
+            var firstArgIndex = 1;
+            if (!args[0].tp$name) {
+                firstArgIndex++;
+            }
+            var self = args[firstArgIndex - 1];
+            const jsType = lazyJsType();
+            if (args[firstArgIndex] && args[firstArgIndex] instanceof jsType) {
+                self._jsVal = args[firstArgIndex];
+                if (afterInitFromJs) {
+                    afterInitFromJs(self, self._jsVal);
                 }
-                return a;
-          };
-          var transformResult = method.transformResult || remapToPy
-          var args = Array.prototype.slice.call(arguments,2);
-
-          var unwrappedArgs = transformArgs.apply(null,args);
-
-          var fnName = method.fn || pyNameToJsName(pyFnName);
-          //console.debug("Calling function", fnName, "with args", unwrappedArgs);
-
-          var jsResult = self._jsVal[fnName].apply(self._jsVal, unwrappedArgs);
-
-          //console.debug("Got result", jsResult);
-          return transformResult(jsResult);
-        }.bind(null, fn, methods[fn]));
-      }
-    }
-
-    var initFnWithJsObjOrPyArgs = function(lazyJsType, initFn, afterInitFromJs) {
-      return function(/* kwargs?, self, arg1, arg2, ... */) {
-        var args = Array.prototype.slice.call(arguments, 0);
-        // First argument is either kwargs (a JS object) or self (a python object)
-        var firstArgIndex = 1;
-        if (!args[0].tp$name) {
-          firstArgIndex++;
-        }
-        var self = args[firstArgIndex-1];
-        const jsType = lazyJsType();
-        if (args[firstArgIndex] && args[firstArgIndex] instanceof jsType) {
-          self._jsVal = args[firstArgIndex];
-          if (afterInitFromJs) {
-            afterInitFromJs(self, self._jsVal);
-          }
-        } else {
-          initFn.apply(null,args);
-        }
-        self._jsVal._pyVal = self;
-      }
+            } else {
+                initFn.apply(null, args);
+            }
+            self._jsVal._pyVal = self;
+            Object.defineProperties(self._jsVal, {
+                $isPyWrapped: { value: true, writable: true },
+                unwrap: {
+                    value() {
+                        return self;
+                    },
+                    writable: true,
+                },
+            });
+        };
     }
 
 
-    const {isTrue} = Sk.misceval;
-    const inDesigner = window.anvilInDesigner;
 
 
-// COMPONENT
+    // COMPONENT
 
     // similar to the logic in Component __new__ but jsVal doesn't exist in component new so we set these props in GoogleMap.__new__
     function setMapProps(self) {
@@ -436,7 +476,7 @@ module.exports = function(pyModule) {
     }
 
     pyModule["GoogleMap"] = PyDefUtils.mkComponentCls(pyModule, "GoogleMap", {
-        base: pyModule["Container"],
+        base: pyModule["ClassicContainer"],
 
         element: (props) => <PyDefUtils.OuterElement className="anvil-google-map" style="min-height:40px;" {...props} />,
 
@@ -594,7 +634,7 @@ module.exports = function(pyModule) {
                 pyVal: true,
                 mapProp: true,
                 set: PyDefUtils.mapSetter("heading", (v) => (isTrue(v) ? v : 0)),
-                get: (self, e) => (self._inDesigner ? self._anvil.props["heading"] : PyDefUtils.mapGetter("getHeading", remapToPy)(self, e)),
+                get: (self, e) => (ANVIL_IN_DESIGNER ? self._anvil.props["heading"] : PyDefUtils.mapGetter("getHeading", remapToPy)(self, e)),
             },
 
             /*!componentProp(GoogleMap)!1*/
@@ -768,7 +808,7 @@ module.exports = function(pyModule) {
                 pyVal: true,
                 mapProp: true,
                 set: PyDefUtils.mapSetter("zoom", (v) => (isTrue(v) ? remapToJs(v) : 2)),
-                get: (self, e) => (inDesigner ? self._anvil.props["zoom"] : PyDefUtils.mapGetter("getZoom", remapToPy)(self, e)),
+                get: (self, e) => (ANVIL_IN_DESIGNER ? self._anvil.props["zoom"] : PyDefUtils.mapGetter("getZoom", remapToPy)(self, e)),
             },
 
             /*!componentProp(GoogleMap)!1*/
@@ -1229,12 +1269,12 @@ module.exports = function(pyModule) {
             });
         }
         return oldGetAttr.call(this, name, canSuspend);
-    }
-    
-    
+    };
+
+
     function GoogleMapLocals($Map) {
 
-        $Map["__new__"] = PyDefUtils.mkNew(pyModule["Container"], (self) => {
+        $Map["__new__"] = PyDefUtils.mkNew(pyModule["ClassicContainer"], (self) => {
             const triggerResize = () => {
                 setTimeout(() => {
                     const oldCenter = self._jsVal.getCenter();
@@ -1249,10 +1289,10 @@ module.exports = function(pyModule) {
                 add: triggerResize,
                 show: triggerResize,
             };
-            
+
             let mkJsVals;
 
-            if (inDesigner) {
+            if (ANVIL_IN_DESIGNER) {
                 mkJsVals = () => {
                     self._jsVal = {
                         setOptions: () => {},
@@ -1321,7 +1361,7 @@ module.exports = function(pyModule) {
                     });
                     self._jsVal._pyVal = self;
                     self._anvil.mapData = Sk.misceval.callsim($Map["Data"], self._jsVal.data);
-                }
+                };
             }
             // we do this now because self._jsVal only exists here
             return suspensionLoadGoogleMaps(mkJsVals, () => setMapProps(self));
@@ -1330,1288 +1370,1214 @@ module.exports = function(pyModule) {
 
 
 
-// OBJECT SPECS
+        // OBJECT SPECS
 
         function objectSpec() { }
 
         $Map["ObjectSpec"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
 
-          $loc["__init__"] = PyDefUtils.funcWithRawKwargsDict(function(kwargs, self) {
-            self._jsVal = new objectSpec();
-            self._jsVal = kwargs;
+            $loc["__init__"] = PyDefUtils.funcWithRawKwargsDict(function(kwargs, self) {
+                self._jsVal = new objectSpec();
+                self._jsVal = kwargs;
 
-            self._toJsVal = function() {
-              return unwrapKwargs(self._jsVal);
-            }
-          });
+                self._toJsVal = function() {
+                    return unwrapKwargs(self._jsVal);
+                };
+            });
 
-          $loc["__setattr__"] = new Sk.builtin.func(function(self, pyName, pyValue) {
+            $loc["__setattr__"] = new Sk.builtin.func(function(self, pyName, pyValue) {
 
-            var name = Sk.ffi.toJs(pyName);
+                var name = Sk.ffi.toJs(pyName);
 
-            self._jsVal[name] = pyValue;
+                self._jsVal[name] = pyValue;
 
-            return Sk.builtin.object.prototype.tp$setattr.call(self, pyName, pyValue);
+                return Sk.builtin.object.prototype.tp$setattr.call(self, pyName, pyValue);
 
-          });
+            });
 
-          $loc["__getattr__"] = new Sk.builtin.func(function(self, pyName) {
+            $loc["__getattr__"] = new Sk.builtin.func(function(self, pyName) {
 
-            var name = Sk.ffi.toJs(pyName);
+                var name = Sk.ffi.toJs(pyName);
 
-            if (name in self._jsVal) {
-              return self._jsVal[name];
-            }
-            throw new Sk.builtin.AttributeError("'" + self.tp$name + "' object has no attribute '" + name + "'");
-        });
+                if (name in self._jsVal) {
+                    return self._jsVal[name];
+                }
+                throw new Sk.builtin.AttributeError("'" + self.tp$name + "' object has no attribute '" + name + "'");
+            });
 
         }, "GoogleMap.ObjectSpec", []);
         registerRemapType(() => objectSpec, $Map["ObjectSpec"]);
 
         $Map["LatLngLiteral"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-          
-          [ /*!defAttr()!1*/{
-            name: "lat",
-            type: "number",
-            description: "The latitude in degrees."
-          }, /*!defAttr()!1*/{
-            name: "lng",
-            type: "number",
-            description: "The longitude in degrees."
-          },]
 
-          /*!defInitFromAttrs()!1*/ "Create a new LatLngLiteral object at the specified latitude and longitude."
+            [ /*!defAttr()!1*/{
+                name: "lat",
+                type: "number",
+                description: "The latitude in degrees."
+            }, /*!defAttr()!1*/{
+                name: "lng",
+                type: "number",
+                description: "The longitude in degrees."
+            },];
+
+            /*!defInitFromAttrs()!1*/ "Create a new LatLngLiteral object at the specified latitude and longitude.";
         }, /*!defClass(anvil.GoogleMap,LatLngLiteral)!*/ "GoogleMap.LatLngLiteral", [$Map["ObjectSpec"]]);
 
         $Map["LatLngBoundsLiteral"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-          
-          [ /*!defAttr()!1*/{
-            name: "north",
-            type: "number",
-            description: "The latitude of the north edge of the bounds, in degrees."
-          }, /*!defAttr()!1*/{
-            name: "east",
-            type: "number",
-            description: "The longitude of the east edge of the bounds, in degrees."
-          }, /*!defAttr()!1*/{
-            name: "south",
-            type: "number",
-            description: "The latitude of the south edge of the bounds, in degrees."
-          }, /*!defAttr()!1*/{
-            name: "west",
-            type: "number",
-            description: "The longitude of the west edge of the bounds, in degrees."
-          },]
-          /*!defInitFromAttrs()!1*/ "Construct a LatLngBoundsLiteral with the specified edges.";
+
+            [ /*!defAttr()!1*/{
+                name: "north",
+                type: "number",
+                description: "The latitude of the north edge of the bounds, in degrees."
+            }, /*!defAttr()!1*/{
+                name: "east",
+                type: "number",
+                description: "The longitude of the east edge of the bounds, in degrees."
+            }, /*!defAttr()!1*/{
+                name: "south",
+                type: "number",
+                description: "The latitude of the south edge of the bounds, in degrees."
+            }, /*!defAttr()!1*/{
+                name: "west",
+                type: "number",
+                description: "The longitude of the west edge of the bounds, in degrees."
+            },];
+            /*!defInitFromAttrs()!1*/ "Construct a LatLngBoundsLiteral with the specified edges.";
         }, /*!defClass(anvil.GoogleMap,LatLngBoundsLiteral)!*/ "GoogleMap.LatLngBoundsLiteral", [$Map["ObjectSpec"]]);
 
         $Map["Icon"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-          
-          [ /*!defAttr()!1*/{
-            name: "anchor",
-            pyType: "anvil.GoogleMap.Point instance",
-            description: "The position at which to anchor an image in correspondence to the location of the marker on the map. By default, the anchor is located along the center point of the bottom of the image."
-          },/*!defAttr()!1*/{
-            name: "label_origin",
-            type: "anvil.GoogleMap.Point instance",
-            description: "The origin of the label relative to the top-left corner of the icon image, if a label is supplied by the marker. By default, the origin is located in the center point of the image."
-          },/*!defAttr()!1*/{
-            name: "origin",
-            type: "anvil.GoogleMap.Point instance",
-            description: "The position of the image within a sprite, if any. By default, the origin is located at the top left corner of the image (0, 0)."
-          },/*!defAttr()!1*/{
-            name: "scaled_size",
-            pyType: "anvil.GoogleMap.Size instance",
-            description: "The size of the entire image after scaling, if any. Use this property to stretch/shrink an image or a sprite."
-          },/*!defAttr()!1*/{
-            name: "size",
-            pyType: "anvil.GoogleMap.Size instance",
-            description: "The display size of the sprite or image. When using sprites, you must specify the sprite size. If the size is not provided, it will be set when the image loads."
-          },/*!defAttr()!1*/{
-            name: "url",
-            type: "string",
-            description: "The URL of the image or sprite sheet."
-          },]
-          /*!defInitFromAttrs()!1*/ "Construct an Icon with the specified options.";
+
+            [ /*!defAttr()!1*/{
+                name: "anchor",
+                pyType: "anvil.GoogleMap.Point instance",
+                description: "The position at which to anchor an image in correspondence to the location of the marker on the map. By default, the anchor is located along the center point of the bottom of the image."
+            },/*!defAttr()!1*/{
+                name: "label_origin",
+                type: "anvil.GoogleMap.Point instance",
+                description: "The origin of the label relative to the top-left corner of the icon image, if a label is supplied by the marker. By default, the origin is located in the center point of the image."
+            },/*!defAttr()!1*/{
+                name: "origin",
+                type: "anvil.GoogleMap.Point instance",
+                description: "The position of the image within a sprite, if any. By default, the origin is located at the top left corner of the image (0, 0)."
+            },/*!defAttr()!1*/{
+                name: "scaled_size",
+                pyType: "anvil.GoogleMap.Size instance",
+                description: "The size of the entire image after scaling, if any. Use this property to stretch/shrink an image or a sprite."
+            },/*!defAttr()!1*/{
+                name: "size",
+                pyType: "anvil.GoogleMap.Size instance",
+                description: "The display size of the sprite or image. When using sprites, you must specify the sprite size. If the size is not provided, it will be set when the image loads."
+            },/*!defAttr()!1*/{
+                name: "url",
+                type: "string",
+                description: "The URL of the image or sprite sheet."
+            },];
+            /*!defInitFromAttrs()!1*/ "Construct an Icon with the specified options.";
         }, /*!defClass(anvil.GoogleMap,Icon)!*/ "GoogleMap.Icon", [$Map["ObjectSpec"]]);
 
         $Map["Symbol"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-          
-          [ /*!defAttr()!1*/{
-            name: "anchor",
-            pyType: "anvil.GoogleMap.Point instance",
-            description: "The position of the symbol relative to the marker or polyline."
-          },/*!defAttr()!1*/{
-            name: "fill_color",
-            type: "string",
-            description: "The fill color of this symbol."
-          },/*!defAttr()!1*/{
-            name: "fill_opacity",
-            type: "number",
-            description: "The fill opacity of this symbol. Defaults to 0."
-          },/*!defAttr()!1*/{
-            name: "label_origin",
-            pyType: "anvil.GoogleMap.Point instance",
-            description: "The origin of the label relative to the origin of the path, if label is supplied by the marker."
-          },/*!defAttr()!1*/{
-            name: "path",
-            pyType: "anvil.GoogleMap.SymbolPath",
-            description: "The symbol's path, which is a built-in symbol path, or a custom path expressed using SVG path notation."
-          },/*!defAttr()!1*/{
-            name: "rotation",
-            type: "number",
-            description: "The angle by which to rotate the symbol, expressed clockwise in degrees. "
-          },/*!defAttr()!1*/{
-            name: "scale",
-            type: "number",
-            description: "The amount by which the symbol is scaled in size."
-          },/*!defAttr()!1*/{
-            name: "strokeColor",
-            type: "string",
-            description: "The symbol's stroke color."
-          },/*!defAttr()!1*/{
-            name: "strokeOpacity",
-            type: "number",
-            description: "The symbol's stroke opacity."
-          },/*!defAttr()!1*/{
-            name: "strokeWeight",
-            type: "number",
-            description: "The symbol's stroke weight."
-          },]
-          /*!defInitFromAttrs()!1*/ "Construct a Symbol with the specified options.";
+
+            [ /*!defAttr()!1*/{
+                name: "anchor",
+                pyType: "anvil.GoogleMap.Point instance",
+                description: "The position of the symbol relative to the marker or polyline."
+            },/*!defAttr()!1*/{
+                name: "fill_color",
+                type: "string",
+                description: "The fill color of this symbol."
+            },/*!defAttr()!1*/{
+                name: "fill_opacity",
+                type: "number",
+                description: "The fill opacity of this symbol. Defaults to 0."
+            },/*!defAttr()!1*/{
+                name: "label_origin",
+                pyType: "anvil.GoogleMap.Point instance",
+                description: "The origin of the label relative to the origin of the path, if label is supplied by the marker."
+            },/*!defAttr()!1*/{
+                name: "path",
+                pyType: "anvil.GoogleMap.SymbolPath",
+                description: "The symbol's path, which is a built-in symbol path, or a custom path expressed using SVG path notation."
+            },/*!defAttr()!1*/{
+                name: "rotation",
+                type: "number",
+                description: "The angle by which to rotate the symbol, expressed clockwise in degrees. "
+            },/*!defAttr()!1*/{
+                name: "scale",
+                type: "number",
+                description: "The amount by which the symbol is scaled in size."
+            },/*!defAttr()!1*/{
+                name: "strokeColor",
+                type: "string",
+                description: "The symbol's stroke color."
+            },/*!defAttr()!1*/{
+                name: "strokeOpacity",
+                type: "number",
+                description: "The symbol's stroke opacity."
+            },/*!defAttr()!1*/{
+                name: "strokeWeight",
+                type: "number",
+                description: "The symbol's stroke weight."
+            },];
+            /*!defInitFromAttrs()!1*/ "Construct a Symbol with the specified options.";
         }, /*!defClass(anvil.GoogleMap,Symbol)!*/ "GoogleMap.Symbol", [$Map["ObjectSpec"]]);
 
         $Map["IconSequence"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-          
-          [ /*!defAttr()!1*/{
-            name: "icon",
-            pyType: "anvil.GoogleMap.Symbol instance",
-            description: "The icon to render on the line."
-          },/*!defAttr()!1*/{
-            name: "fixed_rotation",
-            type: "boolean",
-            description: "If true, each icon in the sequence has the same fixed rotation regardless of the angle of the edge on which it lies. Defaults to false."
-          },/*!defAttr()!1*/{
-            name: "offset",
-            type: "number",
-            description: "The distance from the start of the line at which an icon is to be rendered."
-          },/*!defAttr()!1*/{
-            name: "repeat",
-            type: "string",
-            description: "The distance between consecutive icons on the line."
-          },]
-          /*!defInitFromAttrs()!1*/ "Construct a new IconSequence with the specified options.";
+
+            [ /*!defAttr()!1*/{
+                name: "icon",
+                pyType: "anvil.GoogleMap.Symbol instance",
+                description: "The icon to render on the line."
+            },/*!defAttr()!1*/{
+                name: "fixed_rotation",
+                type: "boolean",
+                description: "If true, each icon in the sequence has the same fixed rotation regardless of the angle of the edge on which it lies. Defaults to false."
+            },/*!defAttr()!1*/{
+                name: "offset",
+                type: "number",
+                description: "The distance from the start of the line at which an icon is to be rendered."
+            },/*!defAttr()!1*/{
+                name: "repeat",
+                type: "string",
+                description: "The distance between consecutive icons on the line."
+            },];
+            /*!defInitFromAttrs()!1*/ "Construct a new IconSequence with the specified options.";
         }, /*!defClass(anvil.GoogleMap,IconSequence)!*/ "GoogleMap.IconSequence", [$Map["ObjectSpec"]]);
 
         $Map["FullscreenControlOptions"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-          
-          [ /*!defAttr()!1*/{
-            name: "position",
-            pyType: "anvil.GoogleMap.ControlPosition",
-            description: "Position of the controls."
-          },]
-          /*!defInitFromAttrs()!1*/ "Construct new FullscreenControlOptions with the specified options.";
+
+            [ /*!defAttr()!1*/{
+                name: "position",
+                pyType: "anvil.GoogleMap.ControlPosition",
+                description: "Position of the controls."
+            },];
+            /*!defInitFromAttrs()!1*/ "Construct new FullscreenControlOptions with the specified options.";
         }, /*!defClass(anvil.GoogleMap,FullscreenControlOptions)!*/ "GoogleMap.FullscreenControlOptions", [$Map["ObjectSpec"]]);
 
         $Map["MapTypeControlOptions"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-          
-          [ /*!defAttr()!1*/{
-            name: "position",
-            pyType: "anvil.GoogleMap.ControlPosition",
-            description: "Position of the controls."
-          },/*!defAttr()!1*/{
-            name: "style",
-            pyType: "anvil.GoogleMap.MapTypeControlStyle",
-            description: "Used to select what style of map type control to display."
-          },/*!defAttr()!1*/{
-            name: "map_type_ids",
-            type: "list(string)",
-            description: "IDs of map types to show in the control."
-          },]
-          /*!defInitFromAttrs()!1*/ "Construct new MapTypeControlOptions with the specified options.";
+
+            [ /*!defAttr()!1*/{
+                name: "position",
+                pyType: "anvil.GoogleMap.ControlPosition",
+                description: "Position of the controls."
+            },/*!defAttr()!1*/{
+                name: "style",
+                pyType: "anvil.GoogleMap.MapTypeControlStyle",
+                description: "Used to select what style of map type control to display."
+            },/*!defAttr()!1*/{
+                name: "map_type_ids",
+                type: "list(string)",
+                description: "IDs of map types to show in the control."
+            },];
+            /*!defInitFromAttrs()!1*/ "Construct new MapTypeControlOptions with the specified options.";
         }, /*!defClass(anvil.GoogleMap,MapTypeControlOptions)!*/ "GoogleMap.MapTypeControlOptions", [$Map["ObjectSpec"]]);
 
         $Map["MotionTrackingControlOptions"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-          
-          [ /*!defAttr()!1*/{
-            name: "position",
-            pyType: "anvil.GoogleMap.ControlPosition",
-            description: "Position of the controls."
-          },]
-          /*!defInitFromAttrs()!1*/ "Construct new MotionTrackingControlOptions with the specified options.";
+
+            [ /*!defAttr()!1*/{
+                name: "position",
+                pyType: "anvil.GoogleMap.ControlPosition",
+                description: "Position of the controls."
+            },];
+            /*!defInitFromAttrs()!1*/ "Construct new MotionTrackingControlOptions with the specified options.";
         }, /*!defClass(anvil.GoogleMap,MotionTrackingControlOptions)!*/ "GoogleMap.MotionTrackingControlOptions", [$Map["ObjectSpec"]]);
 
         $Map["RotateControlOptions"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-          
-          [ /*!defAttr()!1*/{
-            name: "position",
-            pyType: "anvil.GoogleMap.ControlPosition",
-            description: "Position of the controls."
-          },]
-          /*!defInitFromAttrs()!1*/ "Construct new RotateControlOptions with the specified options.";
+
+            [ /*!defAttr()!1*/{
+                name: "position",
+                pyType: "anvil.GoogleMap.ControlPosition",
+                description: "Position of the controls."
+            },];
+            /*!defInitFromAttrs()!1*/ "Construct new RotateControlOptions with the specified options.";
         }, /*!defClass(anvil.GoogleMap,RotateControlOptions)!*/ "GoogleMap.RotateControlOptions", [$Map["ObjectSpec"]]);
 
         $Map["ScaleControlOptions"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-          
-          [ /*!defAttr()!1*/{
-            name: "position",
-            pyType: "anvil.GoogleMap.ControlPosition",
-            description: "Position of the controls."
-          },]
-          /*!defInitFromAttrs()!1*/ "Construct new ScaleControlOptions with the specified options.";
+
+            [ /*!defAttr()!1*/{
+                name: "position",
+                pyType: "anvil.GoogleMap.ControlPosition",
+                description: "Position of the controls."
+            },];
+            /*!defInitFromAttrs()!1*/ "Construct new ScaleControlOptions with the specified options.";
         }, /*!defClass(anvil.GoogleMap,ScaleControlOptions)!*/ "GoogleMap.ScaleControlOptions", [$Map["ObjectSpec"]]);
 
         $Map["StreetViewControlOptions"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-          
-          [ /*!defAttr()!1*/{
-            name: "position",
-            pyType: "anvil.GoogleMap.ControlPosition",
-            description: "Position of the controls."
-          },]
-          /*!defInitFromAttrs()!1*/ "Construct new StreetViewControlOptions with the specified options.";
+
+            [ /*!defAttr()!1*/{
+                name: "position",
+                pyType: "anvil.GoogleMap.ControlPosition",
+                description: "Position of the controls."
+            },];
+            /*!defInitFromAttrs()!1*/ "Construct new StreetViewControlOptions with the specified options.";
         }, /*!defClass(anvil.GoogleMap,StreetViewControlOptions)!*/ "GoogleMap.StreetViewControlOptions", [$Map["ObjectSpec"]]);
 
         $Map["ZoomControlOptions"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-          
-          [ /*!defAttr()!1*/{
-            name: "position",
-            pyType: "anvil.GoogleMap.ControlPosition",
-            description: "Position of the controls."
-          },]
-          /*!defInitFromAttrs()!1*/ "Construct new ZoomControlOptions with the specified options.";
+
+            [ /*!defAttr()!1*/{
+                name: "position",
+                pyType: "anvil.GoogleMap.ControlPosition",
+                description: "Position of the controls."
+            },];
+            /*!defInitFromAttrs()!1*/ "Construct new ZoomControlOptions with the specified options.";
         }, /*!defClass(anvil.GoogleMap,ZoomControlOptions)!*/ "GoogleMap.ZoomControlOptions", [$Map["ObjectSpec"]]);
 
         $Map["MarkerLabel"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-          
-          [ /*!defAttr()!1*/{
-            name: "color",
-            type: "string",
-            description: "The color of the label text. Default color is black."
-          },/*!defAttr()!1*/{
-            name: "font_family",
-            type: "string",
-            description: "The font family of the label text."
-          },/*!defAttr()!1*/{
-            name: "font_size",
-            type: "string",
-            description: "The font size of the label text."
-          },/*!defAttr()!1*/{
-            name: "font_weight",
-            type: "string",
-            description: "The font weight of the label text."
-          },/*!defAttr()!1*/{
-            name: "text",
-            type: "string",
-            description: "The text to be displayed in the label."
-          },]
-          /*!defInitFromAttrs()!1*/ "Construct a new MarkerLabel with the specified options.";
+
+            [ /*!defAttr()!1*/{
+                name: "color",
+                type: "string",
+                description: "The color of the label text. Default color is black."
+            },/*!defAttr()!1*/{
+                name: "font_family",
+                type: "string",
+                description: "The font family of the label text."
+            },/*!defAttr()!1*/{
+                name: "font_size",
+                type: "string",
+                description: "The font size of the label text."
+            },/*!defAttr()!1*/{
+                name: "font_weight",
+                type: "string",
+                description: "The font weight of the label text."
+            },/*!defAttr()!1*/{
+                name: "text",
+                type: "string",
+                description: "The text to be displayed in the label."
+            },];
+            /*!defInitFromAttrs()!1*/ "Construct a new MarkerLabel with the specified options.";
         }, /*!defClass(anvil.GoogleMap,MarkerLabel)!*/ "GoogleMap.MarkerLabel", [$Map["ObjectSpec"]]);
 
         $Map["GeocoderResult"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-          
-          [ /*!defAttr()!1*/{
-            name: "address_components",
-            pyType: "list(anvil.GoogleMap.GeocoderAddressComponent instance)",
-            description: "An array of GeocoderAddressComponents"
-          },/*!defAttr()!1*/{
-            name: "formatted_address",
-            type: "string",
-            description: "A string containing the human-readable address of this location."
-          },/*!defAttr()!1*/{
-            name: "geometry",
-            pyType: "anvil.GoogleMap.GeocoderGeometry instance",
-            description: "A GeocoderGeometry object"
-          },/*!defAttr()!1*/{
-            name: "partial_match",
-            type: "boolean",
-            description: "Whether the geocoder did not return an exact match for the original request, though it was able to match part of the requested address."
-          },/*!defAttr()!1*/{
-            name: "place_id",
-            type: "string",
-            description: "The place ID associated with the location. Place IDs uniquely identify a place in the Google Places database and on Google Maps."
-          },/*!defAttr()!1*/{
-            name: "postcode_localities",
-            type: "list(string)",
-            description: "An array of strings denoting all the localities contained in a postal code. This is only present when the result is a postal code that contains multiple localities."
-          },/*!defAttr()!1*/{
-            name: "types",
-            type: "list(string)",
-            description: "An array of strings denoting the type of the returned geocoded element."
-          },]
-          // No init function for this. Should never be constructed manually.
-          /*!defClass(anvil.GoogleMap,GeocoderResult)!*/
+
+            [ /*!defAttr()!1*/{
+                name: "address_components",
+                pyType: "list(anvil.GoogleMap.GeocoderAddressComponent instance)",
+                description: "An array of GeocoderAddressComponents"
+            },/*!defAttr()!1*/{
+                name: "formatted_address",
+                type: "string",
+                description: "A string containing the human-readable address of this location."
+            },/*!defAttr()!1*/{
+                name: "geometry",
+                pyType: "anvil.GoogleMap.GeocoderGeometry instance",
+                description: "A GeocoderGeometry object"
+            },/*!defAttr()!1*/{
+                name: "partial_match",
+                type: "boolean",
+                description: "Whether the geocoder did not return an exact match for the original request, though it was able to match part of the requested address."
+            },/*!defAttr()!1*/{
+                name: "place_id",
+                type: "string",
+                description: "The place ID associated with the location. Place IDs uniquely identify a place in the Google Places database and on Google Maps."
+            },/*!defAttr()!1*/{
+                name: "postcode_localities",
+                type: "list(string)",
+                description: "An array of strings denoting all the localities contained in a postal code. This is only present when the result is a postal code that contains multiple localities."
+            },/*!defAttr()!1*/{
+                name: "types",
+                type: "list(string)",
+                description: "An array of strings denoting the type of the returned geocoded element."
+            },];
+            // No init function for this. Should never be constructed manually.
+            /*!defClass(anvil.GoogleMap,GeocoderResult)!*/
         },  "GoogleMap.GeocoderResult", [$Map["ObjectSpec"]]);
 
         $Map["GeocoderAddressComponent"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-          
-          [ /*!defAttr()!1*/{
-            name: "long_name",
-            type: "string",
-            description: "The full text of the address component"
-          },/*!defAttr()!1*/{
-            name: "short_name",
-            type: "string",
-            description: "The abbreviated, short text of the given address component."
-          },/*!defAttr()!1*/{
-            name: "types",
-            type: "list(string)",
-            description: "An array of strings denoting the type of this address component."
-          }]
-          // No init function for this. Should never be constructed manually.
-          /*!defClass(anvil.GoogleMap,GeocoderAddressComponent)!*/
+
+            [ /*!defAttr()!1*/{
+                name: "long_name",
+                type: "string",
+                description: "The full text of the address component"
+            },/*!defAttr()!1*/{
+                name: "short_name",
+                type: "string",
+                description: "The abbreviated, short text of the given address component."
+            },/*!defAttr()!1*/{
+                name: "types",
+                type: "list(string)",
+                description: "An array of strings denoting the type of this address component."
+            }];
+            // No init function for this. Should never be constructed manually.
+            /*!defClass(anvil.GoogleMap,GeocoderAddressComponent)!*/
         },  "GoogleMap.GeocoderAddressComponent", [$Map["ObjectSpec"]]);
 
         $Map["GeocoderGeometry"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-          
-          [ /*!defAttr()!1*/{
-            name: "bounds",
-            pyType: "anvil.GoogleMap.LatLngBounds instance",
-            description: "The precise bounds of this GeocoderResult, if applicable."
-          },/*!defAttr()!1*/{
-            name: "location",
-            pyType: "anvil.GoogleMap.LatLng instance",
-            description: "The latitude/longitude coordinates of this result."
-          },/*!defAttr()!1*/{
-            name: "location_type",
-            pyType: "anvil.GoogleMap.GeocoderLocationType",
-            description: "The type of location returned."
-          },/*!defAttr()!1*/{
-            name: "viewport",
-            pyType: "anvil.GoogleMap.LatLngBounds instance",
-            description: "The bounds of the recommended viewport for displaying this GeocoderResult."
-          }]
-          // No init function for this. Should never be constructed manually.
-          /*!defClass(anvil.GoogleMap,GeocoderGeometry)!*/
+
+            [ /*!defAttr()!1*/{
+                name: "bounds",
+                pyType: "anvil.GoogleMap.LatLngBounds instance",
+                description: "The precise bounds of this GeocoderResult, if applicable."
+            },/*!defAttr()!1*/{
+                name: "location",
+                pyType: "anvil.GoogleMap.LatLng instance",
+                description: "The latitude/longitude coordinates of this result."
+            },/*!defAttr()!1*/{
+                name: "location_type",
+                pyType: "anvil.GoogleMap.GeocoderLocationType",
+                description: "The type of location returned."
+            },/*!defAttr()!1*/{
+                name: "viewport",
+                pyType: "anvil.GoogleMap.LatLngBounds instance",
+                description: "The bounds of the recommended viewport for displaying this GeocoderResult."
+            }];
+            // No init function for this. Should never be constructed manually.
+            /*!defClass(anvil.GoogleMap,GeocoderGeometry)!*/
         },  "GoogleMap.GeocoderGeometry", [$Map["ObjectSpec"]]);
 
-// NESTED CLASSES
+        // NESTED CLASSES
 
         $Map["LatLng"] = Sk.misceval.buildClass(pyModule, function($$gbl, $LatLng) {
 
-          /*!defMethod(,lat,lng)!2*/ "Create a new LatLng object at the specified latitude and longitude."
-          $LatLng["__init__"] = new Sk.builtin.func(initFnWithJsObjOrPyArgs(() => google.maps.LatLng, 
-            function(self, pyLat, pyLng, pyNoWrap) {
-              var lat = Sk.ffi.toJs(pyLat);
-              var lng = Sk.ffi.toJs(pyLng);
-              var noWrap = pyNoWrap ? Sk.ffi.toJs(pyNoWrap) : false;
-              self._jsVal = new google.maps.LatLng(lat, lng, noWrap);
-            }));
+            /*!defMethod(,lat,lng)!2*/ "Create a new LatLng object at the specified latitude and longitude.";
+            $LatLng["__init__"] = new Sk.builtin.func(initFnWithJsObjOrPyArgs(() => google.maps.LatLng,
+                function(self, pyLat, pyLng, pyNoWrap) {
+                    var lat = Sk.ffi.toJs(pyLat);
+                    var lng = Sk.ffi.toJs(pyLng);
+                    var noWrap = pyNoWrap ? Sk.ffi.toJs(pyNoWrap) : false;
+                    self._jsVal = new google.maps.LatLng(lat, lng, noWrap);
+                }));
 
-          $LatLng["__repr__"] = new Sk.builtin.func(function(self) {
-            return Sk.ffi.toPy("<GoogleMap.LatLng: " + self._jsVal.toUrlValue() + ">");
-          });
+            $LatLng["__repr__"] = new Sk.builtin.func(function(self) {
+                return Sk.ffi.toPy("<GoogleMap.LatLng: " + self._jsVal.toUrlValue() + ">");
+            });
 
-          /*!defMethod(number,)!2*/ "Returns the latitude in degrees." ["lat"]
-          /*!defMethod(number,)!2*/ "Returns the longitude in degrees." ["lng"]
-          registerMethods($LatLng, {
-            lat: { },
-            lng: { },
-          })
+            /*!defMethod(number,)!2*/ "Returns the latitude in degrees." ["lat"];
+            /*!defMethod(number,)!2*/ "Returns the longitude in degrees." ["lng"];
+            registerMethods($LatLng, {
+                lat: { },
+                lng: { },
+            });
 
         }, /*!defClass(anvil.GoogleMap,LatLng)!*/ "GoogleMap.LatLng", []);
         registerRemapType(() => google.maps.LatLng, $Map["LatLng"]);
 
         $Map["LatLngBounds"] = Sk.misceval.buildClass(pyModule, function($$gbl, $LatLngBounds) {
-          
-          /*!defMethod(,south_west, north_east)!2*/ "Create a new LatLngBounds object with the specified corners."
-          $LatLngBounds["__init__"] = new Sk.builtin.func(initFnWithJsObjOrPyArgs(() => google.maps.LatLngBounds, 
-            function(self, pySw, pyNe) {
-              var sw = remapToJs(pySw);
-              var ne = remapToJs(pyNe);
-              self._jsVal = new google.maps.LatLngBounds(sw, ne);
-            }));
 
-          $LatLngBounds["__repr__"] = new Sk.builtin.func(function(self) {
-              var pySw = Sk.misceval.callsim($Map["LatLng"], self._jsVal.getSouthWest());
-              var pyNe = Sk.misceval.callsim($Map["LatLng"], self._jsVal.getNorthEast());
-              return Sk.ffi.toPy("<GoogleMap.LatLngBounds sw=" + Sk.ffi.toJs(Sk.builtin.str(pySw)) + ", ne=" + Sk.ffi.toJs(Sk.builtin.str(pyNe)) + ">")
-          });
+            /*!defMethod(,south_west, north_east)!2*/ "Create a new LatLngBounds object with the specified corners.";
+            $LatLngBounds["__init__"] = new Sk.builtin.func(initFnWithJsObjOrPyArgs(() => google.maps.LatLngBounds,
+                function(self, pySw, pyNe) {
+                    var sw = remapToJs(pySw);
+                    var ne = remapToJs(pyNe);
+                    self._jsVal = new google.maps.LatLngBounds(sw, ne);
+                }));
 
-          /*!defMethod(boolean,point)!2*/ "Returns True if the given lat/lng is in this bounds." ["contains"]
-          /*!defMethod(boolean,other)!2*/ "Returns True if this bounds approximately equals the given bounds." ["equals"]
-          /*!defMethod(None,point)!2*/ "Extends this bounds to contain the given point." ["extend"]
-          /*!defMethod(anvil.GoogleMap.LatLng instance,)!2*/ "Computes the center of this LatLngBounds" ["get_center"]
-          /*!defMethod(anvil.GoogleMap.LatLng instance,)!2*/ "Returns the north-east corner of this bounds." ["get_north_east"]
-          /*!defMethod(anvil.GoogleMap.LatLng instance,)!2*/ "Returns the south-west corner of this bounds." ["get_south_west"]
-          /*!defMethod(boolean,other)!2*/ "Returns True if this bounds shares any points with the other bounds." ["intersects"]
-          /*!defMethod(boolean,)!2*/ "Returns True if the bounds are empty." ["is_empty"]
-          /*!defMethod(string,)!2*/ "Converts to JSON representation." ["to_json"]
-          /*!defMethod(anvil.GoogleMap.LatLng instance,)!2*/ "Converts the given map bounds to a lat/lng span." ["to_span"]
-          /*!defMethod(string,precision=6)!2*/ "Returns a string of the form 'lat_lo,lng_lo,lat_hi,lng_hi' for this bounds." ["to_url_value"]
-          /*!defMethod(anvil.GoogleMap.LatLngBounds instance,other)!2*/ "Extends this bounds to contain the union of this and the given bounds." ["union"]
-          registerMethods($LatLngBounds, {
-            contains: { },
-            equals: { },
-            extend: { },
-            get_center: { },
-            get_north_east: { },
-            get_south_west: { },
-            intersects: { },
-            is_empty: { },
-            to_json: { fn: "toJSON" },
-            to_span: { },
-            to_url_value: { },
-            union: { },
-          });
+            $LatLngBounds["__repr__"] = new Sk.builtin.func(function(self) {
+                var pySw = Sk.misceval.callsim($Map["LatLng"], self._jsVal.getSouthWest());
+                var pyNe = Sk.misceval.callsim($Map["LatLng"], self._jsVal.getNorthEast());
+                return Sk.ffi.toPy("<GoogleMap.LatLngBounds sw=" + Sk.ffi.toJs(Sk.builtin.str(pySw)) + ", ne=" + Sk.ffi.toJs(Sk.builtin.str(pyNe)) + ">");
+            });
+
+            /*!defMethod(boolean,point)!2*/ "Returns True if the given lat/lng is in this bounds." ["contains"];
+            /*!defMethod(boolean,other)!2*/ "Returns True if this bounds approximately equals the given bounds." ["equals"];
+            /*!defMethod(None,point)!2*/ "Extends this bounds to contain the given point." ["extend"];
+            /*!defMethod(anvil.GoogleMap.LatLng instance,)!2*/ "Computes the center of this LatLngBounds" ["get_center"];
+            /*!defMethod(anvil.GoogleMap.LatLng instance,)!2*/ "Returns the north-east corner of this bounds." ["get_north_east"];
+            /*!defMethod(anvil.GoogleMap.LatLng instance,)!2*/ "Returns the south-west corner of this bounds." ["get_south_west"];
+            /*!defMethod(boolean,other)!2*/ "Returns True if this bounds shares any points with the other bounds." ["intersects"];
+            /*!defMethod(boolean,)!2*/ "Returns True if the bounds are empty." ["is_empty"];
+            /*!defMethod(string,)!2*/ "Converts to JSON representation." ["to_json"];
+            /*!defMethod(anvil.GoogleMap.LatLng instance,)!2*/ "Converts the given map bounds to a lat/lng span." ["to_span"];
+            /*!defMethod(string,precision=6)!2*/ "Returns a string of the form 'lat_lo,lng_lo,lat_hi,lng_hi' for this bounds." ["to_url_value"];
+            /*!defMethod(anvil.GoogleMap.LatLngBounds instance,other)!2*/ "Extends this bounds to contain the union of this and the given bounds." ["union"];
+            registerMethods($LatLngBounds, {
+                contains: { },
+                equals: { },
+                extend: { },
+                get_center: { },
+                get_north_east: { },
+                get_south_west: { },
+                intersects: { },
+                is_empty: { },
+                to_json: { fn: "toJSON" },
+                to_span: { },
+                to_url_value: { },
+                union: { },
+            });
         }, /*!defClass(anvil.GoogleMap,LatLngBounds)!*/ "GoogleMap.LatLngBounds", []);
         registerRemapType(() => google.maps.LatLngBounds, $Map["LatLngBounds"]);
 
         $Map["Point"] = Sk.misceval.buildClass(pyModule, function($$gbl, $Point) {
-          
-          /*!defMethod(,x,y)!2*/ "Create a new Point at the specified coordinates."
-          $Point["__init__"] = new Sk.builtin.func(initFnWithJsObjOrPyArgs(() => google.maps.Point, 
-            function(self, pyX, pyY) {
-              var x = Sk.ffi.toJs(pyX);
-              var y = Sk.ffi.toJs(pyY);
-              self._jsVal = new google.maps.Point(x,y);
-            }));
 
-          // TODO: Add methods and attributes
+            /*!defMethod(,x,y)!2*/ "Create a new Point at the specified coordinates.";
+            $Point["__init__"] = new Sk.builtin.func(initFnWithJsObjOrPyArgs(() => google.maps.Point,
+                function(self, pyX, pyY) {
+                    var x = Sk.ffi.toJs(pyX);
+                    var y = Sk.ffi.toJs(pyY);
+                    self._jsVal = new google.maps.Point(x,y);
+                }));
+
+            // TODO: Add methods and attributes
         }, /*!defClass(anvil.GoogleMap,Point)!*/ "GoogleMap.Point", []);
         registerRemapType(() => google.maps.Point, $Map["Point"]);
 
         $Map["Size"] = Sk.misceval.buildClass(pyModule, function($$gbl, $Size) {
-          
-          /*!defMethod(,x,y)!2*/ "Create a new Size at the specified coordinates."
-          $Size["__init__"] = new Sk.builtin.func(initFnWithJsObjOrPyArgs(() => google.maps.Size, 
-            function(self, pyWidth, pyHeight) {
-              var width = Sk.ffi.toJs(pyWidth);
-              var height = Sk.ffi.toJs(pyHeight);
-              self._jsVal = new google.maps.Size(width,height);
-            }));
 
-          // TODO: Add methods and attributes
+            /*!defMethod(,x,y)!2*/ "Create a new Size at the specified coordinates.";
+            $Size["__init__"] = new Sk.builtin.func(initFnWithJsObjOrPyArgs(() => google.maps.Size,
+                function(self, pyWidth, pyHeight) {
+                    var width = Sk.ffi.toJs(pyWidth);
+                    var height = Sk.ffi.toJs(pyHeight);
+                    self._jsVal = new google.maps.Size(width,height);
+                }));
+
+            // TODO: Add methods and attributes
         }, /*!defClass(anvil.GoogleMap,Size)!*/ "GoogleMap.Size", []);
         registerRemapType(() => google.maps.Size, $Map["Size"]);
 
-// ENUMS
+        // ENUMS
         $Map["GeocoderLocationType"] = () => Sk.misceval.buildClass(pyModule, function($$gbl, $GeocoderLocationType) {
-          [ /*!defClassAttr()!1*/ {
-            name: "APPROXIMATE",
-            type: "Built-in GeocoderLocationType",
-            description: "The returned result is approximate."
-          },/*!defClassAttr()!1*/ {
-            name: "GEOMETRIC_CENTER",
-            type: "Built-in GeocoderLocationType",
-            description: "The returned result is the geometric center of a result such a line (e.g. street) or polygon (region)."
-          },/*!defClassAttr()!1*/ {
-            name: "RANGE_INTERPOLATED",
-            type: "Built-in GeocoderLocationType",
-            description: "The returned result reflects an approximation (usually on a road) interpolated between two precise points (such as intersections)."
-          },/*!defClassAttr()!1*/ {
-            name: "ROOFTOP",
-            type: "Built-in GeocoderLocationType",
-            description: "The returned result reflects a precise geocode."
-          },]
-          $GeocoderLocationType["APPROXIMATE"] = Sk.ffi.toPy(google.maps.GeocoderLocationType.APPROXIMATE);
-          $GeocoderLocationType["GEOMETRIC_CENTER"] = Sk.ffi.toPy(google.maps.GeocoderLocationType.GEOMETRIC_CENTER);
-          $GeocoderLocationType["RANGE_INTERPOLATED"] = Sk.ffi.toPy(google.maps.GeocoderLocationType.RANGE_INTERPOLATED);
-          $GeocoderLocationType["ROOFTOP"] = Sk.ffi.toPy(google.maps.GeocoderLocationType.ROOFTOP);
-          /*!defClassNoConstructor(anvil.GoogleMap,GeocoderLocationType)!1*/ "Describes the type of location returned from a geocode.";
+            [ /*!defClassAttr()!1*/ {
+                name: "APPROXIMATE",
+                type: "Built-in GeocoderLocationType",
+                description: "The returned result is approximate."
+            },/*!defClassAttr()!1*/ {
+                name: "GEOMETRIC_CENTER",
+                type: "Built-in GeocoderLocationType",
+                description: "The returned result is the geometric center of a result such a line (e.g. street) or polygon (region)."
+            },/*!defClassAttr()!1*/ {
+                name: "RANGE_INTERPOLATED",
+                type: "Built-in GeocoderLocationType",
+                description: "The returned result reflects an approximation (usually on a road) interpolated between two precise points (such as intersections)."
+            },/*!defClassAttr()!1*/ {
+                name: "ROOFTOP",
+                type: "Built-in GeocoderLocationType",
+                description: "The returned result reflects a precise geocode."
+            },];
+            $GeocoderLocationType["APPROXIMATE"] = Sk.ffi.toPy(google.maps.GeocoderLocationType.APPROXIMATE);
+            $GeocoderLocationType["GEOMETRIC_CENTER"] = Sk.ffi.toPy(google.maps.GeocoderLocationType.GEOMETRIC_CENTER);
+            $GeocoderLocationType["RANGE_INTERPOLATED"] = Sk.ffi.toPy(google.maps.GeocoderLocationType.RANGE_INTERPOLATED);
+            $GeocoderLocationType["ROOFTOP"] = Sk.ffi.toPy(google.maps.GeocoderLocationType.ROOFTOP);
+            /*!defClassNoConstructor(anvil.GoogleMap,GeocoderLocationType)!1*/ "Describes the type of location returned from a geocode.";
         },  "GoogleMap.GeocoderLocationType", []);
         lazyEnums.push("GeocoderLocationType");
 
         $Map["SymbolPath"] = () => Sk.misceval.buildClass(pyModule, function($$gbl, $SymbolPath) {
-          [ /*!defClassAttr()!1*/ {
-            name: "BACKWARD_CLOSED_ARROW",
-            type: "Built-in SymbolPath",
-          },/*!defClassAttr()!1*/ {
-            name: "BACKWARD_OPEN_ARROW",
-            type: "Built-in SymbolPath",
-          },/*!defClassAttr()!1*/ {
-            name: "CIRCLE",
-            type: "Built-in SymbolPath",
-          },/*!defClassAttr()!1*/ {
-            name: "FORWARD_CLOSED_ARROW",
-            type: "Built-in SymbolPath",
-          },/*!defClassAttr()!1*/ {
-            name: "FORWARD_OPEN_ARROW",
-            type: "Built-in SymbolPath",
-          },]
-          $SymbolPath["BACKWARD_CLOSED_ARROW"] = Sk.ffi.toPy(google.maps.SymbolPath.BACKWARD_CLOSED_ARROW);
-          $SymbolPath["BACKWARD_OPEN_ARROW"] = Sk.ffi.toPy(google.maps.SymbolPath.BACKWARD_OPEN_ARROW);
-          $SymbolPath["CIRCLE"] = Sk.ffi.toPy(google.maps.SymbolPath.CIRCLE);
-          $SymbolPath["FORWARD_CLOSED_ARROW"] = Sk.ffi.toPy(google.maps.SymbolPath.FORWARD_CLOSED_ARROW);
-          $SymbolPath["FORWARD_OPEN_ARROW"] = Sk.ffi.toPy(google.maps.SymbolPath.FORWARD_OPEN_ARROW);
-          /*!defClassNoConstructor(anvil.GoogleMap,SymbolPath)!1*/ "An object containing pre-defined symbol paths for use on maps.";
+            [ /*!defClassAttr()!1*/ {
+                name: "BACKWARD_CLOSED_ARROW",
+                type: "Built-in SymbolPath",
+            },/*!defClassAttr()!1*/ {
+                name: "BACKWARD_OPEN_ARROW",
+                type: "Built-in SymbolPath",
+            },/*!defClassAttr()!1*/ {
+                name: "CIRCLE",
+                type: "Built-in SymbolPath",
+            },/*!defClassAttr()!1*/ {
+                name: "FORWARD_CLOSED_ARROW",
+                type: "Built-in SymbolPath",
+            },/*!defClassAttr()!1*/ {
+                name: "FORWARD_OPEN_ARROW",
+                type: "Built-in SymbolPath",
+            },];
+            $SymbolPath["BACKWARD_CLOSED_ARROW"] = Sk.ffi.toPy(google.maps.SymbolPath.BACKWARD_CLOSED_ARROW);
+            $SymbolPath["BACKWARD_OPEN_ARROW"] = Sk.ffi.toPy(google.maps.SymbolPath.BACKWARD_OPEN_ARROW);
+            $SymbolPath["CIRCLE"] = Sk.ffi.toPy(google.maps.SymbolPath.CIRCLE);
+            $SymbolPath["FORWARD_CLOSED_ARROW"] = Sk.ffi.toPy(google.maps.SymbolPath.FORWARD_CLOSED_ARROW);
+            $SymbolPath["FORWARD_OPEN_ARROW"] = Sk.ffi.toPy(google.maps.SymbolPath.FORWARD_OPEN_ARROW);
+            /*!defClassNoConstructor(anvil.GoogleMap,SymbolPath)!1*/ "An object containing pre-defined symbol paths for use on maps.";
         },  "GoogleMap.SymbolPath", []);
         lazyEnums.push("SymbolPath");
 
         $Map["Animation"] = () => Sk.misceval.buildClass(pyModule, function($$gbl, $Animation) {
-          [ /*!defClassAttr()!1*/ {
-            name: "BOUNCE",
-            type: "Animation",
-            description: "Marker bounces until animation is stopped.",
-          },/*!defClassAttr()!1*/ {
-            name: "DROP",
-            type: "Animation",
-            description: "Marker falls from the top of the map ending with a small bounce.",
-          },]
+            [ /*!defClassAttr()!1*/ {
+                name: "BOUNCE",
+                type: "Animation",
+                description: "Marker bounces until animation is stopped.",
+            },/*!defClassAttr()!1*/ {
+                name: "DROP",
+                type: "Animation",
+                description: "Marker falls from the top of the map ending with a small bounce.",
+            },];
 
-          $Animation["BOUNCE"] = Sk.ffi.toPy(google.maps.Animation.BOUNCE);
-          $Animation["DROP"] = Sk.ffi.toPy(google.maps.Animation.DROP);
-          /*!defClassNoConstructor(anvil.GoogleMap,Animation)!1*/ "An object containing pre-defined animations for use with Markers.";
+            $Animation["BOUNCE"] = Sk.ffi.toPy(google.maps.Animation.BOUNCE);
+            $Animation["DROP"] = Sk.ffi.toPy(google.maps.Animation.DROP);
+            /*!defClassNoConstructor(anvil.GoogleMap,Animation)!1*/ "An object containing pre-defined animations for use with Markers.";
         }, "GoogleMap.Animation", []);
         lazyEnums.push("Animation");
 
         $Map["MapTypeId"] = () => Sk.misceval.buildClass(pyModule, function($$gbl, $MapTypeId) {
-          [ /*!defClassAttr()!1*/ {
-            name: "HYBRID",
-            type: "MapTypeId",
-            description: "This map type displays a transparent layer of major streets on satellite images.",
-          },/*!defClassAttr()!1*/ {
-            name: "ROADMAP",
-            type: "MapTypeId",
-            description: "This map type displays a normal street map.",
-          },/*!defClassAttr()!1*/ {
-            name: "SATELLITE",
-            type: "MapTypeId",
-            description: "This map type displays satellite images.",
-          },/*!defClassAttr()!1*/ {
-            name: "TERRAIN",
-            type: "MapTypeId",
-            description: "This map type displays maps with physical features such as terrain and vegetation.",
-          },]
+            [ /*!defClassAttr()!1*/ {
+                name: "HYBRID",
+                type: "MapTypeId",
+                description: "This map type displays a transparent layer of major streets on satellite images.",
+            },/*!defClassAttr()!1*/ {
+                name: "ROADMAP",
+                type: "MapTypeId",
+                description: "This map type displays a normal street map.",
+            },/*!defClassAttr()!1*/ {
+                name: "SATELLITE",
+                type: "MapTypeId",
+                description: "This map type displays satellite images.",
+            },/*!defClassAttr()!1*/ {
+                name: "TERRAIN",
+                type: "MapTypeId",
+                description: "This map type displays maps with physical features such as terrain and vegetation.",
+            },];
 
-          $MapTypeId["HYBRID"] = Sk.ffi.toPy(google.maps.MapTypeId.HYBRID);
-          $MapTypeId["ROADMAP"] = Sk.ffi.toPy(google.maps.MapTypeId.ROADMAP);
-          $MapTypeId["SATELLITE"] = Sk.ffi.toPy(google.maps.MapTypeId.SATELLITE);
-          $MapTypeId["TERRAIN"] = Sk.ffi.toPy(google.maps.MapTypeId.TERRAIN);
-          /*!defClassNoConstructor(anvil.GoogleMap,MapTypeId)!1*/ "An object containing pre-defined map types.";
+            $MapTypeId["HYBRID"] = Sk.ffi.toPy(google.maps.MapTypeId.HYBRID);
+            $MapTypeId["ROADMAP"] = Sk.ffi.toPy(google.maps.MapTypeId.ROADMAP);
+            $MapTypeId["SATELLITE"] = Sk.ffi.toPy(google.maps.MapTypeId.SATELLITE);
+            $MapTypeId["TERRAIN"] = Sk.ffi.toPy(google.maps.MapTypeId.TERRAIN);
+            /*!defClassNoConstructor(anvil.GoogleMap,MapTypeId)!1*/ "An object containing pre-defined map types.";
         }, "GoogleMap.MapTypeId", []);
         lazyEnums.push("MapTypeId");
 
         $Map["StrokePosition"] = () => Sk.misceval.buildClass(pyModule, function($$gbl, $StrokePosition) {
-          [ /*!defClassAttr()!1*/ {
-            name: "CENTER",
-            type: "Built-in StrokePosition",
-          },/*!defClassAttr()!1*/ {
-            name: "INSIDE",
-            type: "Built-in StrokePosition",
-          },/*!defClassAttr()!1*/ {
-            name: "OUTSIDE",
-            type: "Built-in StrokePosition",
-          },]
+            [ /*!defClassAttr()!1*/ {
+                name: "CENTER",
+                type: "Built-in StrokePosition",
+            },/*!defClassAttr()!1*/ {
+                name: "INSIDE",
+                type: "Built-in StrokePosition",
+            },/*!defClassAttr()!1*/ {
+                name: "OUTSIDE",
+                type: "Built-in StrokePosition",
+            },];
 
-          $StrokePosition["CENTER"] = Sk.ffi.toPy(google.maps.StrokePosition.CENTER);
-          $StrokePosition["INSIDE"] = Sk.ffi.toPy(google.maps.StrokePosition.INSIDE);
-          $StrokePosition["OUTSIDE"] = Sk.ffi.toPy(google.maps.StrokePosition.OUTSIDE);
-          /*!defClassNoConstructor(anvil.GoogleMap,StrokePosition)!1*/ "An object containing pre-defined stroke positions for shape outlines.";
+            $StrokePosition["CENTER"] = Sk.ffi.toPy(google.maps.StrokePosition.CENTER);
+            $StrokePosition["INSIDE"] = Sk.ffi.toPy(google.maps.StrokePosition.INSIDE);
+            $StrokePosition["OUTSIDE"] = Sk.ffi.toPy(google.maps.StrokePosition.OUTSIDE);
+            /*!defClassNoConstructor(anvil.GoogleMap,StrokePosition)!1*/ "An object containing pre-defined stroke positions for shape outlines.";
         }, "GoogleMap.StrokePosition", []);
         lazyEnums.push("StrokePosition");
 
         $Map["MapTypeControlStyle"] = () => Sk.misceval.buildClass(pyModule, function($$gbl, $MapTypeControlStyle) {
-          [ /*!defClassAttr()!1*/ {
-            name: "DEFAULT",
-            type: "MapTypeControlStyle",
-          },/*!defClassAttr()!1*/ {
-            name: "DROPDOWN_MENU",
-            type: "MapTypeControlStyle",
-          },/*!defClassAttr()!1*/ {
-            name: "HORIZONTAL_BAR",
-            type: "MapTypeControlStyle",
-          },]
-          $MapTypeControlStyle["DEFAULT"] = Sk.ffi.toPy(google.maps.MapTypeControlStyle.DEFAULT);
-          $MapTypeControlStyle["DROPDOWN_MENU"] = Sk.ffi.toPy(google.maps.MapTypeControlStyle.DROPDOWN_MENU);
-          $MapTypeControlStyle["HORIZONTAL_BAR"] = Sk.ffi.toPy(google.maps.MapTypeControlStyle.HORIZONTAL_BAR);
-          /*!defClassNoConstructor(anvil.GoogleMap,MapTypeControlStyle)!1*/ "An object containing pre-defined control styles.";
+            [ /*!defClassAttr()!1*/ {
+                name: "DEFAULT",
+                type: "MapTypeControlStyle",
+            },/*!defClassAttr()!1*/ {
+                name: "DROPDOWN_MENU",
+                type: "MapTypeControlStyle",
+            },/*!defClassAttr()!1*/ {
+                name: "HORIZONTAL_BAR",
+                type: "MapTypeControlStyle",
+            },];
+            $MapTypeControlStyle["DEFAULT"] = Sk.ffi.toPy(google.maps.MapTypeControlStyle.DEFAULT);
+            $MapTypeControlStyle["DROPDOWN_MENU"] = Sk.ffi.toPy(google.maps.MapTypeControlStyle.DROPDOWN_MENU);
+            $MapTypeControlStyle["HORIZONTAL_BAR"] = Sk.ffi.toPy(google.maps.MapTypeControlStyle.HORIZONTAL_BAR);
+            /*!defClassNoConstructor(anvil.GoogleMap,MapTypeControlStyle)!1*/ "An object containing pre-defined control styles.";
         }, "GoogleMap.MapTypeControlStyle", []);
         lazyEnums.push("MapTypeControlStyle");
 
         $Map["ControlPosition"] = () => Sk.misceval.buildClass(pyModule, function($$gbl, $ControlPosition) {
-          [ /*!defClassAttr()!1*/ {
-            name: "BOTTOM_CENTER",
-            type: "ControlPosition",
-          },/*!defClassAttr()!1*/ {
-            name: "BOTTOM_LEFT",
-            type: "ControlPosition",
-          },/*!defClassAttr()!1*/ {
-            name: "BOTTOM_RIGHT",
-            type: "ControlPosition",
-          },/*!defClassAttr()!1*/ {
-            name: "LEFT_BOTTOM",
-            type: "ControlPosition",
-          },/*!defClassAttr()!1*/ {
-            name: "LEFT_CENTER",
-            type: "ControlPosition",
-          },/*!defClassAttr()!1*/ {
-            name: "LEFT_TOP",
-            type: "ControlPosition",
-          },/*!defClassAttr()!1*/ {
-            name: "RIGHT_BOTTOM",
-            type: "ControlPosition",
-          },/*!defClassAttr()!1*/ {
-            name: "RIGHT_CENTER",
-            type: "ControlPosition",
-          },/*!defClassAttr()!1*/ {
-            name: "RIGHT_TOP",
-            type: "ControlPosition",
-          },/*!defClassAttr()!1*/ {
-            name: "TOP_CENTER",
-            type: "ControlPosition",
-          },/*!defClassAttr()!1*/ {
-            name: "TOP_LEFT",
-            type: "ControlPosition",
-          },/*!defClassAttr()!1*/ {
-            name: "TOP_RIGHT",
-            type: "ControlPosition",
-          },]
-          $ControlPosition["BOTTOM_CENTER"] = Sk.ffi.toPy(google.maps.ControlPosition.BOTTOM_CENTER);
-          $ControlPosition["BOTTOM_LEFT"] = Sk.ffi.toPy(google.maps.ControlPosition.BOTTOM_LEFT);
-          $ControlPosition["BOTTOM_RIGHT"] = Sk.ffi.toPy(google.maps.ControlPosition.BOTTOM_RIGHT);
-          $ControlPosition["LEFT_BOTTOM"] = Sk.ffi.toPy(google.maps.ControlPosition.LEFT_BOTTOM);
-          $ControlPosition["LEFT_CENTER"] = Sk.ffi.toPy(google.maps.ControlPosition.LEFT_CENTER);
-          $ControlPosition["LEFT_TOP"] = Sk.ffi.toPy(google.maps.ControlPosition.LEFT_TOP);
-          $ControlPosition["RIGHT_BOTTOM"] = Sk.ffi.toPy(google.maps.ControlPosition.RIGHT_BOTTOM);
-          $ControlPosition["RIGHT_CENTER"] = Sk.ffi.toPy(google.maps.ControlPosition.RIGHT_CENTER);
-          $ControlPosition["RIGHT_TOP"] = Sk.ffi.toPy(google.maps.ControlPosition.RIGHT_TOP);
-          $ControlPosition["TOP_CENTER"] = Sk.ffi.toPy(google.maps.ControlPosition.TOP_CENTER);
-          $ControlPosition["TOP_LEFT"] = Sk.ffi.toPy(google.maps.ControlPosition.TOP_LEFT);
-          $ControlPosition["TOP_RIGHT"] = Sk.ffi.toPy(google.maps.ControlPosition.TOP_RIGHT);
-          /*!defClassNoConstructor(anvil.GoogleMap,ControlPosition)!1*/ "An object containing pre-defined control positions.";
+            [ /*!defClassAttr()!1*/ {
+                name: "BOTTOM_CENTER",
+                type: "ControlPosition",
+            },/*!defClassAttr()!1*/ {
+                name: "BOTTOM_LEFT",
+                type: "ControlPosition",
+            },/*!defClassAttr()!1*/ {
+                name: "BOTTOM_RIGHT",
+                type: "ControlPosition",
+            },/*!defClassAttr()!1*/ {
+                name: "LEFT_BOTTOM",
+                type: "ControlPosition",
+            },/*!defClassAttr()!1*/ {
+                name: "LEFT_CENTER",
+                type: "ControlPosition",
+            },/*!defClassAttr()!1*/ {
+                name: "LEFT_TOP",
+                type: "ControlPosition",
+            },/*!defClassAttr()!1*/ {
+                name: "RIGHT_BOTTOM",
+                type: "ControlPosition",
+            },/*!defClassAttr()!1*/ {
+                name: "RIGHT_CENTER",
+                type: "ControlPosition",
+            },/*!defClassAttr()!1*/ {
+                name: "RIGHT_TOP",
+                type: "ControlPosition",
+            },/*!defClassAttr()!1*/ {
+                name: "TOP_CENTER",
+                type: "ControlPosition",
+            },/*!defClassAttr()!1*/ {
+                name: "TOP_LEFT",
+                type: "ControlPosition",
+            },/*!defClassAttr()!1*/ {
+                name: "TOP_RIGHT",
+                type: "ControlPosition",
+            },];
+            $ControlPosition["BOTTOM_CENTER"] = Sk.ffi.toPy(google.maps.ControlPosition.BOTTOM_CENTER);
+            $ControlPosition["BOTTOM_LEFT"] = Sk.ffi.toPy(google.maps.ControlPosition.BOTTOM_LEFT);
+            $ControlPosition["BOTTOM_RIGHT"] = Sk.ffi.toPy(google.maps.ControlPosition.BOTTOM_RIGHT);
+            $ControlPosition["LEFT_BOTTOM"] = Sk.ffi.toPy(google.maps.ControlPosition.LEFT_BOTTOM);
+            $ControlPosition["LEFT_CENTER"] = Sk.ffi.toPy(google.maps.ControlPosition.LEFT_CENTER);
+            $ControlPosition["LEFT_TOP"] = Sk.ffi.toPy(google.maps.ControlPosition.LEFT_TOP);
+            $ControlPosition["RIGHT_BOTTOM"] = Sk.ffi.toPy(google.maps.ControlPosition.RIGHT_BOTTOM);
+            $ControlPosition["RIGHT_CENTER"] = Sk.ffi.toPy(google.maps.ControlPosition.RIGHT_CENTER);
+            $ControlPosition["RIGHT_TOP"] = Sk.ffi.toPy(google.maps.ControlPosition.RIGHT_TOP);
+            $ControlPosition["TOP_CENTER"] = Sk.ffi.toPy(google.maps.ControlPosition.TOP_CENTER);
+            $ControlPosition["TOP_LEFT"] = Sk.ffi.toPy(google.maps.ControlPosition.TOP_LEFT);
+            $ControlPosition["TOP_RIGHT"] = Sk.ffi.toPy(google.maps.ControlPosition.TOP_RIGHT);
+            /*!defClassNoConstructor(anvil.GoogleMap,ControlPosition)!1*/ "An object containing pre-defined control positions.";
         }, "GoogleMap.ControlPosition", []);
         lazyEnums.push("ControlPosition");
 
-// DATA
+        // DATA
         $Map["Data"] = Sk.misceval.buildClass(pyModule, function($$gbl, $Data) {
 
 
-          [/*!defClassAttr()!1*/{
-            name: "StyleOptions",
-            pyType: "anvil.GoogleMap.Data.StyleOptions",
-          }];
-          $Data["StyleOptions"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-            
-            [ /*!defAttr()!1*/{
-              name: "clickable",
-              type: "boolean",
-              description: "If true, the marker receives mouse and touch events. Default value is true."
-            },/*!defAttr()!1*/{
-              name: "cursor",
-              type: "string",
-              description: "Mouse cursor to show on hover. Only applies to point geometries."
-            },/*!defAttr()!1*/{
-              name: "draggable",
-              type: "boolean",
-              description: "If true, the object can be dragged across the map and the underlying feature will have its geometry updated."
-            },/*!defAttr()!1*/{
-              name: "editable",
-              type: "boolean",
-              description: "If true, the object can be edited by dragging control points and the underlying feature will have its geometry updated."
-            },/*!defAttr()!1*/{
-              name: "fill_color",
-              type: "string",
-              description: "The fill color."
-            },/*!defAttr()!1*/{
-              name: "fill_opacity",
-              type: "number",
-              description: "The fill opacity between 0.0 and 1.0."
-            },/*!defAttr()!1*/{
-              name: "icon",
-              pyType: "anvil.GoogleMap.Symbol instance",
-              description: "Icon for the foreground."
-            },/*!defAttr()!1*/{
-              name: "stroke_color",
-              type: "string",
-              description: "The stroke color."
-            },/*!defAttr()!1*/{
-              name: "stroke_opacity",
-              type: "number",
-              description: "The stroke opacity between 0.0 and 1.0."
-            },/*!defAttr()!1*/{
-              name: "stroke_weight",
-              type: "number",
-              description: "The stroke width in pixels."
-            },/*!defAttr()!1*/{
-              name: "title",
-              type: "string",
-              description: "Rollover text."
-            },/*!defAttr()!1*/{
-              name: "visible",
-              type: "boolean",
-              description: "Whether the feature is visible."
-            },/*!defAttr()!1*/{
-              name: "z_index",
-              type: "number",
-              description: "All features are displayed on the map in order of their zIndex, with higher values displaying in front of features with lower values."
-            },]
-            /*!defInitFromAttrs()!*/ 
-          }, /*!defClass(anvil.GoogleMap.Data,StyleOptions)!*/ "GoogleMap.Data.StyleOptions", [$Map["ObjectSpec"]]);
+            [/*!defClassAttr()!1*/{
+                name: "StyleOptions",
+                pyType: "anvil.GoogleMap.Data.StyleOptions",
+            }];
+            $Data["StyleOptions"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
+
+                [ /*!defAttr()!1*/{
+                    name: "clickable",
+                    type: "boolean",
+                    description: "If true, the marker receives mouse and touch events. Default value is true."
+                },/*!defAttr()!1*/{
+                    name: "cursor",
+                    type: "string",
+                    description: "Mouse cursor to show on hover. Only applies to point geometries."
+                },/*!defAttr()!1*/{
+                    name: "draggable",
+                    type: "boolean",
+                    description: "If true, the object can be dragged across the map and the underlying feature will have its geometry updated."
+                },/*!defAttr()!1*/{
+                    name: "editable",
+                    type: "boolean",
+                    description: "If true, the object can be edited by dragging control points and the underlying feature will have its geometry updated."
+                },/*!defAttr()!1*/{
+                    name: "fill_color",
+                    type: "string",
+                    description: "The fill color."
+                },/*!defAttr()!1*/{
+                    name: "fill_opacity",
+                    type: "number",
+                    description: "The fill opacity between 0.0 and 1.0."
+                },/*!defAttr()!1*/{
+                    name: "icon",
+                    pyType: "anvil.GoogleMap.Symbol instance",
+                    description: "Icon for the foreground."
+                },/*!defAttr()!1*/{
+                    name: "stroke_color",
+                    type: "string",
+                    description: "The stroke color."
+                },/*!defAttr()!1*/{
+                    name: "stroke_opacity",
+                    type: "number",
+                    description: "The stroke opacity between 0.0 and 1.0."
+                },/*!defAttr()!1*/{
+                    name: "stroke_weight",
+                    type: "number",
+                    description: "The stroke width in pixels."
+                },/*!defAttr()!1*/{
+                    name: "title",
+                    type: "string",
+                    description: "Rollover text."
+                },/*!defAttr()!1*/{
+                    name: "visible",
+                    type: "boolean",
+                    description: "Whether the feature is visible."
+                },/*!defAttr()!1*/{
+                    name: "z_index",
+                    type: "number",
+                    description: "All features are displayed on the map in order of their zIndex, with higher values displaying in front of features with lower values."
+                },];
+            /*!defInitFromAttrs()!*/
+            }, /*!defClass(anvil.GoogleMap.Data,StyleOptions)!*/ "GoogleMap.Data.StyleOptions", [$Map["ObjectSpec"]]);
 
 
-          [/*!defClassAttr()!1*/{
-            name: "Geometry",
-            pyType: "anvil.GoogleMap.Data.Geometry",
-          }];
-          $Data["Geometry"] = Sk.misceval.buildClass(pyModule, function($$$gbl, $Geometry) {
+            [/*!defClassAttr()!1*/{
+                name: "Geometry",
+                pyType: "anvil.GoogleMap.Data.Geometry",
+            }];
+            $Data["Geometry"] = Sk.misceval.buildClass(pyModule, function($$$gbl, $Geometry) {
 
-            /*defMethod(None)!2*/ "Repeatedly invokes the given function, passing a point from the geometry to the function on each invocation." ["for_each_lat_lng"]
-            /*!defMethod(string)!2*/ "Returns the type of the geometry object." ["get_type"]
-            registerMethods($Geometry, {
-              //for_each_lat_lng,
-              get_type: { },
-            });
-          }, /*!defClass(anvil.GoogleMap.Data,Geometry)!*/ "GoogleMap.Data.Geometry", []);
-
-          [/*!defClassAttr()!1*/{
-            name: "Point",
-            pyType: "anvil.GoogleMap.Data.Point",
-          }];
-          $Data["Point"] = Sk.misceval.buildClass(pyModule, function($$$gbl, $Point) {
-            /*!defMethod(,lat_lng)!2*/ "Create a new Point at the specified position."
-            $Point["__init__"] = PyDefUtils.funcWithKwargs(initFnWithJsObjOrPyArgs(() => google.maps.Data.Point, 
-              function(kwargs, self, pyLatLng) {
-                self._jsVal = new google.maps.Data.Point(remapToJs(pyLatLng));
-              }));
-
-            /*!defMethod(anvil.GoogleMap.LatLng instance)!2*/ "Returns the contained LatLng." ["get"]
-            registerMethods($Point, {
-              get: { },
-            });
-          }, /*!defClass(anvil.GoogleMap.Data,Point,Geometry)!*/ "GoogleMap.Data.Point", [$Data["Geometry"]]);
-          registerRemapType(() => google.maps.Data.Point, $Data["Point"]);
-
-          [/*!defClassAttr()!1*/{
-            name: "MultiPoint",
-            pyType: "anvil.GoogleMap.Data.MultiPoint",
-          }];
-          $Data["MultiPoint"] = Sk.misceval.buildClass(pyModule, function($$$gbl, $MultiPoint) {
-            /*!defMethod(,points)!2*/ "Create a new MultiPoint geometry containing the specified points."
-            $MultiPoint["__init__"] = PyDefUtils.funcWithKwargs(initFnWithJsObjOrPyArgs(() => google.maps.Data.MultiPoint, 
-              function(kwargs, self, pyLatLngArr) {
-                self._jsVal = new google.maps.Data.MultiPoint(remapToJs(pyLatLngArr));
-              }));
-
-            /*!defMethod(list[anvil.GoogleMap.LatLng instance])!2*/ "Returns an array of the contained LatLngs. A new array is returned each time get_array() is called." ["get_array"]
-            /*!defMethod(anvil.GoogleMap.LatLng instance,n)!2*/ "Returns the n-th contained LatLng." ["get_at"]
-            /*!defMethod(number)!2*/ "Returns the number of contained LatLngs." ["get_length"]
-            registerMethods($MultiPoint, {
-              //for_each_lat_lng: ,
-              get_array: { },
-              get_at: { },
-              get_length: { },
-            });
-          }, /*!defClass(anvil.GoogleMap.Data,MultiPoint,Geometry)!*/ "GoogleMap.Data.MultiPoint", [$Data["Geometry"]]);
-          registerRemapType(() => google.maps.Data.MultiPoint, $Data["MultiPoint"]);
-
-          [/*!defClassAttr()!1*/{
-            name: "LineString",
-            pyType: "anvil.GoogleMap.Data.LineString",
-          }];
-          $Data["LineString"] = Sk.misceval.buildClass(pyModule, function($$$gbl, $LineString) {
-            /*!defMethod(,points)!2*/ "Create a new LineString geometry from the specified points."
-            $LineString["__init__"] = PyDefUtils.funcWithKwargs(initFnWithJsObjOrPyArgs(() => google.maps.Data.LineString, 
-              function(kwargs, self, pyLatLngArr) {
-                self._jsVal = new google.maps.Data.LineString(remapToJs(pyLatLngArr));
-              }));
-
-            /*!defMethod(list[anvil.GoogleMap.LatLng instance])!2*/ "Returns an array of the contained LatLngs. A new array is returned each time get_array() is called." ["get_array"]
-            /*!defMethod(anvil.GoogleMap.LatLng instance,n)!2*/ "Returns the n-th contained LatLng." ["get_at"]
-            /*!defMethod(number)!2*/ "Returns the number of contained LatLngs." ["get_length"]
-            registerMethods($LineString, {
-              //for_each_lat_lng: ,
-              get_array: { },
-              get_at: { },
-              get_length: { },
-            });
-          }, /*!defClass(anvil.GoogleMap.Data,LineString,Geometry)!*/ "GoogleMap.Data.LineString", [$Data["Geometry"]]);
-          registerRemapType(() => google.maps.Data.LineString, $Data["LineString"]);
-
-          [/*!defClassAttr()!1*/{
-            name: "MultiLineString",
-            pyType: "anvil.GoogleMap.Data.MultiLineString",
-          }];
-          $Data["MultiLineString"] = Sk.misceval.buildClass(pyModule, function($$$gbl, $MultiLineString) {
-            /*!defMethod(,points)!2*/ "Constructs a Data.MultiLineString from the given Data.LineStrings or arrays of positions."
-            $MultiLineString["__init__"] = PyDefUtils.funcWithKwargs(initFnWithJsObjOrPyArgs(() => google.maps.Data.MultiLineString, 
-              function(kwargs, self, pyLineStringArr) {
-                self._jsVal = new google.maps.Data.MultiLineString(remapToJs(pyLineStringArr));
-              }));
-
-            /*!defMethod(list[anvil.GoogleMap.Data.LineString instance])!2*/ "Returns an array of the contained Data.LineStrings. A new array is returned each time get_array() is called." ["get_array"]
-            /*!defMethod(anvil.GoogleMap.Data.LineString,n)!2*/ "Returns the n-th contained Data.LineString." ["get_at"]
-            /*!defMethod(number)!2*/ "Returns the number of contained Data.LineStrings." ["get_length"]
-            registerMethods($MultiLineString, {
-              //for_each_lat_lng: ,
-              get_array: { },
-              get_at: { },
-              get_length: { },
-            });
-          }, /*!defClass(anvil.GoogleMap.Data,MultiLineString,Geometry)!*/ "GoogleMap.Data.MultiLineString", [$Data["Geometry"]]);
-          registerRemapType(() => google.maps.Data.MultiLineString, $Data["MultiLineString"]);
-
-          [/*!defClassAttr()!1*/{
-            name: "LinearRing",
-            pyType: "anvil.GoogleMap.Data.LinearRing",
-          }];
-          $Data["LinearRing"] = Sk.misceval.buildClass(pyModule, function($$$gbl, $LinearRing) {
-            /*!defMethod(,points)!2*/ "Constructs a Data.LinearRing from the given LatLngs"
-            $LinearRing["__init__"] = PyDefUtils.funcWithKwargs(initFnWithJsObjOrPyArgs(() => google.maps.Data.LinearRing, 
-              function(kwargs, self, pyLatLngArr) {
-                self._jsVal = new google.maps.Data.LinearRing(remapToJs(pyLatLngArr));
-              }));
-
-            /*!defMethod(list[anvil.GoogleMap.LatLng instance])!2*/ "Returns an array of the contained LatLngs. A new array is returned each time get_array() is called." ["get_array"]
-            /*!defMethod(anvil.GoogleMap.LatLng instance,n)!2*/ "Returns the n-th contained LatLng." ["get_at"]
-            /*!defMethod(number)!2*/ "Returns the number of contained LatLngs." ["get_length"]
-            registerMethods($LinearRing, {
-              //for_each_lat_lng: ,
-              get_array: { },
-              get_at: { },
-              get_length: { },
-            });
-          }, /*!defClass(anvil.GoogleMap.Data,LinearRing,Geometry)!*/ "GoogleMap.Data.LinearRing", [$Data["Geometry"]]);
-          registerRemapType(() => google.maps.Data.LinearRing, $Data["LinearRing"]);
-
-          [/*!defClassAttr()!1*/{
-            name: "Polygon",
-            pyType: "anvil.GoogleMap.Data.Polygon",
-          }];
-          $Data["Polygon"] = Sk.misceval.buildClass(pyModule, function($$$gbl, $Polygon) {
-            /*!defMethod(,points)!2*/ "Constructs a Data.Polygon from the given LinearRings or arrays of positions."
-            $Polygon["__init__"] = PyDefUtils.funcWithKwargs(initFnWithJsObjOrPyArgs(() => google.maps.Data.Polygon, 
-              function(kwargs, self, pyLinearRingArr) {
-                self._jsVal = new google.maps.Data.Polygon(remapToJs(pyLinearRingArr));
-              }));
-
-            /*!defMethod(list[anvil.GoogleMap.Data.LinearRing instance])!2*/ "Returns an array of the contained LinearRings. A new array is returned each time get_array() is called." ["get_array"]
-            /*!defMethod(anvil.GoogleMap.Data.LinearRing instance,n)!2*/ "Returns the n-th contained LinearRing." ["get_at"]
-            /*!defMethod(number)!2*/ "Returns the number of contained LinearRings." ["get_length"]
-            registerMethods($Polygon, {
-              //for_each_lat_lng: ,
-              get_array: { },
-              get_at: { },
-              get_length: { },
-            });
-          }, /*!defClass(anvil.GoogleMap.Data,Polygon,Geometry)!*/ "GoogleMap.Data.Polygon", [$Data["Geometry"]]);
-          registerRemapType(() => google.maps.Data.Polygon, $Data["Polygon"]);
-
-          [/*!defClassAttr()!1*/{
-            name: "MultiPolygon",
-            pyType: "anvil.GoogleMap.Data.MultiPolygon",
-          }];
-          $Data["MultiPolygon"] = Sk.misceval.buildClass(pyModule, function($$$gbl, $MultiPolygon) {
-            /*!defMethod(,points)!2*/ "Constructs a Data.MultiPolygon from the given Polygons or arrays of positions."
-            $MultiPolygon["__init__"] = PyDefUtils.funcWithKwargs(initFnWithJsObjOrPyArgs(() => google.maps.Data.MultiPolygon, 
-              function(kwargs, self, pyPolygonArr) {
-                self._jsVal = new google.maps.Data.MultiPolygon(remapToJs(pyPolygonArr));
-              }));
-
-            /*!defMethod(list[anvil.GoogleMap.Data.Polygon instance])!2*/ "Returns an array of the contained Polygons. A new array is returned each time get_array() is called." ["get_array"]
-            /*!defMethod(anvil.GoogleMap.Data.Polygon instance,n)!2*/ "Returns the n-th contained Polygon." ["get_at"]
-            /*!defMethod(number)!2*/ "Returns the number of contained Polygons." ["get_length"]
-            registerMethods($MultiPolygon, {
-              //for_each_lat_lng: ,
-              get_array: { },
-              get_at: { },
-              get_length: { },
-            });
-          }, /*!defClass(anvil.GoogleMap.Data,MultiPolygon,Geometry)!*/ "GoogleMap.Data.MultiPolygon", [$Data["Geometry"]]);
-          registerRemapType(() => google.maps.Data.MultiPolygon, $Data["MultiPolygon"]);
-
-          [/*!defClassAttr()!1*/{
-            name: "GeometryCollection",
-            pyType: "anvil.GoogleMap.Data.GeometryCollection",
-          }];
-          $Data["GeometryCollection"] = Sk.misceval.buildClass(pyModule, function($$$gbl, $GeometryCollection) {
-            /*!defMethod(,points)!2*/ "Constructs a Data.GeometryCollection from the given geometry objects or LatLngs."
-            $GeometryCollection["__init__"] = PyDefUtils.funcWithKwargs(initFnWithJsObjOrPyArgs(() => google.maps.Data.GeometryCollection, 
-              function(kwargs, self, pyGeomArr) {
-                self._jsVal = new google.maps.Data.GeometryCollection(remapToJs(pyGeomArr));
-              }));
-
-            /*!defMethod(list[anvil.GoogleMap.Data.Geometry instance])!2*/ "Returns an array of the contained Geometries. A new array is returned each time get_array() is called." ["get_array"]
-            /*!defMethod(anvil.GoogleMap.Data.Geometry instance,n)!2*/ "Returns the n-th contained Geometry." ["get_at"]
-            /*!defMethod(number)!2*/ "Returns the number of contained Geometries." ["get_length"]
-            registerMethods($GeometryCollection, {
-              //for_each_lat_lng: ,
-              get_array: { },
-              get_at: { },
-              get_length: { },
-            });
-          }, /*!defClass(anvil.GoogleMap.Data,GeometryCollection,Geometry)!*/ "GoogleMap.Data.GeometryCollection", [$Data["Geometry"]]);
-          registerRemapType(() => google.maps.Data.GeometryCollection, $Data["GeometryCollection"]);
-
-          // Register superclass last so that subclasses get matched first when remapping
-          registerRemapType(() => google.maps.Data.Geometry, $Data["Geometry"]);
-
-          [/*!defClassAttr()!1*/{
-            name: "Feature",
-            pyType: "anvil.GoogleMap.Data.Feature",
-          }];
-          $Data["Feature"] = Sk.misceval.buildClass(pyModule, function($$$gbl, $Feature) {
-            /*!defMethod(,[geometry=None],[id=None],[properties=None])!2*/ "Create a new Feature."
-            $Feature["__init__"] = PyDefUtils.funcWithRawKwargsDict(initFnWithJsObjOrPyArgs(() => google.maps.Data.Feature, 
-              function(kwargs, self) {
-                self._jsVal = new google.maps.Data.Feature(unwrapKwargs(kwargs));
-              }));
-
-              [ /*!defAttr()!1*/{
-                name: "geometry",
-                pyType: "anvil.GoogleMap.Data.Geometry instance",
-                description: "The feature geometry."
-              }, /*!defAttr()!1*/{
-                name: "id",
-                type: "string",
-                description: "Feature ID is optional."
-              }]
-
-              $Feature["__setattr__"] = new Sk.builtin.func(function(self, pyName, pyValue) {
-
-                var name = Sk.ffi.toJs(pyName);
-
-                switch(name) {
-                  case "geometry":
-                    self._jsVal.setGeometry(remapToJs(pyValue));
-                    break;
-                  case "id":
-                    self._jsVal.setId(remapToJs(pyValue));
-                    break;
-                  default:
-                    Sk.builtin.object.prototype.tp$setattr.call(self, pyName, pyValue);
-                    break;
-                }
-              });
-
-              $Feature["__getattr__"] = new Sk.builtin.func(function(self, pyName) {
-
-                var name = Sk.ffi.toJs(pyName);
-
-                switch(name) {
-                  case "geometry":
-                    return remapToPy(self._jsVal.getGeometry());
-                  case "id":
-                    return remapToPy(self._jsVal.getId());
-                  default:
-                    throw new Sk.builtin.AttributeError("'" + self.tp$name + "' object has no attribute '" + name + "'");
-                }
-              });
-
-              // TODO: Document __getitem__ et al.
-
-              $Feature["__getitem__"] = new Sk.builtin.func(function(self, pyName) {
-                var name = Sk.ffi.toJs(pyName);
-
-                return remapToPy(self._jsVal.getProperty(name));
-              });
-
-              $Feature["__setitem__"] = new Sk.builtin.func(function(self, pyName, pyVal) {
-                var name = Sk.ffi.toJs(pyName);
-
-                self._jsVal.setProperty(remapToJs(pyVal));
-              });
-
-              /*!defMethod(string)!2*/ "Exports this feature as a GeoJSON object."
-              $Feature["to_geo_json"] = new Sk.builtin.func(function(self) {
-                return PyDefUtils.suspensionPromise(function(resolve, reject) {
-                  self._jsVal.toGeoJson(function(json) {
-                    resolve(Sk.ffi.toPy(json));
-                  });
+                /*defMethod(None)!2*/ "Repeatedly invokes the given function, passing a point from the geometry to the function on each invocation." ["for_each_lat_lng"];
+                /*!defMethod(string)!2*/ "Returns the type of the geometry object." ["get_type"];
+                registerMethods($Geometry, {
+                    //for_each_lat_lng,
+                    get_type: { },
                 });
-              });
+            }, /*!defClass(anvil.GoogleMap.Data,Geometry)!*/ "GoogleMap.Data.Geometry", []);
 
-            registerMethods($Feature, {
-              //for_each_property,
+            [/*!defClassAttr()!1*/{
+                name: "Point",
+                pyType: "anvil.GoogleMap.Data.Point",
+            }];
+            $Data["Point"] = Sk.misceval.buildClass(pyModule, function($$$gbl, $Point) {
+            /*!defMethod(,lat_lng)!2*/ "Create a new Point at the specified position.";
+                $Point["__init__"] = PyDefUtils.funcWithKwargs(initFnWithJsObjOrPyArgs(() => google.maps.Data.Point,
+                    function(kwargs, self, pyLatLng) {
+                        self._jsVal = new google.maps.Data.Point(remapToJs(pyLatLng));
+                    }));
+
+                /*!defMethod(anvil.GoogleMap.LatLng instance)!2*/ "Returns the contained LatLng." ["get"];
+                registerMethods($Point, {
+                    get: { },
+                });
+            }, /*!defClass(anvil.GoogleMap.Data,Point,Geometry)!*/ "GoogleMap.Data.Point", [$Data["Geometry"]]);
+            registerRemapType(() => google.maps.Data.Point, $Data["Point"]);
+
+            [/*!defClassAttr()!1*/{
+                name: "MultiPoint",
+                pyType: "anvil.GoogleMap.Data.MultiPoint",
+            }];
+            $Data["MultiPoint"] = Sk.misceval.buildClass(pyModule, function($$$gbl, $MultiPoint) {
+            /*!defMethod(,points)!2*/ "Create a new MultiPoint geometry containing the specified points.";
+                $MultiPoint["__init__"] = PyDefUtils.funcWithKwargs(initFnWithJsObjOrPyArgs(() => google.maps.Data.MultiPoint,
+                    function(kwargs, self, pyLatLngArr) {
+                        self._jsVal = new google.maps.Data.MultiPoint(remapToJs(pyLatLngArr));
+                    }));
+
+                /*!defMethod(list[anvil.GoogleMap.LatLng instance])!2*/ "Returns an array of the contained LatLngs. A new array is returned each time get_array() is called." ["get_array"];
+                /*!defMethod(anvil.GoogleMap.LatLng instance,n)!2*/ "Returns the n-th contained LatLng." ["get_at"];
+                /*!defMethod(number)!2*/ "Returns the number of contained LatLngs." ["get_length"];
+                registerMethods($MultiPoint, {
+                    //for_each_lat_lng: ,
+                    get_array: { },
+                    get_at: { },
+                    get_length: { },
+                });
+            }, /*!defClass(anvil.GoogleMap.Data,MultiPoint,Geometry)!*/ "GoogleMap.Data.MultiPoint", [$Data["Geometry"]]);
+            registerRemapType(() => google.maps.Data.MultiPoint, $Data["MultiPoint"]);
+
+            [/*!defClassAttr()!1*/{
+                name: "LineString",
+                pyType: "anvil.GoogleMap.Data.LineString",
+            }];
+            $Data["LineString"] = Sk.misceval.buildClass(pyModule, function($$$gbl, $LineString) {
+            /*!defMethod(,points)!2*/ "Create a new LineString geometry from the specified points.";
+                $LineString["__init__"] = PyDefUtils.funcWithKwargs(initFnWithJsObjOrPyArgs(() => google.maps.Data.LineString,
+                    function(kwargs, self, pyLatLngArr) {
+                        self._jsVal = new google.maps.Data.LineString(remapToJs(pyLatLngArr));
+                    }));
+
+                /*!defMethod(list[anvil.GoogleMap.LatLng instance])!2*/ "Returns an array of the contained LatLngs. A new array is returned each time get_array() is called." ["get_array"];
+                /*!defMethod(anvil.GoogleMap.LatLng instance,n)!2*/ "Returns the n-th contained LatLng." ["get_at"];
+                /*!defMethod(number)!2*/ "Returns the number of contained LatLngs." ["get_length"];
+                registerMethods($LineString, {
+                    //for_each_lat_lng: ,
+                    get_array: { },
+                    get_at: { },
+                    get_length: { },
+                });
+            }, /*!defClass(anvil.GoogleMap.Data,LineString,Geometry)!*/ "GoogleMap.Data.LineString", [$Data["Geometry"]]);
+            registerRemapType(() => google.maps.Data.LineString, $Data["LineString"]);
+
+            [/*!defClassAttr()!1*/{
+                name: "MultiLineString",
+                pyType: "anvil.GoogleMap.Data.MultiLineString",
+            }];
+            $Data["MultiLineString"] = Sk.misceval.buildClass(pyModule, function($$$gbl, $MultiLineString) {
+            /*!defMethod(,points)!2*/ "Constructs a Data.MultiLineString from the given Data.LineStrings or arrays of positions.";
+                $MultiLineString["__init__"] = PyDefUtils.funcWithKwargs(initFnWithJsObjOrPyArgs(() => google.maps.Data.MultiLineString,
+                    function(kwargs, self, pyLineStringArr) {
+                        self._jsVal = new google.maps.Data.MultiLineString(remapToJs(pyLineStringArr));
+                    }));
+
+                /*!defMethod(list[anvil.GoogleMap.Data.LineString instance])!2*/ "Returns an array of the contained Data.LineStrings. A new array is returned each time get_array() is called." ["get_array"];
+                /*!defMethod(anvil.GoogleMap.Data.LineString,n)!2*/ "Returns the n-th contained Data.LineString." ["get_at"];
+                /*!defMethod(number)!2*/ "Returns the number of contained Data.LineStrings." ["get_length"];
+                registerMethods($MultiLineString, {
+                    //for_each_lat_lng: ,
+                    get_array: { },
+                    get_at: { },
+                    get_length: { },
+                });
+            }, /*!defClass(anvil.GoogleMap.Data,MultiLineString,Geometry)!*/ "GoogleMap.Data.MultiLineString", [$Data["Geometry"]]);
+            registerRemapType(() => google.maps.Data.MultiLineString, $Data["MultiLineString"]);
+
+            [/*!defClassAttr()!1*/{
+                name: "LinearRing",
+                pyType: "anvil.GoogleMap.Data.LinearRing",
+            }];
+            $Data["LinearRing"] = Sk.misceval.buildClass(pyModule, function($$$gbl, $LinearRing) {
+            /*!defMethod(,points)!2*/ "Constructs a Data.LinearRing from the given LatLngs";
+                $LinearRing["__init__"] = PyDefUtils.funcWithKwargs(initFnWithJsObjOrPyArgs(() => google.maps.Data.LinearRing,
+                    function(kwargs, self, pyLatLngArr) {
+                        self._jsVal = new google.maps.Data.LinearRing(remapToJs(pyLatLngArr));
+                    }));
+
+                /*!defMethod(list[anvil.GoogleMap.LatLng instance])!2*/ "Returns an array of the contained LatLngs. A new array is returned each time get_array() is called." ["get_array"];
+                /*!defMethod(anvil.GoogleMap.LatLng instance,n)!2*/ "Returns the n-th contained LatLng." ["get_at"];
+                /*!defMethod(number)!2*/ "Returns the number of contained LatLngs." ["get_length"];
+                registerMethods($LinearRing, {
+                    //for_each_lat_lng: ,
+                    get_array: { },
+                    get_at: { },
+                    get_length: { },
+                });
+            }, /*!defClass(anvil.GoogleMap.Data,LinearRing,Geometry)!*/ "GoogleMap.Data.LinearRing", [$Data["Geometry"]]);
+            registerRemapType(() => google.maps.Data.LinearRing, $Data["LinearRing"]);
+
+            [/*!defClassAttr()!1*/{
+                name: "Polygon",
+                pyType: "anvil.GoogleMap.Data.Polygon",
+            }];
+            $Data["Polygon"] = Sk.misceval.buildClass(pyModule, function($$$gbl, $Polygon) {
+            /*!defMethod(,points)!2*/ "Constructs a Data.Polygon from the given LinearRings or arrays of positions.";
+                $Polygon["__init__"] = PyDefUtils.funcWithKwargs(initFnWithJsObjOrPyArgs(() => google.maps.Data.Polygon,
+                    function(kwargs, self, pyLinearRingArr) {
+                        self._jsVal = new google.maps.Data.Polygon(remapToJs(pyLinearRingArr));
+                    }));
+
+                /*!defMethod(list[anvil.GoogleMap.Data.LinearRing instance])!2*/ "Returns an array of the contained LinearRings. A new array is returned each time get_array() is called." ["get_array"];
+                /*!defMethod(anvil.GoogleMap.Data.LinearRing instance,n)!2*/ "Returns the n-th contained LinearRing." ["get_at"];
+                /*!defMethod(number)!2*/ "Returns the number of contained LinearRings." ["get_length"];
+                registerMethods($Polygon, {
+                    //for_each_lat_lng: ,
+                    get_array: { },
+                    get_at: { },
+                    get_length: { },
+                });
+            }, /*!defClass(anvil.GoogleMap.Data,Polygon,Geometry)!*/ "GoogleMap.Data.Polygon", [$Data["Geometry"]]);
+            registerRemapType(() => google.maps.Data.Polygon, $Data["Polygon"]);
+
+            [/*!defClassAttr()!1*/{
+                name: "MultiPolygon",
+                pyType: "anvil.GoogleMap.Data.MultiPolygon",
+            }];
+            $Data["MultiPolygon"] = Sk.misceval.buildClass(pyModule, function($$$gbl, $MultiPolygon) {
+            /*!defMethod(,points)!2*/ "Constructs a Data.MultiPolygon from the given Polygons or arrays of positions.";
+                $MultiPolygon["__init__"] = PyDefUtils.funcWithKwargs(initFnWithJsObjOrPyArgs(() => google.maps.Data.MultiPolygon,
+                    function(kwargs, self, pyPolygonArr) {
+                        self._jsVal = new google.maps.Data.MultiPolygon(remapToJs(pyPolygonArr));
+                    }));
+
+                /*!defMethod(list[anvil.GoogleMap.Data.Polygon instance])!2*/ "Returns an array of the contained Polygons. A new array is returned each time get_array() is called." ["get_array"];
+                /*!defMethod(anvil.GoogleMap.Data.Polygon instance,n)!2*/ "Returns the n-th contained Polygon." ["get_at"];
+                /*!defMethod(number)!2*/ "Returns the number of contained Polygons." ["get_length"];
+                registerMethods($MultiPolygon, {
+                    //for_each_lat_lng: ,
+                    get_array: { },
+                    get_at: { },
+                    get_length: { },
+                });
+            }, /*!defClass(anvil.GoogleMap.Data,MultiPolygon,Geometry)!*/ "GoogleMap.Data.MultiPolygon", [$Data["Geometry"]]);
+            registerRemapType(() => google.maps.Data.MultiPolygon, $Data["MultiPolygon"]);
+
+            [/*!defClassAttr()!1*/{
+                name: "GeometryCollection",
+                pyType: "anvil.GoogleMap.Data.GeometryCollection",
+            }];
+            $Data["GeometryCollection"] = Sk.misceval.buildClass(pyModule, function($$$gbl, $GeometryCollection) {
+            /*!defMethod(,points)!2*/ "Constructs a Data.GeometryCollection from the given geometry objects or LatLngs.";
+                $GeometryCollection["__init__"] = PyDefUtils.funcWithKwargs(initFnWithJsObjOrPyArgs(() => google.maps.Data.GeometryCollection,
+                    function(kwargs, self, pyGeomArr) {
+                        self._jsVal = new google.maps.Data.GeometryCollection(remapToJs(pyGeomArr));
+                    }));
+
+                /*!defMethod(list[anvil.GoogleMap.Data.Geometry instance])!2*/ "Returns an array of the contained Geometries. A new array is returned each time get_array() is called." ["get_array"];
+                /*!defMethod(anvil.GoogleMap.Data.Geometry instance,n)!2*/ "Returns the n-th contained Geometry." ["get_at"];
+                /*!defMethod(number)!2*/ "Returns the number of contained Geometries." ["get_length"];
+                registerMethods($GeometryCollection, {
+                    //for_each_lat_lng: ,
+                    get_array: { },
+                    get_at: { },
+                    get_length: { },
+                });
+            }, /*!defClass(anvil.GoogleMap.Data,GeometryCollection,Geometry)!*/ "GoogleMap.Data.GeometryCollection", [$Data["Geometry"]]);
+            registerRemapType(() => google.maps.Data.GeometryCollection, $Data["GeometryCollection"]);
+
+            // Register superclass last so that subclasses get matched first when remapping
+            registerRemapType(() => google.maps.Data.Geometry, $Data["Geometry"]);
+
+            [/*!defClassAttr()!1*/{
+                name: "Feature",
+                pyType: "anvil.GoogleMap.Data.Feature",
+            }];
+            $Data["Feature"] = Sk.misceval.buildClass(pyModule, function($$$gbl, $Feature) {
+            /*!defMethod(,[geometry=None],[id=None],[properties=None])!2*/ "Create a new Feature.";
+                $Feature["__init__"] = PyDefUtils.funcWithRawKwargsDict(initFnWithJsObjOrPyArgs(() => google.maps.Data.Feature,
+                    function(kwargs, self) {
+                        self._jsVal = new google.maps.Data.Feature(unwrapKwargs(kwargs));
+                    }));
+
+                [ /*!defAttr()!1*/{
+                    name: "geometry",
+                    pyType: "anvil.GoogleMap.Data.Geometry instance",
+                    description: "The feature geometry."
+                }, /*!defAttr()!1*/{
+                    name: "id",
+                    type: "string",
+                    description: "Feature ID is optional."
+                }];
+
+                $Feature["__setattr__"] = new Sk.builtin.func(function(self, pyName, pyValue) {
+
+                    var name = Sk.ffi.toJs(pyName);
+
+                    switch(name) {
+                        case "geometry":
+                            self._jsVal.setGeometry(remapToJs(pyValue));
+                            break;
+                        case "id":
+                            self._jsVal.setId(remapToJs(pyValue));
+                            break;
+                        default:
+                            Sk.builtin.object.prototype.tp$setattr.call(self, pyName, pyValue);
+                            break;
+                    }
+                });
+
+                $Feature["__getattr__"] = new Sk.builtin.func(function(self, pyName) {
+
+                    var name = Sk.ffi.toJs(pyName);
+
+                    switch(name) {
+                        case "geometry":
+                            return remapToPy(self._jsVal.getGeometry());
+                        case "id":
+                            return remapToPy(self._jsVal.getId());
+                        default:
+                            throw new Sk.builtin.AttributeError("'" + self.tp$name + "' object has no attribute '" + name + "'");
+                    }
+                });
+
+                // TODO: Document __getitem__ et al.
+
+                $Feature["__getitem__"] = new Sk.builtin.func(function(self, pyName) {
+                    var name = Sk.ffi.toJs(pyName);
+
+                    return remapToPy(self._jsVal.getProperty(name));
+                });
+
+                $Feature["__setitem__"] = new Sk.builtin.func(function(self, pyName, pyVal) {
+                    var name = Sk.ffi.toJs(pyName);
+
+                    self._jsVal.setProperty(remapToJs(pyVal));
+                });
+
+                /*!defMethod(string)!2*/ "Exports this feature as a GeoJSON object.";
+                $Feature["to_geo_json"] = new Sk.builtin.func(function(self) {
+                    return PyDefUtils.suspensionPromise(function(resolve, reject) {
+                        self._jsVal.toGeoJson(function(json) {
+                            resolve(Sk.ffi.toPy(json));
+                        });
+                    });
+                });
+
+                registerMethods($Feature, {
+                    //for_each_property,
+                });
+            }, /*!defClass(anvil.GoogleMap.Data,Feature)!*/ "GoogleMap.Data.Feature", []);
+            registerRemapType(() => google.maps.Data.Feature, $Data["Feature"]);
+
+            var addListeners = function(jsVal) {
+                var jsMap = jsVal.getMap();
+                if (jsMap) {
+                    var pyMap = jsMap._pyVal;
+                    jsVal.addListener("addfeature", function(e) {
+                        PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature) }, pyMap, "data_add_feature");
+                    });
+                    jsVal.addListener("click", function(e) {
+                        PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature), lat_lng: remapToPy(e.latLng) }, pyMap, "data_click");
+                    });
+                    jsVal.addListener("dblclick", function(e) {
+                        PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature), lat_lng: remapToPy(e.latLng) }, pyMap, "data_dblclick");
+                    });
+                    jsVal.addListener("mousedown", function(e) {
+                        PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature), lat_lng: remapToPy(e.latLng) }, pyMap, "data_mousedown");
+                    });
+                    jsVal.addListener("mouseout", function(e) {
+                        PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature), lat_lng: remapToPy(e.latLng) }, pyMap, "data_mouseout");
+                    });
+                    jsVal.addListener("mouseover", function(e) {
+                        PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature), lat_lng: remapToPy(e.latLng) }, pyMap, "data_mouseover");
+                    });
+                    jsVal.addListener("mouseup", function(e) {
+                        PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature), lat_lng: remapToPy(e.latLng) }, pyMap, "data_mouseup");
+                    });
+                    jsVal.addListener("removefeature", function(e) {
+                        PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature) }, pyMap, "data_removefeature");
+                    });
+                    jsVal.addListener("removeproperty", function(e) {
+                        PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature), name: remapToPy(e.name), old_value: remapToPy(e.oldValue) }, pyMap, "data_removeproperty");
+                    });
+                    jsVal.addListener("rightclick", function(e) {
+                        PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature), lat_lng: remapToPy(e.latLng) }, pyMap, "data_rightclick");
+                    });
+                    jsVal.addListener("setgeometry", function(e) {
+                        PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature), new_geometry: remapToPy(e.newGeometry), old_geometry: remapToPy(e.oldGeometry) }, pyMap, "data_setgeometry");
+                    });
+                    jsVal.addListener("setproperty", function(e) {
+                        PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature), name: remapToPy(e.name), new_value: remapToPy(e.newValue), old_value: remapToPy(e.oldValue) }, pyMap, "data_setproperty");
+                    });
+                }
+            };
+
+            /*!defMethod()!2*/ "Create a new Data object with the specified options. Not fully implemented.";
+            $Data["__init__"] = PyDefUtils.funcWithKwargs(initFnWithJsObjOrPyArgs(() => google.maps.Data,
+                function(kwargs, self) {
+                    // Load options from kwargs
+                    // NOT FULLY IMPLEMENTED. Will basically never be used.
+                    self._jsVal = new google.maps.Data(kwargs);
+                }, function afterInitFromJs(self, jsVal) {
+                    addListeners(jsVal);
+                }));
+
+            [ /*!defAttr()!1*/{
+                name: "control_position",
+                pyType: "anvil.GoogleMap.ControlPosition",
+                description: "The position of the drawing controls on the map."
+            }, /*!defAttr()!1*/{
+                name: "controls",
+                type: "list(string)",
+                description: "Describes which drawing modes are available for the user to select, in the order they are displayed. Possible drawing modes are \"Point\", \"LineString\" or \"Polygon\"."
+            }, /*!defAttr()!1*/{
+                name: "drawing_mode",
+                type: "string",
+                description: "The current drawing mode of the given Data layer. Possible drawing modes are \"Point\", \"LineString\" or \"Polygon\"."
+            }, /*!defAttr()!1*/{
+                name: "style",
+                pyType: "anvil.GoogleMap.Data.StyleOptions instance",
+                description: "Style for all features in the collection. May be a styling function or a GoogleMap.Data.StyleOptions object."
+            },];
+
+            $Data["__setattr__"] = new Sk.builtin.func(function(self, pyName, pyValue) {
+
+                var name = Sk.ffi.toJs(pyName);
+
+                switch(name) {
+                    case "control_position":
+                        self._jsVal.setControlPosition(remapToJs(pyValue));
+                        break;
+                    case "controls":
+                        self._jsVal.setControls(remapToJs(pyValue));
+                        break;
+                    case "drawing_mode":
+                        self._jsVal.setDrawingMode(remapToJs(pyValue));
+                        break;
+                    case "style":
+                        if (pyValue && Sk.builtin.callable(pyValue).v) {
+                            var fn = function(feature) {
+                                return remapToJs(Sk.misceval.callsim(pyValue, remapToPy(feature)));
+                            };
+                            fn._pyVal = pyValue;
+                            self._jsVal.setStyle(fn);
+                        } else {
+                            self._jsVal.setStyle(remapToJs(pyValue));
+                        }
+                        break;
+                    default:
+                        Sk.builtin.object.prototype.tp$setattr.call(self, pyName, pyValue);
+                        break;
+                }
             });
-          }, /*!defClass(anvil.GoogleMap.Data,Feature)!*/ "GoogleMap.Data.Feature", []);
-          registerRemapType(() => google.maps.Data.Feature, $Data["Feature"]);
 
-          var addListeners = function(jsVal) {
-            var jsMap = jsVal.getMap();
-            if (jsMap) {
-              var pyMap = jsMap._pyVal;
-              jsVal.addListener("addfeature", function(e) {
-                PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature) }, pyMap, "data_add_feature");
-              });
-              jsVal.addListener("click", function(e) {
-                PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature), lat_lng: remapToPy(e.latLng) }, pyMap, "data_click");
-              });
-              jsVal.addListener("dblclick", function(e) {
-                PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature), lat_lng: remapToPy(e.latLng) }, pyMap, "data_dblclick");
-              });
-              jsVal.addListener("mousedown", function(e) {
-                PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature), lat_lng: remapToPy(e.latLng) }, pyMap, "data_mousedown");
-              });
-              jsVal.addListener("mouseout", function(e) {
-                PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature), lat_lng: remapToPy(e.latLng) }, pyMap, "data_mouseout");
-              });
-              jsVal.addListener("mouseover", function(e) {
-                PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature), lat_lng: remapToPy(e.latLng) }, pyMap, "data_mouseover");
-              });
-              jsVal.addListener("mouseup", function(e) {
-                PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature), lat_lng: remapToPy(e.latLng) }, pyMap, "data_mouseup");
-              });
-              jsVal.addListener("removefeature", function(e) {
-                PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature) }, pyMap, "data_removefeature");
-              });
-              jsVal.addListener("removeproperty", function(e) {
-                PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature), name: remapToPy(e.name), old_value: remapToPy(e.oldValue) }, pyMap, "data_removeproperty");
-              });
-              jsVal.addListener("rightclick", function(e) {
-                PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature), lat_lng: remapToPy(e.latLng) }, pyMap, "data_rightclick");
-              });
-              jsVal.addListener("setgeometry", function(e) {
-                PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature), new_geometry: remapToPy(e.newGeometry), old_geometry: remapToPy(e.oldGeometry) }, pyMap, "data_setgeometry");
-              });
-              jsVal.addListener("setproperty", function(e) {
-                PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature), name: remapToPy(e.name), new_value: remapToPy(e.newValue), old_value: remapToPy(e.oldValue) }, pyMap, "data_setproperty");
-              });
-            }
-          }
+            $Data["__getattr__"] = new Sk.builtin.func(function(self, pyName) {
 
-          /*!defMethod()!2*/ "Create a new Data object with the specified options. Not fully implemented."
-          $Data["__init__"] = PyDefUtils.funcWithKwargs(initFnWithJsObjOrPyArgs(() => google.maps.Data, 
-            function(kwargs, self) {
-              // Load options from kwargs
-              // NOT FULLY IMPLEMENTED. Will basically never be used.
-              self._jsVal = new google.maps.Data(kwargs);
-            }, function afterInitFromJs(self, jsVal) {
-              addListeners(jsVal);
-            }));
+                var name = Sk.ffi.toJs(pyName);
 
-          [ /*!defAttr()!1*/{
-            name: "control_position",
-            pyType: "anvil.GoogleMap.ControlPosition",
-            description: "The position of the drawing controls on the map."
-          }, /*!defAttr()!1*/{
-            name: "controls",
-            type: "list(string)",
-            description: "Describes which drawing modes are available for the user to select, in the order they are displayed. Possible drawing modes are \"Point\", \"LineString\" or \"Polygon\"."
-          }, /*!defAttr()!1*/{
-            name: "drawing_mode",
-            type: "string",
-            description: "The current drawing mode of the given Data layer. Possible drawing modes are \"Point\", \"LineString\" or \"Polygon\"."
-          }, /*!defAttr()!1*/{
-            name: "style",
-            pyType: "anvil.GoogleMap.Data.StyleOptions instance",
-            description: "Style for all features in the collection. May be a styling function or a GoogleMap.Data.StyleOptions object."
-          },]
+                switch(name) {
+                    case "control_position":
+                        return remapToPy(self._jsVal.getControlPosition());
+                    case "controls":
+                        return remapToPy(self._jsVal.getControls());
+                    case "drawing_mode":
+                        return remapToPy(self._jsVal.getDrawingMode());
+                    case "style":
+                        return remapToPy(self._jsVal.getStyle());
+                    default:
+                        throw new Sk.builtin.AttributeError("'" + self.tp$name + "' object has no attribute '" + name + "'");
+                }
+            });
 
-          $Data["__setattr__"] = new Sk.builtin.func(function(self, pyName, pyValue) {
 
-            var name = Sk.ffi.toJs(pyName);
+            /*!defMethod(anvil.GoogleMap.Data.Feature instance,[feature],geometry=,id=,properties=)!2*/ "Adds a feature to the collection, and returns the added feature.";
+            $Data["add"] = PyDefUtils.funcWithRawKwargsDict(function(kwargs, self, pyFeature) {
 
-            switch(name) {
-              case "control_position":
-                self._jsVal.setControlPosition(remapToJs(pyValue));
-                break;
-              case "controls":
-                self._jsVal.setControls(remapToJs(pyValue));
-                break;
-              case "drawing_mode":
-                self._jsVal.setDrawingMode(remapToJs(pyValue));
-                break;
-              case "style":
-                if (pyValue && Sk.builtin.callable(pyValue).v) {
-                  var fn = function(feature) {
-                    return remapToJs(Sk.misceval.callsim(pyValue, remapToPy(feature)));
-                  }
-                  fn._pyVal = pyValue;
-                  self._jsVal.setStyle(fn);
+                if (pyFeature && Sk.builtin.isinstance(pyFeature, $Data["Feature"]).v) {
+                    const rtn = self._jsVal.add(pyFeature._jsVal);
+                    pyFeature._jsVal = rtn;
+                    return pyFeature;
                 } else {
-                  self._jsVal.setStyle(remapToJs(pyValue));
+                    var u = unwrapKwargs(kwargs);
+
+                    const rtn = self._jsVal.add(u);
+                    return Sk.misceval.callsim($Data["Feature"], rtn);
                 }
-                break;
-              default:
-                Sk.builtin.object.prototype.tp$setattr.call(self, pyName, pyValue);
-                break;
-            }
-          });
-
-          $Data["__getattr__"] = new Sk.builtin.func(function(self, pyName) {
-
-            var name = Sk.ffi.toJs(pyName);
-
-            switch(name) {
-              case "control_position":
-                return remapToPy(self._jsVal.getControlPosition());
-              case "controls":
-                return remapToPy(self._jsVal.getControls());
-              case "drawing_mode":
-                return remapToPy(self._jsVal.getDrawingMode());
-              case "style":
-                return remapToPy(self._jsVal.getStyle());
-              default:
-                throw new Sk.builtin.AttributeError("'" + self.tp$name + "' object has no attribute '" + name + "'");
-            }
-          });
-
-
-          /*!defMethod(anvil.GoogleMap.Data.Feature instance,[feature],geometry=,id=,properties=)!2*/ "Adds a feature to the collection, and returns the added feature."
-          $Data["add"] = PyDefUtils.funcWithRawKwargsDict(function(kwargs, self, pyFeature) {
-
-            if (pyFeature && Sk.builtin.isinstance(pyFeature, $Data["Feature"]).v) {
-              var rtn = self._jsVal.add(pyFeature._jsVal);
-              pyFeature._jsVal = rtn;
-              return pyFeature;
-            } else {
-              var u = unwrapKwargs(kwargs);
-
-              var rtn = self._jsVal.add(u);
-              return Sk.misceval.callsim($Data["Feature"], rtn);
-            }
-          });
-
-          /*!defMethod(None,feature,clickable=,cursor=,draggable=,editable=,fillColor=,fillOpacity=,icon=,shape=,strokeColor=,strokeOpacity=,strokeWeight=,title=,visible=,zIndex=)!2*/ "Sets the style for all features in the collection. Styles specified on a per-feature basis via override_style() continue to apply."
-          $Data["override_style"] = PyDefUtils.funcWithRawKwargsDict(function(kwargs, self, pyFeature, pyStyle) {
-            self._jsVal.overrideStyle(pyFeature._jsVal, pyStyle ? remapToJs(pyStyle) : unwrapKwargs(kwargs));
-          });
-
-          // NB: This is synchronous :)
-          /*!defMethod(string)!2*/ "Exports the features in the collection to a GeoJSON object."
-          $Data["to_geo_json"] = new Sk.builtin.func(function(self) {
-            return PyDefUtils.suspensionPromise(function(resolve, reject) {
-              self._jsVal.toGeoJson(function(json) {
-                resolve(Sk.ffi.toPy(json));
-              });
             });
-          });
 
-          /*!defMethod(list[anvil.GoogleMap.Data.Feature instance],geo_json,[id_property_name=id])!2*/ "Adds GeoJSON features to the collection. Give this method a parsed JSON. The imported features are returned."
-          $Data["add_geo_json"] = PyDefUtils.funcWithKwargs(function(kwargs, self, obj) {
-            if (kwargs["id_property_name"]) {
-              var opts = {idPropertyName: kwargs["id_property_name"]};
-            }
-            self._jsVal.addGeoJson(Sk.ffi.toJs(obj), opts);
-          });
+            /*!defMethod(None,feature,clickable=,cursor=,draggable=,editable=,fillColor=,fillOpacity=,icon=,shape=,strokeColor=,strokeOpacity=,strokeWeight=,title=,visible=,zIndex=)!2*/ "Sets the style for all features in the collection. Styles specified on a per-feature basis via override_style() continue to apply.";
+            $Data["override_style"] = PyDefUtils.funcWithRawKwargsDict(function(kwargs, self, pyFeature, pyStyle) {
+                self._jsVal.overrideStyle(pyFeature._jsVal, pyStyle ? remapToJs(pyStyle) : unwrapKwargs(kwargs));
+            });
 
+            // NB: This is synchronous :)
+            /*!defMethod(string)!2*/ "Exports the features in the collection to a GeoJSON object.";
+            $Data["to_geo_json"] = new Sk.builtin.func(function(self) {
+                return PyDefUtils.suspensionPromise(function(resolve, reject) {
+                    self._jsVal.toGeoJson(function(json) {
+                        resolve(Sk.ffi.toPy(json));
+                    });
+                });
+            });
 
-          /*!defMethod(boolean,feature)!2*/ "Checks whether the given feature is in the collection." ["contains"]
-          /*!defMethod(anvil.GoogleMap.Data.Feature instance,id)!2*/ "Returns the feature with the given ID, if it exists in the collection." ["get_feature_by_id"]
-          /*!defMethod(None,url,[id_property_name=id])!2*/ "Loads GeoJSON from a URL, and adds the features to the collection." ["load_geo_json"]
-          /*!defMethod(None,feature)!2*/ "Removes a feature from the collection." ["remove"]
-          /*!defMethod(None,feature)!2*/ "Removes the effect of previous override_style() calls. The style of the given feature reverts to the style specified by set_style()." ["revert_style"]
-          registerMethods($Data, {
-            contains: { },
-            //for_each: ,
-            get_feature_by_id: { },
-            load_geo_json: { transformRawArgs: function(kwargs, self, url) {
-              if(kwargs["id_property_name"]) {
-                var opts = { idPropertyName: Sk.ffi.toJs(kwargs["id_property_name"]) };
-              }
-              if(kwargs["callback"]) {
-                var callback = function(features) {
-                  var pyFeatures = new Sk.builtin.list();
-                  for (var i in features) {
-                    Sk.misceval.callsim(pyFeatures.tp$getattr(new Sk.builtin.str("append")), Sk.misceval.callsim($Data["Feature"], features[i]));
-                  }
-                  Sk.misceval.callsim(kwargs["callback"], pyFeatures);
+            /*!defMethod(list[anvil.GoogleMap.Data.Feature instance],geo_json,[id_property_name=id])!2*/ "Adds GeoJSON features to the collection. Give this method a parsed JSON. The imported features are returned.";
+            $Data["add_geo_json"] = PyDefUtils.funcWithKwargs(function(kwargs, self, obj) {
+                if (kwargs["id_property_name"]) {
+                    var opts = {idPropertyName: kwargs["id_property_name"]};
                 }
-              }
-              return [Sk.ffi.toJs(url), opts, callback];
-            }},
-            remove: { },
-            revert_style: { },
-          })
+                self._jsVal.addGeoJson(Sk.ffi.toJs(obj), opts);
+            });
+
+
+            /*!defMethod(boolean,feature)!2*/ "Checks whether the given feature is in the collection." ["contains"];
+            /*!defMethod(anvil.GoogleMap.Data.Feature instance,id)!2*/ "Returns the feature with the given ID, if it exists in the collection." ["get_feature_by_id"];
+            /*!defMethod(None,url,[id_property_name=id])!2*/ "Loads GeoJSON from a URL, and adds the features to the collection." ["load_geo_json"];
+            /*!defMethod(None,feature)!2*/ "Removes a feature from the collection." ["remove"];
+            /*!defMethod(None,feature)!2*/ "Removes the effect of previous override_style() calls. The style of the given feature reverts to the style specified by set_style()." ["revert_style"];
+            registerMethods($Data, {
+                contains: { },
+                //for_each: ,
+                get_feature_by_id: { },
+                load_geo_json: { transformRawArgs: function(kwargs, self, url) {
+                    if(kwargs["id_property_name"]) {
+                        var opts = { idPropertyName: Sk.ffi.toJs(kwargs["id_property_name"]) };
+                    }
+                    if(kwargs["callback"]) {
+                        var callback = function(features) {
+                            var pyFeatures = new Sk.builtin.list();
+                            for (var i in features) {
+                                Sk.misceval.callsim(pyFeatures.tp$getattr(new Sk.builtin.str("append")), Sk.misceval.callsim($Data["Feature"], features[i]));
+                            }
+                            Sk.misceval.callsim(kwargs["callback"], pyFeatures);
+                        };
+                    }
+                    return [Sk.ffi.toJs(url), opts, callback];
+                }},
+                remove: { },
+                revert_style: { },
+            });
 
         }, /*!defClass(anvil.GoogleMap,Data)!*/ "GoogleMap.Data", []);
         registerRemapType(() => google.maps.Data, $Map["Data"]);
 
-// ATTRIBUTES
-
-        [/*!defClassAttr()!1*/{
-          name: "LatLng", pyType: "anvil.GoogleMap.LatLng",
-        }, /*!defClassAttr()!1*/{
-          name: "LatLngLiteral", pyType: "anvil.GoogleMap.LatLngLiteral",
-        }, /*!defClassAttr()!1*/{
-          name: "LatLngBounds", pyType: "anvil.GoogleMap.LatLngBounds",
-        }, /*!defClassAttr()!1*/{
-          name: "LatLngBoundsLiteral", pyType: "anvil.GoogleMap.LatLngBoundsLiteral",
-        }, /*!defClassAttr()!1*/{
-          name: "Point", pyType: "anvil.GoogleMap.Point",
-        }, /*!defClassAttr()!1*/{
-          name: "Size", pyType: "anvil.GoogleMap.Size",
-        }, /*!defClassAttr()!1*/{
-          name: "Symbol", pyType: "anvil.GoogleMap.Symbol",
-        }, /*!defClassAttr()!1*/{
-          name: "Icon", pyType: "anvil.GoogleMap.Icon",
-        }, /*!defClassAttr()!1*/{
-          name: "IconSequence", pyType: "anvil.GoogleMap.IconSequence",
-        }, /*!defClassAttr()!1*/{
-          name: "Animation", pyType: "anvil.GoogleMap.Animation",
-        }, /*!defClassAttr()!1*/{
-          name: "StrokePosition", pyType: "anvil.GoogleMap.StrokePosition",
-        }, /*!defClassAttr()!1*/{
-          name: "SymbolPath", pyType: "anvil.GoogleMap.SymbolPath",
-        }, /*!defClassAttr()!1*/{
-          name: "MarkerLabel", pyType: "anvil.GoogleMap.MarkerLabel",
-        }, /*!defClassAttr()!1*/{
-          name: "MapTypeControlStyle", pyType: "anvil.GoogleMap.MapTypeControlStyle",
-        }, /*!defClassAttr()!1*/{
-          name: "MapTypeId", pyType: "anvil.GoogleMap.MapTypeId",
-        }, /*!defClassAttr()!1*/{
-          name: "ControlPosition", pyType: "anvil.GoogleMap.ControlPosition",
-        }, /*!defClassAttr()!1*/{
-          name: "Marker", pyType: "anvil.GoogleMap.Marker",
-        }, /*!defClassAttr()!1*/{
-          name: "Polyline", pyType: "anvil.GoogleMap.Polyline",
-        }, /*!defClassAttr()!1*/{
-          name: "Polygon", pyType: "anvil.GoogleMap.Polygon",
-        }, /*!defClassAttr()!1*/{
-          name: "Rectangle", pyType: "anvil.GoogleMap.Rectangle",
-        }, /*!defClassAttr()!1*/{
-          name: "Circle", pyType: "anvil.GoogleMap.Circle",
-        }, /*!defClassAttr()!1*/{
-          name: "InfoWindow", pyType: "anvil.GoogleMap.InfoWindow",
-        }, /*!defClassAttr()!1*/{
-          name: "Data", pyType: "anvil.GoogleMap.Data",
-        }, /*!defClassAttr()!1*/{
-          name: "geocode",
-          description: "Geocode the given location or address",
-          callable: {
-            returns: {
-              name: "list(anvil.GoogleMap.GeocoderResult instance)",
-              iter: { $ref: "anvil.GoogleMap.GeocoderResult instance" },
-              allItems: {$ref: "anvil.GoogleMap.GeocoderResult instance" },
-            },
-            args: [{ name: "address", type: "keyword", optional: true },
-                   { name: "location", type: "keyword", optional: true }],
-          },
-        }, /*!defClassAttr()!1*/{
-          name: "compute_area",
-          description: "Returns the area of a closed path in square meters.",
-          callable: {
-            returns: { name: "number" },
-            args: [{ name: "path" }],
-          },
-        }, /*!defClassAttr()!1*/{
-          name: "compute_length",
-          description: "Returns the length of a path in meters.",
-          callable: {
-            returns: { name: "number" },
-            args: [{ name: "path" }],
-          },
-        }];
-
-// METHODS
 
 
-        /*!defMethod(None,lat_lng_bounds, [padding])!2*/ "Sets the viewport to contain the given bounds. Adds some padding around the bounds by default - set padding to 0 to match the bounds exactly." ["fit_bounds"]
-        /*!defMethod(anvil.GoogleMap.LatLngBounds instance)!2*/ "Returns the lat/lng bounds of the current viewport." ["get_bounds"]
-        /*!defMethod(None,dx,dy)!2*/ "Changes the center of the map by the given distance in pixels." ["pan_by"]
-        /*!defMethod(None,position)!2*/ "Changes the center of the map to the given LatLng position." ["pan_to"]
-        /*!defMethod(None,lat_lng_bounds, [padding])!2*/ "Pans the map by the minimum amount necessary to contain the given LatLngBounds. Adds some padding around the bounds by default - set padding to 0 to match the bounds exactly." ["pan_to_bounds"]
+        // METHODS
+
+
+        /*!defMethod(None,lat_lng_bounds, [padding])!2*/ "Sets the viewport to contain the given bounds. Adds some padding around the bounds by default - set padding to 0 to match the bounds exactly." ["fit_bounds"];
+        /*!defMethod(anvil.GoogleMap.LatLngBounds instance)!2*/ "Returns the lat/lng bounds of the current viewport." ["get_bounds"];
+        /*!defMethod(None,dx,dy)!2*/ "Changes the center of the map by the given distance in pixels." ["pan_by"];
+        /*!defMethod(None,position)!2*/ "Changes the center of the map to the given LatLng position." ["pan_to"];
+        /*!defMethod(None,lat_lng_bounds, [padding])!2*/ "Pans the map by the minimum amount necessary to contain the given LatLngBounds. Adds some padding around the bounds by default - set padding to 0 to match the bounds exactly." ["pan_to_bounds"];
         registerMethods($Map, {
-          fit_bounds: { },
-          get_bounds: { },
-          pan_by: { },
-          pan_to: { },
-          pan_to_bounds: { },
+            fit_bounds: { },
+            get_bounds: { },
+            pan_by: { },
+            pan_to: { },
+            pan_to_bounds: { },
         });
 
-        /*!defMethod(anvil.Component instance,map_component)!2*/ "Add a map component to this GoogleMap"
+        /*!defMethod(anvil.Component instance,map_component)!2*/ "Add a map component to this GoogleMap";
         $Map["add_component"] = PyDefUtils.funcWithKwargs(function(kwargs, self, pyObj) {
-          if (!pyObj || !Sk.builtin.isinstance(pyObj, $Map["AbstractOverlay"]).v) {
+            if (!pyObj || !isTrue(pyIsInstance(pyObj, new pyTuple([$Map["AbstractOverlay"], $Map["InfoWindow"]])))) {
             // For now, until we have the arbitrary overlay layer.
-            throw new Sk.builtin.TypeError("Cannot add component. Only GoogleMap overlay components may be added to a GoogleMap instance.");
-          }
+                throw new Sk.builtin.TypeError("Cannot add component. Only GoogleMap overlay components may be added to a GoogleMap instance.");
+            }
 
-          return Sk.misceval.callsim(pyModule["Container"].prototype.add_component, self, pyObj, kwargs);
+            return pyCallOrSuspend(pyModule["ClassicContainer"].prototype.add_component, [self, pyObj, kwargs]);
         });
 
 
 
-// OVERLAYS
+        // OVERLAYS
 
         const mkOverlayClass = (name, superClass, google_map_type, properties, events, new_callback, loc_callback) => {
             const klass = PyDefUtils.mkComponentCls(pyModule, name, {
@@ -2640,8 +2606,8 @@ module.exports = function(pyModule) {
 
 
         $Map["AbstractOverlay"] = mkOverlayClass(
-            /*!defClass(anvil.GoogleMap,AbstractOverlay,anvil.Component)!*/ "GoogleMap.AbstractOverlay",
-            pyModule["Component"],
+            "GoogleMap.AbstractOverlay",
+            pyModule["ClassicComponent"],
             null,
             PyDefUtils.assembleGroupProperties(/*!componentProps(anvil.GoogleMap.AbstractOverlay)!2*/ ["mapOverlays"]),
             PyDefUtils.assembleGroupEvents(
@@ -2700,10 +2666,11 @@ module.exports = function(pyModule) {
                 return setMapProps(self);
             },
         );
+        /*!defClass(anvil.GoogleMap,AbstractOverlay,anvil.Component)!*/
 
 
         $Map["Marker"] = mkOverlayClass(
-            /*!defClass(anvil.GoogleMap,Marker,anvil.GoogleMap.AbstractOverlay)!*/ "GoogleMap.Marker",
+            "GoogleMap.Marker",
             $Map["AbstractOverlay"],
             () => google.maps.Marker,
             PyDefUtils.assembleGroupProperties(/*!componentProps(anvil.GoogleMap.Marker)!2*/ [], {
@@ -2862,10 +2829,10 @@ module.exports = function(pyModule) {
                 });
             }
         );
-        
-        
+        /*!defClass(anvil.GoogleMap,Marker,anvil.GoogleMap.AbstractOverlay)!*/
+
         $Map["Polyline"] = mkOverlayClass(
-            /*!defClass(anvil.GoogleMap,Polyline,anvil.GoogleMap.AbstractOverlay)!*/ "GoogleMap.Polyline",
+            "GoogleMap.Polyline",
             $Map["AbstractOverlay"],
             () => google.maps.Polyline,
             PyDefUtils.assembleGroupProperties(/*!componentProps(anvil.GoogleMap.Polyline)!2*/ ["mapPolyOverlays"], {
@@ -2901,10 +2868,11 @@ module.exports = function(pyModule) {
             }),
             PyDefUtils.assembleGroupEvents("GoogleMap.Polyline", /*!componentEvents(anvil.GoogleMap.Polyline)!1*/ []),
         );
+        /*!defClass(anvil.GoogleMap,Polyline,anvil.GoogleMap.AbstractOverlay)!*/
 
 
         $Map["Polygon"] = mkOverlayClass(
-            /*!defClass(anvil.GoogleMap,Polygon,anvil.GoogleMap.AbstractOverlay)!*/ "GoogleMap.Polygon",
+            "GoogleMap.Polygon",
             $Map["AbstractOverlay"],
             () => google.maps.Polygon,
             PyDefUtils.assembleGroupProperties(/*!componentProps(anvil.GoogleMap.Polygon)!2*/ ["mapPolyOverlays", "mapAreaOverlays"], {
@@ -2931,10 +2899,10 @@ module.exports = function(pyModule) {
             }),
             PyDefUtils.assembleGroupEvents("GoogleMap.Polygon", /*!componentEvents(anvil.GoogleMap.Polygon)!1*/ []),
         );
-
+        /*!defClass(anvil.GoogleMap,Polygon,anvil.GoogleMap.AbstractOverlay)!*/
 
         $Map["Rectangle"] = mkOverlayClass(
-            /*!defClass(anvil.GoogleMap,Rectangle,anvil.GoogleMap.AbstractOverlay)!*/ "GoogleMap.Rectangle",
+            "GoogleMap.Rectangle",
             $Map["AbstractOverlay"],
             () => google.maps.Rectangle,
             PyDefUtils.assembleGroupProperties(/*!componentProps(anvil.GoogleMap.Rectangle)!2*/ ["mapPolyOverlays", "mapAreaOverlays"], {
@@ -2966,10 +2934,11 @@ module.exports = function(pyModule) {
                 });
             }
         );
+        /*!defClass(anvil.GoogleMap,Rectangle,anvil.GoogleMap.AbstractOverlay)!*/
 
 
         $Map["Circle"] = mkOverlayClass(
-            /*!defClass(anvil.GoogleMap,Circle,anvil.GoogleMap.AbstractOverlay)!*/ "GoogleMap.Circle",
+            "GoogleMap.Circle",
             $Map["AbstractOverlay"],
             () => google.maps.Circle,
             PyDefUtils.assembleGroupProperties(/*!componentProps(anvil.GoogleMap.Circle)!2*/ ["mapPolyOverlays", "mapAreaOverlays"], {
@@ -3016,11 +2985,12 @@ module.exports = function(pyModule) {
                 });
             }
         );
+        /*!defClass(anvil.GoogleMap,Circle,anvil.GoogleMap.AbstractOverlay)!*/
 
 
         $Map["InfoWindow"] = mkOverlayClass(
-            /*!defClass(anvil.GoogleMap,InfoWindow,anvil.Component)!*/ "GoogleMap.InfoWindow",
-            pyModule["Component"],
+            "GoogleMap.InfoWindow",
+            pyModule["ClassicComponent"],
             () => google.maps.InfoWindow,
             PyDefUtils.assembleGroupProperties(/*!componentProps(anvil.GoogleMap.InfoWindow)!2*/ [], {
                 /*!componentProp(anvil.GoogleMap.InfoWindow)!1*/
@@ -3029,15 +2999,29 @@ module.exports = function(pyModule) {
                     pyType: "anvil.Component instance",
                     pyVal: true,
                     important: true,
-                    description: "Content to display in the InfoWindow.",
+                    description: "Content to display in the InfoWindow. Can be a string or an Anvil Component",
                     mapProp: true,
                     set(s, e, v) {
-                        s._jsVal.setOptions({
-                            content: v._anvil.domNode,
+                        const pyHiddenContainer = s._anvil.pyHiddenContainer;
+                        let content;
+                        if (checkString(v)) {
+                            content = v.toString();
+                        } else {
+                            content = v.anvil$hooks.setupDom();
+                        }
+                        return chainOrSuspend(pyCallOrSuspend(pyHiddenContainer.tp$getattr(S_CLEAR)), () => {
+                            s._jsVal.setOptions({ content });
+                            return typeof content === "string"
+                                ? pyNone
+                                : pyCallOrSuspend(pyHiddenContainer.tp$getattr(S_ADD_COMPONENT), [v]);
                         });
                     },
                     get(s, e) {
-                        return $(s._jsVal.getContent()).data("anvil-py-component") || Sk.builtin.none.none$;
+                        const v = s._jsVal.getContent();
+                        if (typeof v === "string") {
+                            return new pyStr(v);
+                        }
+                        return $(v).data("anvil-py-component") || pyNone;
                     },
                 },
                 /*!componentProp(anvil.GoogleMap.InfoWindow)!1*/
@@ -3071,7 +3055,7 @@ module.exports = function(pyModule) {
                 /*!componentProp(anvil.GoogleMap.InfoWindow)!1*/
                 position: {
                     name: "position",
-                    description: "The LatLng at which to display this InfoWindow.",
+                    description: "The LatLng at which to display this InfoWindow. Not required if this popup is anchored to a component",
                     pyType: "anvil.GoogleMap.LatLng instance",
                     pyVal: true,
                     mapProp: true,
@@ -3090,17 +3074,19 @@ module.exports = function(pyModule) {
             PyDefUtils.assembleGroupEvents("GoogleMap.InfoWindow", /*!componentEvents(anvil.GoogleMap.InfoWindow)!1*/ ["universal"]),
             (self) => {
                 self._jsVal = new google.maps.InfoWindow();
+                self._anvil.pyHiddenContainer = PyDefUtils.pyCall(pyModule["ClassicContainer"]);
 
                 self._anvil.pageEvents = {
                     add() {
-                        if (!Sk.misceval.isTrue(Sk.builtin.isinstance(self._anvil.parent.pyObj, pyModule["GoogleMap"]))) {
+                        if (!isTrue(pyIsInstance(self._anvil.parent.pyObj, pyModule["GoogleMap"]))) {
                             throw new Sk.builtin.TypeError("Map components can only be added to maps.");
                         }
                         self._jsVal.setMap(self._anvil.parent.pyObj._jsVal);
+                        return self._anvil.pyHiddenContainer._anvil.addedToPage();
                     },
-
                     remove() {
                         self._jsVal.setMap(null);
+                        return self._anvil.pyHiddenContainer._anvil.removedFromPage();
                     },
                 };
 
@@ -3108,97 +3094,118 @@ module.exports = function(pyModule) {
                     PyDefUtils.raiseEventAsync({ lat_lng: remapToPy(e.latLng) }, self, "rightclick");
                 });
 
+                self._jsVal.addListener("closeclick", () => {
+                    PyDefUtils.asyncToPromise(() => pyCallOrSuspend(self.tp$getattr(S_REMOVE_FROM_PARENT, [])));
+                });
+
                 return setMapProps(self);
             },
             ($loc) => {
-                /*!defMethod(None,map,[anchor])!2*/ "Opens this InfoWindow on the given map. Optionally, an InfoWindow can be associated with an anchor."[
+                /*!defMethod(None,map,[anchor])!2*/ "Display this InfoWindow on the specified map. If anchor is specified, the InfoWindow does not need to have its own position property set."[
                     "open"
                 ];
-                /*!defMethod(None,)!2*/ "Closes this InfoWindow."["close"];
+                /*!defMethod(None,)!2*/ "Hide this InfoWindow. The user can also cause this to happen by clicking the close button in the top-right of the popup."["close"];
                 registerMethods($loc, {
-                    open: {},
-                    close: {},
+                    open: {
+                        callback(self) {
+                            const Map = self._jsVal.getMap()?._pyVal;
+                            const addComponent = Map?.tp$getattr(S_ADD_COMPONENT);
+                            if (!addComponent) return;
+                            const parent = self._anvil.parent?.pyObj;
+                            if (parent && parent === Map) return;
+                            return chainOrSuspend(
+                                parent && pyCallOrSuspend(self.tp$getattr(S_REMOVE_FROM_PARENT, [])),
+                                () => pyCallOrSuspend(addComponent, [self])
+                            );
+                        },
+                    },
+                    close: {
+                        callback(self) {
+                            return pyCallOrSuspend(self.tp$getattr(S_REMOVE_FROM_PARENT, []));
+                        },
+                    },
                 });
             }
         );
+        /*!defClass(anvil.GoogleMap,InfoWindow,anvil.Component)!*/
 
 
-      // These class methods are documented above, so that they end up on the GoogleMap defClass.
-      $Map["geocode"] = new Sk.builtin.staticmethod(
-          PyDefUtils.funcWithRawKwargsDict(function (kwargs) {
-              var geocoder = new google.maps.Geocoder();
-              return PyDefUtils.suspensionPromise(function (resolve, reject) {
-                  if (window.googleMapsAuthFailure) {
-                      reject("Google Maps authorization failed - is the API key invalid?");
-                      return;
-                  }
-                  geocoder.geocode(unwrapKwargs(kwargs), function (results, status) {
-                      if (status == "OK") {
-                          // This is a completely manual remapToPy of a GeocodeResult array. There *must* be a better way.
-                          var pyResults = [];
-                          for (var i in results) {
-                              var kws = [];
-                              var addressComponents = [];
-      
-                              for (var j in results[i].address_components) {
-                                  var ac = results[i].address_components[j];
-                                  var acKws = [
-                                      Sk.ffi.toPy("long_name"),
-                                      remapToPy(ac.long_name),
-                                      Sk.ffi.toPy("short_name"),
-                                      remapToPy(ac.short_name),
-                                      Sk.ffi.toPy("types"),
-                                      remapToPy(ac.types),
-                                  ];
-                                  var pyAc = Sk.misceval.call(pyModule["GoogleMap"].prototype["GeocoderAddressComponent"], undefined, undefined, acKws);
-                                  addressComponents.push(pyAc);
-                              }
-      
-                              kws.push(Sk.ffi.toPy("address_components"));
-                              kws.push(new Sk.builtin.list(addressComponents));
-      
-                              kws.push(Sk.ffi.toPy("formatted_address"));
-                              kws.push(remapToPy(results[i].formatted_address));
-      
-                              var geomKws = [
-                                  Sk.ffi.toPy("bounds"),
-                                  remapToPy(results[i].geometry.bounds),
-                                  Sk.ffi.toPy("location"),
-                                  remapToPy(results[i].geometry.location),
-                                  Sk.ffi.toPy("location_type"),
-                                  remapToPy(results[i].geometry.location_type),
-                                  Sk.ffi.toPy("viewport"),
-                                  remapToPy(results[i].geometry.viewport),
-                              ];
-      
-                              kws.push(Sk.ffi.toPy("geometry"));
-                              kws.push(Sk.misceval.call(pyModule["GoogleMap"].prototype["GeocoderGeometry"], undefined, undefined, geomKws));
-      
-                              kws.push(Sk.ffi.toPy("partial_match"));
-                              kws.push(remapToPy(results[i].partial_match));
-      
-                              kws.push(Sk.ffi.toPy("place_id"));
-                              kws.push(remapToPy(results[i].place_id));
-      
-                              kws.push(Sk.ffi.toPy("postcode_localities"));
-                              kws.push(remapToPy(results[i].postcode_localities));
-      
-                              kws.push(Sk.ffi.toPy("types"));
-                              kws.push(remapToPy(results[i].types));
-      
-                              var pyResult = Sk.misceval.call(pyModule["GoogleMap"].prototype["GeocoderResult"], undefined, undefined, kws);
-      
-                              pyResults.push(pyResult);
-                          }
-                          resolve(new Sk.builtin.list(pyResults));
-                      } else {
-                          reject("Geocode failed: " + status);
-                      }
-                  });
-              });
-          })
-      );
-      
+        // These class methods are documented above, so that they end up on the GoogleMap defClass.
+        $Map["geocode"] = new Sk.builtin.staticmethod(
+            PyDefUtils.funcWithRawKwargsDict(function (kwargs) {
+                var geocoder = new google.maps.Geocoder();
+                return PyDefUtils.suspensionPromise(function (resolve, reject) {
+                    if (window.googleMapsAuthFailure) {
+                        reject("Google Maps authorization failed - is the API key invalid?");
+                        return;
+                    }
+                    geocoder.geocode(unwrapKwargs(kwargs), function (results, status) {
+                        if (status == "OK") {
+                            // This is a completely manual remapToPy of a GeocodeResult array. There *must* be a better way.
+                            var pyResults = [];
+                            for (var i in results) {
+                                var kws = [];
+                                var addressComponents = [];
+
+                                for (var j in results[i].address_components) {
+                                    var ac = results[i].address_components[j];
+                                    var acKws = [
+                                        Sk.ffi.toPy("long_name"),
+                                        remapToPy(ac.long_name),
+                                        Sk.ffi.toPy("short_name"),
+                                        remapToPy(ac.short_name),
+                                        Sk.ffi.toPy("types"),
+                                        remapToPy(ac.types),
+                                    ];
+                                    var pyAc = Sk.misceval.call(pyModule["GoogleMap"].prototype["GeocoderAddressComponent"], undefined, undefined, acKws);
+                                    addressComponents.push(pyAc);
+                                }
+
+                                kws.push(Sk.ffi.toPy("address_components"));
+                                kws.push(new Sk.builtin.list(addressComponents));
+
+                                kws.push(Sk.ffi.toPy("formatted_address"));
+                                kws.push(remapToPy(results[i].formatted_address));
+
+                                var geomKws = [
+                                    Sk.ffi.toPy("bounds"),
+                                    remapToPy(results[i].geometry.bounds),
+                                    Sk.ffi.toPy("location"),
+                                    remapToPy(results[i].geometry.location),
+                                    Sk.ffi.toPy("location_type"),
+                                    remapToPy(results[i].geometry.location_type),
+                                    Sk.ffi.toPy("viewport"),
+                                    remapToPy(results[i].geometry.viewport),
+                                ];
+
+                                kws.push(Sk.ffi.toPy("geometry"));
+                                kws.push(Sk.misceval.call(pyModule["GoogleMap"].prototype["GeocoderGeometry"], undefined, undefined, geomKws));
+
+                                kws.push(Sk.ffi.toPy("partial_match"));
+                                kws.push(remapToPy(results[i].partial_match));
+
+                                kws.push(Sk.ffi.toPy("place_id"));
+                                kws.push(remapToPy(results[i].place_id));
+
+                                kws.push(Sk.ffi.toPy("postcode_localities"));
+                                kws.push(remapToPy(results[i].postcode_localities));
+
+                                kws.push(Sk.ffi.toPy("types"));
+                                kws.push(remapToPy(results[i].types));
+
+                                var pyResult = Sk.misceval.call(pyModule["GoogleMap"].prototype["GeocoderResult"], undefined, undefined, kws);
+
+                                pyResults.push(pyResult);
+                            }
+                            resolve(new Sk.builtin.list(pyResults));
+                        } else {
+                            reject("Geocode failed: " + status);
+                        }
+                    });
+                });
+            })
+        );
+
         $Map["compute_area"] = new Sk.builtin.staticmethod(
             new Sk.builtin.func(function (path) {
                 return remapToPy(google.maps.geometry.spherical.computeArea(remapToJs(path)));
@@ -3211,14 +3218,87 @@ module.exports = function(pyModule) {
             })
         );
 
-    };
+    }
+
+    // ATTRIBUTES
+
+    [/*!defClassAttr()!1*/{
+        name: "LatLng", pyType: "anvil.GoogleMap.LatLng",
+    }, /*!defClassAttr()!1*/{
+        name: "LatLngLiteral", pyType: "anvil.GoogleMap.LatLngLiteral",
+    }, /*!defClassAttr()!1*/{
+        name: "LatLngBounds", pyType: "anvil.GoogleMap.LatLngBounds",
+    }, /*!defClassAttr()!1*/{
+        name: "LatLngBoundsLiteral", pyType: "anvil.GoogleMap.LatLngBoundsLiteral",
+    }, /*!defClassAttr()!1*/{
+        name: "Point", pyType: "anvil.GoogleMap.Point",
+    }, /*!defClassAttr()!1*/{
+        name: "Size", pyType: "anvil.GoogleMap.Size",
+    }, /*!defClassAttr()!1*/{
+        name: "Symbol", pyType: "anvil.GoogleMap.Symbol",
+    }, /*!defClassAttr()!1*/{
+        name: "Icon", pyType: "anvil.GoogleMap.Icon",
+    }, /*!defClassAttr()!1*/{
+        name: "IconSequence", pyType: "anvil.GoogleMap.IconSequence",
+    }, /*!defClassAttr()!1*/{
+        name: "Animation", pyType: "anvil.GoogleMap.Animation",
+    }, /*!defClassAttr()!1*/{
+        name: "StrokePosition", pyType: "anvil.GoogleMap.StrokePosition",
+    }, /*!defClassAttr()!1*/{
+        name: "SymbolPath", pyType: "anvil.GoogleMap.SymbolPath",
+    }, /*!defClassAttr()!1*/{
+        name: "MarkerLabel", pyType: "anvil.GoogleMap.MarkerLabel",
+    }, /*!defClassAttr()!1*/{
+        name: "MapTypeControlStyle", pyType: "anvil.GoogleMap.MapTypeControlStyle",
+    }, /*!defClassAttr()!1*/{
+        name: "MapTypeId", pyType: "anvil.GoogleMap.MapTypeId",
+    }, /*!defClassAttr()!1*/{
+        name: "ControlPosition", pyType: "anvil.GoogleMap.ControlPosition",
+    }, /*!defClassAttr()!1*/{
+        name: "Marker", pyType: "anvil.GoogleMap.Marker",
+    }, /*!defClassAttr()!1*/{
+        name: "Polyline", pyType: "anvil.GoogleMap.Polyline",
+    }, /*!defClassAttr()!1*/{
+        name: "Polygon", pyType: "anvil.GoogleMap.Polygon",
+    }, /*!defClassAttr()!1*/{
+        name: "Rectangle", pyType: "anvil.GoogleMap.Rectangle",
+    }, /*!defClassAttr()!1*/{
+        name: "Circle", pyType: "anvil.GoogleMap.Circle",
+    }, /*!defClassAttr()!1*/{
+        name: "InfoWindow", pyType: "anvil.GoogleMap.InfoWindow",
+    }, /*!defClassAttr()!1*/{
+        name: "Data", pyType: "anvil.GoogleMap.Data",
+    }, /*!defClassAttr()!1*/{
+        name: "geocode",
+        description: "Geocode the given location or address",
+        callable: {
+            returns: {
+                name: "list(anvil.GoogleMap.GeocoderResult instance)",
+                iter: { $ref: "anvil.GoogleMap.GeocoderResult instance" },
+                allItems: {$ref: "anvil.GoogleMap.GeocoderResult instance" },
+            },
+            args: [{ name: "address", type: "keyword", optional: true },
+                { name: "location", type: "keyword", optional: true }],
+        },
+    }, /*!defClassAttr()!1*/{
+        name: "compute_area",
+        description: "Returns the area of a closed path in square meters.",
+        callable: {
+            returns: { name: "number" },
+            args: [{ name: "path" }],
+        },
+    }, /*!defClassAttr()!1*/{
+        name: "compute_length",
+        description: "Returns the length of a path in meters.",
+        callable: {
+            returns: { name: "number" },
+            args: [{ name: "path" }],
+        },
+    }];
+
 
     /*!defClass(anvil,GoogleMap,Container)!*/
     registerRemapType(() => google.maps.Map, pyModule["GoogleMap"]);
-
-
-
-
 
 };
 

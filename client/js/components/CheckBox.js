@@ -3,7 +3,7 @@
 var PyDefUtils = require("PyDefUtils");
 import { setHandled } from "./events";
 
-/**
+/*#
 id: checkbox
 docs_url: /docs/client/components/basic#checkbox
 title: CheckBox
@@ -135,7 +135,7 @@ module.exports = (pyModule) => {
         },
 
         locals($loc) {
-            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Component"], (self) => {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicComponent"], (self) => {
                 self._anvil.element.on("change", (e) => {
                     self._anvil
                         .dataBindingWriteback(self, "checked")

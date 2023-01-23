@@ -10,7 +10,7 @@ var $builtinmodule = window.memoise('stripe.checkout', function() {
         stripeLoaded = true;
     };
 
-    var loadKeys = RSVP.defer();
+    var loadKeys = PyDefUtils.defer();
     var anvil = PyDefUtils.getModule("anvil");
     var appPath = Sk.ffi.remapToJs(anvil.tp$getattr(new Sk.builtin.str("app_path")));
     $.get(appPath + "/_/get_stripe_publishable_keys?s=" + window.anvilSessionToken, function(data) {
@@ -30,7 +30,7 @@ var $builtinmodule = window.memoise('stripe.checkout', function() {
         var shippingAddress = kwargs["shipping_address"];
 
         var config = Sk.ffi.remapToJs(Sk.misceval.callsim(stripeMod.tp$getattr(new Sk.builtin.str("get_config"))));
-        checkoutCallbackDefer = RSVP.defer();
+        checkoutCallbackDefer = PyDefUtils.defer();
 
         var openHandler = function (keys) {
             var publishable_keys = kwargs["raw"] ? config.publishable_key : keys;
@@ -89,20 +89,29 @@ var $builtinmodule = window.memoise('stripe.checkout', function() {
 
         if (stripeWillPopup && popupWillBeBlocked) {
             var cancelled = true;
-            $("#stripeContinue")
-                .off("click")
-                .one("click", function () {
-                    cancelled = false;
-                    loadKeys.promise.then(openHandler);
-                });
-            $("#stripe-checkout-modal")
-                .modal("show")
-                .off("hidden.bs.modal")
-                .one("hidden.bs.modal", function () {
-                    if (cancelled) {
-                        checkoutCallbackDefer.reject();
-                    }
-                });
+
+            const modal = new window.anvilModal({
+                id: "stripe-checkout-modal",
+                title: "Pay Online",
+                body: "You are about to make an online payment",
+                buttons: [
+                    { text: "Cancel" },
+                    {
+                        text: "Continue to payment screen",
+                        style: "success",
+                        onClick: () => {
+                            cancelled = false;
+                            loadKeys.promise.then(openHandler);
+                        },
+                    },
+                ],
+            });
+            modal.once("hidden", () => {
+                if (cancelled) {
+                    checkoutCallbackDefer.reject();
+                }
+            });
+            modal.show();
         } else {
             loadKeys.promise.then(openHandler);
         }
@@ -145,7 +154,7 @@ var $builtinmodule = window.memoise('stripe.checkout', function() {
   			currency: "a three-letter currency code (eg 'USD')",
   			title: "configures the checkout dialog",
   			description: "configures the checkout dialog",
-  			icon_url: "path to an image to be used on the checkout form (eg anvil.server.get_app_origin + '/_/theme/icon.png')",
+  			icon_url: "path to an image to be used on the checkout form (eg anvil.server.get_app_origin() + '/_/theme/icon.png')",
   			billing_address: "(boolean) setting to True requires the user to enter a billing address",
   			shipping_address: "(boolean) setting to True requires the user to enter a shipping and billing address",
   			zipcode: "(boolean) setting to True requires the user to enter their zipcode/postal code "

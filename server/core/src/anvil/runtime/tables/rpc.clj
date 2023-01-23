@@ -932,10 +932,13 @@
                                                                                      (concat [row-tid row-id] view-query-params)))))))))
 
             "list_columns"            (fn [[table-id view-query] _kwargs]
-                                        (let [cols (ensure-table-access-ok-returning-cols (db) table-id :search (get-cols-from-view-query view-query))
+                                        (let [cols (->> (ensure-table-access-ok-returning-cols (db) table-id :search (get-cols-from-view-query view-query))
+                                                        (sort-by (fn [[_id descr]] (:name descr)))
+                                                        (sort-by (fn [[_id descr]] (get-in descr [:admin_ui :order]))))
+
                                               cs (for [[_id descr] cols]
                                                    (select-keys descr [:name :type]))]
-                                          (sort-by :name cs)))
+                                          cs))
 
             "search"                  (fn [[table-id view-query] kwargs & args]
                                         (let [[cols query-obj query-modifiers] (get-query-obj-and-modifiers table-id view-query false kwargs args)

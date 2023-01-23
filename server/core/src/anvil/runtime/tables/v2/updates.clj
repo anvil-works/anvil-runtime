@@ -17,7 +17,7 @@
            (java.io InputStream)
            (java.sql Blob ResultSet Array Connection)))
 
-(clj-logging-config.log4j/set-logger! :level :trace)
+(clj-logging-config.log4j/set-logger! :level :info)
 
 ;; Table updates are a finicky process. Before hitting the database, we need to:
 ;; * Type-check and reduce all the provided values to something that can go in the DB
@@ -41,7 +41,8 @@
                     _ (when-not (if cols
                                   (some #{col-name} cols)
                                   (contains? table-columns col-name))
-                        (throw+ (cond-> (util-v2/general-tables-error (format "No such column '%s'" col-name) "anvil.tables.NoSuchColumnError")
+                        (throw+ (cond-> (util-v2/general-tables-error (format "No such column '%s'%s" col-name (if cols " in this view" ""))
+                                                                      "anvil.tables.NoSuchColumnError")
                                         (and (nil? cols) (nil? restrict)) (assoc ::would-create-column [col-name (table-types/get-type-from-value value)]))))
 
                     col (get table-columns col-name)
@@ -272,6 +273,10 @@
 
         nil))))
 
+(defn- merge-with-nil [cols row-dicts]
+  (let [col-nil-map (zipmap (map keyword cols) (repeat nil))]
+    (mapv #(merge col-nil-map %) row-dicts)))
+
 (defn do-insert! [db-c quota-ctx autocreate-columns? tables {table-id :id :keys [perm cols restrict] :as view-spec} row-dicts]
   (let [view-inferred-values (search-v2/infer-values-from-query restrict)
         ;; You can only add rows to a column-restricted view if the view specifies every inaccessible column
@@ -285,6 +290,11 @@
                 (throw+ (util-v2/general-tables-error "You cannot add rows to this view")))))
 
         [RESTRICT-SQL restrict-args] (when restrict (search-v2/QUERY->SQL restrict))
+
+        ;; if there are cols we need to specify missing columns as nil so that the view-constraints will be triggered
+        row-dicts (if cols
+                    (merge-with-nil cols row-dicts)
+                    row-dicts)
 
         rows (resolving-columns db-c autocreate-columns? tables view-spec
                                 (fn [tables]
@@ -344,6 +354,8 @@
             nil))))
 
 (defn delete-from-query! [db-c tables {table-id :id :keys [perm cols restrict] :as view-spec} search]
+  (when cols
+    (throw+ (util-v2/general-tables-error "Cannot call delete_all_rows() on a view")))
   (let [query (if restrict (search-v2/both-queries restrict search) search)
         [QUERY-SQL query-args] (search-v2/QUERY->SQL query)
         [GET-MEDIA-SQL get-media-args] (RETURN-MEDIA tables view-spec)]

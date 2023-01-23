@@ -1,3 +1,20 @@
+@import "_modal.css";
+@import "_grid.css";
+@import "_alert.css";
+@import "_animate.css";
+
+* {
+    -webkit-box-sizing: border-box;
+    -moz-box-sizing: border-box;
+    box-sizing: border-box;
+}
+
+*:before, *:after {
+    -webkit-box-sizing: border-box;
+    -moz-box-sizing: border-box;
+    box-sizing: border-box;
+}
+
 html, body {
 	/*height: 100%;*/
 }
@@ -112,6 +129,10 @@ body.anvil-show-bottom-banner #anvil-badge img {
 
 .disabled, [disabled] {
 	pointer-events: auto !important;
+}
+
+.anvil-component[disabled] label {
+    cursor: not-allowed;
 }
 
 .runner .visible-false {
@@ -339,7 +360,7 @@ ul.linear-panel {
   padding: 7px 20px;
   background-color: #800;
   color: #fff;
-  z-index: 100;
+  z-index: 2000;
 
   display: none;
 }
@@ -388,6 +409,12 @@ ul.linear-panel {
 
 .runner .anvil-runtime-invisible {
 	visibility: hidden;
+}
+
+.form-control {
+	/* This used to come from Bootstrap */
+	width: 100%;
+	box-sizing: border-box;
 }
 
 .anvil-component.form-control, .anvil-component .form-control:not(select) {

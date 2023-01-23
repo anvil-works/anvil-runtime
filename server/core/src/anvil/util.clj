@@ -252,13 +252,18 @@
   `(-with-db-transaction ~spec ~isolation-level (fn [db#]
                                                   (let [~conn-sym db#]
                                                     ~@body))))
+(defonce db-locks (atom {})) ;; So we can look up locks by number if necessary
 
 (defn -with-try-db-lock [lock-name f]
   (let [lock-number (.hashCode (str lock-name))]
-    (jdbc/with-db-transaction [db-t db] ;; Note that we don't actually use this txn connection for anything except locking.
-      (if (:locked (first (jdbc/query db-t ["SELECT pg_try_advisory_xact_lock(?::bigint) as locked;" lock-number])))
-        (f)
-        (throw+ {:anvil/lock-unavailable lock-name})))))
+    (swap! db-locks assoc lock-number lock-name)
+    (try
+      (jdbc/with-db-transaction [db-t db]                   ;; Note that we don't actually use this txn connection for anything except locking.
+        (if (:locked (first (jdbc/query db-t ["SELECT pg_try_advisory_xact_lock(?::bigint) as locked;" lock-number])))
+          (f)
+          (throw+ {:anvil/lock-unavailable lock-name})))
+      (finally
+        (swap! db-locks dissoc lock-number)))))
 
 (defmacro with-try-db-lock [lock-name & body]
   `(-with-try-db-lock ~lock-name (fn [] ~@body)))
@@ -271,11 +276,15 @@
       (f)
       (throw (Exception. (str "Tried to upgrade from a shared to an exclusive lock for " lock-name))))
     (let [lock-number (.hashCode (str lock-name))]
-      (jdbc/with-db-transaction [db-t db]                   ;; Note that we don't actually use this txn connection for anything except locking.
-        (jdbc/query db-t [(if shared? "SELECT pg_advisory_xact_lock_shared(?::bigint)" "SELECT pg_advisory_xact_lock(?::bigint)")
-                          lock-number])
-        (binding [*db-locks* (assoc *db-locks* lock-name {:shared? true})]
-          (f))))))
+      (swap! db-locks assoc lock-number lock-name)
+      (try
+        (jdbc/with-db-transaction [db-t db]                 ;; Note that we don't actually use this txn connection for anything except locking.
+          (jdbc/query db-t [(if shared? "SELECT pg_advisory_xact_lock_shared(?::bigint)" "SELECT pg_advisory_xact_lock(?::bigint)")
+                            lock-number])
+          (binding [*db-locks* (assoc *db-locks* lock-name {:shared? true})]
+            (f)))
+        (finally
+          (swap! db-locks dissoc lock-number))))))
 
 (defmacro with-db-lock [lock-name shared? & body]
   `(-with-db-lock ~lock-name (boolean ~shared?) (fn [] ~@body)))

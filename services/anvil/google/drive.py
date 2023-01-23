@@ -114,17 +114,23 @@ class DriveItem(ApiItem):
         if item_name in ["title"]: # List of valid fields to set
             update_metadata(self, {item_name: value}, self.creds)
         else:
-            object.__setitem__(self, item_name, value)
+            raise KeyError(item_name)
 
+    #!defMethod(,dest_folder)!2: "Move the DriveItem from one folder to another" ["move"]
     def move(self, dest_folder):
         return update_metadata(self, { 'parents': [{ 'id': dest_folder.id, 'old_id': self['parents'][0]['id'] }]}, self.creds)
-
+    
+    #!defMethod(_)!2: "Move the DriveItem to the trash folder" ["trash"]
     def trash(self):
         ctor = type(self)
         return ctor(rpc.call("anvil.private.google.drive.trash", self.id, self.creds), self.creds)
 
+    #!defMethod(_)!2: "Delete the DriveItem (this cannot be undone)" ["delete"]
     def delete(self):
         rpc.call("anvil.private.google.drive.delete", self.id, self.creds)
+#!defAttr()!1: {name: "id", type: "string", description: "ID of the DriveItem"}
+#!defClass(anvil.google.drive,#DriveItem)!:
+
 
 
 class File(DriveItem,rpc.LazyMedia):
@@ -157,7 +163,7 @@ class File(DriveItem,rpc.LazyMedia):
         #else:
         #    raise Exception("Cannot set attribute '" + attr_name + "' of a Google Drive file")
 
-
+    #!defMethod(_)!2: "Get the contents of an object representing a Google Drive file. Native Google files such as Docs, Slides and Sheets must first be exported to an appropriate file type. All other file types support get_bytes()." ["get_bytes"]
     def get_bytes(self, revision=None):
 
         if revision:
@@ -177,7 +183,8 @@ class File(DriveItem,rpc.LazyMedia):
 
     def get_length(self):
         return int(self["fileSize"])
-
+    
+    #!defMethod(,content)!2: "Set the contents of an object representing a Google Drive file." ["set_bytes"]
     def set_bytes(self, content):
 
         # Use simple upload to replace content. Don't need to touch metadata.
@@ -192,6 +199,7 @@ class File(DriveItem,rpc.LazyMedia):
         self._obj["mimeType"] = content_type
         return File(r, self.creds)
 
+    #!defMethod(,media)!2: "Upload new contents to an existing File. Media must be a Media object." ["set_media"]
     def set_media(self, media):
         if not isinstance(media, anvil.Media):
             raise Exception("set_media() must be called with a Media object.")
@@ -209,8 +217,10 @@ class File(DriveItem,rpc.LazyMedia):
 
         return wrap_gen(_list_gen(request_page_fn), self.creds, FileRevision);
 
+
     def __str__(self):
         return "<Google Drive File: %s>" % self["title"]
+#!defClass(anvil.google.drive,#File, anvil.google.drive.DriveItem, anvil.Media)!:
 
 
 class FileRevision(ApiItem):
@@ -235,8 +245,8 @@ class Folder(DriveItem):
     # Bear in mind that these query strings must correspond exactly to the server
     # proxy whitelist, or the request will be refused for app files.
 
+    #!defMethod(generator[anvil.google.drive.File instance])!2: "List the files (not folders) in the Folder." ["list_files"]
     def list_files(self):
-
         def request_page_fn(page_token):
             return rpc.call("anvil.private.google.drive.list_files", 
                             self.id, 
@@ -244,9 +254,9 @@ class Folder(DriveItem):
                             page_token=page_token,
                             trashed=False,
                             mime_type='!application/vnd.google-apps.folder')
-
         return wrap_gen(_list_gen(request_page_fn), self.creds);
 
+    #!defMethod(generator[anvil.google.drive.Folder instance])!2: "List the folders (not files) in the Folder." ["list_folders"]
     def list_folders(self):
 
         def request_page_fn(page_token):
@@ -259,9 +269,11 @@ class Folder(DriveItem):
 
         return wrap_gen(_list_gen(request_page_fn), self.creds);
 
+    #!defMethod(anvil.google.drive.File instance,title)!2: "Get the File item by title. The title argument should be a string." ["get"]
     def get(self, title):
         return wrap_item(_query_single(self.id, self.creds, title=title, trashed=False), self.creds)
 
+    #!defMethod(anvil.google.drive.File instance,id)!2: "Get the File item by ID. The ID argument should be a string." ["get_by_id"]
     def get_by_id(self, id):
         if not isinstance(id, basestring):
             raise Exception("ID must be a string")
@@ -271,9 +283,11 @@ class Folder(DriveItem):
 
         return wrap_item(rpc.call("anvil.private.google.drive.get_file_by_id", self.id, id, self.creds), self.creds)
 
+    #!defMethod(,title)!2: "Create a new folder within the Folder." ["create_folder"]
     def create_folder(self, title):
         return create_item_simple(title, self, "application/vnd.google-apps.folder", self.creds)
 
+    #!defMethod(,title, [content_bytes=None], [content_type='text/plain'])!2: "Create a new file within the Folder." ["create_file"]
     def create_file(self, title, content_bytes = None, content_type = "text/plain"):
         if content_bytes:
             return create_item_multipart(title, self, content_bytes, self.creds, content_type=content_type)
@@ -282,6 +296,11 @@ class Folder(DriveItem):
 
     def __str__(self):
         return "<Google Drive Folder: %s>" % self["title"]
+#!defAttr()!1: {name: "folders", type: "list(anvil.google.drive.Folder instance)", description: "List of Folder items in the Folder"}
+#!defAttr()!1: {name: "files", type: "list(anvil.google.drive.File instance)", description: "List of File items in the Folder"}
+#!defMethod(_)!2: {anvil$helpLink: "/docs/integrations/google/google-drive#folders"} ["__init__"]
+#!defClass(anvil.google.drive,#Folder, anvil.google.drive.DriveItem)!:
+
 
 #####
 # Documentation
@@ -559,10 +578,19 @@ description: |
 #####
 # API methods
 #####
-
+#!defFunction(anvil.google.drive,_,[extra_scopes=])!2: 
+# {
+#   $doc: "Prompt the user to log in to their Google account and ask permission to access their Google Drive files.",
+#   anvil$helpLink: "/docs/integrations/google/google-drive#user-files"
+# } ["login"]
 def login(extra_scopes=[]):
     return anvil.google.auth.login(google_api_scopes + extra_scopes)
 
+#!defFunction(anvil.google.drive, anvil.google.drive.Folder instance)!2: 
+# {
+#   $doc: "Return the top-level folder containing all the files in the Users drive. anvil.google.drive.login() must be called first.",
+#   anvil$helpLink: "/docs/integrations/google/google-drive#user-files"
+# } ["get_user_files"]
 def get_user_files():
     return Folder(rpc.call("anvil.private.google.drive.get_user_files"), "google-user")
 

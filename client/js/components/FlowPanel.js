@@ -1,7 +1,9 @@
 "use strict";
 
 var PyDefUtils = require("PyDefUtils");
-/**
+import { isInvisibleComponent } from "./helpers";
+
+/*#
 id: flowpanel
 docs_url: /docs/client/components/containers#flowpanel
 title: FlowPanel
@@ -42,17 +44,18 @@ module.exports = (pyModule) => {
 
 
     pyModule["FlowPanel"] = PyDefUtils.mkComponentCls(pyModule, "FlowPanel", {
-        base: pyModule["Container"],
+        base: pyModule["ClassicContainer"],
 
         properties: PyDefUtils.assembleGroupProperties(/*!componentProps(FlowPanel)!1*/ ["appearance", "user data", "layout", "tooltip"], {
             align: /*!componentProp(FlowPanel)!1*/ {
                 name: "align",
                 important: true,
-                type: "string",
-                enum: ["left", "center", "right", "justify"],
+                type: "enum",
+                options: ["left", "center", "right", "justify"],
                 description: "Align this component's content",
                 defaultValue: new Sk.builtin.str("left"),
                 pyVal: true,
+                designerHint: 'align-horizontal',
                 set(s, e, v) {
                     v = v.toString();
                     const j = {
@@ -68,8 +71,8 @@ module.exports = (pyModule) => {
             spacing: /*!componentProp(FlowPanel)!1*/ {
                 name: "spacing",
                 description: "Space between components",
-                type: "string",
-                enum: ["none", "tiny", "small", "medium", "large", "huge"],
+                type: "enum",
+                options: ["none", "tiny", "small", "medium", "large", "huge"],
                 defaultValue: new Sk.builtin.str("medium"),
                 pyVal: true,
                 important: false,
@@ -136,47 +139,33 @@ module.exports = (pyModule) => {
 
             /*!defMethod(_,component,[index=],[width=],[expand=])!2*/ "Add a component to this panel. Optionally specify the position in the panel to add it, or the width to apply to components that can't self-size width-wise."
             $loc["add_component"] = PyDefUtils.funcWithKwargs(function (kwargs, self, component) {
-                pyModule["Container"]._check_no_parent(component);
+                pyModule["ClassicContainer"]._check_no_parent(component);
                 const { index: idx, expand = false } = kwargs;
-                let containerElement;
 
                 return Sk.misceval.chain(
-                    null,
-                    () => {
-                        if (component._anvil.metadata.invisible) {
-                            return;
+                    component.anvil$hooks.setupDom(),
+                    domNode => {
+                        if (isInvisibleComponent(component)) {
+                            return pyModule["ClassicContainer"]._doAddComponent(self, component);
                         }
                         const gutter = self._anvil.elements.gutter;
-                        const domNode = component._anvil.domNode;
-                        const visible = "visible" in component._anvil.propMap ? component._anvil.getProp("visible") : Sk.builtin.bool.true$;
+                        // TODO: How should components signal visibility to their parents?
+                        const visible = (component._anvil && ("visible" in component._anvil.propMap)) ? component._anvil.getProp("visible") : Sk.builtin.bool.true$;
                         const width = domNode.classList.contains("anvil-inlinable") ? "" : kwargs["width"] || "auto";
-                        [containerElement] = <ContainerElement visible={visible} width={width} expand={expand} />;
+                        const [containerElement] = <ContainerElement visible={visible} width={width} expand={expand} />;
                         containerElement.appendChild(domNode);
-                        if (typeof idx === "number") {
-                            if (idx < gutter.children.length) {
-                                gutter.insertBefore(containerElement, gutter.children[idx]);
-                                return;
-                            }
+                        if (typeof idx === "number" && idx < gutter.children.length) {
+                            gutter.insertBefore(containerElement, gutter.children[idx]);
                             // fall through
-                        } 
-                        gutter.appendChild(containerElement);
-                    },
-                    () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs),
-                    () => {
-                        if (typeof idx === "number") {
-                            const c = self._anvil.components.pop(); // pop off this new component (pushed on by super.add_component())
-                            self._anvil.components.splice(idx, 0, c);
+                        } else {
+                            gutter.appendChild(containerElement);
                         }
-
-                        const rmFn = component._anvil.parent.remove;
-                        component._anvil.parent.remove = () => {
-                            if (containerElement) {
+                        return pyModule["ClassicContainer"]._doAddComponent(self, component, kwargs, {
+                            detachDom() {
+                                $(domNode).detach();
                                 containerElement.remove();
-                            }
-                            return rmFn();
-                        };
-
-                        return Sk.builtin.none.none$;
+                            },
+                        });
                     }
                 );
             });

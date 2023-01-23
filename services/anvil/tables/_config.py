@@ -9,3 +9,7 @@ def get_client_config():
         return _config
     _config = anvil.server.call("anvil.private.get_client_config", "/runtime/services/tables.yml") or {}
     return _config
+
+def reset_config():
+    global _config
+    _config = None

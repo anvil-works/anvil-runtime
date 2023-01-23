@@ -67,8 +67,7 @@ class Table(BaseTable):
         return self._get_view(CASCADE, args, kws)
 
     def delete_all_rows(self):
-        return self.search().delete_all_rows()
-        # return anvil.server.call(PREFIX + "delete_all_rows", self._cap)
+        return anvil.server.call(PREFIX + "delete_all_rows", self._cap)
 
     def add_rows(self, rows):
         # rows can be an iterable of dicts

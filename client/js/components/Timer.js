@@ -2,7 +2,7 @@
 
 var PyDefUtils = require("PyDefUtils");
 
-/**
+/*#
 id: timer
 docs_url: /docs/client/components/basic#timer
 title: Timer
@@ -55,7 +55,7 @@ module.exports = (pyModule) => {
         }),
 
         locals($loc) {
-            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Component"], (self) => {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicComponent"], (self) => {
                 self._anvil.metadata = { invisible: true };
 
                 self._anvil.clearTimer = () => {

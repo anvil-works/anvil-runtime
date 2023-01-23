@@ -3,7 +3,7 @@
 import { setHandled } from "./events";
 var PyDefUtils = require("PyDefUtils");
 
-/**
+/*#
 id: radiobutton
 docs_url: /docs/client/components/basic#radiobutton
 title: RadioButton
@@ -156,7 +156,7 @@ module.exports = (pyModule) => {
         },
 
         locals($loc) {
-            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Component"], (self) => {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicComponent"], (self) => {
                 const clicked = PyDefUtils.raiseEventOrSuspend.bind(null, {}, self, "clicked");
                 const change = PyDefUtils.raiseEventOrSuspend.bind(null, {}, self, "change");
                 self._anvil.element.on("change", (e) => {

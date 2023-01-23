@@ -144,31 +144,32 @@
     (locking this
       (when-not (:deleted? cached-state)
         (metrics/inc! :api/runtime-session-swap-total)
-        (loop []
-          (or (try+
-                (jdbc/with-db-transaction [db-c util/db {:isolation :repeatable-read}]
-                  (let [[found-in-db? old-v] (if-let [s (:state (first (jdbc/query db-c ["SELECT state FROM runtime_sessions WHERE session_id=?" id])))]
-                                               [true (edn/read-string edn-options s)]
-                                               [false (:val @cached-state)])
-                        new-v (f old-v)
-                        new-v-str (pr-str new-v)
-                        now (System/currentTimeMillis)]
-                    (when-not (and found-in-db?
-                                   (or (= new-v old-v)
-                                       (= new-v ::no-change)))
-                      ;; Check it's still round-trippable *before* we write it back to the DB
-                      (assert (-edn-roundtrip-ok? new-v new-v-str))
-                      (metrics/inc! :api/runtime-session-update-total)
-                      (when-not (seq (jdbc/query db-c ["UPDATE runtime_sessions SET state=?, last_seen=NOW() WHERE session_id=? RETURNING 1" new-v-str id]))
-                        (jdbc/execute! db-c ["INSERT INTO runtime_sessions (session_id,state,last_seen) VALUES (?,?,NOW())" id new-v-str]))
-                      (reset! cached-state {:db-last-seen now, :last-read now, :val new-v})
-                      (swap! ephemeral-cache assoc ::dirty true)) ;; This session has been modified since it was loaded.
-                    new-v))
-                (catch #(and (instance? SQLException %) (= "40001" (.getSQLState %))) _e
-                  ;; Retry on conflict (can't recur from a (catch) block, so we do this silly (or) thing.)
-                  nil))
-              (recur)))
-        (log/trace "Wrote session" (get-id this) "to DB"))))
+        (let [new-val (loop []
+                        (or (try+
+                              (jdbc/with-db-transaction [db-c util/db {:isolation :repeatable-read}]
+                                (let [[found-in-db? old-v] (if-let [s (:state (first (jdbc/query db-c ["SELECT state FROM runtime_sessions WHERE session_id=?" id])))]
+                                                             [true (edn/read-string edn-options s)]
+                                                             [false (:val @cached-state)])
+                                      new-v (f old-v)
+                                      new-v-str (pr-str new-v)
+                                      now (System/currentTimeMillis)]
+                                  (when-not (and found-in-db?
+                                                 (or (= new-v old-v)
+                                                     (= new-v ::no-change)))
+                                    ;; Check it's still round-trippable *before* we write it back to the DB
+                                    (assert (-edn-roundtrip-ok? new-v new-v-str))
+                                    (metrics/inc! :api/runtime-session-update-total)
+                                    (when-not (seq (jdbc/query db-c ["UPDATE runtime_sessions SET state=?, last_seen=NOW() WHERE session_id=? RETURNING 1" new-v-str id]))
+                                      (jdbc/execute! db-c ["INSERT INTO runtime_sessions (session_id,state,last_seen) VALUES (?,?,NOW())" id new-v-str]))
+                                    (reset! cached-state {:db-last-seen now, :last-read now, :val new-v})
+                                    (swap! ephemeral-cache assoc ::dirty true)) ;; This session has been modified since it was loaded.
+                                  new-v))
+                              (catch #(and (instance? SQLException %) (= "40001" (.getSQLState %))) _e
+                                ;; Retry on conflict (can't recur from a (catch) block, so we do this silly (or) thing.)
+                                nil))
+                            (recur)))]
+          (log/trace "Wrote session" (get-id this) "to DB")
+          new-val))))
   (swap [this f var1] (.swap this #(f % var1)))
   (swap [this f var1 var2] (.swap this #(f % var1 var2)))
   (swap [this f var1 var2 more] (.swap this #(apply f % var1 var2 more)))

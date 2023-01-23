@@ -14,7 +14,7 @@
 
 (def shutdown-hook (Thread. ^Runnable (fn [] (reset! shutting-down? true))))
 
-(defn launch-downlink! [downlink-key server-host server-port]
+(defn launch-downlink! [downlink-key server-host server-port worker-timeout-seconds]
   (.removeShutdownHook (Runtime/getRuntime) shutdown-hook)
   (.addShutdownHook (Runtime/getRuntime) shutdown-hook)
 
@@ -28,6 +28,7 @@
                        (.put env "DOWNLINK_KEY" downlink-key)
                        (.put env "ENABLE_PDF_RENDER" "1")
                        (.put env "DOWNLINK_CAN_PERSIST" "1")
+                       (.put env "DOWNLINK_WORKER_TIMEOUT" (str worker-timeout-seconds))
                        (.redirectError pb ProcessBuilder$Redirect/INHERIT)
                        (.redirectOutput pb ProcessBuilder$Redirect/INHERIT)
                        (.waitFor (.start pb)))
@@ -89,10 +90,10 @@
    (fn [uplink-key]
      (cond
        (when-let [k (conf/get-uplink-key)] (= (sha-256 uplink-key) (sha-256 k)))
-       [(app-data/get-app-info-insecure (conf/get-main-app-id)) (get-default-environment) :uplink]
+       [(app-data/get-app-info-insecure (conf/get-main-app-id)) (get-default-environment) :server_uplink]
 
        (when-let [k (conf/get-client-uplink-key)] (= (sha-256 uplink-key) (sha-256 k)))
-       [(app-data/get-app-info-insecure (conf/get-main-app-id)) (get-default-environment) :client]))
+       [(app-data/get-app-info-insecure (conf/get-main-app-id)) (get-default-environment) :client_uplink]))
 
    :on-uplink-connect
    (fn [connection]

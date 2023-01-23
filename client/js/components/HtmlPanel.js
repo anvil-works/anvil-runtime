@@ -1,14 +1,18 @@
 "use strict";
 
+import {s_add_component, s_clear} from "../runner/py-util";
+
 var PyDefUtils = require("PyDefUtils");
+import { isInvisibleComponent } from "./helpers";
+import {Slot} from "../runner/python-objects";
+import {chainOrSuspend, pyCallOrSuspend, pyStr, retryOptionalSuspensionOrThrow} from "../@Sk";
 
 module.exports = (pyModule) => {
 
 
-    const inDesigner = window.anvilInDesigner;
 
     pyModule["HtmlPanel"] = pyModule["HtmlTemplate"] = PyDefUtils.mkComponentCls(pyModule, "HtmlTemplate", {
-        base: pyModule["Container"],
+        base: pyModule["ClassicContainer"],
 
         properties: PyDefUtils.assembleGroupProperties(/*!componentProps(HtmlTemplate)!1*/ ["user data", "tooltip", "appearance"], {
             html: /*!componentProp(HtmlTemplate)!1*/{
@@ -22,8 +26,8 @@ module.exports = (pyModule) => {
                 initialize: true,
                 set(s, e, v) {
                     const components = s._anvil.components;
-                    components.forEach((c) => {
-                        c.component._anvil.element.detach();
+                    components.forEach(({component}) => {
+                        $(component.anvil$hooks.domElement).detach();
                     });
                     v = v.toString();
                     const m = v.match(/^@theme:(.*)$/);
@@ -61,7 +65,14 @@ module.exports = (pyModule) => {
                     outer.querySelectorAll("[anvil-slot]").forEach((element) => {
                         element.classList.add("anvil-inline-container"); // is this right?
                         const slotName = element.getAttribute("anvil-slot");
-                        slots[slotName] = slots[slotName] || { element, hide_if_empty: [], show_if_empty: [], components: [] };
+                        if (slotName) {
+                            slots[slotName] = slots[slotName] || {
+                                element,
+                                hide_if_empty: [],
+                                show_if_empty: [],
+                                components: []
+                            };
+                        }
                     });
 
                     outer.querySelectorAll("[anvil-slot-repeat]").forEach((element) => {
@@ -86,13 +97,51 @@ module.exports = (pyModule) => {
                         }
                     });
 
+                    const savedSlotComponents = new Map/*<string,{components: Component[], pySlot: Slot}>*/();
+
+                    // 1. Remove all components currently in pyLayoutSlots
+                    for (const [pyName, pySlot] of s._anvil.pyLayoutSlots?.$items() || []) {
+                        const savedComponents = [...pySlot._slotState.components];
+                        const clear = pySlot.tp$getattr(s_clear);
+                        Sk.misceval.callsimArray(clear); // TODO suspend.
+                        savedSlotComponents.set(pyName.toString(), {
+                            components: savedComponents,
+                            pySlot,
+                        });
+                    }
+
+                    // 2. Nuke pyLayoutSlots
+                    s._anvil.pyLayoutSlots = new Sk.builtin.dict();
+
                     components.forEach((c) => {
                         const component = c.component;
                         const removeFn = addComponentToDom(s, component, c.layoutProperties["slot"]);
-                        if (component.parent) {
-                            component.parent.removeFn = removeFn;
-                        }
+                        component.anvilComponent$setParent(s, removeFn);
                     });
+
+                    // 3. Rebuild pyLayoutSlots
+                    const slotsSoFar = [];
+                    for (const [name, htmlSlot] of Object.entries(s._anvil.slots)) {
+                        const oldSlot = savedSlotComponents.get(name);
+                        const slot = oldSlot?.pySlot || new Slot(
+                            () => s,
+                            0,
+                            {slot: name},
+                            false, // TODO: Infer oneComponent from HTML slot attributes
+                            undefined, // TODO: Infer templates from HTML slot
+                        );
+
+                        // The following lines of code need, more than any other lines of code, to be in this order.
+
+                        s._anvil.pyLayoutSlots.mp$ass_subscript(new pyStr(name), slot);
+                        slot._slotState.earlierSlots = [...slotsSoFar];
+                        slotsSoFar.push(slot);
+
+                        const addComponent = slot.tp$getattr(s_add_component);
+                        for (const component of oldSlot?.components || []) {
+                            Sk.misceval.callsimArray(addComponent, [component]);
+                        }
+                    }
                 },
             },
         }),
@@ -113,12 +162,14 @@ module.exports = (pyModule) => {
         ],
 
         locals($loc) {
-            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Container"], (self) => {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicContainer"], (self) => {
                 // Store this on self so we can call it from DesignHtmlPanel
                 self._anvil.addComponentToDom = addComponentToDom;
 
                 self._anvil.slots || (self._anvil.slots = {});
                 self._anvil.scripts || (self._anvil.scripts = []);
+
+                self._anvil.pyLayoutSlots ||= new Sk.builtin.dict();
 
                 self._anvil.element.on("_anvil-call", (e, resolve, reject, fn, ...args) => {
                     const err = (msg) => {
@@ -152,7 +203,9 @@ module.exports = (pyModule) => {
                             let jsR = undefined;
                             try {
                                 jsR = PyDefUtils.remapToJsOrWrap(r);
-                            } catch (e) {}
+                            } catch (e) {
+                                // ignore - throw below
+                            }
 
                             if (jsR === undefined) {
                                 err("Could not convert return value from function '" + fn + "' to JavaScript. Return value was of type '" + r.tp$name + "'");
@@ -213,30 +266,26 @@ module.exports = (pyModule) => {
 
             });
 
+            $loc["slots"] = new Sk.builtin.property(
+                new Sk.builtin.func((self) => {
+                    return self._anvil.pyLayoutSlots;
+                })
+            );
 
             /*!defMethod(_,component,[slot="default"])!2*/ "Add a component to the named slot of this HTML templated panel. If no slot is specified, the 'default' slot will be used."
             $loc["add_component"] = new PyDefUtils.funcWithKwargs(function (kwargs, self, component) {
-                pyModule["Container"]._check_no_parent(component);
+                pyModule["ClassicContainer"]._check_no_parent(component);
 
-                let removeFn;
                 return Sk.misceval.chain(
-                    undefined,
+                    component.anvil$hooks.setupDom(),
                     () => {
-                        if (component._anvil.metadata.invisible) {
-                            return;
+                        if (isInvisibleComponent(component)) {
+                            return pyModule["ClassicContainer"]._doAddComponent(self, component);
                         }
-                        removeFn = addComponentToDom(self, component, kwargs["slot"]);
-                    },
-                    () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs),
-                    () => {
-                        let rmFn = component._anvil.parent.remove;
-                        component._anvil.parent.remove = () => {
-                            if (removeFn) removeFn();
-                            return rmFn();
-                        };
-                        return Sk.builtin.none.none$;
-                    }
-                );
+                        const detachDom = addComponentToDom(self, component, kwargs["slot"]);
+
+                        return pyModule["ClassicContainer"]._doAddComponent(self, component, kwargs, { detachDom });
+                    });
             });
 
             const removeFromParentStr = new Sk.builtin.str("remove_from_parent");
@@ -265,7 +314,8 @@ module.exports = (pyModule) => {
 
     // Returns removeFn
     function addComponentToDom(self, pyComponent, slotName) {
-        const celt = pyComponent._anvil.domNode;
+        const celt = pyComponent.anvil$hooks.domElement;
+        const isDropzone = celt.hasAttribute("anvil-dropzone");
 
         const delEmptyMarkers = (slot, has_components) => {
             slot.show_if_empty.forEach((elt) => {
@@ -281,7 +331,7 @@ module.exports = (pyModule) => {
 
         if (slot) {
             const slotElt = slot.element;
-            if (!slot.components.length) {
+            if (!slot.components.length && !isDropzone) {
                 // we only need to do this if we are an empty slot
                 delEmptyMarkers(slot, true);
             }
@@ -294,7 +344,7 @@ module.exports = (pyModule) => {
                 const dropZone = s_copy.querySelector("[anvil-slot]");
                 if (dropZone) {
                     dropZone.appendChild(celt);
-                    if (inDesigner) {
+                    if (ANVIL_IN_DESIGNER) {
                         // the designer users this
                         $(dropZone).data("anvil-slot-repeat-parent", $(s_copy));
                     }
@@ -313,6 +363,7 @@ module.exports = (pyModule) => {
             } else {
                 slotElt.appendChild(celt);
                 return () => {
+                    celt.remove();
                     slot.components = slot.components.filter((c) => c !== pyComponent);
                     if (!slot.components.length) {
                         delEmptyMarkers(slot, false);
@@ -358,7 +409,7 @@ if (!("isConnected" in Node.prototype)) {
 // this is the official polyfill from MDN - remove this when we stop supporting IE
 (function (arr) {
     arr.forEach(function (item) {
-      if (item.hasOwnProperty('remove')) {
+      if (Object.prototype.hasOwnProperty.call(item, 'remove')) {
         return;
       }
       Object.defineProperty(item, 'remove', {

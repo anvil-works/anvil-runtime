@@ -12,6 +12,7 @@
             [anvil.util :as util]
             [anvil.core.worker-pool :as worker-pool]
             [anvil.dispatcher.core :as dispatcher]
+            [medley.core :refer [indexed]]
             [anvil.dispatcher.types :as types])
   (:import (anvil.dispatcher.types Capability)))
 
@@ -158,35 +159,31 @@
     (let [[creds spreadsheet-id access [sheet-title _sheet-id]] (types/unwrap-capability capability ["_" "google-sheets"] 4)
           range-str (str (escape-sheet-title sheet-title) "!1:" (+ ROWS-PAGE-SIZE 1))
           resp (request {:url (str "https://sheets.googleapis.com/v4/spreadsheets/" spreadsheet-id "/values/" (util/real-actual-genuine-url-encoder range-str))} creds)
-
           [fields & rows] (get resp "values")
-
           done? (< (count rows) ROWS-PAGE-SIZE)
-
-          rows (filter (fn [vals]
-                         (let [val-map (zipmap (map to-old-field-name fields) vals)]
-                           (every? (fn [[k v]] (= (str (get val-map (to-old-field-name (name k)))) (str v))) query-map))) rows)]
-
-      [fields (map-indexed (fn [i vals]
-                             {:row  (+ i 2)
-                              :data vals}) rows) (+ ROWS-PAGE-SIZE 2) done?])))
+          indexed-rows (filter (fn [[_i vals]]
+                                 (let [val-map (zipmap (map to-old-field-name fields) vals)]
+                                   (every? (fn [[q v]]
+                                             (= (str (get val-map (to-old-field-name (name q)))) (str v)))
+                                           query-map)))
+                               (indexed rows))]
+      [fields (map (fn [[i vals]]
+                     {:row  (+ i 2)
+                      :data vals}) indexed-rows) (+ ROWS-PAGE-SIZE 2) done?])))
 
 (defn list-more-rows-v4 [_kwargs capability query-list start]
   (worker-pool/with-expanding-threadpool-when-slow
     (let [[creds spreadsheet-id access [sheet-title _sheet-id]] (types/unwrap-capability capability ["_" "google-sheets"] 4)
           range-str (str (escape-sheet-title sheet-title) "!" start ":" (+ start ROWS-PAGE-SIZE))
           resp (request {:url (str "https://sheets.googleapis.com/v4/spreadsheets/" spreadsheet-id "/values/" (util/real-actual-genuine-url-encoder range-str))} creds)
-
           rows (get resp "values")
-
           done? (< (count rows) ROWS-PAGE-SIZE)
-
-          rows (filter (fn [vals]
-                         (every? (fn [[q v]] (or (nil? q) (= q v))) (map vector query-list vals))) rows)]
-
-      [(map-indexed (fn [i vals]
-                      {:row  (+ i 2 start)
-                       :data vals}) rows) (+ start ROWS-PAGE-SIZE 1) done?])))
+          indexed-rows (filter (fn [[_i vals]]
+                                 (every? (fn [[q v]] (or (nil? q) (= q v))) (map vector query-list vals)))
+                               (indexed rows))]
+      [(map (fn [[i vals]]
+              {:row  (+ i start)
+               :data vals}) indexed-rows) (+ start ROWS-PAGE-SIZE 1) done?])))
 
 (defn add-row [_kwargs list-feed-url values creds]
   (let [wl-access (get-whitelist-access ::worksheet-list-feed-url list-feed-url creds)
@@ -274,7 +271,7 @@
 (defn update-cell-v4 [_kwargs capability value]
   (let [[creds spreadsheet-id access [sheet-title _sheet-id] row col] (types/unwrap-capability capability ["_" "google-sheets"] 6)
         _ (ensure-whitelist-access-ok (keyword access) true "update cell")
-        range (str col row)
+        range (str (escape-sheet-title sheet-title) "!" col row)
         params "?valueInputOption=USER_ENTERED&includeValuesInResponse=true"
         resp (request {:url (str "https://sheets.googleapis.com/v4/spreadsheets/" spreadsheet-id "/values/" range params)
                        :method :put

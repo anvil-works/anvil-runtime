@@ -31,7 +31,10 @@ def enable_debug_logging():
 
 MAX_REMOTE_METADATA_AGE = 5
 DOWNLOAD_TIMEOUT = 5
-FILES_TABLE = getattr(app_tables, "files") # TODO: Get table name from server config
+try:
+    FILES_TABLE = getattr(app_tables, "files") # TODO: Get table name from server config
+except AttributeError:
+    raise Exception("Files table not found. Please add one through the Data Files page of the Anvil Editor.")
 
 class Files(object):
 
@@ -109,7 +112,7 @@ class Files(object):
         db.execute("UPDATE local_files SET status='PRESENT', last_touched=?, local_file_version=?, remote_file_version=? WHERE table_id=? AND path=?", [time(), new_file_version, new_file_version, self._table_id, path])
         db.commit()
 
-
+    #!defMethod(string)!2: "Return the path of a file" ["__getitem__"]
     def __getitem__(self, path):
         db = self._get_db()
         cur = db.cursor()
@@ -210,7 +213,8 @@ class Files(object):
             logger.debug("")
 
             return local_path
-
+    
+    #!defMethod(anvil.files.EditingContextManager instance, path)!2: "Edit a file. To ensure the proper acquisition and release of the file, use the `editing`` function in a `with` statement e.g. `with data_files.editing('test.txt') as file:`" ["editing"]
     def editing(self, path):
         local_path = self[path]
         db = self._get_db()
@@ -226,12 +230,24 @@ class Files(object):
 
         return Editing()
 
+    #!defMethod(anvil.files.OpenContextManager instance, path, [mode="r"])!2: "The open() function opens the file (if possible) and returns the corresponding file object." ["open"]
     @contextmanager
     def open(self, path, mode='r'):
         with open(data_files[path], mode) as f:
             yield f
-        if "w" in mode or "a" in mode or "+" in mode or "x":
+        if "w" in mode or "a" in mode or "+" in mode or "x" in mode:
             self.upload(self._get_db(), path)
 
+#!defClass(anvil.files,%Files)!:
+
+#!defMethod(string)!2: "Begin editing the file." ["__enter__"]
+#!defMethod(_)!2: "End editing the file, uploading its new contents." ["__exit__"]
+#!defClassNoConstructor(anvil.files,#%EditingContextManager)!1: "<a href='https://docs.python.org/3/library/contextlib.html#contextlib.contextmanager' target='_blank'>Context manager</a> for editing data files."
+
+#!defMethod(File object)!2: "Open the file." ["__enter__"]
+#!defMethod(_)!2: "Close the file, uploading its contents if it was opened for writing or appending." ["__exit__"]
+#!defClassNoConstructor(anvil.files,#%OpenContextManager)!1: "<a href='https://docs.python.org/3/library/contextlib.html#contextlib.contextmanager' target='_blank'>Context manager</a> for opening data files."
+
+#!defModuleAttr(anvil.files)!1: {name: "data_files", pyType: "anvil.files.Files instance", description: "Access Data Files from the <a href='https://docs.python.org/3/library/contextlib.html#contextlib.contextmanager' target='_blank'>Data Files Service</a>. To access a file stored in the Data Files Service use square brackets containing the path of the desired file - `data_files['<file_path>']`."}
 data_files = Files()
 

@@ -1,8 +1,11 @@
 "use strict";
 
 var PyDefUtils = require("PyDefUtils");
+const {
+    misceval: { isTrue },
+} = Sk;
 
-/**
+/*#
 id: label
 docs_url: /docs/client/components/basic#label
 title: Label
@@ -22,6 +25,7 @@ module.exports = (pyModule) => {
                 dataBindingProp: true,
                 multiline: true,
                 suggested: true,
+                inlineEditElement: "text",
             },
         }),
 
@@ -30,7 +34,7 @@ module.exports = (pyModule) => {
         element: (props) => (
             <PyDefUtils.OuterElement className="anvil-label anvil-inlinable" {...props}>
                 <PyDefUtils.IconComponent side="left" {...props} />
-                <span refName="text" className="label-text">
+                <span refName="text" className="label-text" style={isTrue(props.underline) ? "text-decoration: underline;" : ""}>
                     {Sk.builtin.checkNone(props.text) ? "" : props.text.toString()}
                 </span>
                 <PyDefUtils.IconComponent side="right" {...props} />

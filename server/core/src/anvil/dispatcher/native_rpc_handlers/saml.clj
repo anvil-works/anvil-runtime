@@ -19,6 +19,8 @@
            (org.bouncycastle.openssl PEMParser)
            (org.bouncycastle.openssl.jcajce JcaPEMKeyConverter)))
 
+(clj-logging-config.log4j/set-logger! :level :debug)
+
 (defn generate-key-pair []
   (-> (doto (KeyPairGenerator/getInstance "RSA")
         (.initialize 4096))
@@ -74,6 +76,7 @@
     [private-key certificate]))
 
 (defn get-sp-entity-ids [app-info]
+  (log/debug "Getting SP entity ID for app" (:id app-info))
   {:app    (str conf/runtime-common-url "/_/saml-app/" (util/sha-256 (:id app-info)))
    :shared (str conf/runtime-common-url "/_/saml-org/" (util/sha-256 (str (or (:user_organisation app-info) (:id app-info)))))})
 

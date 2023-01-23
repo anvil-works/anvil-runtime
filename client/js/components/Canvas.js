@@ -1,8 +1,9 @@
 "use strict";
 
 var PyDefUtils = require("PyDefUtils");
+const { ResizeObserverPolyfill } = require("../utils");
 
-/**
+/*#
 id: canvas
 docs_url: /docs/client/components/canvas
 title: Canvas
@@ -260,31 +261,42 @@ module.exports = function(pyModule) {
         },
 
         locals($loc) {
-            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Component"], (self) => {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicComponent"], (self) => {
                 let resetContextTimeout = null;
+                let initObservation = false;
 
                 const resizeHandler = () => {
-                    if (resetContextTimeout) {
-                        clearTimeout(resetContextTimeout);
-                        resetContextTimeout = null;
+                    if (initObservation) {
+                        // this can fire asynchronously on .observe()
+                        // which we don't want - otherwise the anvil events go: reset, form_show, reset
+                        // and our docs say that the form_show is valid for drawing the initial canvas
+                        initObservation = false;
+                        return;
                     }
-
+                    clearTimeout(resetContextTimeout);
                     if (self._anvil.onPage) {
-                        resetContextTimeout = setTimeout(resetContext.bind(null, self), 50);
+                        resetContextTimeout = setTimeout(() => resetContext(self), 50);
                     }
                 };
+
+                const resizeObserver = new ResizeObserverPolyfill(resizeHandler);
 
                 self._anvil.gradients = {};
                 self._anvil.pageEvents = {
                     add() {
-                        $(window).on("resize", resizeHandler);
+                        initObservation = true;
+                        resizeObserver.observe(self._anvil.domNode);
+                        setTimeout(() => {
+                            // just in case there isn't an initial async fire of resizeHandler
+                            initObservation = false;
+                        });
                         resetContext(self);
                     },
                     show() {
                         resetContext(self);
                     },
                     remove() {
-                        $(window).off("resize", resizeHandler);
+                        resizeObserver.disconnect();
                     },
                 };
 
@@ -292,7 +304,9 @@ module.exports = function(pyModule) {
 
                 PyDefUtils.setupDefaultMouseEvents(self);
 
-                PyDefUtils.addHeightHandle(self._anvil);
+                if (ANVIL_IN_DESIGNER) {
+                    PyDefUtils.addHeightHandle(self._anvil);
+                }
             });
 
             /*!defMethod(_)!2*/ ("Get the pixel width of this canvas.");
@@ -716,6 +730,7 @@ module.exports = function(pyModule) {
                         return Sk.builtin.none.none$;
                     });
 
+                    /*!defMethod(_,offset,color)!2*/ ("Creates a new color stop on the gradient object. The offset argument is a number between 0 and 1, and defines the relative position of the color in the gradient. The color argument must be a string representing a CSS color.");
                     $loc["add_color_stop"] = new Sk.builtin.func(function (self, offset, color) {
                         self._anvil.canvasGradient.addColorStop(Sk.ffi.remapToJs(offset), Sk.ffi.remapToJs(color));
                         return Sk.builtin.none.none$;
@@ -771,3 +786,6 @@ module.exports = function(pyModule) {
  *             create_radial_gradient
  *  - Attributes: stroke_style, fill_style, shadow_offset_x, shadow_offset_y, shadow_blur, shadow_color, global_alpha, line_width, line_cap, line_join, miter_limit, font, text_align, text_baseline
  */
+
+
+

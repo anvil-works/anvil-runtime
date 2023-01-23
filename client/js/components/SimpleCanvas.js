@@ -2,7 +2,7 @@
 
 var PyDefUtils = require("PyDefUtils");
 
-/**
+/*#
 id: simplecanvas
 feature: simpleCanvas
 title: SimpleCanvas

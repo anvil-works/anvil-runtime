@@ -206,14 +206,15 @@ else:
                 mfa_error = None
                 mfa_methods['twilio-verify'] = None
                 selected_mfa_type = 'twilio-verify'
+            elif m == 'fido':
+                # fido is a single step process - we're done
+                return mfa_methods['fido'], password_box.text
 
             elif selected_mfa_type == 'totp':
                 if validate_totp_code(mfa_methods['totp'], totp_box.text):
                     return mfa_methods['totp'], password_box.text
                 else:
                     mfa_error = "Incorrect code entered. Please try again."
-            elif selected_mfa_type == 'fido':
-                return mfa_methods['fido'], password_box.text
             elif selected_mfa_type == 'twilio-verify':
                 mfa_error = None
                 if m == 'resend-sms':

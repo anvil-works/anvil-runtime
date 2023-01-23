@@ -1,9 +1,9 @@
 "use strict";
 
 var PyDefUtils = require("PyDefUtils");
-var RSVP = require("rsvp");
+import { defer } from "../utils";
 
-/**
+/*#
 id: youtubevideo
 docs_url: /docs/client/components/basic#youtube-video
 title: YouTubeVideo
@@ -21,7 +21,6 @@ module.exports = (pyModule) => {
 
 
     const {isTrue} = Sk.misceval;
-    const inDesigner = window.anvilInDesigner;
     let YTLoadExecuted = false;
     const loadYT = async () => {
         try {
@@ -187,20 +186,20 @@ module.exports = (pyModule) => {
 
         element: (props) => (
             <PyDefUtils.OuterElement style="min-height: 34px" className="anvil-youtube-video" {...props}>
-                <iframe refName="iframe" enablejsapi={true} frameborder="0" allowfullscreen="" style="height: 100%; width: 100%;"></iframe>
+                <iframe refName="iframe" enablejsapi={true} frameborder="0" allowfullscreen="" allow="autoplay" style="height: 100%; width: 100%;"></iframe>
             </PyDefUtils.OuterElement>
         ),
 
         locals($loc) {
-            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Component"], (self) => {
-                self._anvil.playerDefer = RSVP.defer();
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicComponent"], (self) => {
+                self._anvil.playerDefer = defer();
                 self._anvil.player = null;
                 update(self);
 
-                if (!inDesigner) {
+                if (!ANVIL_IN_DESIGNER) {
                     setTimeout(function load() {
                         if (window.YT && window.YT.Player) {
-                            self._anvil.player = new YT.Player(self._anvil.elements.iframe, {
+                            self._anvil.player = new window.YT.Player(self._anvil.elements.iframe, {
                                 events: {
                                     onReady() {
                                         if (isTrue(self._anvil.getProp(["mute"]))) {
@@ -247,21 +246,11 @@ module.exports = (pyModule) => {
 
 
     function update(self) {
-        var p = function(propname) {
-            var v = self._anvil.props[propname];
-            if (v === undefined) {
-                return undefined;
-            } else {
-                return Sk.ffi.remapToJs(v);
-            }
-        };
-        var np = function(propname) { return p(propname) ? "1" : "0"; };
-
         function YouTubeGetID(url) {
-            var ID = '';
-            url = url.replace(/(>|<)/gi,'').split(/(vi\/|v=|\/v\/|youtu\.be\/|\/embed\/)/);
-            if(url[2] !== undefined) {
-                ID = url[2].split(/[^0-9a-z_\-]/i);
+            let ID = "";
+            url = url.replace(/(>|<)/gi, "").split(/(vi\/|v=|\/v\/|youtu\.be\/|\/embed\/)/);
+            if (url[2] !== undefined) {
+                ID = url[2].split(/[^0-9a-z_-]/i);
                 ID = ID[0];
             } else {
                 ID = url;
@@ -269,12 +258,23 @@ module.exports = (pyModule) => {
             return ID;
         }
 
-        var vid = YouTubeGetID(p("youtube_id"));
+        const VideoID = encodeURIComponent(YouTubeGetID(self._anvil.getProp("youtube_id").toString()));
 
-        // If we want to loop, we must also set the 'playlist' parameter to the ID of the video. See https://developers.google.com/youtube/player_parameters?hl=en
-        self._anvil.elements.iframe.setAttribute("src", "https://www.youtube.com/embed/" + encodeURIComponent(vid) +
-                                                       "?rel=0&enablejsapi=1&autoplay=" + np("autoplay") + "&loop=" + np("loop") + (p("loop") ? ("&playlist=" + encodeURIComponent(p("youtube_id"))) : ""));
-    };
+        let src = "https://www.youtube.com/embed/" + VideoID + "?rel=0&enablejsapi=1";
+        if (isTrue(self._anvil.getProp("autoplay"))) {
+            src += "&autoplay=1";
+        }
+        if (isTrue(self._anvil.getProp("mute"))) {
+            // set this now since autoplay is unlikely to work if we don't set mute to be true
+            src += "&mute=1";
+        }
+        if (isTrue(self._anvil.getProp("loop"))) {
+            src += "&loop=1";
+            // If we want to loop, we must also set the 'playlist' parameter to the ID of the video. See https://developers.google.com/youtube/player_parameters?hl=en
+            src += "&playlist=" + VideoID;
+        }
+        self._anvil.elements.iframe.setAttribute("src", src);
+    }
 
 
     let translateState = (state) => {
@@ -293,7 +293,7 @@ module.exports = (pyModule) => {
                 return "CUED";
             default:
                 return "UNKNOWN";
-        };
+        }
     };
 
 };

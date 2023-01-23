@@ -24,11 +24,7 @@ setup(
     # the version across setup.py and the project code, see
     # https://packaging.python.org/en/latest/single_source_version.html
 
-    version='0.3.42', # TODO SEE BELOW
-    # TODO ANNOUNCEMENT REQUIRED ON NEXT BUMP
-    # naive datetimes created in anvil uplink code will be given an offset for the local timezone when serialized
-    # previously naive datetimes were always assumed to be UTC
-    # see _server.py line 800
+    version='0.4.1',
 
     description='The Anvil server uplink library',
     long_description=long_description,

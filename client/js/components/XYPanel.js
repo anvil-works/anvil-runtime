@@ -1,8 +1,9 @@
 "use strict";
 
 var PyDefUtils = require("PyDefUtils");
+import { isInvisibleComponent } from "./helpers";
 
-/**
+/*#
 id: xypanel
 docs_url: /docs/client/components/containers#xypanel
 title: XY Panel
@@ -29,7 +30,7 @@ module.exports = (pyModule) => {
     let panelId = 0;
 
     pyModule["XYPanel"] = PyDefUtils.mkComponentCls(pyModule, "XYPanel", {
-        base: pyModule["Container"],
+        base: pyModule["ClassicContainer"],
 
         properties: PyDefUtils.assembleGroupProperties(/*!componentProps(XYPanel)!1*/ ["layout", "height", "appearance", "align", "tooltip", "user data"], {
             height: {
@@ -101,7 +102,7 @@ module.exports = (pyModule) => {
         },
 
         locals($loc) {
-            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Container"], (self) => {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicContainer"], (self) => {
                 // updateHatching is designer only;
                 self._anvil.updateHatching = () => {};
                 self._anvil.panelId = panelId++;
@@ -109,20 +110,20 @@ module.exports = (pyModule) => {
 
             /*!defMethod(_,component,[x=0],[y=0],[width=None])!2*/ "Add a component to this XYPanel, at the specified coordinates. If the component's width is not specified, uses the component's default width."
             $loc["add_component"] = PyDefUtils.funcWithKwargs(function (kwargs, self, component) {
-                pyModule["Container"]._check_no_parent(component);
+                pyModule["ClassicContainer"]._check_no_parent(component);
                 return Sk.misceval.chain(
-                    null,
-                    () => {
-                        if (component._anvil.metadata.invisible) {
-                            return;
+                    component.anvil$hooks.setupDom(),
+                    rawElement => {
+                        if (isInvisibleComponent(component)) {
+                            return pyModule["ClassicContainer"]._doAddComponent(self, component);
                         }
 
                         const { x, y, width } = kwargs;
-                        const celt = component._anvil.element;
+                        const celt = $(rawElement);
                         celt.css({ position: "absolute", left: x || 0, top: y || 0, width: width || "" });
                         self._anvil.elements.holder.appendChild(celt[0]);
-                    },
-                    () => Sk.misceval.callsimOrSuspend(pyModule["Container"].prototype.add_component, self, component, kwargs)
+                        return pyModule["ClassicContainer"]._doAddComponent(self, component, kwargs);
+                    }
                 );
             });
 

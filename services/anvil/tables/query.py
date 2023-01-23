@@ -154,3 +154,11 @@ class fetch_only(object):
         if type(other) is not type(self):
             return NotImplemented
         return other.spec == self.spec
+
+
+@portable_class
+class only_cols(object):
+    def __init__(self, *cols):
+        self.cols = tuple(sorted(cols))
+
+    __hash__, __eq__ = _hash_wrapper("cols")

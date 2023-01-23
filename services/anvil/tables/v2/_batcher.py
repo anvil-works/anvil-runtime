@@ -1,6 +1,6 @@
 import anvil.server
 
-from ._constants import SERVER_PREFIX
+from ._constants import SERVER_PREFIX, NOT_FOUND
 
 PREFIX = SERVER_PREFIX + "row."
 _make_refs = None  # Circular import
@@ -17,7 +17,8 @@ class _Batcher:
 
     def __init__(self):
         self._active = False
-        self._updates = ()
+        self._updates = []
+        self._buffer = {}
         self._func = PREFIX + self._name
 
     @property
@@ -25,11 +26,12 @@ class _Batcher:
         return self._active
 
     def push(self, cap, update=False):
-        self._updates += ((cap, update),)
+        self._updates.append((cap, update))
 
     def reset(self):
         self._active = False
-        self._updates = ()
+        self._updates.clear()
+        self._buffer.clear()
 
     def __enter__(self):
         if self._active:
@@ -41,18 +43,27 @@ class _Batcher:
 
     def __exit__(self, exc_type, exc_value, traceback):
         updates = self._updates
-        self.reset()
-        if exc_value is not None:
-            return
-        if not updates:
-            return
-        anvil.server.call(self._func, self.get_args(updates))
-        for cap, update in updates:
-            cap.send_update(update)
+        try:
+            if exc_value is None and updates:
+                anvil.server.call(self._func, self.get_args(updates))
+                for cap, update in updates:
+                    cap.send_update(update)
+        finally:
+            self.reset()
 
 
 class BatchUpdate(_Batcher):
     _name = "batch_update"
+
+    def push(self, cap, update):
+        self._updates.append((cap, update))
+        self._buffer.setdefault(cap, {}).update(update)
+
+    def get_updates(self, cap):
+        return self._buffer.get(cap, {})
+
+    def read(self, cap, key):
+        return self.get_updates(cap).get(key, NOT_FOUND)
 
     def get_args(self, updates):
         global _make_refs

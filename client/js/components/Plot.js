@@ -1,6 +1,8 @@
 "use strict";
+/* global Plotly */
 
-/**
+
+/*#
 id: plot
 docs_url: /docs/client/components/plots
 module: Anvil Components
@@ -72,34 +74,14 @@ description: |
 
 
 var PyDefUtils = require("PyDefUtils");
+const { pyLazyMod, datetimeMod } = require("../utils");
 
 module.exports = (pyModule) => {
 
-    const go = {
-        get Figure() {
-            delete this.Figure;
-            const go = Sk.importModule("plotly.graph_objs").tp$getattr(new Sk.builtin.str("graph_objs"));
-            return (this.Figure = go.tp$getattr(new Sk.builtin.str("Figure")));
-        },
-    };
-
-    const util = {
-        get WrappedList() {
-            delete this.WrappedList;
-            const ut = Sk.importModule("anvil.util").tp$getattr(new Sk.builtin.str("util"));
-            return (this.WrappedList = ut.tp$getattr(new Sk.builtin.str("WrappedList")));
-        },
-        get WrappedObject() {
-            delete this.WrappedObject;
-            const ut = Sk.importModule("anvil.util").tp$getattr(new Sk.builtin.str("util"));
-            return (this.WrappedObject = ut.tp$getattr(new Sk.builtin.str("WrappedObject")));
-        },
-    };
-
-
-    const datetimeModule = Sk.importModule("datetime");
-    const date = datetimeModule.tp$getattr(new Sk.builtin.str("date"));
-    const datetime = datetimeModule.tp$getattr(new Sk.builtin.str("datetime"));
+    const go = pyLazyMod("plotly.graph_objs");
+    const util = pyLazyMod("anvil.util");
+    const date = datetimeMod.date;
+    const datetime = datetimeMod.datetime;
 
     const remapToJs = (pyObj) => {
         if (pyObj == null) {
@@ -111,6 +93,37 @@ module.exports = (pyModule) => {
             }
         });
     };
+
+    const Templates = { none: {}, default: "none" };
+
+    const PLOTLY_FETCHABLE_TEMPLATES = ["plotly", "plotly_white", "plotly_dark", "presentation", "ggplot2", "seaborn", "simple_white", "gridon", "xgridoff", "ygridoff"];
+    const ANVIL_FETCHABLE_TEMPLATES = ["rally", "material_light", "material_dark"];
+
+    async function templateGetter(templateName) {
+        const resp = await fetch(`${window.anvilCDNOrigin}/runtime/js/lib/templates/${templateName}.json`);
+        return await resp.json();
+    }
+
+    function defineLazyTemplate(templateName) {
+        Object.defineProperty(Templates, templateName, {
+            get() {
+                // lazy template
+                delete this[templateName];
+                return (this[templateName] = new Promise(async (resolve) => {
+                    try {
+                        resolve((this[templateName] = await templateGetter(templateName)));
+                    } catch (err) {
+                        console.error(err);
+                        resolve((this[templateName] = {}));
+                    }
+                }));
+            },
+            enumerable: true,
+            configurable: true,
+        });
+    }
+    PLOTLY_FETCHABLE_TEMPLATES.forEach(defineLazyTemplate)
+    ANVIL_FETCHABLE_TEMPLATES.forEach(defineLazyTemplate)
 
     // There are several places in the component model where we directly access the props
     // Plot.js does this a lot
@@ -226,7 +239,7 @@ module.exports = (pyModule) => {
                 defaultValue: Sk.builtin.bool.true$,
                 pyVal: true,
                 set(s, e, v) {
-                    if (!window.inAnvilDesigner) return update(s);
+                    if (!ANVIL_IN_DESIGNER) return update(s);
                 },
             },
         }),
@@ -312,7 +325,7 @@ module.exports = (pyModule) => {
         ),
 
         locals($loc) {
-            $loc["__new__"] = PyDefUtils.mkNew(pyModule["Component"], (self) => {
+            $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicComponent"], (self) => {
                 const onResize = () => relayout(self);
                 self._anvil.plotlyUpdated = false;
                 self._anvil.initialized = false;
@@ -331,6 +344,21 @@ module.exports = (pyModule) => {
                     }
                 };
             });
+
+            /*!defAttr()!1*/ ({name: "templates", type: "mapping", description: "plotly templates, see plotly docs for valid template names. Set the default template using Plot.templates.default = 'seaborn'."});
+            $loc["templates"] = Sk.ffi.proxy(
+                new Proxy(Templates, {
+                    get(t, v) {
+                        const rv = t[v];
+                        if (!(rv instanceof Promise)) return rv;
+                        return Sk.misceval.promiseToSuspension(rv);
+                    },
+                    set(t, k, v) {
+                        t[k] = v;
+                        return true;
+                    },
+                })
+            );
 
             /*!defMethod(_)!2*/ "Redraws the chart. Call this function if you have updated data or layout properties."
             $loc["redraw"] = new Sk.builtin.func(function redraw(self) {
@@ -375,6 +403,7 @@ module.exports = (pyModule) => {
     
 
     function loadPlotly(self) {
+        const oldPromise = window.Promise;
         if (!window.plotlyPromise) {
             window.plotlyPromise = new Promise(function (resolve, reject) {
                 var script = document.createElement("script");
@@ -382,7 +411,7 @@ module.exports = (pyModule) => {
                 script.onload = function () {
                     // Plotly clobbers window.Promise. Ew.
                     // https://github.com/plotly/plotly.js/issues/1032
-                    window.Promise = RSVP.Promise;
+                    window.Promise = oldPromise;
                     resolve();
                 };
                 document.body.appendChild(script);
@@ -550,6 +579,16 @@ module.exports = (pyModule) => {
         if (notReady(self)) return;
 
         const jsLayout = getJsLayout(self);
+
+        async function getTemplate() {
+            // In Figure objects that came from the server, template will be an empty object {}. Treat this as if it's missing entirely.
+            let template = (jsLayout.template && Object.keys(jsLayout.template).length > 0) ? jsLayout.template : Templates.default;
+            if (typeof template === "string") {
+                template = Sk.ffi.toJs(await Templates[template]);
+                jsLayout.template = template;
+            }
+        }
+
         const jsData = remapToJs(self._anvil.props.data) || [];
         const jsConfig = remapToJs(self._anvil.props.config) || {
             displayLogo: false,
@@ -559,20 +598,22 @@ module.exports = (pyModule) => {
 
         // Do not block here. There's no need, no code depends on the result.
         // If we decide we need to block, just return a suspension here.
-        loadPlotly(self).then(() => {
-            const outerEl = self._anvil.domNode;
-            Plotly.newPlot(outerEl, jsData, jsLayout, jsConfig);
-            outerEl.on("plotly_click", onPlotlyClick.bind(null, self));
-            outerEl.on("plotly_doubleclick", onPlotlyDoubleClick.bind(null, self));
-            outerEl.on("plotly_selected", onPlotlySelect.bind(null, self));
-            outerEl.on("plotly_hover", onPlotlyHover.bind(null, self));
-            outerEl.on("plotly_unhover", onPlotlyUnhover.bind(null, self));
-            outerEl.on("plotly_afterplot", onPlotlyAfterplot.bind(null, self));
-            self._anvil.plotlyUpdated = true;
+        loadPlotly(self)
+            .then(getTemplate)
+            .finally(() => {
+                const outerEl = self._anvil.domNode;
+                Plotly.newPlot(outerEl, jsData, jsLayout, jsConfig);
+                outerEl.on("plotly_click", onPlotlyClick.bind(null, self));
+                outerEl.on("plotly_doubleclick", onPlotlyDoubleClick.bind(null, self));
+                outerEl.on("plotly_selected", onPlotlySelect.bind(null, self));
+                outerEl.on("plotly_hover", onPlotlyHover.bind(null, self));
+                outerEl.on("plotly_unhover", onPlotlyUnhover.bind(null, self));
+                outerEl.on("plotly_afterplot", onPlotlyAfterplot.bind(null, self));
+                self._anvil.plotlyUpdated = true;
 
-            // For some reason, this doesn't ever get called. Possibly we're on an old version of Plotly. Work it out if anyone needs it.
-            //self._anvil.element[0].on("plotly_legendclick", onPlotlyLegendClick.bind(null, self));
-        });
+                // For some reason, this doesn't ever get called. Possibly we're on an old version of Plotly. Work it out if anyone needs it.
+                //self._anvil.element[0].on("plotly_legendclick", onPlotlyLegendClick.bind(null, self));
+            });
         return Sk.builtin.none.none$;
     }
 

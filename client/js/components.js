@@ -1,6 +1,6 @@
 "use strict";
 
-var PyDefUtils = require("PyDefUtils");
+const { anvilMod } = require("./utils");
 
 /* This file defines the system components available to apps, as Python classes.
    These are the runtime (non-designer) versions. */
@@ -13,7 +13,7 @@ var PyDefUtils = require("PyDefUtils");
 // being present. They shouldn't.
 
 
-/**
+/*#
 id: component_list
 docs_url: /docs/client/components/basic
 title: Basic components
@@ -53,7 +53,7 @@ module.exports.defineSystemComponents = function defineSystemComponents(pyModule
 
         $loc["__init__"] = new Sk.builtin.func((self, name, defaultPyValue) => {
             self._anvil = { 
-                propName: name, // N.B. We don't use name for anything right now.
+                propName: String(name), // N.B. We don't use name for anything right now.
                 defaultPyVal: defaultPyValue,
             };
         });
@@ -77,7 +77,7 @@ module.exports.defineSystemComponents = function defineSystemComponents(pyModule
     }, "CustomComponentProperty", []);
 
 
-    require("./components/Component")(pyModule);
+    require("./components/ClassicComponent")(pyModule);
 
     require("./components/Spacer")(pyModule);
 
@@ -109,7 +109,7 @@ module.exports.defineSystemComponents = function defineSystemComponents(pyModule
 
     require("./components/FileLoader")(pyModule);
 
-    require("./components/Container")(pyModule);
+    require("./components/ClassicContainer")(pyModule);
 
     require("./components/RichText")(pyModule);
 
@@ -149,7 +149,7 @@ module.exports.defineSystemComponents = function defineSystemComponents(pyModule
 
 
 var mkInvalidComponent = function(anvilMod, message) {
-    return Sk.misceval.call(anvilMod["InvalidComponent"], undefined, undefined, [new Sk.builtin.str("text"), new Sk.builtin.str(message)]);
+    return Sk.misceval.callsimArray(anvilMod["InvalidComponent"], [], ["text", new Sk.builtin.str(message)]);
 }
 
 module.exports.withFormTrace = function(formName, f) {
@@ -192,8 +192,6 @@ module.exports.newPythonComponent = function newPythonComponent(component, compo
 
     // Construct the component, passing on any YAML properties as kwargs.
 
-    var anvilMod = PyDefUtils.getModule("anvil").$d;
-
     var kwa = [];
     for(var k in component.properties) {
         if (component.properties[k] === undefined)
@@ -210,7 +208,7 @@ module.exports.newPythonComponent = function newPythonComponent(component, compo
     var m = component.type.match(/^form:(.*)$/);
     if (m) {
         // It's a custom component!
-        let [, depId, formName, className] = m[1].match(/^(?:([^:]*):)?((?:.*\.)?([^\.]*))$/);
+        let [, depId, formName, className] = m[1].match(/^(?:([^:]*):)?((?:.*\.)?([^.]*))$/);
         let appPackageName = window.anvilAppMainPackage;
 
         depId = depId || (module.exports.newPythonComponent.dependencyTrace && module.exports.newPythonComponent.dependencyTrace.depId);
@@ -364,13 +362,13 @@ module.exports.newPythonComponent = function newPythonComponent(component, compo
             pyComponent._anvil.element.addClass("anvil-component");
             pyComponent._anvil.element.data("anvil-py-component", pyComponent);
             
-            if (Sk.builtin.isinstance(pyComponent, anvilMod["RepeatingPanel"]).v && window.anvilInDesigner) {
+            if (Sk.builtin.isinstance(pyComponent, anvilMod["RepeatingPanel"]).v && ANVIL_IN_DESIGNER) {
                 pyComponent._anvil.dependencies = dependencies;
                 pyComponent._anvil.forms = otherFormsSpec;
                 pyComponent._anvil.formInstanceIndex = formInstanceIndex;
                 pyComponent._anvil.parentForm = newPythonComponent.formTrace;
                 Sk.misceval.callsim(pyComponent.tp$getattr(new Sk.builtin.str("_refresh_form")), repeatingPanelInstanceIndex);
-            };
+            }
 
             if (pyComponent._anvil.updateDesignName) {
                 pyComponent._anvil.designName = component.name;
