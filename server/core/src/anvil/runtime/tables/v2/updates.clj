@@ -125,8 +125,8 @@
 (defn- delete-media! [db-c media-ids]
   (when-not (empty? media-ids)
     (log/trace "Deleting media:" media-ids)
-    (-> (jdbc/query db-c ["WITH sizes AS (SELECT loid AS object_id, sum(length(data)) as size FROM pg_largeobject
-                                              WHERE loid = ANY(?) GROUP BY object_id),
+    (-> (jdbc/query db-c ["WITH sizes AS (SELECT object_id, get_lo_size(object_id) as size FROM app_storage_media
+                                              WHERE object_id = ANY(?)),
                                 blob_deletions AS (SELECT lo_unlink(object_id) FROM sizes),
                                 record_deletions AS (DELETE FROM app_storage_media WHERE object_id IN (SELECT object_id FROM sizes))
                             SELECT SUM(size) AS bytes_removed FROM sizes"

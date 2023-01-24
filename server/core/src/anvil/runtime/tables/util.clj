@@ -590,7 +590,7 @@
 (defn get-object-size
   ([oid] (get-object-size (db) oid))
   ([db oid]
-   (or (:size (first (jdbc/query db ["SELECT sum(length(data)) as size FROM pg_largeobject WHERE loid = ?" oid])))
+   (or (:size (first (jdbc/query db ["SELECT get_lo_size(?) AS size" oid])))
        0)))
 
 (defn- delete-media-objects
