@@ -4,6 +4,8 @@
             [anvil.dispatcher.types :as types]
             [anvil.runtime.app-data :as app-data]
             [anvil.runtime.tables.util :as tables-util]
+            [anvil.runtime.sessions]
+            [anvil.util :as hook-util]
             [medley.core :refer [find-first map-keys remove-keys]]
             [clojure.data.json :as json]
             [anvil.runtime.tables.v2.rpc :as tables-v2]
@@ -282,10 +284,17 @@
          ;; If it didn't match, fall back to an exact-case match
          (get-and-create-columns table-id original-query-map))))))
 
-(defn get-user-and-check-enabled
-  ([table-id query-map] (get-user-and-check-enabled table-id query-map nil))
+(defonce validate-enabled-user! (fn [user-map]))
+
+(def set-users-impl! (hook-util/hook-setter #{validate-enabled-user!}))
+
+(defn get-user-check-enabled-and-validate
+  ([table-id query-map] (get-user-check-enabled-and-validate table-id query-map nil))
   ([table-id query-map lowercase-column]
-   (let [u (get-and-create-columns table-id query-map lowercase-column)]
-     (when (and u (not (get (row-to-map u) "enabled")))
-       (throw+ {:anvil/server-error "This account has not been enabled by an administrator", :type "anvil.users.AccountIsNotEnabled"}))
+   (let [u (get-and-create-columns table-id query-map lowercase-column)
+         user-map (row-to-map u)]
+     (when u
+       (if (get user-map "enabled")
+         (validate-enabled-user! user-map)
+         (throw+ {:anvil/server-error "This account has not been enabled by an administrator", :type "anvil.users.AccountIsNotEnabled"})))
      u)))

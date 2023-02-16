@@ -501,11 +501,15 @@ class AnvilWrappedError(Exception):
         self.message = self.error_obj.get("message", "")
         Exception.__init__(self, self.message)
 
-    def __str__(self):
+    def __repr__(self):
+        r = Exception.__repr__(self)
+        if type(self) is not AnvilWrappedError:
+            return r
         eo_type = self.error_obj.get("type")
-        if type(self) is AnvilWrappedError and eo_type is not None:
-            return str(eo_type) + ": " + repr(self.message)
-        return repr(self.message)
+        if eo_type is None:
+            return r
+
+        return "AnvilWrappedError" + "(" + eo_type + r[len("AnvilWrappedError"):] + ")"
 
 
 def augment_exception(exc_class):

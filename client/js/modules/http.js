@@ -270,7 +270,7 @@ module.exports = function () {
             if (!suppressLoading) window.setLoading(false);
             const status = xhr.status;
             const content = pyGetResponse(xhr, json, false);
-            let message = statusText ?? xhr.statusText;
+            let message = statusText || xhr.statusText;
             if (!message || message === "error") {
                 message = null; // instead use a HttpError's nicer message.
             }
@@ -285,7 +285,7 @@ module.exports = function () {
                 onError();
             }
         };
-        xhr.onerror = onError;
+        xhr.onerror = () => onError();
         xhr.ontimeout = () => onError("timeout");
 
         if (!suppressLoading) window.setLoading(true);

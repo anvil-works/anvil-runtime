@@ -918,7 +918,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
             pyForm = content;
             body = true;
             // TODO we can currently only detect "already added to an alert" for ClassicComponents
-            if (getPyParent(content) || pyForm._anvil?.inAlert) {
+            if (getPyParent(pyForm) || pyForm._anvil?.inAlert) {
                 // you can't add a component to an alert if it already has a parent
                 throw new Sk.builtin.RuntimeError(
                     "This component is already added to a container, or is already inside an alert"
@@ -973,7 +973,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
             PyDefUtils.applyRole(role, a.elements.modalDialog);
         }
 
-        const { promise: deferredReturnPromise, resolve } = defer();
+        const { promise: deferredReturnPromise, resolve: resolveReturn } = defer();
 
 
         a.once("hide", () => {
@@ -983,9 +983,11 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                     if (pyForm._anvil) {
                         delete pyForm._anvil.inAlert;
                     }
-                    PyDefUtils.asyncToPromise(() => raiseEventOrSuspend(pyForm, s_x_anvil_propagate_page_removed)).then(() => resolve(returnValue));
+                    PyDefUtils.asyncToPromise(() => raiseEventOrSuspend(pyForm, s_x_anvil_propagate_page_removed)).then(
+                        () => resolveReturn(returnValue)
+                    );
                 } else {
-                    resolve(returnValue);
+                    resolveReturn(returnValue);
                 }
             });
         });

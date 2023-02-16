@@ -5,7 +5,6 @@ console.log("Loading runner v2");
 import "../messages";
 import "../extra-python-modules";
 import "./error-handling";
-import { offlineStatusMessageHandler } from "../app_online";
 import {stdout, logEvent} from "./logging";
 
 if (navigator.userAgent.indexOf("Trident/") > -1) {
@@ -274,22 +273,9 @@ window.loadApp = function(params: SetDataParams, preloadModules: string[]) {
 
     if (appLoaded) { console.log("Rejected duplicate app load"); return {}; }
 
-    if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.onmessage = (e) => {
-            if (!e.data?.type) return;
-            if (e.data.type === "CDN_ORIGIN") {
-                navigator.serviceWorker.controller?.postMessage({ cdnOrign: window.anvilCDNOrigin });
-            } else {
-                offlineStatusMessageHandler(e);
-            }
-        };
-
+    if ("serviceWorker" in navigator) {
         navigator.serviceWorker
             .register(`${data.appOrigin}/_/service-worker`, { scope: `${data.appOrigin}` })
-            .then((reg) => {
-                const sw = reg.installing ?? reg.waiting ?? reg.active;
-                sw?.postMessage({ cdnOrign: window.anvilCDNOrigin });
-            })
             .catch((error) => {
                 console.error("Service worker registration failed:", error);
             });

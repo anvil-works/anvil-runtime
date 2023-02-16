@@ -74,7 +74,7 @@ description: |
 
 
 var PyDefUtils = require("PyDefUtils");
-const { pyLazyMod, datetimeMod } = require("../utils");
+const { pyLazyMod, datetimeMod, PostponedResizeObserver } = require("../utils");
 
 module.exports = (pyModule) => {
 
@@ -326,21 +326,26 @@ module.exports = (pyModule) => {
 
         locals($loc) {
             $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicComponent"], (self) => {
-                const onResize = () => relayout(self);
                 self._anvil.plotlyUpdated = false;
                 self._anvil.initialized = false;
+
+                const resizeObserver = new PostponedResizeObserver(() => {
+                    if (self._anvil.onPage) {
+                        relayout(self);
+                    }
+                });
 
                 self._anvil.pageEvents = {
                     add() {
                         self._anvil.initialized = true;
-                        window.addEventListener("resize", onResize);
+                        resizeObserver.observe(self._anvil.domNode);
                         return update(self);
                     },
                     show() {
                         return update(self);
                     },
                     remove() {
-                        window.removeEventListener("resize", onResize);
+                        resizeObserver.disconnect();
                     }
                 };
             });

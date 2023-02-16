@@ -15,7 +15,7 @@ let accumulatingPrints: null | string = null,
     firstMsg: number | undefined;
 
 function flushLog() {
-    if (accumulatingPrints) {
+    if (accumulatingPrints !== null) {
         sendLogImpl({ print: accumulatingPrints });
         accumulatingPrints = null;
     }

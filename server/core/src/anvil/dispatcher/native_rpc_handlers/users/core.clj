@@ -4,7 +4,8 @@
             [anvil.dispatcher.native-rpc-handlers.users.util :as users-util :refer [add-new-user
                                                                                     get-and-create-columns
                                                                                     get-props-with-named-user-table
-                                                                                    get-user-and-check-enabled
+                                                                                    get-user-check-enabled-and-validate
+                                                                                    validate-enabled-user!
                                                                                     get-user-row-by-id
                                                                                     is-valid-user-row?
                                                                                     user-row->table-id-row-id
@@ -183,7 +184,7 @@
 (defn get-available-mfa-types [_kwargs email password]
   (binding [util/*client-request?* false]
     (let [{:keys [user_table]} (get-props-with-named-user-table)
-          user-row (get-user-and-check-enabled user_table {:email (.trim ^String (or email ""))} :email)
+          user-row (get-user-check-enabled-and-validate user_table {:email (.trim ^String (or email ""))} :email)
           pw-hash (when user-row (get (row-to-map user-row) "password_hash"))]
 
       (if-not (anvil.util/bcrypt-checkpw password pw-hash)
@@ -203,7 +204,7 @@
         (let [{:keys [user_table use_email confirm_email require_mfa mfa_timeout_days max_password_failures] :as props} (get-props-with-named-user-table)
               cookie-type (get-cookie-type props)
               _ (when-not use_email (throw+ {:anvil/server-error "Email/password authentication is not enabled."}))
-              user-row (get-user-and-check-enabled user_table {:email (.trim ^String (or email ""))} :email)
+              user-row (get-user-check-enabled-and-validate user_table {:email (.trim ^String (or email ""))} :email)
               user-data (row-to-map user-row)
 
               n-password-failures (let [f (get user-data "n_password_failures")]
@@ -299,7 +300,7 @@
       ; Is this a valid token?
       (when-let [decrypted-token (try (secrets/decrypt-str-with-global-key :ut token) (catch Exception _ nil))]
         (let [[email token-app-id token-time token-type] (.split (or decrypted-token "") "#")
-              user-row (get-user-and-check-enabled user_table {:email email} :email)]
+              user-row (get-user-check-enabled-and-validate user_table {:email email} :email)]
 
           (when (and user-row                               ; Is this a valid user?
                      (= token-app-id (:id app))             ; Is the token for this app?
@@ -332,7 +333,7 @@
 (defn login-with-token [_kwargs token]
   (do-login-with-token {:id util/*app-id* :content util/*app*} util/*environment* util/*session-state* token))
 
-(defn signup-common [required-permission signup-method-name search-attributes new-user-attributes login? lowercase-column remember?]
+(defn signup-common [required-permission signup-method-name search-attributes new-user-attributes login-when-enabled? lowercase-column remember?]
   (let [{:keys [user_table allow_signup enable_automatically] :as props} (get-props-with-named-user-table)]
     (when (and util/*client-request?* (not allow_signup))
       (throw+ {:anvil/server-error "Signups from client code are not enabled."}))
@@ -346,8 +347,10 @@
                                    :enabled   (boolean enable_automatically)}
                                   search-attributes new-user-attributes)
                 new-user (add-new-user user_table attributes)]
-            (if login?
-              (login! new-user remember?)
+            (if (and enable_automatically login-when-enabled?)
+              (do
+                (validate-enabled-user! (row-to-map new-user))
+                (login! new-user remember?))
               new-user)))))))
 
 (def default-emails
@@ -418,7 +421,7 @@
       (when (empty? email)
         (throw+ {:anvil/server-error "Please provide an email address." :type "anvil.users.AuthenticationFailed"}))
 
-      (if (get-user-and-check-enabled user_table {:email email} :email)
+      (if (get-user-check-enabled-and-validate user_table {:email email} :email)
         (let [login-link (str (get-our-origin)
                               "/_/login/"
                               (anvil-util/real-actual-genuine-url-encoder (generate-email-link-token nil email "login")))]
@@ -433,7 +436,7 @@
       (when (empty? email)
         (throw+ {:anvil/server-error "Please provide an email address." :type "anvil.users.AuthenticationFailed"}))
 
-      (if-let [user (get-user-and-check-enabled user_table {:email email} :email)]
+      (if-let [user (get-user-check-enabled-and-validate user_table {:email email} :email)]
         (let [login-link (str (get-our-origin)
                               "/_/login/"
                               (anvil-util/real-actual-genuine-url-encoder (generate-email-link-token nil email "mfa-reset")))
@@ -471,7 +474,7 @@
                                                             {:confirmed_email false, :email_confirmation_key confirmation-key})
                                                           (when require_mfa
                                                             {:mfa [mfa_method]}))
-                                    (and enable_automatically (not confirm_email)) :email remember)
+                                    (not confirm_email) :email remember)
         confirm-url (format "%s/_/email-confirm/%s/%s"
                             (get-our-origin)
                             (codec/url-encode email)
@@ -490,7 +493,7 @@
       (when (empty? email)
         (throw+ {:anvil/server-error "Please provide an email address." :type "anvil.users.AuthenticationFailed"}))
 
-      (if (get-user-and-check-enabled user_table {:email email} :email)
+      (if (get-user-check-enabled-and-validate user_table {:email email} :email)
         (let [reset-link (str (get-our-origin)
                               "/_/reset_password/"
                               (anvil-util/real-actual-genuine-url-encoder (generate-email-link-token nil email "pw-reset")))]
@@ -589,20 +592,20 @@
           current-google-user (google-auth/get-user-email {})
           _ (when-not use_google (throw+ {:anvil/server-error "Google authentication is not enabled."}))
           _ (when-not current-google-user (throw+ {:anvil/server-error "User is not logged in with Google"}))
-          user-row (get-user-and-check-enabled user_table {:email current-google-user} :email)]
+          user-row (get-user-check-enabled-and-validate user_table {:email current-google-user} :email)]
       (if user-row
         (login! user-row remember)
         (if allow_signup
           (signup-common :use_google "Google"
                          {:email (.toLowerCase current-google-user)} nil
-                         enable_automatically :email remember)
+                         true :email remember)
           (throw+ {:anvil/server-error "Not a registered user" :type "anvil.users.AuthenticationFailed"}))))))
 
 (defn signup-with-google [{:keys [remember] :as _kwargs}]
   (if-let [current-google-user (google-auth/get-user-email {})]
     (signup-common :use_google "Google"
                    {:email (.toLowerCase current-google-user)} nil
-                   (:enable_automatically (get-props-with-named-user-table)) :email remember)
+                   true :email remember)
     (throw+ {:anvil/server-error "User is not logged in with Google"})))
 
 (defn login-with-facebook [{:keys [remember] :as _kwargs}]
@@ -611,20 +614,20 @@
           current-facebook-user (facebook-auth/get-user-email {})
           _ (when-not use_facebook (throw+ {:anvil/server-error "Facebook authentication is not enabled."}))
           _ (when-not current-facebook-user (throw+ {:anvil/server-error "User is not logged in with Facebook"}))
-          user-row (get-user-and-check-enabled user_table {:email current-facebook-user} :email)]
+          user-row (get-user-check-enabled-and-validate user_table {:email current-facebook-user} :email)]
       (if user-row
         (login! user-row remember)
         (if allow_signup
           (signup-common :use_facebook "Facebook"
                          {:email (.toLowerCase current-facebook-user)} nil
-                         enable_automatically :email remember)
+                         true :email remember)
           (throw+ {:anvil/server-error "Not a registered user" :type "anvil.users.AuthenticationFailed"}))))))
 
 (defn signup-with-facebook [{:keys [remember] :as _kwargs}]
   (if-let [current-facebook-user (facebook-auth/get-user-email {})]
     (signup-common :use_facebook "Facebook"
                    {:email (.toLowerCase current-facebook-user)} nil
-                   (:enable_automatically (get-props-with-named-user-table)) :email remember)
+                   true :email remember)
     (throw+ {:anvil/server-error "User is not logged in with Facebook"})))
 
 (defn login-with-microsoft [{:keys [remember] :as _kwargs}]
@@ -633,20 +636,20 @@
           current-microsoft-user (microsoft-auth/get-user-email {})
           _ (when-not use_microsoft (throw+ {:anvil/server-error "Microsoft authentication is not enabled."}))
           _ (when-not current-microsoft-user (throw+ {:anvil/server-error "User is not logged in with Microsoft"}))
-          user-row (get-user-and-check-enabled user_table {:email current-microsoft-user} :email)]
+          user-row (get-user-check-enabled-and-validate user_table {:email current-microsoft-user} :email)]
       (if user-row
         (login! user-row remember)
         (if allow_signup
           (signup-common :use_microsoft "Microsoft"
                          {:email (.toLowerCase current-microsoft-user)} nil
-                         enable_automatically :email remember)
+                         true :email remember)
           (throw+ {:anvil/server-error "Not a registered user" :type "anvil.users.AuthenticationFailed"}))))))
 
 (defn signup-with-microsoft [{:keys [remember] :as _kwargs}]
   (if-let [current-microsoft-user (microsoft-auth/get-user-email {})]
     (signup-common :use_microsoft "Microsoft"
                    {:email (.toLowerCase current-microsoft-user)} nil
-                   (:enable_automatically (get-props-with-named-user-table)) :email remember)
+                   true :email remember)
     (throw+ {:anvil/server-error "User is not logged in with Microsoft"})))
 
 (defn login-with-saml [{:keys [remember] :as _kwargs}]
@@ -655,20 +658,20 @@
           current-saml-user (saml-auth/get-user-email {})
           _ (when-not use_saml (throw+ {:anvil/server-error "SAML authentication is not enabled."}))
           _ (when-not current-saml-user (throw+ {:anvil/server-error "User is not logged in via SAML"}))
-          user-row (get-user-and-check-enabled user_table {:email current-saml-user} :email)]
+          user-row (get-user-check-enabled-and-validate user_table {:email current-saml-user} :email)]
       (if user-row
         (login! user-row remember)
         (if allow_signup
           (signup-common :use_saml "SAML"
                          {:email (.toLowerCase current-saml-user)} nil
-                         enable_automatically :email remember)
+                         true :email remember)
           (throw+ {:anvil/server-error "Not a registered user" :type "anvil.users.AuthenticationFailed"}))))))
 
 (defn signup-with-saml [{:keys [remember] :as _kwargs}]
   (if-let [current-saml-user (saml-auth/get-user-email {})]
     (signup-common :use_saml "SAML"
                    {:email (.toLowerCase current-saml-user)} nil
-                   (:enable_automatically (get-props-with-named-user-table)) :email remember)
+                   true :email remember)
     (throw+ {:anvil/server-error "User is not logged in via SAML"})))
 
 (defn login-with-raven [{:keys [remember] :as _kwargs}]
@@ -676,20 +679,20 @@
     (let [{:keys [user_table use_raven enable_automatically allow_signup]} (get-props-with-named-user-table)
           current-raven-user (raven-auth/get-user-email {})
           _ (when-not use_raven (throw+ {:anvil/server-error "Raven authentication is not enabled."}))
-          user-row (get-user-and-check-enabled user_table {:email current-raven-user} :email)]
+          user-row (get-user-check-enabled-and-validate user_table {:email current-raven-user} :email)]
       (if user-row
         (login! user-row remember)
         (if allow_signup
           (signup-common :use_raven "Raven"
                          {:email (.toLowerCase current-raven-user)} nil
-                         enable_automatically :email remember)
+                         true :email remember)
           (throw+ {:anvil/server-error "Not a registered user" :type "anvil.users.AuthenticationFailed"}))))))
 
 (defn signup-with-raven [{:keys [remember] :as _kwargs}]
   (if-let [current-raven-user (raven-auth/get-user-email {})]
     (signup-common :use_raven "Raven"
                    {:email (.toLowerCase current-raven-user)} nil
-                   (:enable_automatically (get-props-with-named-user-table)) :email remember)
+                   true :email remember)
     (throw+ {:anvil/server-error "User is not logged in with Raven"})))
 
 

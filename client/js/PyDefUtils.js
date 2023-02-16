@@ -1,5 +1,6 @@
 "use strict";
 
+const { pyTypeError } = require("./@Sk");
 const { defer } = require("./utils");
 
 var PyDefUtils = {};
@@ -2005,55 +2006,49 @@ function WrappedPyCallable(obj) {
 }
 
 PyDefUtils.remapToJsOrWrap = function remapToJsOrWrap(pyObj) {
-    return Sk.ffi.remapToJs(pyObj, { unhandledHook: (obj) => (obj.tp$call ? WrappedPyCallable(obj) : new WrappedPyObj(obj)) });
+    return Sk.ffi.toJs(pyObj, { unhandledHook: (obj) => (obj.tp$call ? WrappedPyCallable(obj) : new WrappedPyObj(obj)) });
 }
-PyDefUtils.unwrapOrRemapToPy = Sk.ffi.remapToPy; // keep this around even though it is just an alias
+PyDefUtils.unwrapOrRemapToPy = Sk.ffi.toPy; // keep this around even though it is just an alias
 
 PyDefUtils.callJs = (pyComponent, pyFnName, ...pyArgs) => {
-    let err = function(msg) {
-        var ex = new Sk.builtin.Exception(msg);
-        ex.traceback = [{filename: "<template>", lineno: "<unknown>"}];
-        throw(ex);
-    };
 
-    let fnName = Sk.ffi.remapToJs(pyFnName);
+    const fnName = Sk.ffi.toJs(pyFnName);
 
-    let promise = Promise.resolve().then(function() {
-
-        let args = [];
-        for (let i = 0; i < pyArgs.length; i++) {
-            args.push(PyDefUtils.remapToJsOrWrap(pyArgs[i]));
-        }
-
-        try {
-            var fn = Function(`return (${fnName})`)();
-            let domElement = pyComponent?.anvil$hooks?.domElement;
-            if (window.anvilParams.runtimeVersion < 3) {
-                // backwards compatability - jQuery wrapped domElements
-                domElement &&= $(domElement);
-            }
-            return fn.apply(domElement, args);
-        } catch (e) {
-            if (e instanceof ReferenceError && e.message.indexOf(fnName) !== -1) {
-                let msg = `Could not find global JS function '${fnName}'.`;
-                // This hint is only available in ClassicComponents - but that's probably OK because this mechanism
-                // is deprecated anyway.
-                if (pyComponent?._anvil && !pyComponent._anvil.onPage) {
-                    msg += " This form is not currently visible - to call functions defined in its HTML on load, use call_js in the form 'show' event handler."
-                }
-                throw new Sk.builtin.NameError(msg);
-            }
+    let fn;
+    try {
+        fn = Function(`return (${fnName})`)();
+    } catch (e) {
+        if (!(e instanceof ReferenceError && e.message.includes(fnName))) {
             throw e;
         }
-    }).then(v => {
-        try {
-            return Sk.ffi.toPy(v);
-        } catch(e) {
-            err("Could not convert return value from Javascript to Python when calling " + fnName + ": " + v);
+        let msg = `Could not find global JS function '${fnName}'.`;
+        // This hint is only available in ClassicComponents - but that's probably OK because this mechanism
+        // is deprecated anyway.
+        if (pyComponent?._anvil && !pyComponent._anvil.onPage) {
+            msg +=
+                " This form is not currently visible - " +
+                "to call functions defined in its HTML on load, " +
+                "use call_js in the form 'show' event handler.";
         }
-    });
+        throw new Sk.builtin.NameError(msg);
+    }
+    if (typeof fn !== "function") {
+        throw new pyTypeError(`${fnName} is not callable, got ${typeof fn}`);
+    }
 
-    return PyDefUtils.suspensionPromise((resolve, reject) => promise.then(resolve,reject));
+    let domElement = pyComponent?.anvil$hooks?.domElement;
+    if (window.anvilParams.runtimeVersion < 3) {
+        // backwards compatibility - jQuery wrapped domElements
+        domElement &&= $(domElement);
+    }
+
+    let rv = fn.apply(domElement, pyArgs.map(PyDefUtils.remapToJsOrWrap));
+    if (rv instanceof Promise) {
+        rv = PyDefUtils.suspensionFromPromise(rv.then(Sk.ffi.toPy));
+    } else {
+        rv = Sk.ffi.toPy(rv);
+    }
+    return rv;
 };
 
 PyDefUtils.delayPrint = key => {

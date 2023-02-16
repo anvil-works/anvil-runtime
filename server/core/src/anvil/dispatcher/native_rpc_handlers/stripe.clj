@@ -210,7 +210,7 @@
 (defn get-customer [_kwargs id]
   (require-server!)
   (let [[request-options] (get-request-options)]
-    (mk-Customer (Customer/retrieve ^String id, ^RequestOptions request-options))))
+    (mk-Customer (Customer/retrieve ^String id, ^RequestOptions {"expand" ["subscriptions"]} request-options))))
 
 (defn new-customer [_kwargs email token]
   (require-server!)

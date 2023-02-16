@@ -1,9 +1,11 @@
 "use strict";
 
-import { SerializationInfo } from "./_server";
+import { SerializationInfo } from "./_server/serialization-info";
 import { anvilAppOnline } from "../app_online";
-import { anvilMod, datetimeMod, defer, globalSuppressLoading, tzMod } from "../utils";
+import { anvilMod, datetimeMod, defer, generateUUID, globalSuppressLoading, tzMod } from "../utils";
 import { pyCall, pyCallOrSuspend, pyNone, pyStr, toJs, toPy } from "../@Sk";
+import { profileStart } from "./_server/profile";
+import { pyBytesOrStr2ab } from "./_server/util";
 
 module.exports = function(appId, appOrigin) {
 
@@ -49,39 +51,11 @@ module.exports = function(appId, appOrigin) {
         }
     }
 
-    function pyBytesOrStr2ab(py_bytes) {
-        if (Sk.__future__.python3) {
-            return py_bytes.v.buffer;
-        }
-        const str = Sk.ffi.remapToJs(py_bytes);
-        var buf = new ArrayBuffer(str.length); // 1 byte for each char
-        var bufView = new Uint8Array(buf);
-        for (var i=0; i < str.length; i++) {
-            let c = str.charCodeAt(i)
-            if (c > 255) {
-                throw new Sk.builtin.ValueError("Cannot encode unicode character for transfer to server")
-            }
-            bufView[i] = c;
-        }
-        return buf;
-    }
-
-    function generateUUID(){
-        var d = Date.now();
-        var uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-            var r = (d + Math.random()*16)%16 | 0;
-            d = Math.floor(d/16);
-            return (c=='x' ? r : (r&0x3|0x8)).toString(16);
-        });
-        return uuid;
-    }
-
-    var maybeRemapToPy = Sk.ffi.remapToPy;
 
     var deserialiseObject = function(obj, mediaBlobs, knownLiveObjectMethods) {
         var handlers = {
             "Primitive": function() {
-                return maybeRemapToPy(obj.value);
+                return toPy(obj.value);
             },
             "DataMedia": function() {
                 var blob = mediaBlobs[obj.id];
@@ -199,7 +173,7 @@ module.exports = function(appId, appOrigin) {
         }
 
         const pyNewDeserialised = pyValueType.tp$getattr(new Sk.builtin.str("__new_deserialized__"));
-        data = maybeRemapToPy(data);
+        data = toPy(data);
 
         if (pyNewDeserialised) {
             pyObj = PyDefUtils.pyCallOrSuspend(pyNewDeserialised, [data, serializationInfo]);
@@ -324,23 +298,35 @@ module.exports = function(appId, appOrigin) {
                 }, 5000);
 
                 deferred.resolve(ws); 
+                anvilAppOnline.updateStatus(true);
             };
 
-            let onclose = function(evt) {
+            const onclose = function(evt) {
                 // Stop keepalive heartbeat
                 clearInterval(heartbeatInterval);
-                if (websocket == deferred.promise) { websocket = null; }
-                deferred.reject.apply(deferred, arguments);
-
+                if (websocket === deferred.promise) {
+                    websocket = null;
+                }
+                deferred.reject(evt);
+                // we might be offline but we don't know
+                anvilAppOnline.fetchStatus(false);
                 // Let all outstanding requests (on the closed websocket) know that they should either retry or fail
-                for (var i in outstandingRequests) {
+                for (const i in outstandingRequests) {
                     if (outstandingRequests[i].ws == evt.target || outstandingRequests[i].ws == null) {
                         outstandingRequests[i].onerror(evt);
                     }
                 }
             };
-            ws.onclose = function(evt) { diagnosticEvent("closed"); console.log("WebSocket closed", arguments); onclose.apply(null, arguments); }
-            ws.onerror = function(evt) { diagnosticEvent("error"); console.log("WebSocket error", arguments); onclose.apply(null, arguments); }
+            ws.onclose = function (evt) {
+                diagnosticEvent("closed");
+                console.log("WebSocket closed", evt);
+                onclose(evt);
+            };
+            ws.onerror = function (evt) {
+                diagnosticEvent("error");
+                console.log("WebSocket error", evt);
+                onclose(evt);
+            };
 
             var nextBlobLocation = null, nextBlobRequestId = null;
 
@@ -397,7 +383,7 @@ module.exports = function(appId, appOrigin) {
                                             for(let spec of klis) {
                                                 spec.itemCache = {};
                                                 for (var item in updates[id]) {
-                                                    spec.itemCache[item] = maybeRemapToPy(updates[id][item]);
+                                                    spec.itemCache[item] = toPy(updates[id][item]);
                                                 }
                                             }
                                         }
@@ -422,7 +408,7 @@ module.exports = function(appId, appOrigin) {
                                 if (scopeJson in updates) {
                                     console.log("Update for", scopeJson)
                                     capUpdateChain.push(
-                                        () => pyCap._applyUpdate(maybeRemapToPy(updates[scopeJson]))
+                                        () => pyCap._applyUpdate(toPy(updates[scopeJson]))
                                     );
                                 } else {
                                     console.log("No update for", scopeJson)
@@ -432,7 +418,7 @@ module.exports = function(appId, appOrigin) {
                         }
 
                         //console.log("Response came back for RPC request " + id + ": ", req.response);
-                        let pyResponse = maybeRemapToPy(req.response.response);
+                        let pyResponse = toPy(req.response.response);
 
                         req.profile.response = req.response;
                         req.profile.print();
@@ -451,6 +437,7 @@ module.exports = function(appId, appOrigin) {
 
             ws.onmessage = function(e) {
 
+                anvilAppOnline.updateStatus(true);
                 diagnosticData.nReceived++;
 
                 if (e.data instanceof Blob || e.data instanceof ArrayBuffer) {
@@ -535,41 +522,42 @@ module.exports = function(appId, appOrigin) {
         return websocket;
     };
 
-    var trySend = function(jsonData, blobData, profile, outstandingRequest) {
-        return new Promise(function(resolve, reject) {
-            connect(profile).then(function(ws) {
-                if (outstandingRequest) {
-                    outstandingRequest.ws = ws;
-                }
-                if (profile) var w = profile.append("Send to websocket");
-
-                if (profile) var p = w.append("Send JSON Data");
-                ws.send(JSON.stringify(jsonData));
-                diagnosticData.nSent++;
-                if (profile) p.end();
-
-                if (blobData) {
-                    if (profile) var q = w.append("Send blob data");
-                    ws.send(blobData);
-                    if (profile) q.end;
-                }
-
-                setTimeout(function r() {
-                    if (ws.bufferedAmount == 0) {
-                        if (profile) w.end();
-                        resolve();
-                    } else {
-                        //console.log("WebSocket still buffering.")
-                        setTimeout(r, 1);
+    const trySend = function(jsonData, blobData, profile, outstandingRequest) {
+        return new Promise((resolve, reject) => {
+            connect(profile)
+                .then((ws) => {
+                    if (outstandingRequest) {
+                        outstandingRequest.ws = ws;
                     }
-                }, 1);
-            });
+                    if (profile) var w = profile.append("Send to websocket");
 
-            // No catch. WebSocket onclose or onerror handles that for us.
+                    if (profile) var p = w.append("Send JSON Data");
+                    ws.send(JSON.stringify(jsonData));
+                    diagnosticData.nSent++;
+                    if (profile) p.end();
+
+                    if (blobData) {
+                        if (profile) var q = w.append("Send blob data");
+                        ws.send(blobData);
+                        if (profile) q.end;
+                    }
+
+                    setTimeout(function r() {
+                        if (ws.bufferedAmount == 0) {
+                            if (profile) w.end();
+                            resolve();
+                        } else {
+                            //console.log("WebSocket still buffering.")
+                            // TODO - this should throw after a timeout of e.g. 60 secs
+                            setTimeout(r, 1);
+                        }
+                    }, 1);
+                })
+                .catch(reject);
         });
-    }
+    };
 
-    var sendLog = function(logData) {
+    const sendLog = function(logData) {
         logData.type = "LOG";
         if (logData.error) { logData.error.wsdata = diagnosticData; }
         connect().then(function(ws) {
@@ -577,7 +565,7 @@ module.exports = function(appId, appOrigin) {
         }).catch(function() {
             console.log("SendLog failed; Should resend via HTTP", logData)
         });
-    }
+    };
 
 
     var pythonifyPath = function(path) {
@@ -674,80 +662,9 @@ module.exports = function(appId, appOrigin) {
         }
     };
 
-    var profilePrintColor = "transparent";
-    function profileStart(desc, startTime) {
-        var p = {
-            description: desc,
-            startTime: startTime || Date.now(),
-            children: [],
-        };
 
-        p.append = function(desc, startTime, endTime) {
-            var q = profileStart(desc, Math.round(startTime));
-
-            if (endTime) {
-                q.endTime = Math.round(endTime);
-                q.duration = q.endTime - q.startTime;
-            }
-
-            p.children.push(q);
-            return q;
-        }
-
-        p.end = function() {
-            if (!p.endTime) {
-                for (var i in p.children) {
-                    p.children[i].end();
-                }
-                p.endTime = Date.now();
-                p.duration = p.endTime - p.startTime;
-            }
-        }
-
-        p.print = function() {
-            p.end();
-            var oldPrintColor = profilePrintColor;
-
-            if (p.origin == "Server (Native)") {
-                profilePrintColor = "#cfc";
-            } else if (p.origin == "Server (Python)") {
-                profilePrintColor = "#ffb";
-            }
-
-            if (console.groupCollapsed) {
-                var childDuration = 0;
-                for (let i in p.children) {
-                    childDuration += p.children[i].duration;
-                }
-                var msg = p.description + " (" + p.duration + " ms";
-                if (p.children.length > 0) {
-                    msg += ", " + (p.duration - childDuration) + " ms lost)";
-
-                    console.groupCollapsed("%c" + msg, "background:" + profilePrintColor);
-                    for (let i in p.children) {
-                        p.children[i].print();
-                    }
-                    if (p.response) {
-                        console.log("%cResponse:", "background:#ddd;",p.response);
-                    }
-                    console.groupEnd();
-                } else {
-                    msg += ")";
-                    console.log("%c" + msg, "background:" + profilePrintColor);
-                }
-            } else {
-                console.log(p);
-            }
-            profilePrintColor = oldPrintColor;
-        }
-        return p;
-    }
 
     function doRpcCall(pyKwargs, args, commandOrMethod, liveObjectSpec, suppressLoading) {
-
-        if (!anvilAppOnline.checkStatus(false)) {
-            throw PyDefUtils.pyCall(pyMod["AppOfflineError"], [new Sk.builtin.str("App is offline")]);
-        }
 
         suppressLoading = suppressLoading || (globalSuppressLoading.value > 0);
 
@@ -979,128 +896,138 @@ module.exports = function(appId, appOrigin) {
 
         mappingProfile.end();
 
-        return PyDefUtils.suspensionPromise(function(resolve, reject) {
-
-            if (!suppressLoading)
-                window.setLoading(true);
+        return PyDefUtils.suspensionPromise(function (resolve, reject) {
+            if (!suppressLoading) window.setLoading(true);
 
             if (blobContent.length > 0) {
                 var realiseBlobsProfile = profile.append("Realise blobs");
             }
 
-            Promise.all(call.objects).then(function makeRequest(realisedObjects) {
-                if (realiseBlobsProfile) {
-                    realiseBlobsProfile.end();
-                }
+            Promise.all(call.objects).then(
+                function makeRequest(realisedObjects) {
+                    if (realiseBlobsProfile) {
+                        realiseBlobsProfile.end();
+                    }
 
-                call.objects = realisedObjects;
+                    call.objects = realisedObjects;
 
-                var preventRetry = false;
+                    var preventRetry = false;
 
-                console.debug("RPC request: " + (call.command || (call.liveObjectCall.backend + ":" + call.liveObjectCall.method)), call);
-                //console.debug("BLOBS:", blobs);
+                    console.debug(
+                        "RPC request: " +
+                            (call.command || call.liveObjectCall.backend + ":" + call.liveObjectCall.method),
+                        call
+                    );
+                    //console.debug("BLOBS:", blobs);
 
+                    var sendPromise = Promise.resolve();
+                    let nWaiting = 0;
 
-                var sendPromise = Promise.resolve();
-                let nWaiting = 0;
-
-                for (var id in outstandingRequests) {
-                    nWaiting++;
-                    sendPromise = sendPromise.then(function() {
-                        return new Promise(function(resolve, reject) {
-                            if (id in outstandingRequests) {
-                                var oldResolve = outstandingRequests[id].promise.resolve;
-                                var oldReject = outstandingRequests[id].promise.reject;
-                                outstandingRequests[id].promise.resolve = function() {
+                    for (var id in outstandingRequests) {
+                        nWaiting++;
+                        sendPromise = sendPromise.then(function () {
+                            return new Promise(function (resolve, reject) {
+                                if (id in outstandingRequests) {
+                                    var oldResolve = outstandingRequests[id].promise.resolve;
+                                    var oldReject = outstandingRequests[id].promise.reject;
+                                    outstandingRequests[id].promise.resolve = function () {
+                                        resolve();
+                                        oldResolve.apply(this, arguments);
+                                    };
+                                    outstandingRequests[id].promise.reject = function () {
+                                        resolve();
+                                        oldReject.apply(this, arguments);
+                                    };
+                                } else {
                                     resolve();
-                                    oldResolve.apply(this, arguments)
                                 }
-                                outstandingRequests[id].promise.reject = function() {
-                                    resolve();
-                                    oldReject.apply(this, arguments)
-                                }
-                            } else {
-                                resolve();
-                            }
-                        }).catch(function(ee) {
-                            console.error(ee);
+                            }).catch(function (ee) {
+                                console.error(ee);
+                            });
                         });
-                    });
-                }
-
-                outstandingRequests[requestId] = {media: {}, promise: {resolve: resolve, reject: reject},
-                                                    suppressLoading: suppressLoading,
-                                                    knownLiveObjectInstances: knownLiveObjectInstances,
-                                                    knownCapabilities: knownCapabilities,
-                                                    onerror: function(evt) {
-                    // TODO be a bit more clever about retries here when preventRetry is true
-
-                    if (!suppressLoading)
-                        window.setLoading(false);
-                    deleteOutstandingRequest(requestId)
-                    console.error("Websocket connection failed", evt);
-                    anvilAppOnline.updateStatus(false);
-
-                    const msg = `Connection to server failed (${
-                        (evt && (evt.code || evt.message || evt.type)) || "FAIL"
-                    })`;
-                    reject(PyDefUtils.pyCall(pyMod["AppOfflineError"], [new Sk.builtin.str(msg)]));
-                }, profile: profile};
-
-                var sendProfile = profile.append("Send call");
-                if (nWaiting !== 0) {
-                    let waitingProfile = sendProfile.append("Waiting for " + nWaiting + " previous call(s) to complete");
-                    sendPromise = sendPromise.then(() => waitingProfile.end());
-                }
-
-                sendPromise = sendPromise.then(trySend.bind(null, call, null, sendProfile, outstandingRequests[requestId])).then(function() {
-
-                    sendProfile.end();
-                    if (blobContent.length > 0) {
-                        sendProfile = profile.append("Send blobs");
                     }
-                    // If we don't already have a heartbeat scheduled
-                    if (!heartbeatTimeout) {
-                        heartbeatTimeout = setTimeout(function heartbeat() {
 
-                            trySend({
-                                type: "CALL",
-                                id: "client-keepalive-" + (heartbeatCount++),
-                                command: "anvil.private.echo",
-                                args: ["keep-alive"],
-                                kwargs: {},                            
-                            })
+                    outstandingRequests[requestId] = {
+                        media: {},
+                        promise: { resolve: resolve, reject: reject },
+                        suppressLoading: suppressLoading,
+                        knownLiveObjectInstances: knownLiveObjectInstances,
+                        knownCapabilities: knownCapabilities,
+                        onerror: function (evt) {
+                            // TODO be a bit more clever about retries here when preventRetry is true
 
-                            heartbeatTimeout = false;
-                            // If we still have outstanding requests, schedule the next heartbeat.
-                            if (Object.keys(outstandingRequests).length > 0) {
-                                heartbeatTimeout = setTimeout(heartbeat, 30000);
+                            if (!suppressLoading) window.setLoading(false);
+                            deleteOutstandingRequest(requestId);
+                            console.error("Websocket connection failed", evt);
+
+                            const msg = `Connection to server failed (${
+                                (evt && (evt.code || evt.message || evt.type)) || "FAIL"
+                            })`;
+                            reject(PyDefUtils.pyCall(pyMod["AppOfflineError"], [new Sk.builtin.str(msg)]));
+                        },
+                        profile: profile,
+                    };
+
+                    var sendProfile = profile.append("Send call");
+                    if (nWaiting !== 0) {
+                        let waitingProfile = sendProfile.append(
+                            "Waiting for " + nWaiting + " previous call(s) to complete"
+                        );
+                        sendPromise = sendPromise.then(() => waitingProfile.end());
+                    }
+
+                    sendPromise = sendPromise
+                        .then(() => trySend(call, null, sendProfile, outstandingRequests[requestId]))
+                        .then(function () {
+                            sendProfile.end();
+                            if (blobContent.length > 0) {
+                                sendProfile = profile.append("Send blobs");
                             }
-                        }, 30000);
+                            // If we don't already have a heartbeat scheduled
+                            if (!heartbeatTimeout) {
+                                heartbeatTimeout = setTimeout(function heartbeat() {
+                                    trySend({
+                                        type: "CALL",
+                                        id: "client-keepalive-" + heartbeatCount++,
+                                        command: "anvil.private.echo",
+                                        args: ["keep-alive"],
+                                        kwargs: {},
+                                    }).catch(() => {
+                                        // pass
+                                    });
+
+                                    heartbeatTimeout = false;
+                                    // If we still have outstanding requests, schedule the next heartbeat.
+                                    if (Object.keys(outstandingRequests).length > 0) {
+                                        heartbeatTimeout = setTimeout(heartbeat, 30000);
+                                    }
+                                }, 30000);
+                            }
+                        });
+
+                    for (let contentChunks of blobContent) {
+                        for (let chunk of contentChunks) {
+                            sendPromise = sendPromise.then(() =>
+                                trySend(chunk.json, chunk.data, sendProfile, outstandingRequests[requestId])
+                            );
+                        }
                     }
 
-                });
+                    sendPromise = sendPromise
+                        .then(function (r) {
+                            sendProfile.end();
+                            return r;
+                        })
+                        .catch((e) => console.error(e));
 
-                for (let contentChunks of blobContent) {
-                    for (let chunk of contentChunks) {
-                        sendPromise = sendPromise.then(trySend.bind(null, chunk.json, chunk.data, sendProfile, outstandingRequests[requestId]));
-                    }
+                    return sendPromise;
+                },
+                function (e) {
+                    if (!suppressLoading) window.setLoading(false);
+                    deleteOutstandingRequest(requestId);
+                    reject(e);
                 }
-
-                sendPromise = sendPromise.then(function(r) {
-                    sendProfile.end();
-                    return r;
-                })
-
-                return sendPromise;
-            }, function(e) {
-                if (!suppressLoading)
-                    window.setLoading(false);
-                deleteOutstandingRequest(requestId)
-                reject(e);
-            });
-
-
+            );
         });
     }
 
@@ -1319,6 +1246,19 @@ module.exports = function(appId, appOrigin) {
             message ||= Sk.builtin.str.$empty;
             self.tp$setattr(s_message,  message);
         });
+
+        $loc["__repr__"] = new Sk.builtin.func((self) => {
+            const r = Sk.builtin.Exception.prototype.$r.call(self);
+            if (self.ob$type !== pyMod["AnvilWrappedError"]) {
+                return r;
+            }
+            const type = self._anvil?.errorObj?.type;
+            if (type === undefined) {
+                return r;
+            }
+            return new Sk.builtin.str(`AnvilWrappedError(${type + r.toString().slice("AnvilWrappedError".length)})`);
+        });
+
     }, "AnvilWrappedError", [Sk.builtin.Exception]);
 
     /*!defClass(anvil.server,%SessionExpiredError, __builtins__..Exception)!*/ 
@@ -1557,7 +1497,7 @@ module.exports = function(appId, appOrigin) {
 
     /*!defFunction(anvil.server,!_)!2*/ "Returns `True` if this app is online and `False` otherwise.\nIf `anvil.server.is_app_online()` returns `False` we expect `anvil.server.call()` to throw an `anvil.server.AppOfflineError`"
     pyMod["is_app_online"] = new Sk.builtin.func(function () {
-        const p = anvilAppOnline.checkStatus(true);
+        const p = anvilAppOnline.checkStatus();
         if (typeof p === "boolean") {
             return Sk.ffi.toPy(p);
         }

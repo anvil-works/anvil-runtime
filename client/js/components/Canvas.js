@@ -1,7 +1,7 @@
 "use strict";
 
 var PyDefUtils = require("PyDefUtils");
-const { ResizeObserverPolyfill } = require("../utils");
+const { PostponedResizeObserver } = require("../utils");
 
 /*#
 id: canvas
@@ -262,34 +262,16 @@ module.exports = function(pyModule) {
 
         locals($loc) {
             $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicComponent"], (self) => {
-                let resetContextTimeout = null;
-                let initObservation = false;
-
-                const resizeHandler = () => {
-                    if (initObservation) {
-                        // this can fire asynchronously on .observe()
-                        // which we don't want - otherwise the anvil events go: reset, form_show, reset
-                        // and our docs say that the form_show is valid for drawing the initial canvas
-                        initObservation = false;
-                        return;
-                    }
-                    clearTimeout(resetContextTimeout);
+                const resizeObserver = new PostponedResizeObserver(() => {
                     if (self._anvil.onPage) {
-                        resetContextTimeout = setTimeout(() => resetContext(self), 50);
+                        resetContext(self);
                     }
-                };
-
-                const resizeObserver = new ResizeObserverPolyfill(resizeHandler);
+                });
 
                 self._anvil.gradients = {};
                 self._anvil.pageEvents = {
                     add() {
-                        initObservation = true;
                         resizeObserver.observe(self._anvil.domNode);
-                        setTimeout(() => {
-                            // just in case there isn't an initial async fire of resizeHandler
-                            initObservation = false;
-                        });
                         resetContext(self);
                     },
                     show() {

@@ -8,7 +8,7 @@
             [anvil.dispatcher.native-rpc-handlers.users.util :refer [row-to-map
                                                                      get-user-row-by-id
                                                                      get-props-with-named-user-table
-                                                                     get-user-and-check-enabled]]
+                                                                     get-user-check-enabled-and-validate]]
             [clojure.tools.logging :as log]
             [anvil.dispatcher.core :as dispatcher])
   (:import (com.webauthn4j.data.client.challenge DefaultChallenge)
@@ -88,7 +88,7 @@
 (defn begin-fido-assertion [_kwargs email password]
   (binding [util/*client-request?* false]                   ; Safe, because we're loading the current user, and verifying their password.
     (let [{:keys [user_table]} (get-props-with-named-user-table)
-          user (get-user-and-check-enabled user_table {:email (.trim ^String (or email ""))} :email)]
+          user (get-user-check-enabled-and-validate user_table {:email (.trim ^String (or email ""))} :email)]
 
       (when-not password
         (throw+ {:anvil/server-error "No password provided" :type "anvil.users.AuthenticationFailed"}))

@@ -691,11 +691,14 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
         "remove_from_parent": {
             $meth: function () {
                 const parent = this._Component.parent;
+                const fns = [];
                 if (parent) {
                     delete this._Component.parent;
-                    for (const callback of parent.remove) { callback(); }
+                    for (const cb of parent.remove) {
+                        fns.push(cb);
+                    }
                 }
-                return pyNone;
+                return chainOrSuspend(null, ...fns, () => pyNone);
             },
             $flags: { NoArgs: true },
             $doc: "Remove this component from its parent container.",

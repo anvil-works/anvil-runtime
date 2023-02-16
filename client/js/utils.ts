@@ -1,6 +1,6 @@
 import { pyModule, pyObject, pyStr, retryOptionalSuspensionOrThrow } from "./@Sk";
 
-type Deferred<T> = {
+export type Deferred<T> = {
     promise: Promise<T>;
     resolve: (value: T | PromiseLike<T>) => void;
     reject: (reason?: any) => void;
@@ -25,6 +25,19 @@ export function getRandomStr(len: number) {
     }
     return rv;
 }
+
+// polyfill for when window.crypto.randomUUID is not supported
+function _generateUUID() {
+    let d = Date.now();
+    const uuid = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+        const r = (d + Math.random() * 16) % 16 | 0;
+        d = Math.floor(d / 16);
+        return (c == "x" ? r : (r & 0x3) | 0x8).toString(16);
+    });
+    return uuid;
+}
+
+export const generateUUID = window.crypto.randomUUID ? () => window.crypto.randomUUID() : _generateUUID;
 
 export const globalSuppressLoading = {
     value: 0,
@@ -85,9 +98,7 @@ class _ResizeObserverPolyfill {
         this.mo = new MutationObserver((mutations) => {
             for (const mutation of mutations) {
                 if (mutation.attributeName !== "style") continue;
-                if (this._is_resized()) {
-                    return cb();
-                }
+                if (this._is_resized()) return cb();
             }
         });
     }
@@ -106,13 +117,13 @@ class _ResizeObserverPolyfill {
 
     observe(target: HTMLElement) {
         this.target = target;
-        this.mo.observe(target, { attributes: true });
+        this.mo.observe(target, { attributes: true, attributeFilter: ["style"] });
         // use jquery here because Material Design templates trigger a resize using jQuery
         // and the window.addEventListener("resize") doesn't catch $(window).trigger("resize");
         $(window).on("resize", this.cb);
     }
 
-    unobserver() {
+    unobserve() {
         this.disconnect();
     }
 
@@ -124,3 +135,32 @@ class _ResizeObserverPolyfill {
 }
 
 export const ResizeObserverPolyfill = window.ResizeObserver ?? _ResizeObserverPolyfill;
+
+/** avoids the first call to the resize observer callback */
+export class PostponedResizeObserver extends ResizeObserverPolyfill {
+    _init = true;
+    _t: undefined | number = undefined;
+    constructor(cb: () => void) {
+        super(() => {
+            // we don't want to fire this when we are first observed
+            // this breaks canvas event firing order
+            if (this._init) {
+                this._init = false;
+                return;
+            }
+            clearTimeout(this._t);
+            this._t = setTimeout(cb, 50);
+        });
+    }
+    observe(target: HTMLElement) {
+        super.observe(target);
+        setTimeout(() => {
+            // if we're using a MutationObserver we don't fire on initial observation
+            this._init = false;
+        });
+    }
+    disconnect() {
+        super.disconnect();
+        this._init = true;
+    }
+}

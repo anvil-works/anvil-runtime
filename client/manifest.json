@@ -1,7 +1,7 @@
 {
     "start_url": "{{canonical-url}}/",
     "name": "{{app-name}}",
-    "shortname": "{{app-name}}",
+    "short_name": "{{app-name}}",
     "description": "{{social-description}}",
     "background_color": "{{background-color}}",
     "theme_color": "{{theme-color}}",

@@ -1,50 +1,47 @@
+import { defer, Deferred } from "./utils";
+
 declare global {
     interface Window {
-        isIE: boolean;
         anvilAppOnline: AnvilAppOnline;
     }
 }
 
-// initial value just use what the navigator says
-// until the service worker tells us otherwise
+
 class AnvilAppOnline {
     onLine = navigator.onLine;
-    navigatorTrusted = true;
     offlineTimeout = 5000;
     lastCheck = 0;
+    deferredStatus: null | Deferred<boolean> = null;
     updateStatus(onLine: boolean) {
         this.onLine = onLine;
         this.lastCheck = Date.now();
-        this.navigatorTrusted = onLine === navigator.onLine;
+        this.deferredStatus = null;
     }
-    async fetchStatus() {
-        if (window.isIE) return this.onLine;
+    async fetchStatus(expectedToBe?: boolean) {
+        // if we think we think we might be offline and we are offline - don't check
+        // otherwise every print statement will fire this when offline
+        if (expectedToBe === this.onLine) return this.onLine;
+        // avoid multiple in flight calls
+        if (this.deferredStatus) return this.deferredStatus.promise;
         let rv: boolean;
+        const deferred = (this.deferredStatus = defer());
         try {
-            await fetch("_/check-app-online?buildTime=0");
+            await fetch("_/check-app-online?t=" + Date.now());
             rv = true;
         } catch (e) {
             rv = false;
         }
+        deferred.resolve(rv);
         this.updateStatus(rv);
         return rv;
     }
-    checkStatus(awaitable: boolean) {
-        // IE has no support for fetch and it's not polyfilled
-        if ((this.navigatorTrusted && this.onLine) || window.isIE) return this.onLine;
+    checkStatus(): boolean | Promise<boolean> {
+        // this function is only called inside anvil.server.is_app_online()
         if (this.lastCheck > Date.now() - this.offlineTimeout) {
-            // use the value we have
+            // use the cached value we have
             return this.onLine;
         }
-        this.lastCheck = Date.now(); // So we don't have multiple calls to fetchStatus in flight
-        if (awaitable) {
-            return this.fetchStatus();
-        }
-        // in the rpc call we can't await
-        // so do the asyncronous fetch, which will update our stale online value
-        // return the stale value
-        this.fetchStatus();
-        return this.onLine;
+        return this.fetchStatus();
     }
 }
 
@@ -54,26 +51,8 @@ window.anvilAppOnline = anvilAppOnline;
 
 /// these events are fired on change of online/offline status
 /// whenever one fires we update our status
-/// if the navigator was previously untrusted we check in with the service worker
 function navigatorChange() {
-    if (anvilAppOnline.navigatorTrusted) {
-        anvilAppOnline.updateStatus(navigator.onLine);
-    } else {
-        anvilAppOnline.fetchStatus(); // check with the service worker
-    }
+    anvilAppOnline.updateStatus(navigator.onLine);
 }
 window.addEventListener("online", navigatorChange);
 window.addEventListener("offline", navigatorChange);
-
-interface OfflineStatusEvent {
-    type: "OFFLINE_STATUS";
-    onLine: boolean;
-    navigatorTrusted: boolean;
-}
-
-export function offlineStatusMessageHandler(event: MessageEvent<OfflineStatusEvent>) {
-    if (event.data && event.data.type === "OFFLINE_STATUS") {
-        const { onLine } = event.data;
-        anvilAppOnline.updateStatus(onLine);
-    }
-}

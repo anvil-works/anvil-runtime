@@ -8,7 +8,7 @@ v ??= 1;
 require("./messages");
 require("./extra-python-modules.js");
 
-import { offlineStatusMessageHandler } from "./app_online";
+import { pyNone } from "./@Sk";
 import Modal from "./modules/modal";
 import { anvilMod, anvilServerMod } from "./utils";
 
@@ -297,11 +297,11 @@ function loadApp(app, appId, appOrigin, preloadModules) {
     var sendLog = function(details) { console.log(details); };
 
     var flushLog = function() {
-        if (accumulatingPrints) {
+        if (accumulatingPrints !== null) {
             sendLog({print: accumulatingPrints});
             accumulatingPrints = null;
         }
-    }    
+    };
 
     var stdout = function(text, fromServer) {
         if (text != "\n") {
@@ -917,7 +917,7 @@ function loadApp(app, appId, appOrigin, preloadModules) {
 
                 
                 $loc["refresh_data_bindings"] = new Sk.builtin.func(function(self) {
-                    const chainArgs = [Sk.builtin.none.none$];
+                    const chainArgs = [];
 
                     // TODO: Confirm that we want to refresh even if 'item' is None - we don't necessarily just bind to item.
                     //var item = self.tp$getattr(new Sk.builtin.str("item"));
@@ -1011,7 +1011,7 @@ function loadApp(app, appId, appOrigin, preloadModules) {
                         }
                     });
 
-                    return Sk.misceval.chain(...chainArgs);
+                    return Sk.misceval.chain(null, ...chainArgs, () => pyNone);
                 });
 
 
@@ -1274,25 +1274,9 @@ window.loadApp = function(params, preloadModules) {
     if (appLoaded) { console.log("Rejected duplicate app load"); return {}; }
 
     if ("serviceWorker" in navigator) {
-
-        navigator.serviceWorker.onmessage = (e) => {
-            if (!e.data?.type) return;
-            if (e.data.type === "CDN_ORIGIN") {
-                navigator.serviceWorker.controller?.postMessage({ cdnOrign: window.anvilCDNOrigin });
-            } else {
-                offlineStatusMessageHandler(e);
-            }
-        };
-
-        navigator.serviceWorker
-            .register(`${appOrigin}/_/service-worker`, { scope: `${appOrigin}` })
-            .then((reg) => {
-                const sw = reg.installing ?? reg.waiting ?? reg.active;
-                sw?.postMessage({ cdnOrign: window.anvilCDNOrigin });
-            })
-            .catch((error) => {
-                console.error("Service worker registration failed:", error);
-            });
+        navigator.serviceWorker.register(`${appOrigin}/_/service-worker`, { scope: `${appOrigin}` }).catch((error) => {
+            console.error("Service worker registration failed:", error);
+        });
     }
 
 

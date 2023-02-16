@@ -197,76 +197,78 @@
        (throw+ {:anvil/server-error (format "Table '%s' has no column '%s'" python-name col-name)}))
      [table-id cols col-id])))
 
-(defn apply-changes! [table-mapping description schema-changes]
-  (let [table-ids (into {} (for [{:keys [python_name id]} description] [python_name id]))]
+(defn apply-changes!
+  ([table-mapping description schema-changes] (apply-changes! table-mapping description schema-changes nil))
+  ([table-mapping description schema-changes use-quota!]
+   (let [table-ids (into {} (for [{:keys [python_name id]} description] [python_name id]))]
 
-    (loop [[{:keys [type table column column_name new_column_name] :as change} & more-changes] schema-changes
-           table-ids table-ids]
-      (when change
-        (let [type (name type)]
-          (cond
+     (loop [[{:keys [type table column column_name new_column_name] :as change} & more-changes] schema-changes
+            table-ids table-ids]
+       (when change
+         (let [type (name type)]
+           (cond
 
-            (= "CREATE_TABLES" type)
-            (let [tables (:tables change)
-                  table-ids (into table-ids
-                                  (for [[python_name {:keys [title server client]}] tables
-                                        :let [python_name (name python_name)
-                                              {new-id :id} (tables-manager/create-table! table-mapping title python_name server client)]]
-                                    [python_name new-id]))]
-              ;; Then do the columns after we've created all the tables, so the references match
-              (doseq [[python_name {:keys [columns]}] tables]
-                (let [columns (sort-by #(get-in % [:admin_ui :order]) columns)
-                      new-cols (into {} (map-indexed (fn [order col] (raw-column-from-yaml-schema col order table-ids)) columns))
-                      table-id (table-ids (name python_name))]
-                  (tables-util/update-cols-returning table-id
-                                                     new-cols
-                                                     {})))
-              (recur more-changes table-ids))
+             (= "CREATE_TABLES" type)
+             (let [tables (:tables change)
+                   table-ids (into table-ids
+                                   (for [[python_name {:keys [title server client]}] tables
+                                         :let [python_name (name python_name)
+                                               {new-id :id} (tables-manager/create-table! table-mapping title python_name server client)]]
+                                     [python_name new-id]))]
+               ;; Then do the columns after we've created all the tables, so the references match
+               (doseq [[python_name {:keys [columns]}] tables]
+                 (let [columns (sort-by #(get-in % [:admin_ui :order]) columns)
+                       new-cols (into {} (map-indexed (fn [order col] (raw-column-from-yaml-schema col order table-ids)) columns))
+                       table-id (table-ids (name python_name))]
+                   (tables-util/update-cols-returning table-id
+                                                      new-cols
+                                                      {})))
+               (recur more-changes table-ids))
 
-            (= "DELETE_TABLE" type)
-            (let [table-id (get-table-id table-ids table)]
-              (tables-manager/delete-table-access! table-mapping table-id)
-              (recur more-changes (dissoc table-ids (:table type))))
+             (= "DELETE_TABLE" type)
+             (let [table-id (get-table-id table-ids table)]
+               (tables-manager/delete-table-access! table-mapping table-id)
+               (recur more-changes (dissoc table-ids (:table type))))
 
-            (= "UPDATE_TABLE" type)
-            (let [{:keys [table new_python_name server client title]} change
-                  table-id (get-table-id table-ids table)
-                  new-table-ids (if new_python_name
-                                  (-> table-ids
-                                      (dissoc table)
-                                      (assoc new_python_name table-id))
-                                  table-ids)]
-              (when (and new_python_name (not= new_python_name table) (contains? table-ids new_python_name))
-                (throw+ {:anvil/server-error (format "A table with name '%s' already exists; cannot rename '%s'" new_python_name table)}))
-              (when title
-                (tables-manager/rename-table! table-id title))
-              (when-let [update (merge (when new_python_name
-                                         {:python_name new_python_name})
-                                       (when server
-                                         {:server server})
-                                       (when client
-                                         {:client client}))]
-                (tables-util/update-table-access-record! table-mapping table-id update))
-              (recur more-changes new-table-ids))
+             (= "UPDATE_TABLE" type)
+             (let [{:keys [table new_python_name server client title]} change
+                   table-id (get-table-id table-ids table)
+                   new-table-ids (if new_python_name
+                                   (-> table-ids
+                                       (dissoc table)
+                                       (assoc new_python_name table-id))
+                                   table-ids)]
+               (when (and new_python_name (not= new_python_name table) (contains? table-ids new_python_name))
+                 (throw+ {:anvil/server-error (format "A table with name '%s' already exists; cannot rename '%s'" new_python_name table)}))
+               (when title
+                 (tables-manager/rename-table! table-id title))
+               (when-let [update (merge (when new_python_name
+                                          {:python_name new_python_name})
+                                        (when server
+                                          {:server server})
+                                        (when client
+                                          {:client client}))]
+                 (tables-util/update-table-access-record! table-mapping table-id update))
+               (recur more-changes new-table-ids))
 
-            (= "ADD_COLUMN" type)
-            (let [[table-id cols] (get-table-id-and-cols table table-ids)
-                  order (inc (apply max 0 (map #(:order (:admin_ui (second %))) cols)))
-                  new-cols (conj cols (raw-column-from-yaml-schema column order table-ids))]
-              (table-util/update-cols-returning table-id new-cols cols)
-              (recur more-changes table-ids))
+             (= "ADD_COLUMN" type)
+             (let [[table-id cols] (get-table-id-and-cols table table-ids)
+                   order (inc (apply max 0 (map #(:order (:admin_ui (second %))) cols)))
+                   new-cols (conj cols (raw-column-from-yaml-schema column order table-ids))]
+               (table-util/update-cols-returning table-id new-cols cols)
+               (recur more-changes table-ids))
 
-            (= "DELETE_COLUMN" type)
-            (let [[table-id cols col-id] (get-table-id-and-cols table table-ids column_name)]
-              (table-util/update-cols-returning table-id (dissoc cols col-id) cols)
-              (recur more-changes table-ids))
+             (= "DELETE_COLUMN" type)
+             (let [[table-id cols col-id] (get-table-id-and-cols table table-ids column_name)]
+               (table-util/update-cols-returning table-id (dissoc cols col-id) cols use-quota!)
+               (recur more-changes table-ids))
 
-            (= "RENAME_COLUMN" type)
-            (let [[table-id cols col-id] (get-table-id-and-cols table table-ids column_name)]
-              (when (some (fn [[id col]] (= (:name col) new_column_name)) cols)
-                (throw+ {:anvil/server-error (format "Table '%s' already has a column named '%s'" table new_column_name)}))
-              (table-util/update-cols-returning table-id (assoc-in cols [col-id :name] new_column_name) cols)
-              (recur more-changes table-ids))
+             (= "RENAME_COLUMN" type)
+             (let [[table-id cols col-id] (get-table-id-and-cols table table-ids column_name)]
+               (when (some (fn [[id col]] (= (:name col) new_column_name)) cols)
+                 (throw+ {:anvil/server-error (format "Table '%s' already has a column named '%s'" table new_column_name)}))
+               (table-util/update-cols-returning table-id (assoc-in cols [col-id :name] new_column_name) cols)
+               (recur more-changes table-ids))
 
-            :else
-            (throw+ {:anvil/server-error (format "Unknown table command '%s'" type)})))))))
+             :else
+             (throw+ {:anvil/server-error (format "Unknown table command '%s'" type)}))))))))

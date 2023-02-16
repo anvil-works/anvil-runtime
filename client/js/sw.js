@@ -19,30 +19,6 @@ const cleanupOldCaches = async () => {
     }
 };
 
-let cdnOrign = "https://";
-/// Are we able to fetch this URL
-const isExpectedToFetch = (e) => {
-    return e.request.url.startsWith(cdnOrign);
-};
-
-self.onmessage = (e) => {
-    const data = e.data;
-    if (data?.cdnOrign) {
-        cdnOrign = data.cdnOrign;
-    }
-};
-
-async function requestCdnOrigin() {
-    const clients = await self.clients.matchAll({
-        includeUncontrolled: true,
-        type: "window",
-    });
-    const client = clients?.filter((c) => c.visibilityState === "visible")[0];
-    client?.postMessage({ type: "CDN_ORIGIN" });
-}
-
-// we may have 'woken up' so ask the client for the CDN Origin
-requestCdnOrigin();
 
 const _fetch = async (e) => {
     const cache = await caches.open(ACTIVE_CACHE);
@@ -70,13 +46,8 @@ const _fetch = async (e) => {
             log && console.debug("Not caching:", e.request.url);
             cache.delete(e.request);
         }
-        updateOnlineStatus(e, true);
         return resp;
     } catch (err) {
-        if (match || isExpectedToFetch(e)) {
-            updateOnlineStatus(e, false);
-        }
-
         if (match) {
             lastOffline = Date.now();
             console.log("Serving Anvil resources from Service Worker cache");
@@ -101,22 +72,3 @@ self.addEventListener("fetch", (e) => {
     e.respondWith(_fetch(e));
 });
 
-let navigatorTrusted = true;
-
-/// We only post a message if either the navigator was previously untrusted
-/// or the navigator is now untrusted
-async function updateOnlineStatus(e, onLine) {
-    if (onLine !== navigator.onLine) {
-        navigatorTrusted = false;
-        postOfflineStatus(e, onLine);
-    } else if (!navigatorTrusted) {
-        navigatorTrusted = true;
-        postOfflineStatus(e, onLine);
-    }
-}
-
-async function postOfflineStatus(e, onLine) {
-    const client = await self.clients.get(e.clientId);
-    if (!client) return;
-    client.postMessage({ type: "OFFLINE_STATUS", onLine });
-}

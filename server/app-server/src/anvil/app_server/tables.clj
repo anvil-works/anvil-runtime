@@ -63,7 +63,7 @@
             (log/info "Data tables schema out of date. Applying migrations:\n" (with-out-str (pprint updates)))
             (log/info "Migrating automatically...")
             (binding [tables-util/*environment-for-admin-call* {}]
-              (schema/apply-changes! {} current-tables updates))
+              (schema/apply-changes! {} current-tables updates (fn [& args] #_"No quota enforcement required here")))
             (log/info "Migration complete."))
           (do
             (log/info "Data tables schema out of date. Here is the migration that will run if you restart Anvil with the --auto-migrate command-line flag:")
