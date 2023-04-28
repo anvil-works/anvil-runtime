@@ -23,7 +23,7 @@ window.anvilCurrentlyConstructingForms = [];
 import * as componentModule from "../components";
 import * as PyDefUtils from "../PyDefUtils";
 import {setupPythonEnvironment} from "./python-environment";
-import {getReactComponents, registerReactComponent} from "./components-in-js/component-from-react";
+import {getReactComponents, registerReactComponent, registerToolboxItem, setReactImpl} from "./components-in-js/component-from-react";
 import { registerSolidComponent, solidComponents } from "./components-in-js/component-from-solid";
 import { pyCallable, pyCallOrSuspend, pyDict, pyStr, pyTuple, toJs } from "../@Sk";
 import { isCustomAnvilError } from "./error-handling";
@@ -328,7 +328,9 @@ window.anvil = {
             });
         }
     },
+    setReactImpl,
     registerReactComponent,
+    registerToolboxItem,
     getReactComponents,
     registerSolidComponent,
     solidComponents,

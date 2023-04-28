@@ -40,7 +40,12 @@
   (fn [request]
     (let [origin-header (get-in request [:headers "origin"])
           referer-header (get-in request [:headers "referer"])
-          origin-subset? #(or (= %1 %2) (.startsWith %1 (str %2 "/")))
+          origin-subset? (fn [valid-app-origin provided-header]
+                           ;; NB an app origin may include path components, and origin/referer header is likely
+                           ;; just a top-level domain, so we have to accept headers that are the domain component of
+                           ;; the origin:
+                           (or (= valid-app-origin provided-header)
+                               (.startsWith valid-app-origin (str provided-header "/"))))
 
           valid-origins (app-data/get-valid-origins (:environment request))
           [cross-origin? foreign-origin] (or

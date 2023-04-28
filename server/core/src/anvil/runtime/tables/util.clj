@@ -25,7 +25,7 @@
            (java.time.format DateTimeFormatter DateTimeFormatterBuilder)
            (java.time.temporal ChronoField)))
 
-;(clj-logging-config.log4j/set-logger! :level :debug)
+(clj-logging-config.log4j/set-logger! :level :info)
 
 (defonce table-mapping-for-environment (fn
                                          ([environment] {})
@@ -57,6 +57,7 @@
            (-> (jdbc/query db-c ["DELETE FROM app_storage_access WHERE table_id = ? RETURNING 1" table-id])
                (first) (boolean))))
 
+(def MEDIA-INFO-COLS " object_id, name, content_type, table_id, column_id, row_id ")
 
 (defn general-tables-error
   ([message] (general-tables-error message "anvil.tables.TableError"))
@@ -590,7 +591,8 @@
 (defn get-object-size
   ([oid] (get-object-size (db) oid))
   ([db oid]
-   (or (:size (first (jdbc/query db ["SELECT get_lo_size(?) AS size" oid])))
+   (or (:size (first (jdbc/query db ["SELECT length(data) AS size FROM app_storage_media WHERE object_id = ?" oid])))
+       (:size (first (jdbc/query db ["SELECT get_lo_size(?) AS size" oid])))
        0)))
 
 (defn- delete-media-objects
@@ -602,22 +604,34 @@
        (jdbc/query db-c ["SELECT lo_unlink(?)" object-id])))))
 
 (defn delete-media-in-row [table-id row-id use-quota!]
-  (let [affected-media (jdbc/query (db) ["DELETE FROM app_storage_media WHERE table_id = ? AND row_id = ? RETURNING object_id" table-id row-id])]
-    (delete-media-objects (map :object_id affected-media) use-quota!)))
+  (let [affected-media (jdbc/query (db) ["DELETE FROM app_storage_media WHERE table_id = ? AND row_id = ? RETURNING object_id, (data is null) as has_lo, length(data) AS len" table-id row-id])]
+    (delete-media-objects (->> affected-media
+                               (filter :has_lo)
+                               (map :object_id)) use-quota!)
+    (when use-quota! (use-quota! 0 (- (->> affected-media (filter :len) (map :len) (reduce + 0)))))))
 
 (defn delete-media-in-table
   ([table-id use-quota!] (delete-media-in-table (db) table-id use-quota!))
   ([db-c table-id use-quota!]
-   (let [affected-media (jdbc/query db-c ["DELETE FROM app_storage_media WHERE table_id = ? RETURNING object_id" table-id])]
-     (delete-media-objects db-c (map :object_id affected-media) use-quota!))))
+   (let [affected-media (jdbc/query db-c ["DELETE FROM app_storage_media WHERE table_id = ? RETURNING object_id, (data is null) as has_lo, length(data) AS len" table-id])]
+     (delete-media-objects db-c (->> affected-media
+                                     (filter :has_lo)
+                                     (map :object_id)) use-quota!)
+     (when use-quota! (use-quota! 0 (- (->> affected-media (filter :len) (map :len) (reduce + 0))))))))
 
 (defn delete-media-in-column [table-id col-id use-quota!]
-  (let [affected-media (jdbc/query (db) ["DELETE FROM app_storage_media WHERE table_id = ? AND column_id = ? RETURNING object_id" table-id (name col-id)])]
-    (delete-media-objects (map :object_id affected-media) use-quota!)))
+  (let [affected-media (jdbc/query (db) ["DELETE FROM app_storage_media WHERE table_id = ? AND column_id = ? RETURNING object_id, (data is null) as has_lo, length(data) AS len" table-id (name col-id)])]
+    (delete-media-objects (->> affected-media
+                               (filter :has_lo)
+                               (map :object_id)) use-quota!)
+    (when use-quota! (use-quota! 0 (- (->> affected-media (filter :len) (map :len) (reduce + 0)))))))
 
 (defn delete-media-in-cell [table-id col-id row-id use-quota!]
-  (let [affected-media (jdbc/query (db) ["DELETE FROM app_storage_media WHERE table_id = ? AND column_id = ? AND row_id = ? RETURNING object_id" table-id col-id row-id])]
-    (delete-media-objects (map :object_id affected-media) use-quota!)))
+  (let [affected-media (jdbc/query (db) ["DELETE FROM app_storage_media WHERE table_id = ? AND column_id = ? AND row_id = ? RETURNING object_id, (data is null) as has_lo, length(data) AS len" table-id col-id row-id])]
+    (delete-media-objects (->> affected-media
+                               (filter :has_lo)
+                               (map :object_id)) use-quota!)
+    (when use-quota! (use-quota! 0 (- (->> affected-media (filter :len) (map :len) (reduce + 0)))))))
 
 (defn copy-media [^InputStream in-stream ^OutputStream out-stream]
   (try
@@ -646,12 +660,17 @@
                                   query-args))
               (.executeQuery stmt))]))))
 
-(defn export-as-csv [table-id query-obj cols]
+(defn export-as-csv [table-id query-obj cols escape-for-excel?]
   (let [raw-conn ^Connection (jdbc/get-connection (db))
         columns (->> (for [[col-id col-spec] cols] (assoc col-spec :id col-id))
                      (sort-by #(:order (:admin_ui %))))
 
-        esc-string #(str "\"" (.replace (str %) "\"" "\"\"") "\"")
+        esc-string (fn [s]
+                     (let [s (str/replace (str s) "\"" "\"\"")
+                           s (if escape-for-excel?
+                               (str/replace s #"^([=+\-@])" "'$1")
+                               s)]
+                       (str \" s \")))
 
         render (fn render [{:keys [type backend]} value]
                  (condp = type
@@ -762,7 +781,7 @@
                                            ;"string" or anything else
                                            (str ", data->>'" ID "'"))
 
-                                         " AS " (:VIEW-NAME col)))
+                                         " AS \"" (:VIEW-NAME col) "\""))
                                      (apply str))
                                 " FROM app_storage_data"
                                 " WHERE table_id = " table-id)]
@@ -771,6 +790,7 @@
           CREATE FUNCTION " VIEW-NAME "_update() RETURNS trigger AS $$
             DECLARE
               deleted_oid integer;
+              has_lo boolean;
             BEGIN
 
 
@@ -791,12 +811,14 @@
                                                                     "media"           "Cannot update Media objects in Data Tables using SQL. Please use the Python Data Tables API."}
                                                                    (:type col))]
                                                     :when ERR]
-                                                (str "IF NEW." COL-NAME " IS NOT NULL AND (NEW." COL-NAME " != OLD." COL-NAME " OR OLD." COL-NAME " IS NULL) THEN RAISE EXCEPTION '" ERR "'; END IF;"
+                                                (str "IF NEW.\"" COL-NAME "\" IS NOT NULL AND (NEW.\"" COL-NAME "\" != OLD.\"" COL-NAME "\" OR OLD.\"" COL-NAME "\" IS NULL) THEN RAISE EXCEPTION '" ERR "'; END IF;"
                                                      (when (= (:type col) "media")
 
-                                                       (str "\nIF NEW." COL-NAME " IS NULL AND OLD." COL-NAME " IS NOT NULL THEN \n"
-                                                            "  DELETE FROM public.app_storage_media WHERE table_id = " table-id " AND row_id = OLD._id AND column_id = '" ID "' RETURNING object_id INTO deleted_oid;\n"
-                                                            "  PERFORM lo_unlink(deleted_oid);\n"
+                                                       (str "\nIF NEW.\"" COL-NAME "\" IS NULL AND OLD.\"" COL-NAME "\" IS NOT NULL THEN \n"
+                                                            "  DELETE FROM public.app_storage_media WHERE table_id = " table-id " AND row_id = OLD._id AND column_id = '" ID "' RETURNING object_id, (data IS NULL) as has_lo INTO deleted_oid, has_lo;\n"
+                                                            "  IF has_lo THEN \n"
+                                                            "    PERFORM lo_unlink(deleted_oid);\n"
+                                                            "  END IF; \n"
                                                             "END IF;"))))
                                               (interpose "\n")
                                               (apply str))
@@ -811,28 +833,28 @@
                                                   (condp = (:type col)
 
                                                     "number"
-                                                    (str "NEW." (:VIEW-NAME col) "::float")
+                                                    (str "NEW.\"" (:VIEW-NAME col) "\"::float")
 
                                                     "bool"
-                                                    (str "NEW." (:VIEW-NAME col) "::bool")
+                                                    (str "NEW.\"" (:VIEW-NAME col) "\"::bool")
 
                                                     "date"
-                                                    (str "NEW." (:VIEW-NAME col) "::date")
+                                                    (str "NEW.\"" (:VIEW-NAME col) "\"::date")
 
                                                     "datetime"
-                                                    (str "public.to_anvil_timestamp(NEW." (:VIEW-NAME col) "::timestamptz)")
+                                                    (str "public.to_anvil_timestamp(NEW.\"" (:VIEW-NAME col) "\"::timestamptz)")
 
                                                     "simpleObject"
-                                                    (str "NEW." (:VIEW-NAME col) "::jsonb")
+                                                    (str "NEW.\"" (:VIEW-NAME col) "\"::jsonb")
 
-                                                    (str "NEW." (:VIEW-NAME col)))))
+                                                    (str "NEW.\"" (:VIEW-NAME col) "\""))))
                                               (interpose ",")
                                               (apply str)) ")"
                                          (->> (for [col view-cols
                                                     :let [COL-NAME (:VIEW-NAME col)
                                                           ID (:ID col)]
                                                     :when (#{"liveObject" "liveObjectArray" "media"} (:type col))]
-                                                (str " || CASE WHEN NEW." COL-NAME " IS NULL THEN '{\"" ID "\":null}'::jsonb ELSE '{}'::jsonb END"))
+                                                (str " || CASE WHEN NEW.\"" COL-NAME "\" IS NULL THEN '{\"" ID "\":null}'::jsonb ELSE '{}'::jsonb END"))
                                               (apply str))
 
                                          " WHERE table_id = " table-id " AND id = NEW._id;
@@ -846,26 +868,26 @@
                                                   (condp = (:type col)
 
                                                     "number"
-                                                    (str "NEW." (:VIEW-NAME col) "::float")
+                                                    (str "NEW.\"" (:VIEW-NAME col) "\"::float")
 
                                                     "bool"
-                                                    (str "NEW." (:VIEW-NAME col) "::bool")
+                                                    (str "NEW.\"" (:VIEW-NAME col) "\"::bool")
 
                                                     "date"
-                                                    (str "NEW." (:VIEW-NAME col) "::date")
+                                                    (str "NEW.\"" (:VIEW-NAME col) "\"::date")
 
                                                     "datetime"
-                                                    (str "public.to_anvil_timestamp(NEW." (:VIEW-NAME col) "::timestamptz)")
+                                                    (str "public.to_anvil_timestamp(NEW.\"" (:VIEW-NAME col) "\"::timestamptz)")
 
                                                     "simpleObject"
-                                                    (str "NEW." (:VIEW-NAME col) "::jsonb")
+                                                    (str "NEW.\"" (:VIEW-NAME col) "\"::jsonb")
 
                                                     "liveObject" "NULL"
                                                     "liveObjectArray" "NULL"
                                                     "media" "NULL"
 
                                                     ;; else
-                                                    (str "NEW." (:VIEW-NAME col)))))
+                                                    (str "NEW.\"" (:VIEW-NAME col) "\""))))
                                               (interpose ",")
                                               (apply str))
                                          ")) RETURNING id INTO NEW._id;
@@ -875,8 +897,10 @@
                                          (->> (for [col view-cols
                                                     :let [ID (:ID col)]
                                                     :when (= (:type col) "media")]
-                                                (str "DELETE FROM public.app_storage_media WHERE table_id = " table-id " AND row_id = OLD._id AND column_id = '" ID "' RETURNING object_id INTO deleted_oid;"
-                                                     "PERFORM lo_unlink(deleted_oid);"))
+                                                (str "DELETE FROM public.app_storage_media WHERE table_id = " table-id " AND row_id = OLD._id AND column_id = '" ID "' RETURNING object_id, (data IS NULL) as has_lo INTO deleted_oid, has_lo;"
+                                                     "IF has_lo THEN \n"
+                                                     "  PERFORM lo_unlink(deleted_oid); \n"
+                                                     "END IF; "))
                                               (apply str))
                                          "
                    DELETE FROM public.app_storage_data WHERE table_id = " table-id " AND id = OLD._id;

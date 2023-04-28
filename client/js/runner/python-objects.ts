@@ -103,11 +103,23 @@ function mkSlotState(getPyTarget: () => Suspension | pyObject, insertionIndex: n
             const pyLayoutProperties = (dropping.pyLayoutProperties || new pyDict()).nb$or(this.pyLayoutProps);
             const dropZones: DropZone[] = this.cache?.hooks.enableDropMode?.({...dropping, pyLayoutProperties}) || [];
             const offset = this.calculateOffset();
-            //console.log("Got DZs from parent", dropZones, "with offset", offset, "target", this.cache?.pyTarget, "insertion idx", this.insertionIndex, "components",  this.components.length);
-            return dropZones.filter(({element, dropInfo: {childIdx}}) =>
-                childIdx === undefined || (childIdx >= this.insertionIndex+offset && childIdx <= this.insertionIndex+offset+this.components.length)
-            ).map(({dropInfo: {childIdx, ...dropInfo}, ...dz}) =>
-                ({...dz, dropInfo: {...dropInfo, childIdx: childIdx !== undefined ? childIdx - this.insertionIndex-offset : undefined}}));
+            const filteredDropzones = dropZones.filter(({element, dropInfo: {minChildIdx, maxChildIdx}}) =>
+                minChildIdx === undefined && maxChildIdx === undefined || // This slot will accept a component at any index
+                (maxChildIdx === undefined && minChildIdx !== undefined && minChildIdx <= this.insertionIndex+offset+this.components.length) ||
+                (minChildIdx === undefined && maxChildIdx !== undefined && maxChildIdx >= this.insertionIndex+offset) ||
+                (minChildIdx !== undefined && maxChildIdx !== undefined && minChildIdx <= this.insertionIndex+offset+this.components.length && maxChildIdx >= this.insertionIndex+offset)
+            ).map(({dropInfo: {minChildIdx, maxChildIdx, ...dropInfo}, ...dz}) =>
+                ({...dz, dropInfo: {
+                        ...dropInfo,
+                        minChildIdx: minChildIdx === undefined ? undefined : Math.max(minChildIdx - this.insertionIndex - offset, this.insertionIndex - offset),
+                        maxChildIdx: maxChildIdx === undefined ? undefined : Math.min(maxChildIdx - this.insertionIndex - offset, this.insertionIndex + offset + this.components.length),
+                        _originalMinChildIdx: minChildIdx, // For debugging
+                        _originalMaxChildIdx: maxChildIdx,
+                    }
+                }));
+
+            console.log(toJs(this.pyLayoutProps), "got DZs from parent", dropZones, "with offset", offset, "target", this.cache?.pyTarget, "insertion idx", this.insertionIndex, "components",  this.components.length, "Filtered DZs:", filteredDropzones);
+            return filteredDropzones;
         },
         disableDropMode() {
             this.cache?.hooks.disableDropMode();

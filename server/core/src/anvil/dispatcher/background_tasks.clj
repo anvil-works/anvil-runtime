@@ -216,10 +216,11 @@
                                                                                return-path (assoc return-path :respond! (fn [resp]
                                                                                                                           ;; Response is always a BG task liveobject. Add its metadata to our tracing span.
                                                                                                                           ;; TODO: Once BG tasks are sensible Portable Classes, we won't need this DB lookup, we can include the session ID in the wire format for the object.
-                                                                                                                          (let [task-id (json/read-str (-> resp :response :id))
+                                                                                                                          (when-let [response-id (get-in resp [:response :id])]
+                                                                                                                            (let [task-id (json/read-str response-id)
                                                                                                                                 session-id (:session_id (first (jdbc/query util/db ["SELECT session_id FROM background_tasks WHERE id = ?" task-id])))]
                                                                                                                             (tracing/merge-span-attrs tracing-span {:task_id         task-id
-                                                                                                                                                                    :task_session_id session-id}))
+                                                                                                                                                                      :task_session_id session-id})))
                                                                                                                           (dispatcher/respond! return-path resp)))]
                                                                            (when (= :client origin)
                                                                              (throw+ {:anvil/server-error "Can't launch background tasks from the client." :type "anvil.server.BackgroundTaskError"}))

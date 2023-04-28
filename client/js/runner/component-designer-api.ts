@@ -10,6 +10,10 @@ const NOT_AVAILABLE = (...args: any[]) => {
 
 export type SectionUpdates = {[id: string]: Partial<Omit<Section, "id">> | null} | true;
 
+export interface DesignerState {
+    [key:string]: any;
+}
+
 interface DesignerApi {
     inDesigner: boolean;
     updateComponentProperties(
@@ -29,6 +33,8 @@ interface DesignerApi {
     allowDirectInteraction(pyComponent: Component): void;
     notifyBoundsChanged(pyComponent: Component): void;
     notifyInteractionsChanged(pyComponent: Component): void;
+    notifyDomNodeChanged(pyComponent: Component): void;
+    getDesignerState(pyComponent: Component): DesignerState;
 }
 
 export let designerApi: DesignerApi = {
@@ -40,6 +46,8 @@ export let designerApi: DesignerApi = {
     allowDirectInteraction: NOT_AVAILABLE,
     notifyBoundsChanged: NOT_AVAILABLE,
     notifyInteractionsChanged: NOT_AVAILABLE,
+    notifyDomNodeChanged: NOT_AVAILABLE,
+    getDesignerState: NOT_AVAILABLE,
 };
 
 export const pyDesignerApi = {

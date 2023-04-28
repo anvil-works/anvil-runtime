@@ -29,7 +29,21 @@ anvil.server._register_exception_type("anvil.http.HttpRequestFailed", HttpReques
 def _has_content(method):
     return method != "GET" and method != "HEAD"
 
-#!defFunction(anvil.http,_,url,[method="GET"],[data=None],[json=False],[headers=None],[username=None],[password=None], [timeout=None])!2: "Make an HTTP request to the specified URL.\n\nIf json=True, the response is parsed into Python objects (dicts/lists/etc), and 'data' is JSON-encoded before sending.\n\n'headers' can be a dict of strings to set HTTP headers.\nIf specified, 'username' and 'password' will be used to perform HTTP Basic authentication." ["request"]
+#!defFunction(anvil.http,_,url,[method="GET"],[data=None],[json=False],[headers=None],[username=None],[password=None],[timeout=None])!2: 
+# {
+#   $doc: "Make an HTTP request to the specified URL.",
+#   anvil$helpLink: "/docs/http-apis/making-http-requests",
+#   anvil$args: {
+#     url: "The request will be made to this URL.",
+#     method: "The HTTP method. Defaults to 'GET'.",
+#     data: "The data to send in the request body",
+#     json: "If set to True, the response is parsed into Python objects (dicts/lists/etc), and ‘data’ is JSON-encoded before sending. If False, the response will be a Media object.",
+#     headers: "A dict of strings to set HTTP headers",
+#     username: "If specified, used to perform HTTP Basic authentication",
+#     password: "If specified, used to perform HTTP Basic authentication",
+#     timeout: "An int or float representing the amount of time, in seconds, to wait for a response. Default is 60 seconds.",
+#   } 
+# }["request"]
 def request(url, method='GET', data=None, headers=None, username=None, password=None, json=False, timeout=None):
     method = str(method).upper()
 

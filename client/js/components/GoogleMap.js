@@ -3206,12 +3206,14 @@ module.exports = function(pyModule) {
             })
         );
 
+        /*!defMethod(_)!2*/ "Returns the area of a closed path in square meters."
         $Map["compute_area"] = new Sk.builtin.staticmethod(
             new Sk.builtin.func(function (path) {
                 return remapToPy(google.maps.geometry.spherical.computeArea(remapToJs(path)));
             })
         );
 
+        /*!defMethod(_)!2*/ "Returns the length of a path in meters."
         $Map["compute_length"] = new Sk.builtin.staticmethod(
             new Sk.builtin.func(function (path) {
                 return remapToPy(google.maps.geometry.spherical.computeLength(remapToJs(path)));

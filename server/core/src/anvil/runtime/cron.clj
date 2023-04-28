@@ -1,4 +1,5 @@
 (ns anvil.runtime.cron
+  (:use     [slingshot.slingshot :only [try+]])
   (:import java.util.Date
            (java.util Calendar TimeZone))
   (:require [anvil.util :as util]
@@ -122,7 +123,7 @@
       (let [{:keys [app_id] :as environment} (get-environment-for-job job)]
        (when-not (app-data/abuse-caution? nil app_id)
          (let [launch! (fn []
-                         (try
+                         (try+
                            ;; This session is created with no log data, so will not be logged unless there's an error launching - see below.
                            (let [session (sessions/new-unlogged-session-from-environment environment "background_task" {:scheduled_task job_id :func (str "task:" task_name)})]
                              (dispatcher/dispatch!
@@ -145,6 +146,8 @@
                                                 (app-log/record-event! session nil "err" (str (:type error) ": " (:message error)) error)
                                                 (log/error (str "Failed to launch Scheduled Task " job_id " for app " app_id ": " error)))
                                               (update-job! util/db job {:last_bg_task_id (json/read-str (:id response))})))}))
+                           (catch :anvil/app-loading-error e
+                             (log/warn (str "Failed to load app when launching scheduled task " job_id " for app " app_id ": " (:anvil/app-loading-error e))))
                            (catch Exception e
                              (log/error e (str "Failed to launch scheduled task " job_id " for app " app_id)))))]
            (if (nil? last_bg_task_id)

@@ -24,6 +24,8 @@
     "r" READ
     NONE))
 
+(def MEDIA-INFO-COLS " object_id, name, content_type, table_id, column_id, row_id ")
+
 (defn general-tables-error
   ([message] (general-tables-error message "anvil.tables.TableError"))
   ([message error-type]

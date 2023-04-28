@@ -32,7 +32,7 @@ export function mkInvalidComponent(message: string) {
 }
 
 export interface SetupResult {
-    components: {[name:string]: {component: Component, layoutProperties: LayoutProperties, index: number, targetSlot?: string}};
+    components: {[name:string]: {component: Component, layoutProperties: LayoutProperties, index: number, targetSlot?: string, ancestors: Component[]}};
     slots?: {[name:string]: Slot};
     form: Component;
 }
@@ -87,9 +87,9 @@ function addEventHandlers(pyComponent: Component, pyForm: Component, yaml: Compo
     }
 }
 
-function createComponents(formYaml: FormYaml, pyForm: Component, setupHandlers: boolean) {
+function createComponents(formYaml: FormYaml, pyForm: Component, setupHandlers: boolean, rootComponent?: Component) {
     const setupResult : SetupResult = {components: {}, form: pyForm};
-    const setupComponent = (yaml: ComponentYaml, pyAddToParent: pyObject | null, index: number, targetSlot?: string): Suspension | null | pyNoneType =>
+    const setupComponent = (yaml: ComponentYaml, pyAddToParent: pyObject | null, ancestors: Component[], index: number, targetSlot?: string): Suspension | null | pyNoneType =>
         chainOrSuspend(
             tryCatchOrSuspend(
                 () => instantiateComponentFromYamlSpec(pyForm, yaml.type, {__ignore_property_exceptions: true, ...yaml.properties}, yaml.name),
@@ -102,7 +102,7 @@ function createComponents(formYaml: FormYaml, pyForm: Component, setupHandlers: 
                 tryCatchOrSuspend(
                     () => {
                         if (yaml.name) {
-                            setupResult.components[yaml.name] = {component: pyComponent, layoutProperties: yaml.layout_properties || {}, index, targetSlot};
+                            setupResult.components[yaml.name] = {component: pyComponent, layoutProperties: yaml.layout_properties || {}, index, ancestors, targetSlot};
                         }
 
                         if (setupHandlers) {
@@ -113,7 +113,7 @@ function createComponents(formYaml: FormYaml, pyForm: Component, setupHandlers: 
                             const pyAddComponent = Sk.abstr.gattr(pyComponent, py.s_add_component);
                             return chainOrSuspend(
                                 null,
-                                ...yaml.components.map((subYaml, index) => () => setupComponent(subYaml, pyAddComponent, index)),
+                                ...yaml.components.map((subYaml, index) => () => setupComponent(subYaml, pyAddComponent, [pyComponent, ...ancestors], index)),
                                 () => pyComponent
                             );
                         } else {
@@ -149,7 +149,10 @@ function createComponents(formYaml: FormYaml, pyForm: Component, setupHandlers: 
                 container: {},
                 slot: {},
             };
-            for (const [name, { set_layout_properties, one_component, template, target, index }] of Object.entries(formYaml.slots)) {
+            const sortedSlots = Object.entries(formYaml.slots).sort(([nameA, {index: indexA}],[nameB, {index: indexB}]) =>
+                indexA === indexB ? nameA.localeCompare(nameB, "en") : indexA - indexB
+            )
+            for (const [name, { set_layout_properties, one_component, template, target, index }] of sortedSlots) {
                 let getContainer: () => Suspension | pyObject;
                 if (target.type === "container") {
                     const pyContainer = target.name ? setupResult.components[target.name].component : pyForm;
@@ -180,13 +183,7 @@ function createComponents(formYaml: FormYaml, pyForm: Component, setupHandlers: 
 
                 // Make sure slots in the same container coexist happily (earlier slots affect insertion index of later slots)
                 const slots = (slotsByTarget[target.type][target.name] ||= []);
-                for (const s of slots) {
-                    if (s._slotState.insertionIndex > slot._slotState.insertionIndex) {
-                        s._slotState.earlierSlots.push(slot);
-                    } else if (s._slotState.insertionIndex < slot._slotState.insertionIndex) {
-                        slot._slotState.earlierSlots.push(s);
-                    }
-                }
+                slot._slotState.earlierSlots.push(...slots);
                 slots.push(slot);
             }
         }
@@ -201,7 +198,7 @@ function createComponents(formYaml: FormYaml, pyForm: Component, setupHandlers: 
         return chainOrSuspend(
             undefined,
             ...Object.entries(formYaml.components_by_slot ?? []).map(([slotName, components], index) => () => {
-                return chainOrSuspend(null, ...components.map((yaml) => () => setupComponent(yaml, null, index, slotName)));
+                return chainOrSuspend(null, ...components.map((yaml) => () => setupComponent(yaml, null, [rootComponent!], index, slotName)));
             }),
             setupSlotsAndCleanUp
         );
@@ -212,16 +209,16 @@ function createComponents(formYaml: FormYaml, pyForm: Component, setupHandlers: 
         const pyAddToForm = Sk.abstr.gattr(pyForm, py.s_add_component);
         return chainOrSuspend(
             null,
-            ...(formYaml.components ?? []).map((yaml, index) => () => setupComponent(yaml, pyAddToForm, index)),
+            ...(formYaml.components ?? []).map((yaml, index) => () => setupComponent(yaml, pyAddToForm, [rootComponent!], index)),
             setupSlotsAndCleanUp
         );
     }
 }
 
 
-export function setupFormComponents(formYaml: FormYaml, pyForm: Component, setupHandlers=true) {
+export function setupFormComponents(formYaml: FormYaml, pyForm: Component, setupHandlers=true, rootComponent?: Component) {
     const pyFormDict = Sk.abstr.lookupSpecial(pyForm, pyStr.$dict) as pyDict;
-    return chainOrSuspend(createComponents(formYaml, pyForm, setupHandlers), (setupResult: SetupResult) => {
+    return chainOrSuspend(createComponents(formYaml, pyForm, setupHandlers, rootComponent), (setupResult: SetupResult) => {
         for (const [name, {component}] of Object.entries(setupResult.components)) {
             const pyName = new pyStr(name);
             if (isTrue(pyHasAttr(pyForm, pyName))) {

@@ -411,6 +411,13 @@ class Row(BaseRow):
     # def table_id(self):
     #     return self._table_id
 
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except NoSuchColumnError:
+            return default
+
+
     def keys(self):
         if self._spec is None:
             # if we don't have a _spec we don't have any keys

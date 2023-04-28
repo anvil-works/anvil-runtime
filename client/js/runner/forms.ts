@@ -36,7 +36,7 @@ import {
 } from "../@Sk";
 import type { pyObject, pyTuple, Kws } from "../@Sk";
 import { AnvilHooks, Component, setDefaultDepId } from "../components/Component";
-import { getAnvilComponentClass, kwargsToJsObject, objectToKwargs } from "./instantiation"; // for type stub
+import {getAnvilComponentClass, kwargsToJsObject, objectToKwargs, resolveStringComponent} from "./instantiation"; // for type stub
 import { BindingError, CustomAnvilError, isCustomAnvilError } from "./error-handling";
 import { designerApi } from "./component-designer-api";
 
@@ -193,8 +193,10 @@ export function setupCustomComponentHooks(yaml: FormYaml, c: Component, kws: Kws
     const oldHooks = c.anvil$hooks;
     c.anvil$hooks = {
         setupDom: oldHooks.setupDom,
-        domElement: oldHooks.domElement,
+        get domElement() { return oldHooks.domElement },
         setDataBindingListener: oldHooks.setDataBindingListener,
+        enableDropMode: oldHooks.enableDropMode,
+        disableDropMode: oldHooks.disableDropMode,
     };
     // TODO: include the item property here
 
@@ -262,7 +264,10 @@ export const createFormTemplateClass = (
     className: string,
     anvilModule: PyModMap
 ): FormTemplateConstructor => {
-    const pyBase = yaml.container ? getAnvilComponentClass(anvilModule, yaml.container.type)! : WithLayout;
+    const pyBase = yaml.container ? (
+        getAnvilComponentClass(anvilModule, yaml.container.type)!
+        || resolveStringComponent(yaml.container.type.substring(5), depId)
+    ) : WithLayout;
 
     // Legacy bits of _anvil we can't get rid of yet
     const _anvil: any = {};

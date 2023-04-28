@@ -492,7 +492,7 @@
 
        (catch :anvil/app-loading-error e
          (let [error-id (random/hex 6)]
-           (log/error (:throwable &throw-context) "App dependency error when loading app for API call:" error-id)
+           (log/warn (str "App dependency error when loading app " (:app-id request) " for API call to " path ": " error-id))
            (send! channel (-> {:body (str "Internal server error: " error-id)}
                               (resp/status 500)
                               (resp/content-type "text/plain")))))
@@ -746,7 +746,8 @@
             application-id (or (get-in microsoft-service [:server_config :application_id])
                                (and (:custom? conf/microsoft-client-config) (:application-id conf/microsoft-client-config)))
             additional-scopes (get-in microsoft-service [:server_config :additional_oauth_scopes])
-            app-secret-provided? (or (get-in microsoft-service [:server_config :application_secret])
+            app-secret-provided? (or (get-in microsoft-service [:server_config :application_secret_enc])
+                                     (get-in microsoft-service [:server_config :application_secret])
                                      (and (:custom? conf/microsoft-client-config) (:application-secret conf/microsoft-client-config)))
 
             app-id-provided? (not (or (= "" application-id) (nil? application-id)))
@@ -900,7 +901,9 @@
               custom-google-config? (not-empty google-client-id)
 
               google-client-secret (if custom-google-config?
-                                     (or (get-in google-service [:server_config :client_secret])
+                                     (or (when-let [encrypted-client-secret (get-in google-service [:server_config :client_secret_enc])]
+                                           (:value (secrets/get-global-app-secret-value (:app-info session-state) "google-service/client-secret" encrypted-client-secret)))
+                                         (get-in google-service [:server_config :client_secret])
                                          (and (:custom? conf/google-client-config) (:client-secret conf/google-client-config)))
                                      (:client-secret conf/google-client-config))
 
@@ -926,7 +929,7 @@
               (sessions/notify-session-update! app-session)
 
               (-> (resp/response (-> (slurp (runtime-client-resource request "/client_auth_success.html"))
-                                     (.replace "{{canonical-url}}" (hiccup-util/escape-html (:app-origin session-state)))))
+                                     (.replace "{{canonical-url}}" ^String (hiccup-util/escape-html (:app-origin session-state)))))
                   (resp/content-type "text/html")
                   (resp/status 200)))
 
@@ -940,7 +943,8 @@
           app-session (sessions/load-session-by-id-without-authentication session-id)]
       (if-not app-session
         (resp/redirect (str conf/static-root-url "/runtime-new/runtime/facebook_auth_error.html#" (codec/url-encode "SESSION_EXPIRED")))
-        (let [request (merge req {:app-session app-session} (select-keys @app-session [:app-id :app-info :environment]))
+        (let [session-state (sessions/deref-db app-session)
+              request (merge req {:app-session app-session} (select-keys session-state [:app-id :app-info :environment]))
               app (:content (get-app-from-request request))
               facebook-service (first (filter #(= (:source %) "/runtime/services/facebook.yml") (:services app)))
               facebook-client-id (or (get-in facebook-service [:server_config :app_id])
@@ -948,7 +952,9 @@
 
               facebook-client-secret (if (or (= "" facebook-client-id) (nil? facebook-client-id))
                                        (:app-secret conf/facebook-client-config)
-                                       (or (get-in facebook-service [:server_config :app_secret])
+                                       (or (when-let [encrypted-app-secret (get-in facebook-service [:server_config :app_secret_enc])]
+                                             (:value (secrets/get-global-app-secret-value (:app-info session-state) "facebook-service/app-secret" encrypted-app-secret)))
+                                           (get-in facebook-service [:server_config :app_secret])
                                            (and (:custom? conf/facebook-client-config) (:app-secret conf/facebook-client-config))))
 
               facebook-client-id (if (or (= "" facebook-client-id) (nil? facebook-client-id))
@@ -958,7 +964,7 @@
             (let [provided-csrf-token (last (.split ^String (-> req :params :state) "G"))]
 
               ;; First, check the CSRF token matches the one we put in the session
-              (if (not= provided-csrf-token (::facebook-csrf-token @app-session))
+              (if (not= provided-csrf-token (::facebook-csrf-token session-state))
 
                 ;; CSRF does not match. Fail.
                 (throw (Exception. "CSRF CHECK FAILED"))
@@ -990,7 +996,7 @@
 
 
                       (-> (resp/response (-> (slurp (runtime-client-resource request "/facebook_auth_success.html"))
-                                             (.replace "{{canonical-url}}" (hiccup-util/escape-html (:app-origin @app-session)))))
+                                             (.replace "{{canonical-url}}" ^String (hiccup-util/escape-html (:app-origin session-state)))))
                           (resp/content-type "text/html")
                           (resp/status 200)))))))
 
@@ -1011,7 +1017,8 @@
           (resp/redirect (str conf/static-root-url "/runtime-new/runtime/microsoft_auth_error.html#" (codec/url-encode (str error ": " (-> req :params :error_description)))))
 
           (try
-            (let [request (merge req {:app-session app-session} (select-keys @app-session [:app-id :app-info :environment]))
+            (let [session-state (sessions/deref-db app-session)
+                  request (merge req {:app-session app-session} (select-keys session-state [:app-id :app-info :environment]))
                   app (:content (get-app-from-request request))
                   microsoft-service (first (filter #(= (:source %) "/runtime/services/anvil/microsoft.yml") (:services app)))
                   provided-csrf-token (last (.split ^String (-> req :params :state) "G"))
@@ -1033,12 +1040,12 @@
 
                                          verified-claims (buddy.sign.jwt/unsign id-token public-key {:alg alg})]
 
-                                     (if (not= (:nonce verified-claims) (::microsoft-nonce @app-session))
+                                     (if (not= (:nonce verified-claims) (::microsoft-nonce session-state))
                                        (throw (Exception. "NONCE CHECK FAILED"))
                                        (swap! app-session assoc-in [:microsoft :id-token] verified-claims))))]
 
               ;; First, check the CSRF token matches the one we put in the session
-              (if (not= provided-csrf-token (::microsoft-csrf-token @app-session))
+              (if (not= provided-csrf-token (::microsoft-csrf-token session-state))
 
                 ;; CSRF does not match. Fail.
                 (throw (Exception. "CSRF CHECK FAILED"))
@@ -1051,8 +1058,12 @@
                     (sessions/notify-session-update! app-session))
 
                   ;; There was no ID token, so we must be using the full auth code flow.
-                  (let [application-id (or (get-in microsoft-service [:server_config :application_id]) (and (:custom? conf/microsoft-client-config) (:application-id conf/microsoft-client-config)))
-                        application-secret (or (get-in microsoft-service [:server_config :application_secret]) (and (:custom? conf/microsoft-client-config) (:application-secret conf/microsoft-client-config)))
+                  (let [application-id (or (get-in microsoft-service [:server_config :application_id])
+                                           (and (:custom? conf/microsoft-client-config) (:application-id conf/microsoft-client-config)))
+                        application-secret (or (when-let [encrypted-app-secret (get-in microsoft-service [:server_config :application_secret_enc])]
+                                                 (:value (secrets/get-global-app-secret-value (:app-info session-state) "microsoft-service/application-secret" encrypted-app-secret)))
+                                               (get-in microsoft-service [:server_config :application_secret])
+                                               (and (:custom? conf/microsoft-client-config) (:application-secret conf/microsoft-client-config)))
                         tenant-id (or (get-in microsoft-service [:server_config :tenant_id]) (and (:custom? conf/microsoft-client-config) (:tenant-id conf/microsoft-client-config)))
                         body-json (:body @(http/post (str "https://login.microsoftonline.com/" (URLEncoder/encode (util/or-str tenant-id "common")) "/oauth2/v2.0/token")
                                                      {:keepalive   -1
@@ -1077,7 +1088,7 @@
                         (sessions/notify-session-update! app-session))))))
 
               (-> (resp/response (-> (slurp (runtime-client-resource req "/microsoft_auth_success.html"))
-                                     (.replace "{{canonical-url}}" (hiccup-util/escape-html (:app-origin @app-session)))))
+                                     (.replace "{{canonical-url}}" ^String (hiccup-util/escape-html (:app-origin session-state)))))
                   (resp/content-type "text/html")
                   (resp/status 200)))
 

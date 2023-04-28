@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-namespace */
 declare global {
      //
      // Based on JSX types for solidjs/Surplus and Inferno and adapted for `dom-expressions`.
@@ -21,6 +22,7 @@ declare global {
         // Let TS know the name of the `children` property in order for it to be able to type check them.
         // https://github.com/Microsoft/TypeScript/issues/18357
         interface ElementChildrenAttribute {
+            // eslint-disable-next-line @typescript-eslint/ban-types
             children: {};
         }
 

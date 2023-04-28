@@ -53,6 +53,8 @@
   (and (not= method :get) (not= method :head)))
 
 (defn request [{:keys [url timeout method headers data username password] :as kwargs}]
+  (when u/*client-request?*
+    (throw+ {:anvil/server-error "Cannot call this function from client code", :type "anvil.server.PermissionDenied"}))
   (worker-pool/with-expanding-threadpool-when-slow
     (let [method (keyword (.toLowerCase (or method "GET")))
           headers (reduce merge {} (for [[k v] headers]

@@ -10,7 +10,8 @@
             [clojure.data.json :as json]
             [anvil.runtime.tables.v2.rpc :as tables-v2]
             [anvil.runtime.tables.rpc :as tables]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [anvil.runtime.tables.v2.util :as util-v2])
   (:import (anvil.dispatcher.types LiveObjectProxy SerializedPythonObject)))
 
 (defn get-props
@@ -57,6 +58,12 @@
        :client_config
        :enable_v2))
 
+(defn- v2-fetch-spec [table-id]
+  (let [tables (util-v2/get-tables)
+        fetch (into {} (for [[col _] (get-in tables [table-id :columns])]
+                         [col {}]))]
+    (SerializedPythonObject. "anvil.tables.fetch_only" {:spec fetch})))
+
 (defn- is-v1-row? [r]
   (instance? LiveObjectProxy r))
 
@@ -78,7 +85,7 @@
   (let [[cap view-key table-id] (tables-v2/get-table-by-id nil table-id)
         row-id (force-row-id-str row-id)
         ;; v2 understands old-row-id format integer row-id and str row-id
-        [row-id table-data :as row] (tables-v2/table-get-row-by-id nil cap row-id)]
+        [row-id table-data :as row] (tables-v2/table-get-row-by-id {:fetch (v2-fetch-spec table-id)} cap row-id)]
     (when row
       [view-key table-id row-id table-data])))
 
@@ -135,7 +142,7 @@
 
 (defn- table-get-v2 [table-id query-map]
   (let [[cap view-key table-id] (tables-v2/get-table-by-id nil table-id)
-        [row-id table-data :as row] (tables-v2/table-get-row nil cap [] query-map)]
+        [row-id table-data :as row] (tables-v2/table-get-row nil cap [(v2-fetch-spec table-id)] query-map)]
     (when row
       [view-key table-id row-id table-data])))
 
@@ -298,3 +305,8 @@
          (validate-enabled-user! user-map)
          (throw+ {:anvil/server-error "This account has not been enabled by an administrator", :type "anvil.users.AccountIsNotEnabled"})))
      u)))
+
+(defn record-login-failure! [user-row]
+  (when user-row
+    (update-row! (user-row->table-id-row-id user-row) (fn [{fail-count "n_password_failures"}]
+                                                        {"n_password_failures" (inc (or fail-count 0))}))))

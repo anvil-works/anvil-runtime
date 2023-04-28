@@ -14,7 +14,7 @@
             [anvil.runtime.quota :as quota]
             [clojure.pprint :as pprint])
   (:import (org.apache.commons.io IOUtils)
-           (java.io InputStream)
+           (java.io ByteArrayOutputStream InputStream)
            (java.sql Blob ResultSet Array Connection)))
 
 (clj-logging-config.log4j/set-logger! :level :info)
@@ -125,12 +125,15 @@
 (defn- delete-media! [db-c media-ids]
   (when-not (empty? media-ids)
     (log/trace "Deleting media:" media-ids)
-    (-> (jdbc/query db-c ["WITH sizes AS (SELECT object_id, get_lo_size(object_id) as size FROM app_storage_media
-                                              WHERE object_id = ANY(?)),
-                                blob_deletions AS (SELECT lo_unlink(object_id) FROM sizes),
-                                record_deletions AS (DELETE FROM app_storage_media WHERE object_id IN (SELECT object_id FROM sizes))
-                            SELECT SUM(size) AS bytes_removed FROM sizes"
-                          (long-array media-ids)])
+    (-> (jdbc/query db-c ["WITH lo_sizes AS (SELECT object_id, get_lo_size(object_id) as bytes_removed FROM app_storage_media
+                                              WHERE data IS NULL AND object_id = ANY(?)),
+                                blob_deletions AS (SELECT lo_unlink(object_id), object_id FROM lo_sizes),
+                                lo_record_deletions AS (DELETE FROM app_storage_media WHERE object_id IN (SELECT object_id FROM blob_deletions)),
+                                data_sizes AS (SELECT object_id, length(data) as bytes_removed FROM app_storage_media
+                                                  WHERE data IS NOT NULL AND object_id = ANY(?)),
+                                data_record_deletions AS (DELETE FROM app_storage_media WHERE object_id IN (SELECT object_id FROM data_sizes))
+                            SELECT bytes_removed FROM lo_sizes UNION SELECT bytes_removed FROM data_sizes"
+                          (long-array media-ids) (long-array media-ids)])
         (first) (:bytes_removed))))
 
 (defn- delete-displaced-media! [db-c table-id rows]
@@ -176,6 +179,7 @@
     (quota/decrement-if-possible-c! quota-ctx db-c :db-bytes size)
     (.close out-stream)
     (.close in-stream)
+    (.free blob)
     oid))
 
 (defn- create-blobs! [db-c quota-ctx rows]
@@ -192,14 +196,29 @@
                 (assoc :created-oids created-oids)
                 (update-in [:reduced-values] merge created-oids))))))))
 
-(defn- create-media-records! [db-c table-id rows]
-  (when-let [media-rows (seq (filter :created-oids rows))]
-    (jdbc/insert-multi! db-c :app_storage_media [:object_id :content_type :name :row_id :table_id :column_id]
-                        (mapcat (fn [{:keys [row-id created-oids media-to-write]}]
-                                  (for [[col-id oid] created-oids
-                                        :let [media (get media-to-write col-id)]]
-                                    [oid (dispatcher-types/getContentType media) (dispatcher-types/getName media) row-id table-id (util/preserve-slashes col-id)]))
-                                media-rows))))
+(defn- create-media-records! [db-c table-id quota-ctx rows]
+  ;; At this point we don't (necessarily) know row-id. That's fine, in the case of an insert, we'll come back later and fill it in.
+  (for [{:keys [row-id media-to-write] :as row} rows]
+    (if-not media-to-write
+      row
+      (let [created-oids
+            (into {}
+                  (for [[col-id media] media-to-write
+                        :when media]
+                    (let [in-stream ^InputStream (blocking-hacks/?->InputStream rpc-util/*req* media)
+                          out-stream (ByteArrayOutputStream.)
+                          size (IOUtils/copy in-stream out-stream 4096)
+                          data (.toByteArray out-stream)]
+                      (.close in-stream)
+                      (.close out-stream)
+                      (quota/decrement-if-possible-c! quota-ctx db-c :db-bytes size)
+                      (let [object-id (:object_id (first (jdbc/query db-c ["INSERT INTO app_storage_media(content_type, name, table_id, row_id, column_id, data) VALUES (?, ?, ?, ?, ?, ?) RETURNING object_id"
+                                                                           (dispatcher-types/getContentType media) (dispatcher-types/getName media) table-id row-id (util/preserve-slashes col-id) data])))]
+                        [col-id object-id]))))]
+        (-> row
+            (dissoc :media-to-write)
+            (assoc :created-oids (vals created-oids))
+            (update-in [:reduced-values] merge created-oids))))))
 
 (defn- merge-row-updates [tables view-spec row-updates]
   (reduce (fn [updates {:keys [row-id values]}]
@@ -225,8 +244,7 @@
             bytes-displaced (delete-displaced-media! db-c table-id rows)
             _ (when bytes-displaced
                 (quota/decrement-c! quota-ctx db-c :db-bytes (- bytes-displaced)))
-            rows (create-blobs! db-c quota-ctx rows)
-            _ (create-media-records! db-c table-id rows)
+            rows (create-media-records! db-c table-id quota-ctx rows)
 
             data-json (-> (for [{:keys [row-id reduced-values]} rows]
                             {:id row-id, :data reduced-values})
@@ -307,7 +325,7 @@
     ;; (but the roundtrips aren't that expensive, so this isn't urgent)
     (util/with-db-transaction [db-c db-c :repeatable-read]
       (quota/decrement-if-possible-c! quota-ctx db-c :db-rows (count rows))
-      (let [rows (create-blobs! db-c quota-ctx rows)
+      (let [rows (create-media-records! db-c table-id quota-ctx rows)
             new-rows (jdbc/query db-c (concat [(str "WITH new_data AS (SELECT value AS data, ordinality FROM jsonb_array_elements(?::jsonb) WITH ORDINALITY)
                                                      INSERT INTO app_storage_data (table_id,data)
                                                      (SELECT ? as table_id, data FROM new_data " (when RESTRICT-SQL (str "WHERE " RESTRICT-SQL)) " ORDER BY ordinality)
@@ -319,8 +337,9 @@
             ;; Now match up the new media records, using the fact that the ids were returned in the same order as the input rows
             rows (map (fn [row {:keys [id]}]
                         (assoc row :row-id id))
-                      rows new-rows)
-            _ (create-media-records! db-c table-id rows)]
+                      rows new-rows)]
+        (doseq [{:keys [row-id created-oids]} rows]
+          (jdbc/execute! db-c ["UPDATE app_storage_media SET row_id = ? WHERE object_id = ANY(?)" row-id (int-array created-oids)]))
         (map :row-id rows)))))
 
 (defn- RETURN-MEDIA [tables {table-id :id :as view-spec}]

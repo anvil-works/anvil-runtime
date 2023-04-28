@@ -26,13 +26,18 @@
                                   query-args))
               (.executeQuery stmt))]))))
 
-(defn export-as-csv [tables db-c table-id query-obj col-names]
+(defn export-as-csv [tables db-c table-id query-obj col-names escape-for-excel?]
   (let [raw-conn ^Connection (jdbc/get-connection db-c)
         columns (->> (-> (get-in tables [table-id :columns])
                          (select-keys col-names))
                      (map second))
 
-        esc-string #(str "\"" (.replace (str %) "\"" "\"\"") "\"")
+        esc-string (fn [s]
+                     (let [s (str/replace (str s) "\"" "\"\"")
+                           s (if escape-for-excel?
+                               (str/replace s #"^([=+\-@])" "'$1")
+                               s)]
+                       (str \" s \")))
 
         render (fn render [{:keys [type] :as col} value]
                  (condp = type
@@ -78,7 +83,7 @@
   (let [table-name (get-in tables [table-id :name])]
     (str (.replaceAll ^String (or table-name "export") "[^A-Za-z0-9\\. ]" "") ".csv")))
 
-(defn serve-query-csv-lazy-media [tables db-c table-id query-obj cols]
+(defn serve-query-csv-lazy-media [tables db-c table-id query-obj cols escape-for-excel?]
   (reify
     MediaDescriptor
     (getName [_this] (get-csv-filename tables table-id))
@@ -88,4 +93,4 @@
     (getInputStream [_this]
       ;; We have to re-do the binding here, because this is likely to be called
       ;; from another thread.
-      (export-as-csv tables db-c table-id query-obj cols))))
+      (export-as-csv tables db-c table-id query-obj cols escape-for-excel?))))

@@ -34,8 +34,12 @@ CREATE INDEX background_tasks_idx ON background_tasks (id);
 CREATE TABLE runtime_sessions (
   session_id text primary key, -- Yes this is not the same thing as the "session_id" in the app_sessions table which should really be called app_log_sessions, I apologise to all of you
   state text,
+  user_id text,
   last_seen timestamp without time zone
 );
+-- TODO the user_id column is a special-case for the Users service, and when we move beyond Postgres 10
+-- we will be able to expand this into a general purpose JSONB column with a GIN index
+CREATE INDEX runtime_sessions_user_id_idx ON runtime_sessions(user_id) WHERE user_id IS NOT NULL;
 
 CREATE TABLE anvil_config (
   key text primary key,

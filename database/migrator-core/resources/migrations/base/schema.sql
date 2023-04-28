@@ -19,12 +19,16 @@ CREATE TABLE app_storage_data (id serial,
 CREATE INDEX app_storage_data_idx ON app_storage_data (table_id,id);
 CREATE INDEX app_storage_data_json_idx ON app_storage_data using gin (data jsonb_path_ops);
 
-CREATE TABLE app_storage_media (object_id integer PRIMARY KEY NOT NULL,
+CREATE SEQUENCE app_storage_media_object_id_seq;
+
+CREATE TABLE app_storage_media (object_id integer PRIMARY KEY NOT NULL DEFAULT nextval('app_storage_media_object_id_seq'),
                                 content_type text,
                                 name text,
                                 row_id integer,
                                 table_id integer,
-                                column_id text);
+                                column_id text,
+                                data bytea);
+ALTER TABLE app_storage_media ALTER COLUMN data SET STORAGE EXTERNAL;
 CREATE INDEX app_storage_media_object_id_uindex ON app_storage_media (object_id);
 
 
@@ -71,6 +75,6 @@ GRANT SELECT ON db_version TO $ANVIL_USER;
 GRANT EXECUTE ON FUNCTION parse_anvil_timestamp TO $ANVIL_USER;
 GRANT EXECUTE ON FUNCTION to_anvil_timestamp TO $ANVIL_USER;
 GRANT EXECUTE ON FUNCTION get_lo_size TO $ANVIL_USER;
-
+GRANT USAGE ON app_storage_media_object_id_seq TO $ANVIL_USER;
 GRANT ALL ON app_storage_tables, app_storage_access, app_storage_data, app_storage_media, app_storage_data_id_seq TO $ANVIL_USER;
 --[/GRANTS]--

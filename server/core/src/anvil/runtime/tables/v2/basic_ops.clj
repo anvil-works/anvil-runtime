@@ -20,7 +20,7 @@
         colspecs-to-fetch (for [cn fetching-cols] (get all-columns cn))
         col-param-kvs (for [{:keys [type]} colspecs-to-fetch]
                         (if (= type "media")
-                          (str "?, (SELECT to_jsonb(app_storage_media.*) from app_storage_media WHERE object_id = (data->>?)::text::bigint)")
+                          (str "?, (SELECT to_jsonb(all_except_data) from (select " util-v2/MEDIA-INFO-COLS " from app_storage_media) all_except_data WHERE object_id = (data->>?)::text::bigint)")
                           (str "?, data->?")))]
     ;; We can only pass 100 arguments to jsonb_build_object, so we partition the colspecs and join the resulting objects together
     [(str "(" (->> (for [param-group (if (not-empty col-param-kvs) (partition-all 50 col-param-kvs) [[]])]

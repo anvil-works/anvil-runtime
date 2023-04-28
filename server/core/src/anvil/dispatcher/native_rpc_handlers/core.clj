@@ -61,6 +61,7 @@
    ;                                                                           (println "Finished task")
    ;                                                                           42)))
    ;
+   ;"anvil.private.return_20MB"          (native-util/wrap-native-fn (fn [_] (String. (byte-array (* 20 1024 1024) (byte 65)))))
    "anvil.private.iter_test"            (native-util/wrap-native-fn
                                           (fn [_kwargs]
                                             (live-objects/mk-LiveObjectProxy "anvil.private.TestLiveObjectIteration" "123" [] ["__anvil_iter_page__"])))
@@ -114,7 +115,7 @@
                                           (fn [_kws path]
                                             (if native-util/*client-request?*
                                               (throw+ {:anvil/server-error "Cannot access server config from the client"
-                                                       :type "anvil.server.PermissionDenied"})
+                                                       :type               "anvil.server.PermissionDenied"})
                                               (->> (:services native-util/*app*)
                                                    (find-first #(= path (:source %)))
                                                    :server_config))))
@@ -193,8 +194,8 @@
                                                   (send-to-session-id! session-id))
 
                                                 channel
-                                                (let [all-sessions (sessions/list-sessions native-util/*app-id* (:env_id native-util/*environment*))
-                                                      subscribed-sessions (filter #(let [session-state (sessions/get-session-data-for-env native-util/*app-id* (:env_id native-util/*environment*) %)]
+                                                (let [all-sessions (sessions/list-sessions native-util/*environment*)
+                                                      subscribed-sessions (filter #(let [session-state (sessions/get-session-data-for-env native-util/*environment* %)]
                                                                                      (contains? (:channel-subscriptions session-state) channel)) all-sessions)]
                                                   (doseq [session-id subscribed-sessions]
                                                     (send-to-session-id! session-id)))))))
@@ -226,10 +227,10 @@
                                           ;; Returns all the sessions in the current environment, or just the ones where a particular user is logged in.
                                           (fn [{:keys [user] :as _kwargs}]
                                             (native-util/require-server! "list sessions")
-                                            (let [all-sessions (sessions/list-sessions native-util/*app-id* (:env_id native-util/*environment*))]
+                                            (let [all-sessions (sessions/list-sessions native-util/*environment*)]
                                               (if user
                                                 (let [user-id ((tables/TRow "get_id") (json/read-str (:id user)) {})]
-                                                  (filter #(let [session-state (sessions/get-session-data-for-env native-util/*app-id* (:env_id native-util/*environment*) %)]
+                                                  (filter #(let [session-state (sessions/get-session-data-for-env native-util/*environment* %)]
                                                              (let [user-in-session (get-in session-state [:users :logged-in-id])]
                                                                (= user-in-session user-id))) all-sessions))
                                                 all-sessions))))
@@ -237,7 +238,7 @@
    "anvil.private.get_session_data"     (native-util/wrap-native-fn
                                           (fn [_kwargs session-id]
                                             (native-util/require-server! "get session data")
-                                            (sessions/get-python-session-data-for-env native-util/*app-id* (:env_id native-util/*environment*) session-id)))})
+                                            (sessions/get-python-session-data-for-env native-util/*environment* session-id)))})
 
 
 (def debug-live-object-backends

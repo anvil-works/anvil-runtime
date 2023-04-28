@@ -133,13 +133,15 @@
 (defn sub-is-live? [^Subscription sub]
   (boolean (#{"trialling" "active" "past_due"} (.getStatus sub))))
 
-(defn get-subs-for-customer [id live-only?]
+(defn get-subs-for-customer [^String id live-only?]
   (worker-pool/with-expanding-threadpool-when-slow
-    (->> (retrieve Customer id)
-         (.getSubscriptions)
-         (.autoPagingIterable)
-         (filter #(or (not live-only?)
-                      (sub-is-live? %))))))
+    (let [request-options ^RequestOptions (first (get-request-options))
+          customer (Customer/retrieve id {"expand" ["subscriptions"]} request-options)]
+      (->> (-> customer
+               (.getSubscriptions)
+               (.autoPagingIterable {} request-options))
+           (filter #(or (not live-only?)
+                        (sub-is-live? %)))))))
 
 (defn first-bool [& s]
   (first (filter #(contains? #{true false} %) s)))
@@ -151,8 +153,10 @@
                                                (get-subs-for-customer id live_only)))
 
                  "get_subscription_ids" (py-method get_subscription_ids [[id] ^{:default true} live_only]
-                                          (map #(.getId (.getPlan ^Subscription %))
-                                               (get-subs-for-customer id live_only)))
+                                          (let [subs (get-subs-for-customer id live_only)
+                                                sub-items (apply concat (for [sub subs] (.getData (.getItems sub))))]
+                                            (for [item sub-items]
+                                              (-> item .getPlan .getId))))
 
                  "new_subscription"     (py-method new_subscription [[id] plan_id ^{:default 1} quantity]
                                           (require-server!)
@@ -166,7 +170,7 @@
                  "add_token"            (py-method add_token [[id] token]
                                           (require-server!)
                                           (let [[^RequestOptions request-options] (get-request-options)
-                                                customer (Customer/retrieve ^String id request-options)]
+                                                customer (Customer/retrieve ^String id {"expand" ["sources"]} request-options)]
                                             (.create (.getSources customer) {"source" token} request-options)
                                             nil))
 
@@ -210,7 +214,7 @@
 (defn get-customer [_kwargs id]
   (require-server!)
   (let [[request-options] (get-request-options)]
-    (mk-Customer (Customer/retrieve ^String id, ^RequestOptions {"expand" ["subscriptions"]} request-options))))
+    (mk-Customer (Customer/retrieve ^String id, {"expand" ["subscriptions"]} ^RequestOptions request-options))))
 
 (defn new-customer [_kwargs email token]
   (require-server!)

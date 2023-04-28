@@ -16,7 +16,8 @@
                                                                                     set-values-creating-col-if-necessary
                                                                                     table-get
                                                                                     update-row!
-                                                                                    update-row-values]]
+                                                                                    update-row-values
+                                                                                    record-login-failure!]]
             [anvil.dispatcher.native-rpc-handlers.google.auth :as google-auth]
             [anvil.dispatcher.native-rpc-handlers.facebook :as facebook-auth]
             [anvil.dispatcher.native-rpc-handlers.microsoft :as microsoft-auth]
@@ -96,8 +97,16 @@
               (catch #(and (:anvil/server-error %) (= (:type %) "anvil.tables.TableError") %) e
                 (util/*rpc-println* (str "WARNING: Cannot retrieve user record by remember-me state: " (:anvil/server-error e))))))))
       (catch :anvil/cookie-error _ nil)))
-
   nil)
+
+(defn invalidate-all-session-logins [user-id]
+  (let [except-session-id (sessions/get-id util/*session-state*)]
+    (doseq [session-id (sessions/list-sessions-for-user-id user-id)
+            :when (not= session-id except-session-id)
+            :let [session (sessions/load-session-by-id-without-authentication session-id)]
+            :when (= (get-in @session [:users :logged-in-id]) user-id)]
+      (swap! session dissoc :users)
+      (sessions/notify-session-update! session true))))
 
 (defn login! [user-row remember?]
   (let [[table-id row-id] (user-row->table-id-row-id user-row)
@@ -172,6 +181,7 @@
         (throw+ {:anvil/server-error "No password provided" :type "anvil.users.AuthenticationFailed"}))
       (let [pw-hash (when user (get (row-to-map user) "password_hash"))]
         (when-not (anvil.util/bcrypt-checkpw password pw-hash)
+          (record-login-failure! user)
           (throw+ {:anvil/server-error "Incorrect password" :type "anvil.users.AuthenticationFailed"})))
 
       (swap! util/*session-state* assoc-in [:users :mfa-reset-user-id] nil)
@@ -221,9 +231,7 @@
                      :type               "anvil.users.TooManyPasswordFailures"}))
 
           (when-not (anvil.util/bcrypt-checkpw password pw-hash)
-            (when user-row
-              (update-row! (user-row->table-id-row-id user-row) (fn [{fail-count "n_password_failures"}]
-                                               {"n_password_failures" (inc (or fail-count 0))})))
+            (record-login-failure! user-row)
             (throw+ {:anvil/server-error "Incorrect email address or password"
                      :type               (if (>= (inc n-password-failures) max_password_failures)
                                            "anvil.users.TooManyPasswordFailures"
@@ -252,7 +260,9 @@
                       "totp"
                       (if-let [mfa-method (some #(when (totp/validate-totp-code nil % (:code mfa)) %) matching-mfa-methods)]
                         (maybe-remember-mfa! mfa-method)
-                        (throw+ {:anvil/server-error "Incorrect authentication code" :type "anvil.users.AuthenticationFailed"}))
+                        (do
+                          (record-login-failure! user-row)
+                          (throw+ {:anvil/server-error "Incorrect authentication code" :type "anvil.users.AuthenticationFailed"})))
 
                       "fido"
                       (if-let [[mfa-method updated-mfa-method] (some #(when-let [updated-mfa-method (fido/validate-fido-assertion % (:result mfa))] [% updated-mfa-method]) matching-mfa-methods)]
@@ -260,12 +270,16 @@
                         (let [new-mfa-methods (vec (map #(if (= % mfa-method) updated-mfa-method %) mfa-methods))]
                           (set-and-return-value-creating-col-if-necessary user_table (user-row->row-id-int user-row) "mfa" new-mfa-methods)
                           (maybe-remember-mfa! updated-mfa-method))
-                        (throw+ {:anvil/server-error "Two-factor authentication failed" :type "anvil.users.AuthenticationFailed"}))
+                        (do
+                          (record-login-failure! user-row)
+                          (throw+ {:anvil/server-error "Two-factor authentication failed" :type "anvil.users.AuthenticationFailed"})))
 
                       "twilio-verify"
                       (if-let [mfa-method (some #(when (twilio/check-verification-token nil % (:code mfa)) %) matching-mfa-methods)]
                         (maybe-remember-mfa! mfa-method)
-                        (throw+ {:anvil/server-error "Incorrect authentication code" :type "anvil.users.AuthenticationFailed"}))
+                        (do
+                          (record-login-failure! user-row)
+                          (throw+ {:anvil/server-error "Incorrect authentication code" :type "anvil.users.AuthenticationFailed"})))
 
                       (throw+ {:anvil/server-error "MFA method not supported" :type "anvil.users.AuthenticationFailed"})))) ; We should never get here.
                 (let [remembered-mfa (try+ (cookies/get-cookie-val cookie-type mfa-cookie-key) (catch :anvil/cookie-error _ nil))
@@ -551,6 +565,7 @@
       (when-not (or email-reset-user
                     (anvil.util/bcrypt-checkpw old-password pw-hash))
         ;; Don't require old password when resetting by token.
+        (record-login-failure! user)
         (throw+ {:anvil/server-error "Incorrect password" :type "anvil.users.AuthenticationFailed"}))
 
       (when (and require_secure_passwords
@@ -568,6 +583,7 @@
                                                      {:confirmed_email true})
                                                    (when (number? password-failures)
                                                      {"n_password_failures" 0})))
+      (invalidate-all-session-logins v1-row-id-str)
       true)))
 
 (defn reset-email-password! [app environment email confirmation-key password]

@@ -1,7 +1,8 @@
 (ns anvil.dispatcher.native-rpc-handlers.microsoft
   (:use [anvil.dispatcher.native-rpc-handlers.util]
         [slingshot.slingshot])
-  (:require [clojure.data.json :as json]
+  (:require [anvil.runtime.secrets :as secrets]
+            [clojure.data.json :as json]
             [org.httpkit.client :as http]
             [anvil.dispatcher.core :as dispatcher]
             [anvil.runtime.conf :as conf]
@@ -35,7 +36,9 @@
                                      (and (:custom? conf/microsoft-client-config) (:application-id conf/microsoft-client-config)))]
     (when-not microsoft-application-id
       (throw-need-own-app-id!))
-    (let [microsoft-application-secret (or (get-in microsoft-service [:server_config :application_secret])
+    (let [microsoft-application-secret (or (when-let [encrypted-app-secret (get-in microsoft-service [:server_config :application_secret_enc])]
+                                             (:value (secrets/get-global-app-secret-value *app-info* "microsoft-service/application-secret" encrypted-app-secret)))
+                                           (get-in microsoft-service [:server_config :application_secret])
                                            (and (:custom? conf/microsoft-client-config) (:application-secret conf/microsoft-client-config)))
 
           tenant-id (or (get-in microsoft-service [:server_config :tenant_id])

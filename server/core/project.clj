@@ -35,7 +35,7 @@
 
                  [javax.mail/mail "1.4.4"]
 
-                 [com.stripe/stripe-java "11.5.1"]
+                 [com.stripe/stripe-java "22.5.0"]
 
                  [org.clojure/tools.logging "0.4.1"]
                  [org.slf4j/slf4j-reload4j "1.7.36"]

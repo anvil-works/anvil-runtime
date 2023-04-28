@@ -375,7 +375,18 @@ export interface WholeComponentInteraction extends InteractionBase {
     callbacks: { execute: () => void }
 }
 
-export type Interaction = ButtonInteraction | HandleInteraction | WholeComponentInteraction;
+export interface OnSelectionInteraction extends InteractionBase {
+    type: "on_selection",
+    callbacks: {
+        onSelect: () => void; // When this component is selected
+        onDeselect: () => void; // When this component is deselected
+        onSelectDescendent: () => void; // When this component or any of its descendents are selected
+        onDeselectDescendent: () => void; // When neither this component nor any of its descendents are selected
+        onSelectOther: () => void; // When a component outside the descendent tree of this component is selected
+    }
+}
+
+export type Interaction = ButtonInteraction | HandleInteraction | WholeComponentInteraction | OnSelectionInteraction;
 
 export interface DesignInfo {
     propertyDescriptions: PropertyDescriptionBase[];
@@ -402,7 +413,8 @@ type ListenerFn = (component: Component, attr: string, val: pyObject) => any;
 
 export interface DropInfo {
     perComponentUpdates?: { layout_properties: LayoutProperties; }[];
-    childIdx?: number;
+    minChildIdx?: number;
+    maxChildIdx?: number;
     layout_properties?: LayoutProperties;
     slots_set_layout_properties?: string[];
     otherComponentUpdates?: {

@@ -274,11 +274,10 @@
       (apply str
              (when (get-in yaml [:runtime_options :preview_v3])
                "\n<style>\n  @import url({{cdn-origin}}/runtime/css/bootstrap.css) layer(bootstrap);\n  @import url({{cdn-origin}}/runtime/css/bootstrap-theme.min.css) layer(bootstrap);\n</style>\n")
-             (reverse
-               (cons
-                 (get-in yaml [:native_deps :head_html])
-                 (for [dep-id (:dependency_order yaml)]
-                   (get-in yaml [:dependency_code dep-id :native_deps :head_html])))))
+             (concat
+               (for [dep-id (:dependency_order yaml)]
+                 (get-in yaml [:dependency_code dep-id :native_deps :head_html]))
+               [(get-in yaml [:native_deps :head_html])]))
       (:version app)])))
 
 

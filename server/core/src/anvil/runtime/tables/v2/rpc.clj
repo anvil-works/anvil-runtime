@@ -275,27 +275,27 @@
     (boolean (when row-id
                (seq (jdbc/query (db) ["SELECT 1 FROM app_storage_data WHERE table_id=? AND id=?" table-id row-id]))))))
 
-(defn- get-csv-lazy-media [tables {table-id :id :keys [cols restrict] :as view-spec} query]
+(defn- get-csv-lazy-media [tables {table-id :id :keys [cols restrict] :as view-spec} query escape-for-excel?]
   (let [cols (or cols (keys (get-in tables [table-id :columns])))
         query (if (and restrict query) (search/both-queries restrict query) (or restrict query))]
-    (lazy-media/mk-LazyMedia-with-correct-mac {:manager   "query-csv-v2", :id (util/write-json-str [table-id query cols]),
+    (lazy-media/mk-LazyMedia-with-correct-mac {:manager   "query-csv-v2", :id (util/write-json-str [table-id query cols escape-for-excel?]),
                                                :mime-type "text/csv", :name (csv/get-csv-filename tables table-id)}
                                               rpc-util/*req*)))
 
-(defn table-to-csv [_kw table-cap]
+(defn table-to-csv [{:keys [escape_for_excel]} table-cap]
   (let [tables (util-v2/get-tables)
         [view-spec] (unwrap-cap-with-perm! tables table-cap :table util-v2/READ)]
-    (get-csv-lazy-media tables view-spec nil)))
+    (get-csv-lazy-media tables view-spec nil escape_for_excel)))
 
-(defn search-to-csv [_kw search-cap]
+(defn search-to-csv [{:keys [escape_for_excel]} search-cap]
   (let [tables (util-v2/get-tables)
         [view-spec {:keys [search] :as _search-spec} _cursor] (util-v2/unwrap-cap search-cap :search)]
-    (get-csv-lazy-media tables view-spec search)))
+    (get-csv-lazy-media tables view-spec search escape_for_excel)))
 
 (defn serve-csv-lazy-media [media-id]
   (let [tables (util-v2/get-tables)
-        [table-id query cols] (json/read-str media-id :key-fn keyword)]
-    (csv/serve-query-csv-lazy-media tables (db) table-id query cols)))
+        [table-id query cols escape-for-excel?] (json/read-str media-id :key-fn keyword)]
+    (csv/serve-query-csv-lazy-media tables (db) table-id query cols escape-for-excel?)))
 
 (defn- wrap-native-fn [f]
   (rpc-util/wrap-native-fn #(old-tables-util/with-transform-err (apply f %&)) :db-time))

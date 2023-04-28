@@ -193,8 +193,8 @@ class SearchIterator(BaseSearchIterator):
     def refresh(self):
         self._clear_cache()
 
-    def to_csv(self):
-        return anvil.server.call(PREFIX + "to_csv", self._cap)
+    def to_csv(self, escape_for_excel=False):
+        return anvil.server.call(PREFIX + "to_csv", self._cap, escape_for_excel=escape_for_excel)
 
     def delete_all_rows(self):
         result = anvil.server.call(PREFIX + "delete_all", self._cap)

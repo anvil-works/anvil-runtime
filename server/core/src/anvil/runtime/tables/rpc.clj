@@ -22,7 +22,8 @@
             [anvil.core.tracing :as tracing])
   (:import (java.sql SQLException ResultSet Blob)
            (anvil.dispatcher.types Date DateTime LiveObjectProxy MediaDescriptor Media ChunkedStream BlobMedia SerialisableForRpc SerializedPythonObject)
-           (java.io ByteArrayOutputStream)
+           (java.io ByteArrayOutputStream InputStream OutputStream)
+           (org.apache.commons.io IOUtils)
            (org.postgresql.util PSQLException)))
 
 (clj-logging-config.log4j/set-logger! :level :warn)
@@ -76,7 +77,7 @@
              [(:name col-desc) (assoc col-desc :id col-id)])))
 
 (defn- oid->Media [oid]
-  (let [media-info (first (jdbc/query (db) ["SELECT * from app_storage_media WHERE object_id = ?" oid]))]
+  (let [media-info (first (jdbc/query (db) [(str "SELECT " MEDIA-INFO-COLS " from app_storage_media WHERE object_id = ?") oid]))]
     (lazy-media/mk-LazyMedia-with-correct-mac {:manager   "table-media", :id (str oid),
                                                :mime-type (:content_type media-info), :name (:name media-info)}
                                               ;; LazyMedia needs a request for all sorts of reasons, but table RPC functions are sometimes called
@@ -303,10 +304,10 @@
                                           (:c (first (jdbc/query (db) (concat [(str "SELECT COUNT(1) AS c FROM app_storage_data WHERE table_id=? AND " QUERY-SQL) table-id]
                                                                               query-args)))))))
 
-              "to_csv"              (fn [[table-id _query-obj view-cols _cols :as liveobject-id] _kwargs]
+              "to_csv"              (fn [[table-id query-obj view-cols cols] {:keys [escape_for_excel]}]
 
                                       (ensure-table-access-ok-returning-cols (db) table-id :search view-cols)
-                                      (lazy-media/mk-LazyMedia-with-correct-mac {:manager   "query-csv", :id (util/write-json-str liveobject-id),
+                                      (lazy-media/mk-LazyMedia-with-correct-mac {:manager   "query-csv", :id (util/write-json-str [table-id query-obj view-cols cols escape_for_excel]),
                                                                                  :mime-type "text/csv", :name "download.csv"}
                                                                                 rpc-util/*req*))})
 
@@ -681,53 +682,49 @@
               :else
               ; We are setting this field to something, so either create a media object or reuse the existing one.
               (let [new? (nil? existing-oid)
-                    oid (if new?
-                          (:lo_create (first (jdbc/query (db) ["SELECT lo_create(0)"])))
-                          existing-oid)]
-                (log/trace "Updating media in col" col-id "with" (if new? "new" "existing") "OID" oid)
-                (if new?
-                  (jdbc/execute! (db) ["INSERT INTO app_storage_media (object_id, content_type, name, row_id, table_id, column_id) VALUES (?, ?, ?, ?, ?, ?)"
-                                       oid (.getContentType media) (.getName media) row-id table-id (name col-id)])
-                  (jdbc/execute! (db) ["UPDATE app_storage_media SET content_type = ?, name = ? WHERE object_id = ?"
-                                       (.getContentType media) (.getName media) oid]))
+                    {existing-data-length :size has-lo? :has_lo} (when-not new?
+                                                                   (first (jdbc/query (db) ["SELECT length(data) AS size, data IS NULL AS has_lo FROM app_storage_media WHERE object_id = ?" existing-oid])))
+                    bytes-removed (if new?
+                                    0
+                                    (or existing-data-length (get-object-size existing-oid)))
+                    media (cond
+                            (satisfies? anvil.dispatcher.types/Media media)
+                            media
 
-                (let [bytes-removed (if new?
-                                      0
-                                      (get-object-size oid))]
-                  (when-not new?
-                    (use-quota! 0 (- bytes-removed)))
-                  (let [^Blob blob (jdbc/db-query-with-resultset (db) ["SELECT ?" oid]
-                                                                 (fn [^ResultSet x]
-                                                                   (.next x)
-                                                                   (.getBlob x 1)))
+                            (satisfies? anvil.dispatcher.types/ChunkedStream media)
+                            (blocking-hacks/ChunkedStream->Media media)
 
-                        _ (.truncate blob 0)
+                            (instance? anvil.dispatcher.types.LazyMedia media)
+                            ;; TODO: Something better here. There's no guarantee what kind of thing (get-lazy-media) will return
+                            ;;       It just so happens that all our current LazyMedia managers return BlobMedia (probably) so this will work for now.
+                            (lazy-media/get-lazy-media rpc-util/*req* media)
 
-                        out-stream (.setBinaryStream blob 1)
+                            :else
+                            (throw (IllegalArgumentException. (str "'" (class media) "' object is neither Media, LazyMedia nor ChunkedStream"))))
 
-                        media (cond
-                                (satisfies? anvil.dispatcher.types/Media media)
-                                media
+                    in-stream ^InputStream (.getInputStream media)
+                    out-stream (ByteArrayOutputStream.)
+                    new-size (IOUtils/copy in-stream out-stream 4096)
+                    new-data (.toByteArray out-stream)
 
-                                (satisfies? anvil.dispatcher.types/ChunkedStream media)
-                                (blocking-hacks/ChunkedStream->Media media)
+                    final-oid (-> (if new?
+                                    (jdbc/query (db) ["INSERT INTO app_storage_media (content_type, name, row_id, table_id, column_id, data) VALUES (?, ?, ?, ?, ?, ?) RETURNING object_id"
+                                                         (.getContentType media) (.getName media) row-id table-id (name col-id) new-data])
+                                    (jdbc/query (db) ["UPDATE app_storage_media SET content_type = ?, name = ?, data = ? WHERE object_id = ? RETURNING object_id"
+                                                         (.getContentType media) (.getName media) new-data existing-oid]))
+                                  (first)
+                                  (:object_id))]
+                (.close in-stream)
+                (.close out-stream)
 
-                                (instance? anvil.dispatcher.types.LazyMedia media)
-                                ;; TODO: Something better here. There's no guarantee what kind of thing (get-lazy-media) will return
-                                ;;       It just so happens that all our current LazyMedia managers return BlobMedia (probably) so this will work for now.
-                                (lazy-media/get-lazy-media rpc-util/*req* media)
+                (log/trace "Updating media in col" col-id "with" (if new? "new" "existing") "OID" existing-oid "has-lo?" has-lo?)
 
-                                :else
-                                (throw (IllegalArgumentException. (str "'" (class media) "' object is neither Media, LazyMedia nor ChunkedStream"))))
+                (when has-lo?
+                  (jdbc/query (db) ["SELECT lo_unlink(?)" existing-oid]))
 
-                        in-stream (.getInputStream media)]
+                (use-quota! 0 (- new-size bytes-removed))
 
-                    (use-quota! 0 (.getLength media))
-
-                    (copy-media in-stream out-stream)
-
-
-                    (assoc obj-ids col-id oid))))))
+                (assoc obj-ids col-id final-oid))))
           {} updates))
 
 (defn realise-media-in-kwargs [kwargs]
@@ -946,12 +943,12 @@
                                           (types/mk-LiveObjectProxy "anvil.tables.SearchIterator" (util/write-json-str liveobject-id) rpc-util/*permissions* (keys TSearch)
                                                                     nil (iter-page liveobject-id {} nil))))
 
-            "to_csv"                  (fn [[table-id view-query] _kwargs]
+            "to_csv"                  (fn [[table-id view-query] {:keys [escape_for_excel]}]
 
                                         (let [view-cols (get-cols-from-view-query view-query)
                                               cols (ensure-table-access-ok-returning-cols (db) table-id :search view-cols)]
 
-                                          (lazy-media/mk-LazyMedia-with-correct-mac {:manager   "query-csv", :id (util/write-json-str [table-id view-query view-cols cols]),
+                                          (lazy-media/mk-LazyMedia-with-correct-mac {:manager   "query-csv", :id (util/write-json-str [table-id view-query view-cols cols escape_for_excel]),
                                                                                      :mime-type "text/csv", :name "download.csv"}
                                                                                     rpc-util/*req*)))})
 
@@ -998,7 +995,7 @@
 
 
 (defn query-csv-lazy-media [TSearch-liveobject-id]
-  (let [[table-id query-obj view-cols cols] (json/read-str TSearch-liveobject-id :key-fn keyword)
+  (let [[table-id query-obj view-cols cols escape-for-excel?] (json/read-str TSearch-liveobject-id :key-fn keyword)
         environment rpc-util/*environment*]
     (binding [rpc-util/*client-request?* false]
       (ensure-table-access-ok-returning-cols (db) table-id :search view-cols)
@@ -1016,21 +1013,25 @@
             ;; from another thread.
             (binding [rpc-util/*app-id* app-id
                       rpc-util/*environment* environment]
-              (export-as-csv table-id query-obj cols))))))))
+              (export-as-csv table-id query-obj cols escape-for-excel?))))))))
 
 (defn get-stored-media [object-id]
   (with-table-transaction
     (let [object-id (as-int object-id)
-          media-info (first (jdbc/query (db) ["SELECT * from app_storage_media WHERE object_id = ?" object-id]))
-          b (jdbc/db-query-with-resultset (db) ["SELECT ?" object-id]
-                                          (fn [rs]
-                                            (.next rs)
-                                            (.getBlob rs 1)))
-          b-stream (.getBinaryStream b)
-          os (ByteArrayOutputStream.)]
+          media (first (jdbc/query (db) ["SELECT content_type, name, data from app_storage_media WHERE object_id = ?" object-id]))]
+      (if (:data media)
+        (BlobMedia. (:content_type media) (:data media) (:name media))
+        (let [b (jdbc/db-query-with-resultset (db) ["SELECT ?" object-id]
+                                              (fn [rs]
+                                                (.next rs)
+                                                (.getBlob rs 1)))
+              b-stream (.getBinaryStream b)
+              os (ByteArrayOutputStream.)]
 
-      (io/copy b-stream os)
-      (BlobMedia. (:content_type media-info) (.toByteArray os) (:name media-info)))))
+          (io/copy b-stream os)
+          (.close b-stream)
+          (.free b)
+          (BlobMedia. (:content_type media) (.toByteArray os) (:name media)))))))
 
 (swap! lazy-media/managers assoc
        "query-csv" (rpc-util/wrap-lazy-media-server query-csv-lazy-media)

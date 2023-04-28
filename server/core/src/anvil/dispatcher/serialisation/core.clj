@@ -8,7 +8,8 @@
             [anvil.dispatcher.serialisation.live-objects :as live-objects]
             [anvil.dispatcher.types]
             [anvil.util :as util]
-            [anvil.dispatcher.types :as types])
+            [anvil.dispatcher.types :as types]
+            [anvil.runtime.conf :as conf])
   (:use [clojure.core.async :only [<! <!! >! >!! go go-loop chan close!]]
         [clojure.pprint]
         [slingshot.slingshot])
@@ -266,7 +267,10 @@
                 (recur (inc idx))))))))))
 
 (defn serialise-to-websocket-like! [payload lockable send-text-fn send-bytes-fn serialise-errors? session-liveobject-key]
-  (serialise! payload (fn [json & [^bytes bytes]]
+  (serialise! payload (fn [^String json & [^bytes bytes]]
+                        (when (or (>= (alength (.getBytes json)) conf/max-websocket-payload)
+                                  (and bytes (>= (alength bytes) conf/max-websocket-payload)))
+                          (throw+ {:anvil/websocket-payload-too-large true}))
                         (locking lockable
                           (send-text-fn json)
                           (when bytes

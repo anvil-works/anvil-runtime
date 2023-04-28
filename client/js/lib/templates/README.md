@@ -1,6 +1,8 @@
 # Templates
 
-Custom templates in this folder are lazy loaded by Plot.js
+Templates in this folder are lazy loaded by Plot.js
 
-If updating plotly.min.js plotly templates should be updated accordingly.
+Plotly templates like "plot_dark.json" are automatically created with "runtime/packaging/build-plotly-client-package.py".
+
+Custom templates like "rally.json" are bespoke and created in house.
 

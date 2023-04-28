@@ -15,7 +15,7 @@ The Anvil Runtime is the open-source engine that powers those apps. This reposit
 
 The easiest way to build an Anvil app is the free online editor at https://anvil.works. It includes a [drag-and-drop GUI builder](https://anvil.works/articles/python-gui-builder-web) and [free, built-in hosting](https://anvil.works/docs/deployment) for your apps.
 
-![A short animated clip of the Anvil editor](https://anvil.works/learn/tutorials/img/feedback-form/add-button.gif)
+![A short animated clip of the Anvil editor](https://anvil-website-static.s3.eu-west-2.amazonaws.com/learn/tutorials/feedback-form/add-button.gif)
 
 [![Try the Anvil Editor](https://anvil.works/img/github/try-editor.png)](https://anvil.works)
 

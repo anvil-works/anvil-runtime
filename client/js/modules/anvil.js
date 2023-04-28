@@ -1015,8 +1015,12 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                             a.hide();
                         }),
                     ]);
-                    a.once("shown", () => {
+                    a.once("show", () => {
+                        // do this synchronously
+                        // it's possible for hide to be called before shown
                         pyForm._anvil.inAlert = true;
+                    });
+                    a.once("shown", () => {
                         loadResolve(PyDefUtils.asyncToPromise(pyForm._anvil.addedToPage));
                     });
                 } else {

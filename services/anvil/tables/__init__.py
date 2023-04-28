@@ -219,10 +219,10 @@ def get_connection_string(via_host=None, via_port=None):
 #!defMethod(bool,row)!2: "Returns true if the table (or view) contains the provided row." ["has_row"]
 #!defMethod(list of dicts)!2: "Get the spec for the table as a list of dicts. Each dict contains the name and type of a column." ["list_columns"]
 #!defMethod(Row or None)!2: "Get rows from a data table. If you specify keyword arguments, you will retrieve only rows whose columns match those values.\n\nEg: app_tables.table_1.search(name='John Smith')" ["search"]
-#!defMethod(Media object)!2: "Get the table in CSV format. Returns a downloadable Media object; use its url property." ["to_csv"]
+#!defMethod(Media object, [escape_for_excel=False])!2: "Get the table in CSV format, optionally escaped for use in Excel. Returns a downloadable Media object; use its url property." ["to_csv"]
 #!defClassNoConstructor(anvil.tables,#Table)!1: "A table returned from app_tables"
 
-#!defMethod(Media object)!2: "Get the results of the SearchIterator in CSV format. Returns a downloadable Media object; use its url property." ["to_csv"]
+#!defMethod(Media object, [escape_for_excel=False])!2: "Get the results of the SearchIterator in CSV format, optionally escaped for use in Excel. Returns a downloadable Media object; use its url property." ["to_csv"]
 #!defClassNoConstructor(anvil.tables,#SearchIterator)!1: "An iterator of table rows returned from a search()";
 
 

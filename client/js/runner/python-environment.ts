@@ -251,7 +251,10 @@ export function setupPythonEnvironment(preloadModules: string[]) {
         Sk.misceval.retryOptionalSuspensionOrThrow(Sk.importModule(pm, false, true));
     }
 
+
     setupAppSourceCode();
+
+    runPostSetupHooks();
 
     for (const [depId, depApp] of Object.entries(data.app.dependency_code)) {
 
@@ -263,5 +266,4 @@ export function setupPythonEnvironment(preloadModules: string[]) {
 
     setupAppTemplates(data.app, null, data.appPackage, anvilModule);
 
-    runPostSetupHooks();
 }

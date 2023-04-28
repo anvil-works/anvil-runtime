@@ -152,15 +152,16 @@
                                                              [false (:val @cached-state)])
                                       new-v (f old-v)
                                       new-v-str (pr-str new-v)
-                                      now (System/currentTimeMillis)]
+                                      now (System/currentTimeMillis)
+                                      user-id (get-in new-v [:users :logged-in-id])]
                                   (when-not (and found-in-db?
                                                  (or (= new-v old-v)
                                                      (= new-v ::no-change)))
                                     ;; Check it's still round-trippable *before* we write it back to the DB
                                     (assert (-edn-roundtrip-ok? new-v new-v-str))
                                     (metrics/inc! :api/runtime-session-update-total)
-                                    (when-not (seq (jdbc/query db-c ["UPDATE runtime_sessions SET state=?, last_seen=NOW() WHERE session_id=? RETURNING 1" new-v-str id]))
-                                      (jdbc/execute! db-c ["INSERT INTO runtime_sessions (session_id,state,last_seen) VALUES (?,?,NOW())" id new-v-str]))
+                                    (when-not (seq (jdbc/query db-c ["UPDATE runtime_sessions SET state=?, user_id=?, last_seen=NOW() WHERE session_id=? RETURNING 1" new-v-str user-id id]))
+                                      (jdbc/execute! db-c ["INSERT INTO runtime_sessions (session_id,state,user_id,last_seen) VALUES (?,?,?,NOW())" id new-v-str user-id]))
                                     (reset! cached-state {:db-last-seen now, :last-read now, :val new-v})
                                     (swap! ephemeral-cache assoc ::dirty true)) ;; This session has been modified since it was loaded.
                                   new-v))
@@ -235,10 +236,11 @@
           (let [gen-token #(str id "=" (random/url-part 21))
                 val (assoc val ::tokens {:cookie (gen-token), :url (gen-token), :tmp #{}, :burned nil})
                 val-str (pr-str val)
-                now (System/currentTimeMillis)]
+                now (System/currentTimeMillis)
+                user-id (get-in val [:users :logged-in-id])]
 
             (assert (-edn-roundtrip-ok? val val-str))
-            (jdbc/execute! util/db ["INSERT INTO runtime_sessions (session_id,state,last_seen) VALUES (?,?,NOW())" id val-str])
+            (jdbc/execute! util/db ["INSERT INTO runtime_sessions (session_id,state,user_id,last_seen) VALUES (?,?,?,NOW())" id val-str user-id])
             (reset! draft-state {:db-session (->DBSession id (atom {:val val, :db-last-seen now, :last-read now}) ephemeral-cache)})
             (swap! ephemeral-cache dissoc ::dirty))))))
   (persisted? [this] (boolean (:db-session @draft-state)))
@@ -305,7 +307,6 @@
           (when (some #(and % (= (util/sha-256 %) token-sha))
                       (get-valid-tokens-from-session @session))
             [session id]))))))
-
 
 
 (defn new-unlogged-session-with-state [{:keys [app-id environment] :as state} log-data]
@@ -491,16 +492,23 @@
   (swap! app-session update-in [::tokens :tmp] disj combined-token))
 
 (defn cleanup-sessions! []
-  (jdbc/execute! util/db ["DELETE FROM runtime_sessions WHERE last_seen < NOW() - INTERVAL '30 minutes'"]))
+  (util/with-db-lock ::cleanup-sessions! false
+    (jdbc/execute! util/db ["DELETE FROM runtime_sessions WHERE last_seen < NOW() - INTERVAL '30 minutes'"])))
 
-(defn get-session-data-for-env [app-id env-id session-id]
-  (let [session (load-session-by-id-without-authentication session-id)]
-    (when (and (= app-id (:app-id @session))
-               (= env-id (:env_id (:environment @session))))
-      @session)))
 
-(defn get-python-session-data-for-env [app-id env-id session-id]
-  (let [session-data (get-session-data-for-env app-id env-id session-id)]
+(defonce session-matches-environment? (fn [environment session] false))
+
+(defn get-session-for-env [environment session-id]
+  (when-let [session (load-session-by-id-without-authentication session-id)]
+    (when (session-matches-environment? environment session)
+      session)))
+
+(defn get-session-data-for-env [environment session-id]
+  (when-let [session (get-session-for-env environment session-id)]
+    @session))
+
+(defn get-python-session-data-for-env [environment session-id]
+  (let [session-data (get-session-data-for-env environment session-id)]
     (get-in session-data [:pymods :session])))
 
 ;; TODO: Implement within-node session hooks for server-initiated events
@@ -521,14 +529,22 @@
                                           (swap! listeners util/dissoc-in-or-remove [session-id cookie]))))
 
 ;; TODO: Session invalidation should really be implemented directly in the runtime, without the need for listeners.
-(defonce notify-session-update! (fn [session]
-                                  (when-let [session-id (get-id session)]
-                                    (cache/evict! session-cache session-id) ;; So that new requests don't hit a stale cache
-                                    (doseq [[_ {:keys [session _callbacks]}] (get @listeners session-id)]
-                                      (deref-db session)))))
+(defonce notify-session-update! (fn notify-session-update!
+                                  ([session] (notify-session-update! session false))
+                                  ([session async?]
+                                   (when-let [session-id (get-id session)]
+                                     (cache/evict! session-cache session-id) ;; So that new requests don't hit a stale cache
+                                     (doseq [[_ {:keys [session _callbacks]}] (get @listeners session-id)]
+                                       (deref-db session))))))
 
 (defonce send-event! (fn [app-id env-id session-id event] nil))
 
-(defonce list-sessions (fn [app-id env-id] nil))
+(defonce list-sessions (fn [environment] nil))
 
-(def set-ws-hooks! (util/hook-setter [register-session-listener! unregister-session-listener! notify-session-update! send-event! list-sessions get-shared-cookie-key]))
+;; This is a special-case thing for users. One day this will grow into an arbitrary tagging session with a JSONB
+;; column
+(defn list-sessions-for-user-id [user-row-id]
+  (->> (jdbc/query util/db ["SELECT session_id FROM runtime_sessions WHERE user_id=?" user-row-id])
+       (map :session_id)))
+
+(def set-ws-hooks! (util/hook-setter [register-session-listener! unregister-session-listener! notify-session-update! send-event! list-sessions session-matches-environment? get-shared-cookie-key]))

@@ -111,8 +111,8 @@ class Table(BaseTable):
         row_ids, cap, cap_next, table_data = anvil.server.call(PREFIX + "search", self._cap, args, kws)
         return SearchIterator._create(self._view_key, self._id, row_ids, cap, cap_next, table_data)
 
-    def to_csv(self):
-        return anvil.server.call(PREFIX + "to_csv", self._cap)
+    def to_csv(self, escape_for_excel=False):
+        return anvil.server.call(PREFIX + "to_csv", self._cap, escape_for_excel=escape_for_excel)
 
     # TODO reinclude this API
     # @property

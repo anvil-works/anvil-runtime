@@ -1,4 +1,5 @@
 import { pyModule, pyNone, pyObject, pyStr, retryOptionalSuspensionOrThrow, Suspension } from "../../@Sk";
+import {ToolboxItem} from "@runtime/components/Component";
 
 let environmentSetupHooks: (() => void)[] | null = [];
 export const runPostSetupHooks = () => {
@@ -8,6 +9,8 @@ export const runPostSetupHooks = () => {
 export const whenEnvironmentReady = (f: () => void) => (environmentSetupHooks ? environmentSetupHooks.push(f) : f());
 
 export const jsComponentModules: { [name: string]: pyModule } = {};
+
+export const customToolboxItems: ToolboxItem[] = [];
 
 function getOrCreateModule(modName: string) {
     const pyName = new pyStr(modName);
