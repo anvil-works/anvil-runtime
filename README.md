@@ -381,8 +381,8 @@ All three components are installed when you `pip install anvil-app-server`, and 
 For instructions on building and editing this code, check out [doc/HACKING.md](doc/HACKING.md).
 
 
-## Licence
+## License
 
-The Anvil Runtime and App Server are made available under the GNU Affero General Public Licence (AGPL). You can download it and use it freely, but if you modify the Runtime or App Server code you must make the source code of your modifications available to everyone who uses it (even over a network).
+The Anvil Runtime and App Server are made available under the GNU Affero General Public License (AGPL). You can download it and use it freely, but if you modify the Runtime or App Server code you must make the source code of your modifications available to everyone who uses it (even over a network).
 
-**You do not have to make your Anvil apps open source.** We have added an exception to the licence that gives you explicit permission to use this code to host non-open-source applications, and to distribute it alongside them.
+**You do not have to make your Anvil apps open source.** We have added an exception to the license that gives you explicit permission to use this code to host non-open-source applications, and to distribute it alongside them.
