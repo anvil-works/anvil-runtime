@@ -1,6 +1,8 @@
 "use strict";
 
 var PyDefUtils = require("PyDefUtils");
+import { validateChild } from "./Container";
+import { getCssPrefix } from "@runtime/runner/legacy-features";
 import { isInvisibleComponent } from "./helpers";
 
 /*#
@@ -39,9 +41,6 @@ description: |
 
 module.exports = (pyModule) => {
 
-    // in runtime v3+ we mangle the bootstrap style column classes
-    const PREFIX = window.anvilParams.runtimeVersion >= 3 ? "aw-" : "";
-
     pyModule["GridPanel"] = PyDefUtils.mkComponentCls(pyModule, "GridPanel", {
         base: pyModule["ClassicContainer"],
 
@@ -66,7 +65,7 @@ module.exports = (pyModule) => {
 
             /*!defMethod(_,component,[row=],[col_xs=],[width_xs=])!2*/ "Add a component to this GridPanel";
             $loc["add_component"] = PyDefUtils.funcWithKwargs(function add_component(kwargs, self, pyComponent) {
-                pyModule["ClassicContainer"]._check_no_parent(pyComponent);
+                validateChild(pyComponent);
 
                 const rowName = kwargs["row"];
                 let celt;
@@ -80,8 +79,9 @@ module.exports = (pyModule) => {
                     let row = self._anvil.rows[rowName];
 
                     if (!row) {
+                        const prefix = getCssPrefix();
                         // TODO allow a way of manually inserting into the middle rather than at the bottom?
-                        const element = $('<div class="' + PREFIX + 'row">')
+                        const element = $('<div class="' + prefix + 'row">')
                             .css("marginBottom", self._anvil.getPropJS("row_spacing"))
                             .data("anvil-gridpanel-row", rowName);
                         row = { element, lastCol: {} };
@@ -132,18 +132,19 @@ module.exports = (pyModule) => {
             offset = 0, // Default to full-width, zero offset, inherit small-to-large
             classList = [];
         const kwargs = component.layoutProperties;
+        const prefix = getCssPrefix();
         ["xs", "sm", "md", "lg"].forEach((size) => {
             const w = kwargs["width_" + size];
             if (w) {
                 width = parseInt(w);
             }
-            classList.push(PREFIX + "col-" + size + "-" + width);
+            classList.push(prefix + "col-" + size + "-" + width);
             const lastCol = row.lastCol[size] || 0;
 
             const xRequest = kwargs["col_" + size];
             if (xRequest && parseInt(xRequest) > lastCol) {
                 offset = parseInt(xRequest) - lastCol;
-                classList.push(PREFIX + "col-" + size + "-offset-" + offset);
+                classList.push(prefix + "col-" + size + "-offset-" + offset);
             }
             row.lastCol[size] = component.lastCol[size] = lastCol + width + offset;
         });

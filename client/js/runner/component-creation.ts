@@ -6,10 +6,11 @@ import {
     pyCallOrSuspend,
     pyException,
     pyHasAttr,
-    pyIsInstance,
+    pyIsInstance, pyNone,
     pyNoneType,
     pyStr,
     pyTrue,
+    pyType,
     Suspension,
     toPy,
     tryCatchOrSuspend
@@ -19,13 +20,22 @@ import * as PyDefUtils from "../PyDefUtils";
 import {ComponentYaml, data, FormContainerYaml, FormYaml, SlotTarget, SlotTargetType} from "./data";
 import * as py from "./py-util";
 import {Slot} from "./python-objects";
-import {s_add_component, s_layout, s_slots, strError} from "./py-util";
-import {instantiateComponentFromYamlSpec, objectToKwargs, yamlSpecToQualifiedFormName} from "./instantiation";
-import {Component, getDefaultDepId, LayoutProperties, ToolboxItem} from "../components/Component";
-import { FormTemplate } from "./forms";
+import {s_add_component, s_layout, s_slots, strError, objectToKwargs} from "./py-util";
+import {instantiateComponentFromYamlSpec, yamlSpecToQualifiedFormName} from "./instantiation";
+import {
+    Component,
+    ComponentConstructor,
+    getDefaultDepIdForComponent,
+    LayoutProperties,
+    ToolboxItem
+} from "../components/Component";
 
 const warnedAboutEventBinding = new Set();
 
+export type YamlCreationStack = {
+    form: pyType;
+    prev: YamlCreationStack;
+} | undefined;
 
 export function mkInvalidComponent(message: string) {
     return pyCall(py.getValue("anvil", "InvalidComponent"), [], ["text", new pyStr(message)]);
@@ -33,6 +43,7 @@ export function mkInvalidComponent(message: string) {
 
 export interface SetupResult {
     components: {[name:string]: {component: Component, layoutProperties: LayoutProperties, index: number, targetSlot?: string, ancestors: Component[]}};
+    orphanedComponents: string[];
     slots?: {[name:string]: Slot};
     form: Component;
 }
@@ -87,14 +98,17 @@ function addEventHandlers(pyComponent: Component, pyForm: Component, yaml: Compo
     }
 }
 
-function createComponents(formYaml: FormYaml, pyForm: Component, setupHandlers: boolean, rootComponent?: Component) {
-    const setupResult : SetupResult = {components: {}, form: pyForm};
+const pyAlwaysThrow = new Sk.builtin.func(() => { throw new Sk.builtin.Exception() });
+
+function createComponents(formYaml: FormYaml, pyForm: Component, defaultDepId: string | null, setupHandlers: boolean, yamlStack: YamlCreationStack, rootComponent?: Component) {
+    const setupResult : SetupResult = {components: {}, orphanedComponents: [], form: pyForm};
     const setupComponent = (yaml: ComponentYaml, pyAddToParent: pyObject | null, ancestors: Component[], index: number, targetSlot?: string): Suspension | null | pyNoneType =>
         chainOrSuspend(
             tryCatchOrSuspend(
-                () => instantiateComponentFromYamlSpec(pyForm, yaml.type, {__ignore_property_exceptions: true, ...yaml.properties}, yaml.name),
+                () => instantiateComponentFromYamlSpec({requestingComponent: pyForm, fromYaml: true, defaultDepId}, yaml.type, {__ignore_property_exceptions: true, ...yaml.properties}, yamlStack, yaml.name),
                 (exception) => {
                     console.error(`Error instantiating ${yaml?.name}`, ": ", exception, "YAML:", yaml, "\n", strError(exception));
+                    window.onerror(null, null, null, null, exception);
                     return mkInvalidComponent(`Error instantiating "${yaml?.name}": ${strError(exception)}`);
                 }
             ),
@@ -110,7 +124,12 @@ function createComponents(formYaml: FormYaml, pyForm: Component, setupHandlers: 
                         }
 
                         if (yaml.components && !isTrue(pyIsInstance(pyComponent, py.getValue("anvil", "InvalidComponent")))) {
-                            const pyAddComponent = Sk.abstr.gattr(pyComponent, py.s_add_component);
+                            let pyAddComponent = pyAlwaysThrow;
+                            try {
+                                pyAddComponent = Sk.abstr.gattr(pyComponent, py.s_add_component);
+                            } catch {
+                                // pass;
+                            }
                             return chainOrSuspend(
                                 null,
                                 ...yaml.components.map((subYaml, index) => () => setupComponent(subYaml, pyAddComponent, [pyComponent, ...ancestors], index)),
@@ -128,13 +147,16 @@ function createComponents(formYaml: FormYaml, pyForm: Component, setupHandlers: 
                     }
                 ),
             (pyComponent) => {
-                const layoutArgs = [];
+                const layoutArgs: any = [];
                 if (yaml.layout_properties) {
                     for (const [k, v] of Object.entries(yaml.layout_properties)) {
                         layoutArgs.push(new pyStr(k), toPy(v));
                     }
                 }
-                return pyAddToParent && pyCallOrSuspend<pyNoneType>(pyAddToParent, [pyComponent], layoutArgs);
+                return pyAddToParent && tryCatchOrSuspend(() => pyCallOrSuspend<pyNoneType>(pyAddToParent, [pyComponent], layoutArgs), (exception) => {
+                    setupResult.orphanedComponents.push(yaml.name);
+                    return pyNone;
+                });
             }
         );
 
@@ -174,7 +196,7 @@ function createComponents(formYaml: FormYaml, pyForm: Component, setupHandlers: 
                 let templateToolboxItem: ToolboxItem | undefined;
                 if (template) {
                     templateToolboxItem = {
-                        component: {...template, type: template.type.startsWith("form:") ? yamlSpecToQualifiedFormName(template.type.substring(5), getDefaultDepId(pyForm)) : `anvil.${template.type}`},
+                        component: {...template, type: template.type.startsWith("form:") ? yamlSpecToQualifiedFormName(template.type.substring(5), getDefaultDepIdForComponent(pyForm)) : `anvil.${template.type}`},
                         title: "Template",
                     }
                 }
@@ -204,9 +226,16 @@ function createComponents(formYaml: FormYaml, pyForm: Component, setupHandlers: 
         );
     } else {
         // No layout; this form inherits from a container class directly
-        addEventHandlers(pyForm, pyForm, formYaml.container as FormContainerYaml);
+        if (setupHandlers) {
+            addEventHandlers(pyForm, pyForm, formYaml.container as FormContainerYaml);
+        }
 
-        const pyAddToForm = Sk.abstr.gattr(pyForm, py.s_add_component);
+        let pyAddToForm = pyAlwaysThrow;
+        try {
+            pyAddToForm = Sk.abstr.gattr(pyForm, py.s_add_component);
+        } catch {
+            // pass
+        }
         return chainOrSuspend(
             null,
             ...(formYaml.components ?? []).map((yaml, index) => () => setupComponent(yaml, pyAddToForm, [rootComponent!], index)),
@@ -216,9 +245,9 @@ function createComponents(formYaml: FormYaml, pyForm: Component, setupHandlers: 
 }
 
 
-export function setupFormComponents(formYaml: FormYaml, pyForm: Component, setupHandlers=true, rootComponent?: Component) {
+export function setupFormComponents(formYaml: FormYaml, pyForm: Component, defaultDepId: string | null, yamlStack: YamlCreationStack, setupHandlers=true, rootComponent?: Component) {
     const pyFormDict = Sk.abstr.lookupSpecial(pyForm, pyStr.$dict) as pyDict;
-    return chainOrSuspend(createComponents(formYaml, pyForm, setupHandlers, rootComponent), (setupResult: SetupResult) => {
+    return chainOrSuspend(createComponents(formYaml, pyForm, defaultDepId, setupHandlers, yamlStack, rootComponent), (setupResult: SetupResult) => {
         for (const [name, {component}] of Object.entries(setupResult.components)) {
             const pyName = new pyStr(name);
             if (isTrue(pyHasAttr(pyForm, pyName))) {
@@ -228,8 +257,10 @@ export function setupFormComponents(formYaml: FormYaml, pyForm: Component, setup
                     ),
                 ]);
             }
-            // add it to the dunder dict
-            pyFormDict.mp$ass_subscript(pyName, component);
+            // add it to the dunder dict IF we have one. If pyForm was created by a YAML carrier, it might not have one.
+            if (pyFormDict) {
+                pyFormDict.mp$ass_subscript(pyName, component);
+            }
         }
         return setupResult;
     });

@@ -25,57 +25,57 @@ import {
     objectRepr,
     arrayFromIterable,
     toPy,
+    pyCallable,
 } from "../@Sk";
 import { data } from "./data";
-import { getDefaultDepId } from "../components/Component";
+import {
+    getDefaultDepIdForComponent,
+    setDefaultDepIdForNextComponent,
+    setYamlStackForNextComponent
+} from "../components/Component";
 import type { Component, ComponentConstructor } from "../components/Component";
 import * as py from "./py-util";
-import { PyModMap } from "./py-util";
+import { PyModMap, objectToKwargs } from "./py-util";
+import {YamlCreationStack} from "@runtime/runner/component-creation";
 
-export const objectToKwargs = (obj?: object) => {
-    const kwargs: Kws = [];
-    for (const [k, v] of Object.entries(obj || {})) {
-        kwargs.push(k, toPy(v));
-    }
-    return kwargs;
-};
+// There are two times when we might want to turn the name of a form into a constructor, at which point
+// we need to disambiguate which app/dependency we should look in when we get a bare string like "Form1".
+//
+// If a FormTemplate is instantiating a component from a YAML description, it's simple - we should always be relative
+// to the app that defines that form.
+//
+// If we're instantiating a component from a form property (eg a RepeatingPanel instantiating its item_template
+// property), and it's a property on a component created from YAML, it should be relative to the YAML that created
+// that component. For example, if a dependency defines its own CustomRepeatingPanel, and we use the
+// CustomRepeatingPanel from another app, the item_template property should be looked up relative to the app whose
+// YAML created the CustomRepeatingPanel, not the dependency that defined the CustomRepeatingPanel class.
+//
+// To do this we have a magic reach-around-the-back mechanism in Component.ts which uses global state to set the
+// default dep ID on the next Component to be instantiated. When we instantiate from YAML, we use this mechanism
+// to set the YAML's dep ID as the default dep ID, in case that component wants to instantiate any form properties.
+interface YamlInstantiationContext {
+    requestingComponent: Component;
+    fromYaml: true;
+    defaultDepId: string | null;
+}
 
-export const objectToPyMap = (obj?: object) =>
-    Object.fromEntries(Object.entries(obj || {}).map(([k, v]) => [k, toPy(v)]));
+interface PropertyInstantiationContext {
+    requestingComponent?: Component;
+    fromYaml?: false;
+}
+export type InstantiationContext = YamlInstantiationContext | PropertyInstantiationContext;
 
-export const kwargsToPyMap = (kws?: Kws) => {
-    const obj: { [key: string]: pyObject } = {};
-    if (kws === undefined) return obj;
-    for (let i = 0; i < kws.length; i += 2) {
-        obj[kws[i] as string] = kws[i + 1] as pyObject;
-    }
-    return obj;
-};
-
-export const kwargsToJsObject = (kws?: Kws) => {
-    const obj: any = {};
-    if (kws === undefined) { return obj; }
-    for (let i = 0; i < kws.length; i += 2) {
-        obj[kws[i] as string] = toJs(kws[i + 1] as pyObject);
-    }
-    return obj;
-};
-
-export const pyMapToKwargs = (obj: { [name: string]: pyObject }) => {
-    const kwargs: Kws = [];
-    for (const [k, v] of Object.entries(obj)) {
-        kwargs.push(k, v);
-    }
-    return kwargs;
-};
+export const getDefaultDepIdForInstantiation = (context: InstantiationContext) =>
+    context.fromYaml ? context.defaultDepId : getDefaultDepIdForComponent(context.requestingComponent);
 
 const COMPONENT_MATHER = /^(?:([^:]+):)?([^:]*)$/;
 const ComponentMatcher = (nameSpec: string) => nameSpec.match(COMPONENT_MATHER);
 
 export const yamlSpecToQualifiedFormName = (yamlSpec: string, defaultDepId?: string | null) => {
-    const [, depId, className] = ComponentMatcher(yamlSpec) || [];
-    const appPackage = depId
-        ? data.dependencyPackages[depId]
+    const [, logicalDepId, className] = ComponentMatcher(yamlSpec) || [];
+    const depId = logicalDepId ? data.logicalDepIds[logicalDepId] : null;
+    const appPackage = logicalDepId
+        ? depId && data.dependencyPackages[depId]
         : defaultDepId
             ? data.dependencyPackages[defaultDepId]
             : data.appPackage;
@@ -114,7 +114,7 @@ export const setInstantiationHooks = (hooks: InstantiationHooks) => {
     ({ getAnvilComponentInstantiator, getAnvilComponentClass, getNamedFormInstantiator } = hooks);
 };
 
-export const getDefaultAnvilComponentInstantiator = (requestingComponent: Component | null, componentType: string) => {
+export const getDefaultAnvilComponentInstantiator = (context: InstantiationContext, componentType: string) => {
     const pyComponent = py.getValue("anvil", componentType);
     return (kwargs?: Kws, pathStep?: string | number) => pyCallOrSuspend(pyComponent, [], kwargs);
 };
@@ -123,8 +123,8 @@ export interface FormInstantiationFlags {
     asLayout?: true;
 }
 
-export const getDefaultNamedFormInstantiator = (requestingComponent: Component | null, formName: string, flags?: FormInstantiationFlags) => {
-    return chainOrSuspend(resolveStringComponent(formName, getDefaultDepId(requestingComponent)), (constructor) => {
+export const getDefaultNamedFormInstantiator = (context: InstantiationContext, formName: string, flags?: FormInstantiationFlags) => {
+    return chainOrSuspend(resolveStringComponent(formName, getDefaultDepIdForInstantiation(context)), (constructor) => {
         if (constructor === undefined) {
             // TODO - throw a proper Error here or return mkInvalidComponent
             throw new Error("Unable to Instantiate form " + formName);
@@ -139,24 +139,34 @@ export let getAnvilComponentInstantiator = getDefaultAnvilComponentInstantiator;
 
 export let getNamedFormInstantiator = getDefaultNamedFormInstantiator;
 
-export const getFormInstantiator = (requestingComponent: Component, formSpec: pyStr | ComponentConstructor) =>
+export const getFormInstantiator = (context: InstantiationContext, formSpec: pyStr | ComponentConstructor | pyCallable & {anvil$isFormInstantiator: true}) =>
     checkString(formSpec)
-        ? getNamedFormInstantiator(requestingComponent, formSpec.toString())
-        : (kws?: Kws, pathStep?: number | string) => pyCallOrSuspend(formSpec, [], kws);
+        ? getNamedFormInstantiator(context, formSpec.toString())
+        : (kws?: Kws, pathStep?: number | string) => pyCallOrSuspend(formSpec, formSpec?.anvil$isFormInstantiator && pathStep !== undefined ? [toPy(pathStep)] : [], kws);
 
 // Used in YAML instantiation: Decode YAML spec and shortcut anvil.* components
 // TODO - Yaml properties may be empty - inject default properties when instantiating from Yaml
 export const instantiateComponentFromYamlSpec = (
-    requestingComponent: Component | null,
+    context: YamlInstantiationContext,
     yamlSpec: string,
     properties: { [prop: string]: any },
+    yamlStack: YamlCreationStack,
     name?: string
-) =>
-    yamlSpec.startsWith("form:")
-        ? chainOrSuspend(getNamedFormInstantiator(requestingComponent, yamlSpec.substring(5)), (instantiate) =>
-              instantiate(objectToKwargs(properties), name)
-          )
-        : getAnvilComponentInstantiator(requestingComponent, yamlSpec)(objectToKwargs(properties), name);
+) => {
+    if (yamlSpec.startsWith("form:")) {
+        return chainOrSuspend(getNamedFormInstantiator(context, yamlSpec.substring(5)), (instantiate) => {
+            // Tell this component it was created by YAML from this app, so if it has any form
+            // properties it knows how to look them up
+            setDefaultDepIdForNextComponent(context.defaultDepId);
+            setYamlStackForNextComponent(yamlStack); // todo consider: should the yamlStack become part of the YamlInstantiationContext?
+            return instantiate(objectToKwargs(properties), name)
+        });
+    } else {
+        const instantiate = getAnvilComponentInstantiator(context, yamlSpec);
+        setDefaultDepIdForNextComponent(context.defaultDepId);
+        return instantiate(objectToKwargs(properties), name);
+    }
+}
 
 // Used from Python code
 export const pyInstantiateComponent = PyDefUtils.funcFastCall((args_: Args, kws_?: Kws) => {
@@ -189,7 +199,7 @@ export const pyInstantiateComponent = PyDefUtils.funcFastCall((args_: Args, kws_
 
     return chainOrSuspend(
         checkString(component)
-            ? resolveStringComponent(component.toString(), getDefaultDepId(requestingComponent))
+            ? resolveStringComponent(component.toString(), getDefaultDepIdForComponent(requestingComponent))
             : component,
         (constructor) => {
             if (constructor === undefined) {

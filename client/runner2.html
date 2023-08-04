@@ -9,21 +9,22 @@
   <meta name="referrer" content="never"> <!-- Yes, this is "legacy", but Safari and Edge don't support 'no-referrer' yet -->
 
   <meta name="og:title" content="{{app-name}}">
+  <meta name="title" content="{{app-name}}">
   <meta name="og:type" content="website">
   <meta name="og:url" content="{{canonical-url}}">
   <meta name="og:image" content="{{social-image}}">
   <!--<xmeta name="og:image:width" content="400">-->
   <!--<xmeta name="og:image:height" content="400">-->
   <!--<xmeta name="og:site_name" content="Anvil">-->
-  <meta name="og:description" content="{{social-description}}">
+  <meta name="og:description" content="{{description}}">
+  <meta name="description" content="{{description}}">
 
 
   <title>{{app-title}}</title>
 
 <!--  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/bootstrap.css?buildTime=0" crossorigin/>-->
 <!--  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/bootstrap-theme.min.css?buildTime=0" crossorigin/>-->
-  <style>.modal { display: none; }</style>
-  <link rel="stylesheet" href="{{cdn-origin}}/runtime/dist/runner.min.css?buildTime=0" crossorigin/>
+  <link rel="stylesheet" href="{{cdn-origin}}/runtime/dist/runner-v3.min.css?buildTime=0" crossorigin/>
   <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/daterangepicker.min.css?buildTime=0" crossorigin/>
   <!-- <link rel="stylesheet" href="{{cdn-origin}}/runtime/node_modules/animate.css/animate.min.css?buildTime=0" crossorigin/> -->
 
@@ -120,7 +121,11 @@
   window.anvilGoogleApiKey = "{{google-api-key}}";
   // docker-platform-server-base script adds sha's in html files - we put this variable here so that we can aggrissively cache the std-lib files
   // the std-lib is loaded dynamically in runner.js
-  window.anvilSkulptLib = "{{cdn-origin}}/runtime/js/lib/skulpt-stdlib-file-number.json?buildTime=0";
+  window.anvilSkulptLib = {
+    1: "{{cdn-origin}}/runtime/js/lib/skulpt-stdlib-1.json?buildTime=0",
+    2: "{{cdn-origin}}/runtime/js/lib/skulpt-stdlib-2.json?buildTime=0",
+    3: "{{cdn-origin}}/runtime/js/lib/skulpt-stdlib-3.json?buildTime=0"
+  };
 
   // NB: We will need to preserve things other than ?s= at some point.
   window.history.replaceState(window.history.state || {}, "Anvil App", document.location.origin + document.location.pathname + document.location.hash);

@@ -77,6 +77,9 @@
 
                  [com.onelogin/java-saml "2.5.0" :exclusions [org.slf4j/slf4j-api]]
                  [medley "1.4.0"]
+                 [olical/crawlers "0.2.0"]
+
+                 [org.apache.commons/commons-compress "1.23.0"]
 
                  [io.opentelemetry/opentelemetry-sdk]]
   :bom {:import [[io.opentelemetry/opentelemetry-bom "1.7.0"]]}

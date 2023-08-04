@@ -1,0 +1,497 @@
+/* 
+this would be:
+@import "../node_modules/modern-normalize/modern-normalize.css" layer(preflight);
+but our css minifier doesn't support this syntax - if we upgrade to webpack 5 then we can
+*/
+@import "./modern-normalize.css";
+@import "./preflight.css";
+@import "./runner-css/modal-v3.css";
+@import "./runner-css/grid-v3.css";
+@import "./runner-css/alert-v3.css";
+@import "./runner-css/animate-v3.css";
+@import "./runner-css/classic_components-v3.css";
+@import "./runner-css/banner.css";
+@import "./runner-css/error-indicator.css";
+@import "./runner-css/loading-spinner.css";
+
+/* Fix a bootstrap-ism that isn't helpful */
+.form-control, .btn {
+	font-size: inherit;
+}
+
+@media print {
+	a[href]:after {
+		content: unset;
+	}
+}
+
+.disabled, [disabled] {
+	pointer-events: auto !important;
+}
+
+.anvil-component[disabled] label {
+    cursor: not-allowed;
+}
+
+
+.runner .visible-false {
+	display: none !important;
+}
+
+
+.xy-panel > .holder > .anvil-component {
+    margin: 0;
+}
+
+/* Any container can have this class to request that what's in it be inline where possible */
+span.anvil-inline-container > .anvil-inlinable, .anvil-always-inline-container > .anvil-inlinable {
+	display: inline-block;
+}
+
+.grid-panel {
+	overflow-y: auto;
+	overflow-x: hidden;
+}
+
+.linear-panel {
+	padding: 0px;
+    /* overflow settings removed because they cause scroll bars on FF. Don't think we need them anyway. */
+	/*overflow-y: auto;
+	overflow-x: hidden;*/
+}
+
+ul.linear-panel {
+	list-style-type: none;
+	margin: 0;
+}
+
+.invalid-component {
+	text-align: center;
+	font-size: 30;
+	padding: 9px;
+	border: 1px dashed black;
+	word-wrap: break-word;
+}
+
+.invalid-component i {
+	color: #800;
+}
+
+
+.anvil-container-overflow {
+    overflow-x: hidden;
+}
+
+.anvil-panel-row {
+	border: 0px solid black;
+    display: flex;
+    flex-wrap: nowrap;
+}
+
+.anvil-panel-col {
+	min-height: 0;
+	border: 0px solid red;
+    pointer-events: none;
+    overflow-x:hidden;
+    flex: 60 1 0;
+}
+
+
+.anvil-panel-col>* {
+    pointer-events: auto;
+}
+
+.anvil-panel-col>.col-padding {
+    position: relative;
+}
+
+.anvil-panel-section-container {
+    margin: 0 auto;
+    padding: 0;
+}
+
+@media (min-width : 768px) {
+    .anvil-panel-section-container:not(.full-width-row) { max-width: 750px; }
+}
+
+@media (min-width: 992px) {
+    .anvil-panel-section-container:not(.full-width-row) { max-width: 970px; }
+}
+
+.anvil-panel-section-gutter { margin: 0 -15px; }
+
+.col-padding.col-padding-none { padding: 0 1px; margin: 0 -1px; }
+.column-panel.col-padding-none > .anvil-panel-section > .anvil-panel-section-container > .anvil-panel-section-gutter { margin: 0 0; }
+
+.col-padding.col-padding-tiny { padding: 0 5px; }
+.column-panel.col-padding-tiny > .anvil-panel-section > .anvil-panel-section-container > .anvil-panel-section-gutter { margin: 0 -5px; }
+
+.col-padding.col-padding-small { padding: 0 10px; }
+.column-panel.col-padding-small > .anvil-panel-section > .anvil-panel-section-container > .anvil-panel-section-gutter { margin: 0 -10px; }
+
+.col-padding.col-padding-medium { padding: 0 15px; }
+.column-panel.col-padding-medium > .anvil-panel-section > .anvil-panel-section-container > .anvil-panel-section-gutter { margin: 0 -15px; }
+
+.col-padding.col-padding-large { padding: 0 20px; }
+.column-panel.col-padding-large > .anvil-panel-section > .anvil-panel-section-container > .anvil-panel-section-gutter { margin: 0 -20px; }
+
+.col-padding.col-padding-huge { padding: 0 30px; }
+.column-panel.col-padding-huge > .anvil-panel-section > .anvil-panel-section-container > .anvil-panel-section-gutter { margin: 0 -30px; }
+
+@media screen and (max-width: 768px) {
+    .runner .anvil-panel-row.wrap-mobile {
+        flex-wrap: wrap;
+    }
+	.runner .anvil-panel-col.wrap-mobile  {
+		min-width: 100%;
+	}
+}
+
+@media screen and (max-width: 992px) {
+    .runner .anvil-panel-row.wrap-tablet {
+        flex-wrap: wrap;
+    }
+	.runner .anvil-panel-col.wrap-tablet {
+		min-width: 100%;
+	}
+}
+
+.anvil-component {
+	display: block;
+}
+
+.anvil-spacing-above-none { margin-top: 0px; }
+.anvil-spacing-above-small { margin-top: 5px; }
+.anvil-spacing-above-medium { margin-top: 20px; }
+.anvil-spacing-above-large { margin-top: 40px; }
+.anvil-spacing-below-none { margin-bottom: 0px; }
+.anvil-spacing-below-small { margin-bottom: 5px; }
+.anvil-spacing-below-medium { margin-bottom: 20px; }
+.anvil-spacing-below-large { margin-bottom: 40px; }
+
+.flow-panel > .flow-panel-gutter {  
+    display: flex;
+    flex-wrap: wrap;
+    align-items: top;
+    align-content: flex-start;
+}
+.flow-panel > .flow-panel-gutter > .flow-panel-item {
+    flex: 0 1 auto;
+}
+
+.flow-panel.flow-spacing-none > .flow-panel-gutter { margin-left: 0; margin-right: 0; }
+.flow-panel.flow-spacing-tiny > .flow-panel-gutter {  margin-left: -5px; margin-right: -5px; }
+.flow-panel.flow-spacing-small > .flow-panel-gutter {  margin-left: -10px; margin-right: -10px; }
+.flow-panel.flow-spacing-medium > .flow-panel-gutter {  margin-left: -15px; margin-right: -15px; }
+.flow-panel.flow-spacing-large > .flow-panel-gutter {  margin-left: -20px; margin-right: -20px; }
+.flow-panel.flow-spacing-huge > .flow-panel-gutter {  margin-left: -30px; margin-right: -30px; }
+
+.flow-panel.flow-spacing-none > .flow-panel-gutter > .flow-panel-item {  margin-left: 0; margin-right: 0; }
+.flow-panel.flow-spacing-tiny > .flow-panel-gutter > .flow-panel-item {  margin-left: 5px; margin-right: 5px; }
+.flow-panel.flow-spacing-small > .flow-panel-gutter > .flow-panel-item {  margin-left: 10px; margin-right: 10px; }
+.flow-panel.flow-spacing-medium > .flow-panel-gutter > .flow-panel-item {  margin-left: 15px; margin-right: 15px; }
+.flow-panel.flow-spacing-large > .flow-panel-gutter > .flow-panel-item {  margin-left: 20px; margin-right: 20px; }
+.flow-panel.flow-spacing-huge > .flow-panel-gutter > .flow-panel-item {  margin-left: 30px; margin-right: 30px; }
+
+
+
+
+/* For HTML templates */
+[anvil-slot-repeat] {
+	display: none !important;
+}
+
+.anvil-force-hidden {
+    display: none !important;
+}
+
+.runner .anvil-designer-only {
+	display: none !important;
+}
+
+.runner .anvil-runtime-invisible {
+	visibility: hidden;
+}
+
+.form-control {
+	/* This used to come from Bootstrap */
+	width: 100%;
+	box-sizing: border-box;
+}
+
+.anvil-component.form-control, .anvil-component .form-control:not(select) {
+    height: initial;
+}
+
+/* Hacks for specific component types */
+
+select.form-control {
+	/* ew ew ew - select elements are weird and don't obey line-height, so we just
+	   set the height explicitly. Ugh. */
+	height: calc(1.5em + 14px);
+}
+
+.anvil-dropdown>form {
+    display: inline-block;
+    position: relative;
+}
+
+
+
+.anvil-datepicker {
+    position: relative;
+}
+
+.anvil-datepicker .fa-calendar {
+	position: absolute;
+    bottom: 10px;
+    right: 8px;
+    top: auto;
+	cursor: pointer;
+}
+.anvil-datepicker .fa-calendar.anvil-disabled {
+	cursor: not-allowed;
+    opacity: .5;
+}
+
+
+.anvil-datepicker input {
+    padding-right: 2em !important;
+}
+
+.anvil-component-icon {
+	display: none !important;
+	line-height: inherit !important;
+	width: 1.1em;
+	text-align: center;
+}
+
+.anvil-component-icon-present .anvil-component-icon.left.left-icon,
+.anvil-component-icon-present .anvil-component-icon.left.left_edge-icon,
+.anvil-component-icon-present .anvil-component-icon.right.right-icon,
+.anvil-component-icon-present .anvil-component-icon.right.right_edge-icon {
+	display: inline-block !important;
+}
+.anvil-component-icon-present .anvil-component-icon.left.top-icon {
+	display: block !important;
+}
+.anvil-component-icon-present button .anvil-component-icon.left.top-icon,
+.anvil-component-icon-present.align-center .anvil-component-icon.left.top-icon
+{
+	margin: auto;
+}
+.anvil-component-icon-present.align-right .anvil-component-icon.left.top-icon
+{
+	margin-left: auto;
+	margin-right: 0;
+}
+.anvil-component-icon.left.left_edge-icon {
+	position: absolute;
+	left: 0;
+}
+.has-text > .anvil-component-icon.left-icon {
+	margin-right: 0.75em;
+}
+.has-text > .anvil-component-icon.right-icon {
+	margin-left: 0.75em;
+}
+.anvil-component-icon.right.right_edge-icon {
+	position: absolute;
+	right: 0;
+}
+
+.btn {
+	min-height: calc(12px + 1.42857143em); /* account for padding */
+}
+
+/* BUTTONS */
+.anvil-component-icon-present.left_edge-icon>button {
+	position: relative;
+	padding-left: 1.75em;
+}
+.anvil-component-icon-present.right_edge-icon>button {
+	position: relative;
+	padding-right: 1.75em;
+}
+/* LINKS AND LABELS */
+a.anvil-component-icon-present.left_edge-icon,
+.anvil-label.anvil-component-icon-present.left_edge-icon {
+	position: relative;
+	padding-left: 1.75em;
+}
+a.anvil-component-icon-present.right_edge-icon,
+.anvil-label.anvil-component-icon-present.right_edge-icon {
+	position: relative;
+	padding-right: 1.75em;
+}
+a>.anvil-component-icon.left_edge-icon,
+a>.anvil-component-icon.right_edge-icon,
+.anvil-label>.anvil-component-icon.left_edge-icon,
+.anvil-label>.anvil-component-icon.right_edge-icon,
+button>.anvil-component-icon.left_edge-icon,
+button>.anvil-component-icon.right_edge-icon {
+    top: 0;
+	padding-top: 7px;
+	padding-bottom: 7px;
+}
+.anvil-label>.label-text, a>.link-text {
+	display: inline-block;
+	padding-top: 7px;
+	padding-bottom: 7px;
+	white-space: pre-wrap;
+}
+.anvil-label.anvil-component-icon-present.top-icon>.label-text,
+a.anvil-component-icon-present.top-icon>.link-text {
+	padding-top: 0;
+}
+
+.anvil-rich-text {
+    padding-top: 7px;
+    padding-bottom: 7px;
+    white-space: pre-wrap;
+}
+
+.anvil-button>button>.button-text {
+    white-space: pre-wrap;
+}
+
+.form-control::-webkit-input-placeholder { color: #aaa; }
+.form-control:-moz-placeholder { color: #aaa; }
+.form-control::-moz-placeholder { color: #aaa; }
+.form-control:-ms-input-placeholder { color: #aaa; }
+
+input[type=number]::-webkit-inner-spin-button, 
+input[type=number]::-webkit-outer-spin-button { 
+  -webkit-appearance: none; 
+  margin: 0; 
+}
+
+[data-notify="title"] {
+	font-weight: bold;
+    white-space: pre-wrap;
+}
+[data-notify="message"] {
+	display: block;
+	font-size: 90%;
+    white-space: pre-wrap;
+}
+
+.file-loader {
+    cursor: default;
+}
+
+.file-loader>label {
+    cursor: pointer; 
+    padding: 7px; 
+    border-radius: 4px;
+    margin-bottom: 0;
+    border: 1px dashed #888;
+}
+
+.file-loader.anvil-disabled {
+    color: #ddd;
+    opacity: .8;
+}
+
+.file-loader.anvil-disabled label {
+    cursor: not-allowed;
+}
+
+.btn-default {
+  background-image: linear-gradient(to bottom, rgba(255,255,255,0.1), rgba(0,0,0,0.1));
+  text-shadow: 0 1px 0 rgba(255,255,255,0.5);
+}
+
+.btn-default:hover, .btn-default:focus {
+    background-image: linear-gradient(rgba(0,0,0,0.1), rgba(0,0,0,0.1));    
+    background-position:0 0;
+}
+
+.modal-body.alert-text, .modal-title.alert-title {
+    white-space: pre-wrap;
+}
+
+.anvil-data-grid {
+    /*border: 1px solid black;*/
+}
+
+.anvil-data-grid>.data-grid-child-panel>div.auto-grid-header {
+    border-bottom: 2px solid #888;
+}
+
+.anvil-data-grid>.data-grid-footer-panel {
+    display: flex;
+    padding: 7px;
+}
+
+.anvil-data-grid>.data-grid-footer-panel>.footer-slot {
+    flex: 1 0 auto;
+}
+
+.anvil-data-grid>.data-grid-footer-panel>.pagination-buttons {
+}
+
+.anvil-data-grid>.data-grid-footer-panel>.pagination-buttons>a {
+    display: inline-block;
+    padding: 7px;
+    margin-left: 7px;
+    font-size: 24px;
+    line-height: 24px;
+}
+
+.anvil-data-grid>.data-grid-footer-panel>.pagination-buttons>a.disabled {
+    pointer-events: none;
+    cursor: not-allowed;
+    color: #ddd;
+}
+
+.anvil-data-grid>.data-grid-footer-panel>.pagination-buttons>a:not(.disabled):hover {
+    outline: 1px solid #ccc;
+}
+
+.anvil-data-row-panel {
+    /*border: 1px solid pink;*/
+    display: flex;
+    flex-direction: row; 
+    flex-wrap: wrap;
+    width: 100%;
+}
+
+.anvil-data-row-panel>.data-row-col {
+    /*border: 1px solid #888;*/
+    flex-shrink: 0;
+    flex-grow: 1;
+    flex-basis: auto;
+    width:0px;
+    padding: 0px 7px;
+}
+
+@media screen and (max-width: 768px) {
+	.runner .anvil-data-grid.wrap-mobile .anvil-data-row-panel>.data-row-col  {
+		min-width: 100%;
+	}
+}
+
+@media screen and (max-width: 992px) {
+	.runner .anvil-data-grid.wrap-tablet .anvil-data-row-panel>.data-row-col {
+		min-width: 100%;
+	}
+}
+
+.anvil-data-row-panel>.data-row-col.extra-column {
+    width:100%;
+}
+
+.anvil-data-row-panel>.data-row-col.extra-column>.anvil-container,
+.anvil-data-row-panel>.data-row-col.extra-column>.repeating-panel {
+    margin-left: -7px;
+    width: calc(100% + 14px);
+}
+
+.paginating .hide-while-paginating {
+    visibility: hidden; /* Because display:none breaks canvas width during pagination */
+}
+
+[x-anvil-slot]>code.anvil-slot-name {
+    display: none;
+}

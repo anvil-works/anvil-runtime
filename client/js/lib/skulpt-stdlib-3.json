@@ -104,8 +104,6 @@
   "src/lib/imghdr.py": "import _sk_fail; _sk_fail._(\"imghdr\")\n",
   "src/lib/imputil.py": "import _sk_fail; _sk_fail._(\"imputil\")\n",
   "src/lib/io.py": "import _sk_fail; _sk_fail._(\"io\")\n",
-  "src/lib/json/__init__.py": "import _sk_fail; _sk_fail._(\"json\")\n",
-  "src/lib/json/tests/__init__.py": "import _sk_fail; _sk_fail._(\"tests\")\n",
   "src/lib/lib-dynload/__init__.py": "import _sk_fail; _sk_fail._(\"lib-dynload\")\n",
   "src/lib/lib-tk/__init__.py": "import _sk_fail; _sk_fail._(\"lib-tk\")\n",
   "src/lib/lib2to3/__init__.py": "import _sk_fail; _sk_fail._(\"lib2to3\")\n",

@@ -1,11 +1,20 @@
+import type { ResponseData } from "./handlers";
+
 let profilePrintColor = "transparent";
+
+export interface ServerProfile {
+    children?: ServerProfile[];
+    description: string;
+    "start-time": number;
+    "end-time": number;
+}
 
 export class Profile {
     children: Profile[] = [];
     endTime?: number;
     duration?: number;
     origin?: string;
-    response?: any;
+    response?: ResponseData;
 
     constructor(readonly description: string, readonly startTime: number = Date.now()) {}
     append(description: string, startTime: number = Date.now(), endTime?: number) {
@@ -57,6 +66,14 @@ export class Profile {
             console.log("%c" + msg, "background:" + profilePrintColor);
         }
         profilePrintColor = oldPrintColor;
+    }
+
+    mergeServerProfile(serverProfile: ServerProfile) {
+        const { description, "start-time": startTime, "end-time": endTime } = serverProfile;
+        this.append(description, startTime, endTime);
+        for (const child of serverProfile.children ?? []) {
+            this.mergeServerProfile(child);
+        }
     }
 }
 

@@ -3,6 +3,7 @@
 import {
     s_add_component,
     kwToObj,
+    kwargsToPyMap,
     s_layout,
     s_parent,
     s_slots,
@@ -29,7 +30,7 @@ import {
     raiseEventOrSuspend,
     ToolboxItem
 } from "../components/Component";
-import {getAnvilComponentInstantiator, getNamedFormInstantiator, kwargsToPyMap} from "./instantiation";
+import {getAnvilComponentInstantiator, getNamedFormInstantiator} from "./instantiation";
 
 interface SlotConstructor extends pyType<Slot> {
     new (
@@ -41,8 +42,13 @@ interface SlotConstructor extends pyType<Slot> {
     ): Slot;
 }
 
+export interface DropModeFlags {
+    asComponent?: boolean;
+    allowOtherComponentUpdates?: boolean;
+}
+
 export interface HasRelevantHooks {
-    enableDropMode: (dropping: DroppingSpecification, allowOtherComponentUpdates?: boolean) => DropZone[];
+    enableDropMode: (dropping: DroppingSpecification, flags?: DropModeFlags) => DropZone[];
     disableDropMode: () => void;
     getContainerDesignInfo(component: Component): ContainerDesignInfo;
 }
@@ -101,22 +107,25 @@ function mkSlotState(getPyTarget: () => Suspension | pyObject, insertionIndex: n
         },
         enableDropMode(dropping) {
             const pyLayoutProperties = (dropping.pyLayoutProperties || new pyDict()).nb$or(this.pyLayoutProps);
-            const dropZones: DropZone[] = this.cache?.hooks.enableDropMode?.({...dropping, pyLayoutProperties}) || [];
             const offset = this.calculateOffset();
-            const filteredDropzones = dropZones.filter(({element, dropInfo: {minChildIdx, maxChildIdx}}) =>
-                minChildIdx === undefined && maxChildIdx === undefined || // This slot will accept a component at any index
-                (maxChildIdx === undefined && minChildIdx !== undefined && minChildIdx <= this.insertionIndex+offset+this.components.length) ||
-                (minChildIdx === undefined && maxChildIdx !== undefined && maxChildIdx >= this.insertionIndex+offset) ||
-                (minChildIdx !== undefined && maxChildIdx !== undefined && minChildIdx <= this.insertionIndex+offset+this.components.length && maxChildIdx >= this.insertionIndex+offset)
-            ).map(({dropInfo: {minChildIdx, maxChildIdx, ...dropInfo}, ...dz}) =>
+            const dropZones: DropZone[] = this.cache?.hooks.enableDropMode?.({...dropping, pyLayoutProperties, minChildIdx: this.insertionIndex+offset, maxChildIdx: this.insertionIndex+offset+this.components.length }) || [];
+            const filteredDropzones = dropZones.filter(({element, dropInfo: {minChildIdx, maxChildIdx, layout_properties}}) =>
+                (minChildIdx === undefined && maxChildIdx === undefined || // This DZ will accept a component at any index
+                    (maxChildIdx === undefined && minChildIdx !== undefined && minChildIdx <= this.insertionIndex+offset+this.components.length) ||
+                    (minChildIdx === undefined && maxChildIdx !== undefined && maxChildIdx >= this.insertionIndex+offset) ||
+                    (minChildIdx !== undefined && maxChildIdx !== undefined && minChildIdx <= this.insertionIndex+offset+this.components.length && maxChildIdx >= this.insertionIndex+offset)) &&
+                (this.pyLayoutProps.$items().every(([pyPropName, pyPropVal]) => Sk.misceval.richCompareBool(toPy(layout_properties?.[pyPropName.toString()]), pyPropVal, "Eq")))
+            ).map(({dropInfo: {minChildIdx, maxChildIdx, layout_properties, ...dropInfo}, ...dz}) =>
                 ({...dz, dropInfo: {
                         ...dropInfo,
-                        minChildIdx: minChildIdx === undefined ? undefined : Math.max(minChildIdx - this.insertionIndex - offset, this.insertionIndex - offset),
-                        maxChildIdx: maxChildIdx === undefined ? undefined : Math.min(maxChildIdx - this.insertionIndex - offset, this.insertionIndex + offset + this.components.length),
+                        layout_properties: Object.fromEntries(Object.entries(layout_properties ?? {}).filter(([k,v]) => !this.pyLayoutProps.quick$lookup(new pyStr(k)))),
+                        minChildIdx: minChildIdx === undefined ? undefined : Math.max(minChildIdx - this.insertionIndex - offset, 0),
+                        maxChildIdx: maxChildIdx === undefined ? undefined : Math.min(maxChildIdx - this.insertionIndex - offset, this.components.length),
                         _originalMinChildIdx: minChildIdx, // For debugging
                         _originalMaxChildIdx: maxChildIdx,
                     }
                 }));
+
 
             console.log(toJs(this.pyLayoutProps), "got DZs from parent", dropZones, "with offset", offset, "target", this.cache?.pyTarget, "insertion idx", this.insertionIndex, "components",  this.components.length, "Filtered DZs:", filteredDropzones);
             return filteredDropzones;
@@ -241,7 +250,7 @@ export const Slot: SlotConstructor = Sk.abstr.buildNativeClass("anvil.Slot", {
         layout_properties: "Layout properties will be passed on as keyword arguments to the target container's add_component() method, unless overridden by the Slot.",
     }
 }); ["add_component"];
-/*!defMethod(_,earlier_slot)!2*/ ({
+/*!defMethod(_,offset_by_slot)!2*/ ({
     $doc: "Inform this Slot of an earlier Slot with the same target container. Future calls to add_component() will take account of any components inserted into the earlier slot when calculating the insertion index for the target container, thereby preserving ordering between the two slots' components.",
     anvil$args: {
         earlier_slot: "The Slot whose contents will offset this Slot's target indices. This argument must be a Slot object with the same target container as this one, and the same or earlier insertion_index.",
@@ -256,10 +265,11 @@ export function getComponentClass(typeSpec: string, defaultDepId: string) {
     if (!customComponentMatch) {
         return py.getValue("anvil", typeSpec);
     }
-    const [_, depId, formName] = customComponentMatch;
+    const [_, logicalDepId, formName] = customComponentMatch;
+    const depId = logicalDepId ? data.logicalDepIds[logicalDepId] : null;
     const appPackage = depId ? data.app.dependency_code[depId].package_name : defaultDepId ? data.app.dependency_code[defaultDepId].package_name : data.appPackage;
     if (!appPackage) {
-        throw `Missing dependency with ID "${depId}"`;
+        throw `Missing dependency with ID "${depId || logicalDepId}"`;
     }
     const [__, pkgPrefix, className] = formName.match(/^(.+\.)?([^.]+)$/)!;
     const formModuleName = `${appPackage}.${pkgPrefix || ""}${className}`;
@@ -269,6 +279,7 @@ export function getComponentClass(typeSpec: string, defaultDepId: string) {
             () => Sk.importModule(formModuleName, false, true),
             (exception) => {
                 // This is probably user code, so surface it:
+                // @ts-ignore
                 window.onerror(null, null, null, null, exception);
                 throw `Error importing ${formModuleName}: ${strError(exception)}`;
             }
@@ -333,9 +344,6 @@ export const WithLayout: WithLayoutConstructor = Sk.abstr.buildNativeClass("anvi
                 get domElement() {
                     return self._withLayout.domElement;
                 },
-                setDataBindingListener(listenFn) {
-                    /* no data bindings on layouts anyway */
-                },
             };
 
             for (const eventName of [s_x_anvil_propagate_page_added, s_x_anvil_propagate_page_removed, s_x_anvil_propagate_page_shown]) {
@@ -378,7 +386,8 @@ export const WithLayout: WithLayoutConstructor = Sk.abstr.buildNativeClass("anvi
                     // a form template that hasn't been created yet. Not an issue for layouts created directly in Python.
                     const {type, defaultDepId} = layoutClass;
                     this._withLayoutSubclass = {
-                        mkInstantiate(requestingComponent: Component) {
+                        // TODO fix this type
+                        mkInstantiate(requestingComponent: any) {
                             return type.startsWith("form:")
                                 ? getNamedFormInstantiator(requestingComponent, type.substring(5), {asLayout: true})
                                 : getAnvilComponentInstantiator(requestingComponent, type);

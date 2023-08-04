@@ -1,4 +1,4 @@
-import type { pyNewableType, pyObject } from "..";
+import type { pyNewableType, pyObject } from "../index";
 
 // Because Typescript infers the last overload - but when we extend an interface it goes to the top
 // https://github.com/microsoft/TypeScript/issues/48458

@@ -1,6 +1,7 @@
 "use strict";
 
 var PyDefUtils = require("PyDefUtils");
+import { validateChild } from "./Container";
 import { isInvisibleComponent } from "./helpers";
 
 /*#
@@ -110,7 +111,7 @@ module.exports = (pyModule) => {
 
             /*!defMethod(_,component,[x=0],[y=0],[width=None])!2*/ "Add a component to this XYPanel, at the specified coordinates. If the component's width is not specified, uses the component's default width."
             $loc["add_component"] = PyDefUtils.funcWithKwargs(function (kwargs, self, component) {
-                pyModule["ClassicContainer"]._check_no_parent(component);
+                validateChild(component);
                 return Sk.misceval.chain(
                     component.anvil$hooks.setupDom(),
                     rawElement => {

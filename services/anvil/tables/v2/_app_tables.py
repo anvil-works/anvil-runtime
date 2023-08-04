@@ -19,6 +19,21 @@ def _clear_cache():
     _table_cache = None
 
 
+class AppTableIterator:
+    def __init__(self):
+        self._it = None
+
+    def __iter__(self):
+        return self
+    
+    def __next__(self):
+        if self._it is None:
+            self._it = _fill_cache().__iter__()
+        return next(self._it)
+    
+    next = __next__
+
+
 class AppTables(BaseAppTables):
     def __getattribute__(self, name):
         # use __getattribute__ so that we prioritise the table name
@@ -37,6 +52,10 @@ class AppTables(BaseAppTables):
 
     def __dir__(self):
         return object.__dir__(self) + list(_fill_cache().keys())
+    
+    def __iter__(self):
+        return AppTableIterator()
+
 
 
 def get_table_by_id(table_id):

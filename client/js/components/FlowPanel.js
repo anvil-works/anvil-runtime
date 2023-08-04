@@ -1,6 +1,7 @@
 "use strict";
 
 var PyDefUtils = require("PyDefUtils");
+import { validateChild } from "./Container";
 import { isInvisibleComponent } from "./helpers";
 
 /*#
@@ -126,7 +127,7 @@ module.exports = (pyModule) => {
 
         locals($loc) {
             const ContainerElement = ({ visible, width, expand }) => {
-                visible = !Sk.misceval.isTrue(visible) ? " visisble-false" : "";
+                visible = !Sk.misceval.isTrue(visible) ? " visible-false" : "";
                 let style = "";
                 if (width) {
                     style += "width: " + PyDefUtils.cssLength(width.toString()) + ";";
@@ -139,7 +140,7 @@ module.exports = (pyModule) => {
 
             /*!defMethod(_,component,[index=],[width=],[expand=])!2*/ "Add a component to this panel. Optionally specify the position in the panel to add it, or the width to apply to components that can't self-size width-wise."
             $loc["add_component"] = PyDefUtils.funcWithKwargs(function (kwargs, self, component) {
-                pyModule["ClassicContainer"]._check_no_parent(component);
+                validateChild(component);
                 const { index: idx, expand = false } = kwargs;
 
                 return Sk.misceval.chain(

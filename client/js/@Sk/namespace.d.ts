@@ -1,4 +1,5 @@
 import type * as ABSTR from "./abstr";
+
 import {
     pyArithmeticErrorConstructor,
     pyAssertionErrorConstructor,
@@ -32,6 +33,7 @@ import {
     pyRuntimeErrorConstructor,
     pyStopAsyncIterationConstructor,
     pyStopIterationConstructor,
+    pySuperConstructor,
     pySyntaxErrorConstructor,
     pySystemErrorConstructor,
     pySystemExitConstructor,
@@ -83,8 +85,8 @@ import {
     pyTupleConstructor,
     pyType,
     pyTypeConstructor,
-} from "./";
-import { BreakConstructor, SuspensionConstructor, Suspension, Break } from "./";
+} from "./index";
+import { BreakConstructor, SuspensionConstructor, Suspension, Break } from "./index";
 
 export namespace Sk {
     export namespace builtin {
@@ -106,6 +108,7 @@ export namespace Sk {
         const str: pyStrConstructor;
         const tuple: pyTupleConstructor;
         const type: pyTypeConstructor;
+        const super_: pySuperConstructor;
         const NotImplemented: pyNotImplementedTypeConstructor;
 
         const classmethod: pyClassMethodConstructor;
@@ -175,7 +178,7 @@ export namespace Sk {
             free?: number
         ): void;
         function pyCheckArgsLen(fnName: string, args: Args, minargs: number, maxargs?: number): void;
-        function pyCheckType(fnName: string, excTypeName: string, predicate: (obj: any) => boolean): void;
+        function pyCheckType(fnName: string, excTypeName: string, check: boolean): void;
 
         function round(num: pyObject, ndigits?: pyObject): pyObject;
         function len(o: pyObject): pyInt | Suspension;
@@ -353,7 +356,7 @@ export namespace Sk {
             globals: { [gbl: string]: pyObject },
             body: (gbl: { [gbl: string]: pyObject }, loc: { [gbl: string]: pyObject }) => void,
             name: string,
-            bases?: pyType[],
+            bases?: [pyNewableType<T>] | pyType[],
             cell?: any,
             kws?: Kws
         ): pyNewableType<T>;
@@ -394,6 +397,8 @@ export namespace Sk {
             ? any[]
             : T extends pyFloat
             ? number
+            : T extends pyBytes
+            ? Uint8Array
             : T extends pyObject
             ? unknown
             : T;
@@ -462,7 +467,7 @@ export namespace Sk {
         ): any[];
         function checkArgsLen(funcName: string, args: Args, minargs: number, maxargs?: number): void;
         function checkOneArg(funcName: string, args: Args, kws?: Kws): void;
-        function checkNoArg(funcName: string, args: Args, kws?: Kws): void;
+        function checkNoArgs(funcName: string, args: Args, kws?: Kws): void;
         function checkNoKwargs(funcName: string, kws?: Kws): void;
 
         function numberBinOp(a: pyObject, b: pyObject, op: BinOp): pyObject;
@@ -477,6 +482,8 @@ export namespace Sk {
 
         function keywordArrayFromPyDict(d: pyDict): Kws;
         function keywordArrayToPyDict(kws: Kws): pyDict<pyStr, pyObject>;
+
+        function objectHash(obj: pyObject): number;
     }
 
     const sysmodules: pyDict<pyStr, pyModule>;

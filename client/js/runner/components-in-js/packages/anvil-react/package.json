@@ -1,0 +1,33 @@
+{
+    "name": "@anvil-works/anvil-react",
+    "version": "0.2.12",
+    "description": "A library for building Anvil Components in React",
+    "main": "./index.js",
+    "exports": {
+        ".": "./index.js",
+        "./designer": "./designer.js",
+        "./util": "./util.js"
+    },
+    "type": "module",
+    "scripts": {
+        "build": "tsup src/index.ts src/designer.ts src/util.tsx --format esm --dts --out-dir ./"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/daviesian/anvil.git"
+    },
+    "author": "The Anvil Team",
+    "license": "MIT",
+    "bugs": {
+        "url": "https://github.com/anvil-works/anvil-react/issues"
+    },
+    "homepage": "https://github.com/anvil-works/anvil-react#readme",
+    "peerDependencies": {
+        "react": "^18.0.0",
+        "react-dom": "^18.0.0"
+    },
+    "devDependencies": {
+        "@types/react": "^18.2.14",
+        "tsup": "^7.1.0"
+    }
+}

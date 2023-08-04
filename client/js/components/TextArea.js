@@ -35,30 +35,9 @@ module.exports = (pyModule) => {
                     v = Sk.builtin.checkNone(v) ? "" : v.toString();
                     s._anvil.lastChangeVal = v;
 
-                    /* OK, this whole business is to work around a bug in IE11:
-                  "If the value of a textarea is set *before* our sidebar is
-                  populated, the media-query doesn't work. Wow."" So we do
-                  the update asynchronously. But we don't want to incur a
-                  repaint in every other browser, so we only do it in IE.
-                  AAAAHHHH.
-                  */
-
-                    let doUpdate = () => {
-                        e.val(v);
-                        if (s._anvil.taAutoExpand) {
-                            setHeightToContent(s, e);
-                        }
-                    };
-
-                    if (window.isIE) {
-                        return PyDefUtils.suspensionPromise((resolve) => {
-                            setTimeout(() => {
-                                doUpdate();
-                                resolve();
-                            });
-                        });
-                    } else {
-                        doUpdate();
+                    e.val(v);
+                    if (s._anvil.taAutoExpand) {
+                        setHeightToContent(s, e);
                     }
                 },
                 allowBindingWriteback: true,

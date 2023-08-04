@@ -1,6 +1,8 @@
 "use strict";
 
 var PyDefUtils = require("PyDefUtils");
+const {pyNone} = require("@Sk");
+const { validateChild } = require("./Container");
 
 /*#
 id: datarowpanel
@@ -121,7 +123,7 @@ module.exports = function(pyModule) {
 
             /*!defMethod(_,component,[column=None])!2*/ "Add a component to the specified column of this DataRowPanel. TODO: If 'column' is not specified, adds the component full-width."
             $loc["add_component"] = new PyDefUtils.funcWithKwargs(function (kwargs, self, component) {
-                pyModule["ClassicContainer"]._check_no_parent(component);
+                validateChild(component);
 
                 const colId = kwargs.column;
                 return Sk.misceval.chain(
@@ -289,7 +291,7 @@ module.exports = function(pyModule) {
         }
 
 
-        const fns = [];
+        const fns = [() => PyDefUtils.raiseEventOrSuspend({data_grid: dataGrid || pyNone}, self, "x-data-row-panel-update-columns")];
 
         const validIds = new Set();
         const dataRowCols = self._anvil.cols;
@@ -342,7 +344,6 @@ module.exports = function(pyModule) {
         })
 
         return Sk.misceval.chain(undefined, ...fns);
-
     }
 
     let paginate = (self, updatedChild = null) => {

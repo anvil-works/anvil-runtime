@@ -1,6 +1,7 @@
 "use strict";
 
 var PyDefUtils = require("PyDefUtils");
+import { validateChild } from "./Container";
 import { isInvisibleComponent } from "./helpers";
 
 /*#
@@ -213,7 +214,7 @@ module.exports = function(pyModule) {
 
             /*!defMethod(_,component,[index=None],[pinned=False])!2*/ "Add a component to this DataGrid, in the 'index'th position. If 'index' is not specified, adds to the bottom."
             $loc["add_component"] = PyDefUtils.funcWithKwargs(function add_component(kwargs, self, component) {
-                pyModule["ClassicContainer"]._check_no_parent(component);
+                validateChild(component);
                 
                 const { index, pinned, slot } = kwargs;
 
@@ -319,7 +320,6 @@ module.exports = function(pyModule) {
 
         let h = element.find(".auto-grid-header").map((_,e) => $(e).data("anvilPyComponent"));
         if (isTrue(self._anvil.getProp("auto_header"))) {
-
             let headerData = {};
             for (let c of cols || []) {
                 headerData[c.id] = c.title;
@@ -340,6 +340,7 @@ module.exports = function(pyModule) {
         }
 
         //self._anvil.paginate();
+        self._anvil.afterUpdateColumns?.();
     }
 
     // self._anvil.pagination = { startAfter: object, rowQuota: number}

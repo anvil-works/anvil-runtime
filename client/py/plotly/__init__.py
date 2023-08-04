@@ -4,6 +4,7 @@ from anvil.server import portable_class as _portable
 from anvil.util import WrappedObject as _wo
 
 from ._schema import schema as _root_schema
+from ._cls_overrides import _overrides
 
 _ModType = type(_sys)
 
@@ -25,15 +26,21 @@ def _cache(fn):
 
 @_cache
 def _gen_cls(name, module, trace_type=None):
-    d = {"_name": name, "_module": module, "__module__": module}
-    if trace_type:
+    try:
+        cls = _overrides[module + "." + name]
+        cls.__module__ = module
+        cls.__name__ = name
+    except KeyError:
+        d = {"_name": name, "_module": module, "__module__": module}
+        if trace_type:
 
-        def __init__(self, d=None, **kws):
-            _wo.__init__(self, d, type=trace_type, **kws)
+            def __init__(self, d=None, **kws):
+                _wo.__init__(self, d, type=trace_type, **kws)
 
-        d["__init__"] = __init__
+            d["__init__"] = __init__
+        cls = type(name, (_wo,), d)
 
-    return _portable(type(name, (_wo,), d))
+    return _portable(cls)
 
 
 class _LazyPlotlyMod(_ModType):

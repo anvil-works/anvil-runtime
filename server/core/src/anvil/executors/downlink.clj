@@ -34,7 +34,7 @@
 (def STACK-FRAME-INFO {:origin :server, :stack-frame-type :server_module})
 
 (defn- sanitise-app-for-downlink [app]
-  (select-keys app [:modules :server_modules :forms :runtime_options :dependency_code :dependency_order :package_name]))
+  (select-keys app [:modules :server_modules :forms :runtime_options :dependency_code :dependency_order :dependency_ids :package_name]))
 
 
 (def WS-SERVER-PARAMS {:link-name "Downlink",

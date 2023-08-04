@@ -1,6 +1,7 @@
 "use strict";
 
-const { pyTypeError } = require("./@Sk");
+const { pyTypeError, pyObject, toPy, Suspension, pyFunc, pyStr, pyCallOrSuspend } = require("./@Sk");
+const { s_anvil_events, objectToKwargs, s_raise_event } = require("./runner/py-util");
 const { defer } = require("./utils");
 
 var PyDefUtils = {};
@@ -80,14 +81,22 @@ PyDefUtils.funcWithRawKwargsDict = function(f) {
 }
 
 
+/**
+ * @template {pyObject | Suspension} T 
+ * @template {import("./@Sk").Args} A
+ * @param {(args: A, kws?: import("./@Sk").Kws) => T} f 
+ * @returns {pyFunc<T>}
+ */
 PyDefUtils.funcFastCall = (f) => {
     f.co_fastcall = 1;
     return new Sk.builtin.func(f);
-}
+};
 
 
+/** @deprecated use pyCall from Sk module */
 PyDefUtils.pyCall = Sk.misceval.callsimArray;
 
+/** @deprecated use pyCallOrSuspend from Sk module */
 PyDefUtils.pyCallOrSuspend = Sk.misceval.callsimOrSuspendArray;
 
 
@@ -168,6 +177,15 @@ PyDefUtils.remapToJs = function(pyObj, unknownTypeWrapper, firstLookWrapper) {
     return remapToJSWithWrapper(pyObj, [], unknownTypeWrapper, firstLookWrapper);
 }
 
+const getInheritedEventsTypes = (events, baseEvents) => {
+    if (!events) return;
+    baseEvents ??= {};
+    const eventTypes = { ...baseEvents };
+    events.forEach((event) => {
+        eventTypes[event.name] = event;
+    });
+    return eventTypes;
+};
 
 PyDefUtils.mkComponentCls = function mkComponentCls(anvilModule, name, params) {
     let { base, properties, events, layouts, element, locals, kwargs } = params;
@@ -184,11 +202,16 @@ PyDefUtils.mkComponentCls = function mkComponentCls(anvilModule, name, params) {
 
     locals = locals || (() => {});
 
+    const eventTypes = getInheritedEventsTypes(events, bases[0]?.prototype?.event$types ?? {});
+
     const ComponentCls = Sk.misceval.buildClass(
         anvilModule,
         ($gbl, $loc) => {
             locals($loc);
             PyDefUtils.mkGettersSetters($loc, properties, anvilModule);
+            if (eventTypes) {
+                $loc[s_anvil_events] = toPy(Object.values(eventTypes));
+            }
         },
         name,
         bases,
@@ -236,7 +259,7 @@ PyDefUtils.initComponentClassPrototype = function (ComponentClass, properties, e
     const propMap = {};
     Object.entries(inheritedPropMap).forEach(([name, entry]) => {
         propMap[name] = {...entry};
-    })
+    });
     const propTypes = [...inheritedPropTypes];
 
     properties.forEach((entry) => {
@@ -257,6 +280,8 @@ PyDefUtils.initComponentClassPrototype = function (ComponentClass, properties, e
             "showInDesignerWhen",
             "inlineEditElement",
             "designerHint",
+            "iconset",
+            "allowCustomValue",
         ].forEach((prop) => {
             if (entry[prop]) {
                 propType[prop] = entry[prop];
@@ -275,13 +300,7 @@ PyDefUtils.initComponentClassPrototype = function (ComponentClass, properties, e
 
     const propsToInit = Object.keys(propMap).filter((key) => propMap[key].initialize);
 
-    let eventTypes;
-    if (events) {
-        eventTypes = { ...inheritedEvents };
-        events.forEach((event) => {
-            eventTypes[event.name] = event;
-        });
-    }
+    const eventTypes = getInheritedEventsTypes(events, inheritedEvents);
     let layoutPropTypes ;
     if (layoutProperties) {
         layoutPropTypes = [...inheritedLayouts];
@@ -311,7 +330,7 @@ PyDefUtils.initComponentClassPrototype = function (ComponentClass, properties, e
             writable: true,
         }
     });
-    if (events) {
+    if (eventTypes) {
         Object.defineProperty(ComponentClass.prototype, "event$types", {
             value: eventTypes,
             writable: true,
@@ -408,6 +427,7 @@ PyDefUtils.suspensionFromPromise = function(p) {
     return newSuspension;
 }
 
+/** @param {ConstructorParameters<PromiseConstructor>[0]} fn */
 PyDefUtils.suspensionPromise = function(fn) {
     var p = new Promise(fn);
     return PyDefUtils.suspensionFromPromise(p);
@@ -430,6 +450,11 @@ PyDefUtils.callAsyncWithoutDefaultError = function() {
     return Sk.misceval.callAsync.apply(null, args);
 };
 
+/**
+ * @template {pyObject} T
+ * @param  {...any} args
+ * @returns {Promise<T>}
+ */
 PyDefUtils.callAsync = (...args) =>
     Sk.misceval.callAsync(PyDefUtils.suspensionHandlers, ...args).catch((e) => {
         // unhandled errors are caught by window.onunhandledrejection
@@ -453,6 +478,11 @@ function ignoreFirstOptionalSuspension(susp) {
 }
 
 // This is really "suspensionToPromise."
+/**
+ * @template T
+ * @param {() => T | Suspension} fn 
+ * @returns {Promise<T>}
+ */
 PyDefUtils.asyncToPromise = (fn) => {
     const suspendablefn = () => ignoreFirstOptionalSuspension(fn());
     return Sk.misceval.asyncToPromise(suspendablefn).catch((e) => {
@@ -464,52 +494,14 @@ PyDefUtils.asyncToPromise = (fn) => {
 // CLASSIC COMPONENTS ONLY:
 // Raise the named event with the specified arguments
 // (expects a Javascript object as first parameter, keys are JS, vals are Python if pyVal is true, otherwise JS.
+/** @deprecated */
 PyDefUtils.raiseEventOrSuspend = function(eventArgs, self, eventName) {
-
-    const handlers = self._anvil.eventHandlers[eventName];
-
-    var expectedParameters = {};
-
-    var eventType = self._anvil.eventTypes[eventName];
-    if (eventType) {
-        for (var i in eventType.parameters) {
-            var p = self._anvil.eventTypes[eventName].parameters[i];
-            expectedParameters[p.name] = p;
-        }
-    }
-
-    let chainFns = [];
-
-    let customPropsToWriteBack = (self._anvil.customComponentProperties || []).filter(p => (p.binding_writeback_events || []).indexOf(eventName) > -1);
-    for (let p of customPropsToWriteBack) {
-        chainFns.push(() => PyDefUtils.suspensionFromPromise(self._anvil.dataBindingWriteback(self, p.name)));
-    }
-
-    if (handlers) {
-        eventArgs["event_name"] = Sk.ffi.remapToPy(eventName);
-
-        var kwa = [];
-        for (var k in eventArgs) {
-            var pyVal = expectedParameters[k] ? expectedParameters[k].pyVal : true;
-            kwa.push(k);
-            kwa.push(pyVal ? eventArgs[k] : Sk.ffi.remapToPy(eventArgs[k]));
-        }
-
-        kwa.push("sender");
-        kwa.push(self);
-
-        chainFns.push(...handlers.map((pyHandler) => () => PyDefUtils.pyCallOrSuspend(pyHandler, [], kwa)));
-
-    }
-
-    return Sk.misceval.chain(Sk.builtin.none.none$, ...chainFns);
+    return pyCallOrSuspend(self.tp$getattr(s_raise_event), [new pyStr(eventName)], objectToKwargs(eventArgs));
 };
 
 PyDefUtils.raiseEventAsync = function(eventArgs, self, eventName) {
-    return PyDefUtils.asyncToPromise(
-        PyDefUtils.raiseEventOrSuspend.bind(null, eventArgs, self, eventName)
-    );
-}
+    return PyDefUtils.asyncToPromise(() => PyDefUtils.raiseEventOrSuspend(eventArgs, self, eventName));
+};
 
 PyDefUtils.whileOrSuspend = function(testFn, bodyFn, elseFn) {
     function gotBodyReturn(bodyRet) {
@@ -740,11 +732,9 @@ PyDefUtils.getColor = (v) => {
     const m = v.match(/^theme:(.*)$/);
     if (!m) {
         return v;
-    } else if (!window.isIE) {
+    } else {
         const cssVar = window.anvilThemeVars[m[1]];
         return cssVar ? `var(${cssVar})` : "";
-    } else {
-        return window.anvilThemeColors[v] || ""
     }
 };
 
@@ -961,6 +951,9 @@ var propertyGroups = {
         icon: {
             name: "icon",
             type: "icon",
+
+            iconset: "font-awesome-4.7.0",
+
             defaultValue: Sk.builtin.str.$empty,
             exampleValue: "fa:user",
             description: "The icon to display on this component. Either a URL, or a FontAwesome Icon, e.g. 'fa:user'.",
@@ -1091,15 +1084,14 @@ var propertyGroups = {
             set(s, e, v) {
                 // Don't just set "display" property - this needs to behave differently in
                 // designer and runner.
-                if (isTrue(v)) {
-                    e.removeClass("visible-false");
-                    e.parent(".hide-with-component").removeClass("visible-false");
+                const visible = isTrue(v);
+                e.toggleClass("visible-false", !visible);
+                s._anvil.parent?.setVisibility?.(visible);
+                s._Component.lastVisibility = visible;
+                if (visible) {
                     // Trigger events for components that need to update themselves when visible
                     // (eg Maps, Canvas)
                     return s._anvil.shownOnPage();
-                } else {
-                    e.addClass("visible-false");
-                    e.parent(".hide-with-component").addClass("visible-false");
                 }
             },
         },
@@ -1130,16 +1122,14 @@ var propertyGroups = {
             set(s, e, v) {
                 // Don't just set "display" property - this needs to behave differently in
                 // designer and runner.
-                v = isTrue(v);
-                if (v) {
-                    e.removeClass("visible-false");
-                    e.parent(".hide-with-component").removeClass("visible-false");
+                const visible = isTrue(v);
+                e.toggleClass("visible-false", !visible);
+                s._anvil.parent?.setVisibility?.(visible);
+                s._Component.lastVisibility = visible;
+                if (visible) {
                     // Trigger events for components that need to update themselves when visible
                     // (eg Maps, Canvas)
-                    s._anvil.shownOnPage();
-                } else {
-                    e.addClass("visible-false");
-                    e.parent(".hide-with-component").addClass("visible-false");
+                    return s._anvil.shownOnPage();
                 }
             },
         },
@@ -2036,13 +2026,10 @@ PyDefUtils.callJs = (pyComponent, pyFnName, ...pyArgs) => {
         throw new pyTypeError(`${fnName} is not callable, got ${typeof fn}`);
     }
 
-    let domElement = pyComponent?.anvil$hooks?.domElement;
-    if (window.anvilParams.runtimeVersion < 3) {
-        // backwards compatibility - jQuery wrapped domElements
-        domElement &&= $(domElement);
-    }
+    const domElement = pyComponent?.anvil$hooks?.domElement;
+    const jqueryWrapped = domElement && $(domElement);
 
-    let rv = fn.apply(domElement, pyArgs.map(PyDefUtils.remapToJsOrWrap));
+    let rv = fn.apply(jqueryWrapped, pyArgs.map(PyDefUtils.remapToJsOrWrap));
     if (rv instanceof Promise) {
         rv = PyDefUtils.suspensionFromPromise(rv.then(Sk.ffi.toPy));
     } else {

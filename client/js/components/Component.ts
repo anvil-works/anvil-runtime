@@ -1,46 +1,62 @@
 import {
+    Args,
+    Kws,
+    Suspension,
     arrayFromIterable,
-    buildPyClass,
-    objectRepr,
-    pyFunc,
-    pyStr,
     buildNativeClass,
-    pyNone,
-    pyCallOrSuspend,
-    isTrue,
+    buildPyClass,
     chainOrSuspend,
+    checkOneArg,
     checkString,
+    isTrue,
+    objectRepr,
+    pyBool,
+    pyCallOrSuspend,
+    pyCallable,
+    pyDict,
+    pyException,
+    pyFalse,
+    pyFunc,
+    pyIterable,
+    pyNone,
+    pyNoneType,
+    pyObject,
+    pyStr,
+    pyTrue,
+    pyTuple,
     pyType,
     pyTypeError,
-    toPy,
+    pyValueError,
+    retryOptionalSuspensionOrThrow,
     toJs,
-    pyNoneType,
-    pyBool,
-    Kws,
-    Args
+    toPy,
 } from "../@Sk";
-import { pyCallable, pyDict, pyObject, pyNewableType, pyIterable, Suspension } from "../@Sk";
-import PyDefUtils from "../PyDefUtils";
-import {ComponentYaml, FormLayoutYaml} from "../runner/data";
+import PyDefUtils, { remapToJsOrWrap } from "../PyDefUtils";
+import { ComponentYaml, FormLayoutYaml } from "../runner/data";
 import {
-    s_anvil_events,
-    s_anvil_hooks,
-    s_dom_element,
-    s_page_added,
-    s_page_removed,
-    s_page_shown,
-    s_set_data_binding_listener,
-    s_setup_dom,
-    s_name,
     kwToObj,
     objToKw,
-    s_update_design_name,
-    s_get_design_info,
-    s_parent, s_raise_event, s_add_event_handler,
+    s_add_event_handler,
+    s_anvil_disable_drop_mode,
+    s_anvil_dom_element,
+    s_anvil_enable_drop_mode,
+    s_anvil_events,
+    s_anvil_get_container_design_info,
+    s_anvil_get_design_info,
+    s_anvil_get_section_dom_element,
+    s_anvil_get_sections,
+    s_anvil_set_property_values,
+    s_anvil_set_section_property_values,
+    s_anvil_setup_dom,
+    s_anvil_update_design_name,
+    s_anvil_update_layout_properties,
+    s_name,
+    s_raise_event,
 } from "../runner/py-util";
-import {HasRelevantHooks} from "../runner/python-objects";
+import { HasRelevantHooks } from "../runner/python-objects";
+import type {YamlCreationStack} from "@runtime/runner/component-creation";
 
-// The *real* base Component class. It implements the event APIs, the _anvil_hooks_/anvil$hooks API, and that's it.
+// The *real* base Component class. It implements the event APIs, the __anvil_xyz/anvil$hooks API, and that's it.
 
 // A subclass can specify a set of events that can be raised on this component by providing a list in _anvil_events
 // (Currently this is a list of strings, but that will probably change when components occur)
@@ -55,6 +71,8 @@ export function getPyParent(pyComponent: Component) {
     return pyComponent?._Component?.parent?.pyParent;
 }
 
+export const isComponent = (c: any): c is Component => !!c?.anvil$hooks;
+
 const unwrapDomElement = (elt: any, pyComponent: Component) => {
     if (!elt?.js$wrapped?.tagName) {
         throw new Sk.builtin.ValueError(`"${Sk.abstr.typeName(pyComponent)}" component did not provide a valid DOM element (got ${Sk.abstr.typeName(elt)} instead)`);
@@ -62,101 +80,203 @@ const unwrapDomElement = (elt: any, pyComponent: Component) => {
     return elt.js$wrapped as HTMLElement;
 };
 
-const mkJsHooksForPython = (pyComponent: Component): AnvilHooks => {
-    const pyHooks = Sk.abstr.gattr(pyComponent, s_anvil_hooks);
-    const callMethod = (method: pyStr, args: pyObject[]) => pyCallOrSuspend(Sk.abstr.gattr(pyHooks, method), args);
-    const callMethodIfExists = (method: pyStr, args: pyObject[]) => {
-        const pyMethod = pyHooks.tp$getattr(method);
-        if (pyMethod) {
-            return pyCallOrSuspend(pyMethod, args);
-        }
-    };
-    return {
-        // Return an implementation of the JS API (anvil$hooks) that's backed off the Python implementation (_anvil_hooks_)
-        setupDom() {
-            return chainOrSuspend(callMethod(s_setup_dom, []), (elt) => unwrapDomElement(elt, pyComponent));
-        },
-        get domElement() {
-            return unwrapDomElement(Sk.abstr.gattr(pyHooks, s_dom_element), pyComponent);
-        },
-        setDataBindingListener(listenFn: ListenerFn) {
-            callMethod(s_set_data_binding_listener, [
-                new pyFunc((pyComponent: Component, pyAttrName: pyStr, pyNewValue: pyObject) =>
-                    listenFn(pyComponent, pyAttrName.toString(), pyNewValue)
-                ),
-            ]);
-        },
-        updateDesignName(name: string) {
-            callMethodIfExists(s_update_design_name,[new pyStr(name)]);
-        },
-        getDesignInfo: () => {
-            const pyDesignInfo = callMethodIfExists(s_get_design_info, []);
-            if (pyDesignInfo) {
-                return toJs(pyDesignInfo) as DesignInfo;
-            } else {
-                return EMPTY_DESIGN_INFO;
-            }
-        },
-    };
-};
-
-// An implementation of the new Python API backed off the new JS API
-interface PyHooks extends pyObject {
-    hooks: AnvilHooks;
+interface NonSuspendableHookMapping {
+    jsMethod: keyof AnvilHooks;
+    pythonMethod: pyStr;
+    canSuspend: false;
+    jsCall?: (method: pyCallable, ...args: any[]) => any;
+    pyCall?: (hooks: AnvilHooks, ...args: pyObject[]) => pyObject;
+    $flags?: { NamedArgs: string[]; Defaults?: pyObject[]; },
+    $doc?: string,
 }
 
-export const PyHooks: pyNewableType<PyHooks> = Sk.abstr.buildNativeClass("anvil.Component._AnvilHooks", {
-    constructor: function AnvilHooks(hooks) {
-        this.hooks = hooks;
+interface SuspendableHookMapping {
+    jsMethod: keyof AnvilHooks;
+    pythonMethod: pyStr;
+    canSuspend: true;
+    jsCall?: (method: pyCallable, ...args: any[]) => any | Suspension;
+    pyCall?: (hooks: AnvilHooks, ...args: pyObject[]) => pyObject | Suspension;
+    $flags?: { NamedArgs: string[]; Defaults?: pyObject[]; },
+    $doc?: string,
+}
+type HookMapping = SuspendableHookMapping | NonSuspendableHookMapping;
+
+const hookMappings: HookMapping[] = [{
+    jsMethod: "setupDom",
+    pythonMethod: s_anvil_setup_dom,
+    canSuspend: true,
+    $doc: "Return the DOM element for this component, doing any necessary setup. May block, but must return a DOM element",
+    jsCall(method, ...args) {
+        return chainOrSuspend(pyCallOrSuspend(method, args.map(toPy)), pyElement => {
+            const element = toJs(pyElement);
+            if (!element) {
+                throw new pyValueError(`setup_dom cannot return None: ${method}`);
+            }
+            return element;
+        })
+    }
+}, {
+    jsMethod: "setPropertyValues",
+    pythonMethod: s_anvil_set_property_values,
+    canSuspend: true,
+    $flags: { NamedArgs: ["property_values"] },
+    $doc: "Set multiple property values at once",
+}, {
+    jsMethod: "updateDesignName",
+    pythonMethod: s_anvil_update_design_name,
+    canSuspend: false,
+    $flags: { NamedArgs: ["name"] },
+    $doc: "Inform a component of its current name, for display if necessary. Design mode only."
+}, {
+    jsMethod: "getDesignInfo",
+    pythonMethod: s_anvil_get_design_info,
+    canSuspend: false,
+    $flags: { NamedArgs: ["as_layout"], Defaults: [pyFalse] },
+    $doc: "Get information for displaying this component's property palette and interactions. Design mode only.",
+}, {
+    jsMethod: "getContainerDesignInfo",
+    pythonMethod: s_anvil_get_container_design_info,
+    canSuspend: false,
+    $flags: { NamedArgs: ["for_child"] },
+    jsCall(method, forChild) {
+        return remapToJsOrWrap(Sk.misceval.callsimArray(method, [forChild]));
     },
-    slots: {
-        tp$init(args, kws) {
-            Sk.abstr.checkOneArg("_AnvilHooks", args, kws);
-            const [component] = args;
-            this.hooks = (component as Component).anvil$hooks;
-        },
-    },
-    methods: {
-        set_data_binding_listener: {
-            $meth(listenerFn: pyCallable) {
-                return chainOrSuspend(
-                    this.hooks.setDataBindingListener(
-                        (pyComponent: Component, attrName: string, pyNewValue: pyObject) =>
-                            pyCallOrSuspend(listenerFn, [pyComponent, new pyStr(attrName), pyNewValue])
-                    ),
-                    () => pyNone
-                );
-            },
-            $flags: { OneArg: true },
-        },
-        setup_dom: {
-            $meth() {
-                return chainOrSuspend(this.hooks.setupDom(), toPy);
-            },
-            $flags: { NoArgs: true },
-        },
-        update_design_name: {
-            $meth(name: pyStr) {
-                this.hooks.updateDesignName?.(name.toString());
-                return pyNone;
-            },
-            $flags: { OneArg: true },
-        },
-        get_design_info: {
-            $meth(asLayout: pyBool) {
-                return toPy(this.hooks.getDesignInfo?.(Sk.misceval.isTrue(asLayout)) || EMPTY_DESIGN_INFO);
-            },
-            $flags: { OneArg: true },
+    pyCall(hooks, forChild) {
+        if (!(forChild instanceof Component)) {
+            throw new pyValueError("for_child must be a Component instance");
         }
+        return toPy(hooks.getContainerDesignInfo!(forChild));
     },
-    getsets: {
-        dom_element: {
-            $get() {
-                return toPy(this.hooks.domElement);
-            },
+    $doc: "For containers: Get information for displaying a child component's layout properties and container interaction. Design mode only.",
+}, {
+    jsMethod: "enableDropMode",
+    pythonMethod: s_anvil_enable_drop_mode,
+    canSuspend: false,
+    $flags: { NamedArgs: ["dropping", "allow_other_component_updates"], Defaults: [pyFalse] },
+    $doc: "For containers: Set up, and get a list of, available drop zones. Design mode only.",
+}, {
+    jsMethod: "disableDropMode",
+    pythonMethod: s_anvil_disable_drop_mode,
+    canSuspend: false,
+    $doc: "For containers: Clean up possible drop zones. Design mode only.",
+}, {
+    jsMethod: "updateLayoutProperties",
+    pythonMethod: s_anvil_update_layout_properties,
+    canSuspend: false,
+    $flags: { NamedArgs: ["for_child", "updates"] },
+    jsCall(method, forChild, updates=null) {
+        return toJs(Sk.misceval.callsimArray(method, [forChild, toPy(updates)]));
+    },
+    pyCall(hooks, forChild, updates) {
+        if (!(forChild instanceof Component)) {
+            throw new pyValueError("for_child must be a Component instance");
+        }
+        if (!(updates instanceof pyDict)) {
+            throw new pyValueError("updates must be a dictionary");
+        }
+        return toPy(hooks.updateLayoutProperties!(forChild, toJs(updates) as LayoutProperties));
+    },
+}, {
+    jsMethod: "getSections",
+    pythonMethod: s_anvil_get_sections,
+    canSuspend: false,
+}, {
+    jsMethod: "getSectionDomElement",
+    pythonMethod: s_anvil_get_section_dom_element,
+    canSuspend: false,
+    $flags: { NamedArgs: ["section_id"] },
+}, {
+    jsMethod: "setSectionPropertyValues",
+    pythonMethod: s_anvil_set_section_property_values,
+    canSuspend: false,
+    $flags: { NamedArgs: ["section_id", "updates"] },
+}];
+
+const getHooksWithOverrides = (baseHooks: AnvilHooks, pyComponent: Component, cls: ComponentConstructor) => {
+    const hooks = Object.create(baseHooks);
+    const {_ComponentClass: {providesHooksInPython}} = cls;
+
+    const domElementDescriptor = providesHooksInPython["domElement"]
+    if (domElementDescriptor) {
+        Object.defineProperty(hooks, "domElement", {
+            get() {
+                const pyElement = domElementDescriptor.tp$descr_get!(pyComponent, pyComponent.ob$type);
+                return toJs(pyElement);
+            }
+        });
+    }
+
+    for (const {jsMethod, pythonMethod, jsCall, canSuspend} of hookMappings) {
+        if (providesHooksInPython[jsMethod]) {
+            const method = providesHooksInPython[jsMethod]?.tp$descr_get!(pyComponent, cls) as pyCallable;
+            hooks[jsMethod] = jsCall ?
+                (...args: any[]) => jsCall(method, ...args) :
+                canSuspend ?
+                    (...args: any[]) => chainOrSuspend(pyCallOrSuspend(method, args.map(toPy)), remapToJsOrWrap) :
+                    (...args: any[]) => remapToJsOrWrap(retryOptionalSuspensionOrThrow(pyCallOrSuspend(method, args.map(toPy))));
+        }
+    }
+    return hooks;
+};
+
+const overrideJsHooksWithPython = (pyComponent: Component, cls: ComponentConstructor) => {
+    // This function is because of some ugly sequencing. At __new__ time, the base Component class
+    // wants to implement "Python functionality can override JS hooks", but the anvil$hooks hasn't
+    // been initialised yet - that will happen in subclass __new__. So we make anvil$hooks a property
+    // that wraps the actual hooks and overrides with JS hooks.
+    // TODO it would be nice to compute more of this up-front rather than per-instance. Can we make
+    //   anvil$hooks a class/prototype thing, not a dynamic thing? (Kinda hard, as it's supposed to know about
+    //   the instance...) Fortunately, anvil$hooks is a private API, so we can change this later.
+
+    const baseHooks = {
+        domElement: null,
+        setupDom() {
+            const d = this.domElement;
+            if (d) { return d; }
+            throw new pyException(`setup_dom not defined for ${Sk.abstr.typeName(pyComponent)}`);
         },
-    },
-});
+    };
+
+    let wrappedHooks: AnvilHooks = getHooksWithOverrides(baseHooks, pyComponent, cls);
+    pyComponent._Component.unwrappedHooks = baseHooks;
+
+    Object.defineProperty(pyComponent, "anvil$hooks", {
+        get() {
+            return wrappedHooks;
+        },
+        set(v: AnvilHooks) {
+            pyComponent._Component.unwrappedHooks = v;
+            wrappedHooks = getHooksWithOverrides(v, pyComponent, cls);
+        }
+    });
+};
+
+const pythonMethodDescriptorsForJsHooks = Object.fromEntries(hookMappings.map(({pythonMethod, jsMethod, pyCall, canSuspend, $flags, $doc}) => [
+    pythonMethod.toString(),
+    {
+        $get(this: Component) {
+            const hooks = this._Component.unwrappedHooks;
+            const f = hooks[jsMethod] as ((...args:any[]) => any) | undefined;
+            if (f) {
+                return new Sk.builtin.sk_method({
+                    $meth: pyCall ?? function(this: Component, ...args: pyObject[]) {
+                        const r = f.apply(hooks, args.map(toJs));
+                        return canSuspend ? chainOrSuspend(r, toPy) : toPy(retryOptionalSuspensionOrThrow(r));
+                    },
+                    $flags: $flags ?? { NoArgs: true },
+                    $doc
+                }, this) as pyObject;
+            }
+        }
+    }
+]).concat([[
+    "_anvil_dom_element_",
+    {
+        $get(this:Component) {
+            return toPy(this.anvil$hooks.domElement);
+        }
+    }
+]]));
 
 export interface ComponentTag extends pyObject {
     $d: pyDict;
@@ -184,20 +304,44 @@ function eventDescriptionToString(event: pyStr | pyDict) {
     throw new pyTypeError(`Invalid argument for ${objectRepr(s_anvil_events)}, got ${objectRepr(event)}`);
 }
 
-export function initComponentSubclass(cls: ComponentConstructor) {
-    const pyAllowedEvents = cls.tp$getattr<pyIterable<pyStr>>(s_anvil_events);
-    const allowedEvents = new Set((pyAllowedEvents ? arrayFromIterable(pyAllowedEvents) : []).map(eventDescriptionToString));
-    const providesHooksInPython = cls.$typeLookup(s_anvil_hooks) !== Component.$typeLookup(s_anvil_hooks);
+const s___mro__ = new pyStr("__mro__");
 
+export function initComponentSubclass(cls: ComponentConstructor) {
+    const mro = cls.tp$getattr<pyTuple<pyType>>(s___mro__);
+    const allowedEvents = new Set<string>();
+    for (const c of arrayFromIterable(mro)) {
+        if (c === Component) break;
+        // we could check if c is a subclass of Component, but seems unnecessary
+        const pyAllowedEvents = c.tp$getattr<pyIterable<pyStr>>(s_anvil_events);
+        if (!pyAllowedEvents) continue;
+        for (const pyEvent of arrayFromIterable(pyAllowedEvents)) {
+            allowedEvents.add(eventDescriptionToString(pyEvent));
+        }
+    }
+    const providesHooksInPython: HookDescriptors = {};
+    for (const {pythonMethod, jsMethod} of [...hookMappings, {pythonMethod: s_anvil_dom_element, jsMethod: "domElement" as keyof AnvilHooks}]) {
+        const descr = cls.$typeLookup(pythonMethod);
+        if (descr?.tp$descr_get && descr !== Component.$typeLookup(pythonMethod)) {
+            providesHooksInPython[jsMethod] = descr;
+        }
+    }
     cls._ComponentClass = { allowedEvents, providesHooksInPython };
     return pyNone;
 }
 
+// This is something of a hack, so it's pretty self-contained - Component.__new__ just forwards this information
+// to forms.ts
+let yamlStackForNextComponent: YamlCreationStack;
+let yamlStackForThisComponent: YamlCreationStack;
+export const setYamlStackForNextComponent = (yamlStack: YamlCreationStack) => { yamlStackForNextComponent = yamlStack; };
+export const getYamlStackForThisComponent = () => yamlStackForThisComponent;
+// end hack
+
 let defaultDepId: string | undefined | null;
 let onNextInstantiation: ((c: Component) => void) | undefined;
 
-export const setDefaultDepId = (depId: string | null) => { defaultDepId = depId; }; // call immediately before instantiating a component
-export const getDefaultDepId = (component: Component | null) => component?._Component.defaultDepId ?? null;
+export const setDefaultDepIdForNextComponent = (depId: string | null) => { defaultDepId = depId; }; // call immediately before instantiating a component
+export const getDefaultDepIdForComponent = (component: Component | undefined) => component?._Component.defaultDepId ?? null;
 export const runOnNextInstantiation = (f: (c: Component) => void) => {
     onNextInstantiation = f;
 };
@@ -205,10 +349,11 @@ export const runOnNextInstantiation = (f: (c: Component) => void) => {
 interface ComponentState {
     allowedEvents: Set<string>;
     eventHandlers: { [eventName: string]: pyCallable[] };
-    parent?: { pyParent: Component; remove: (() => void)[] };
+    parent?: { pyParent: Component; remove: (() => void)[]; setVisibility?: (v: boolean) => void };
+    lastVisibility?: boolean;
     tag: pyObject;
     defaultDepId: string | null;
-    pyHookWrapper?: pyObject;
+    unwrappedHooks?: any;
 }
 
 type DesignerHint = "align-horizontal" | "font-bold" | "font-italic" | "font-underline" | "visible" | "enabled" | "background-color" | "foreground-color" | "border";
@@ -220,7 +365,9 @@ export interface PropertyDescriptionBase {
     important?: boolean;
     group?: string | null;
     designerHint?: DesignerHint;
+    hidden?: boolean;
     deprecated?: boolean;
+    supportsWriteback?: boolean;
 }
 
 export type StringPropertyType = "string";
@@ -235,6 +382,10 @@ export type IconPropertyType = "icon";
 export type RolePropertyType = "themeRole";
 export type UriPropertyType = "uri";
 export type HtmlPropertyType = "html";
+export type RecordTypePropertyType = "recordType";
+export type MarginPropertyType = "margin";
+export type PaddingPropertyType = "padding";
+export type SpacingPropertyType = "spacing";
 export type PropertyType =
     | StringPropertyType
     | StringListPropertyType
@@ -247,7 +398,11 @@ export type PropertyType =
     | IconPropertyType
     | RolePropertyType
     | UriPropertyType
-    | HtmlPropertyType;
+    | HtmlPropertyType
+    | RecordTypePropertyType
+    | MarginPropertyType
+    | PaddingPropertyType
+    | SpacingPropertyType;
 
 export interface StringPropertyDescription extends PropertyDescriptionBase { type: StringPropertyType; multiline?: boolean, inlineEditElement?: string}
 export interface StringListPropertyDescription extends PropertyDescriptionBase {type: StringListPropertyType; }
@@ -256,15 +411,20 @@ export interface BooleanPropertyDescription extends PropertyDescriptionBase { ty
 export interface FormPropertyDescription extends PropertyDescriptionBase { type: FormPropertyType; }
 export interface ObjectPropertyDescription extends PropertyDescriptionBase { type: ObjectPropertyType; }
 export interface ColorPropertyDescription extends PropertyDescriptionBase {type: ColorPropertyType; }
-export interface IconPropertyDescription extends PropertyDescriptionBase {type: IconPropertyType; }
+export interface IconPropertyDescription extends PropertyDescriptionBase {type: IconPropertyType; iconset?: string }
 export interface RolePropertyDescription extends PropertyDescriptionBase {type: RolePropertyType; }
 export interface UriPropertyDescription extends PropertyDescriptionBase {type: UriPropertyType; }
 export interface HtmlPropertyDescription extends PropertyDescriptionBase {type: HtmlPropertyType; }
+export interface RecordTypePropertyDescription extends PropertyDescriptionBase {type: RecordTypePropertyType; }
+export interface MarginPropertyDescription extends PropertyDescriptionBase {type: MarginPropertyType; }
+export interface PaddingPropertyDescription extends PropertyDescriptionBase {type: PaddingPropertyType; }
+export interface SpacingPropertyDescription extends PropertyDescriptionBase {type: SpacingPropertyType; }
 
-export interface EnumPropertyDescription extends PropertyDescriptionBase {
-    type: EnumPropertyType,
+export type EnumPropertyDescription = PropertyDescriptionBase & {
+    type: EnumPropertyType;
+    allowCustomValue?: boolean;
     options: string[];
-}
+};
 
 export type PropertyDescription<T extends PropertyType = PropertyType> = { type: T } & (
     | StringPropertyDescription
@@ -279,6 +439,10 @@ export type PropertyDescription<T extends PropertyType = PropertyType> = { type:
     | RolePropertyDescription
     | UriPropertyDescription
     | HtmlPropertyDescription
+    | RecordTypePropertyDescription
+    | MarginPropertyDescription
+    | PaddingPropertyDescription
+    | SpacingPropertyDescription
 );
 
 type StringPropertyValue = string;
@@ -290,9 +454,21 @@ type ObjectPropertyValue = never;
 type EnumPropertyValue = string;
 type ColorPropertyValue = string;
 type IconPropertyValue = string;
-type RolePropertyValue = string;
+type RolePropertyValue = string[] | string;
 type UriPropertyValue = string;
 type HtmlPropertyvalue = string;
+type RecordTypePropertyValue = string;
+
+type SpacingLength = string | number;
+type MarginPropertyValue =
+    SpacingLength
+    | [SpacingLength, SpacingLength]
+    | [SpacingLength, SpacingLength, SpacingLength, SpacingLength];
+type PaddingPropertyValue = MarginPropertyValue;
+type SpacingPropertyValue = {
+    margin?: MarginPropertyValue;
+    padding?: PaddingPropertyValue;
+}
 
 export type PropertyValue<T extends PropertyType> =
     | (T extends StringPropertyType
@@ -319,6 +495,14 @@ export type PropertyValue<T extends PropertyType> =
           ? UriPropertyValue
           : T extends HtmlPropertyType
           ? HtmlPropertyvalue
+          : T extends RecordTypePropertyType
+          ? RecordTypePropertyValue
+          : T extends MarginPropertyType
+          ? MarginPropertyValue
+          : T extends PaddingPropertyType
+          ? PaddingPropertyValue
+          : T extends SpacingPropertyType
+          ? SpacingPropertyValue
           : never)
     | null
     | undefined;
@@ -361,18 +545,27 @@ export interface HandleInteraction extends InteractionBase {
     direction?: 'x' | 'y';
     callbacks: {
         grab: () => void;
-        /** if position set, call designerAPI.notifyBoundsChanged() otherwise return a HandleResult */
         drag: (relativeX: number, relativeY: number) => HandleDragResult | void;
         drop: (relativeX: number, relativeY: number) => void;
         doubleClick?: () => void;
     };
 }
 
+type InteractionIconName = "edit" | "delete" | "arrow_left" | "arrow_right" | "add";
+
 export interface WholeComponentInteraction extends InteractionBase {
     type: "whole_component";
-    name: string;
-    icon: "edit" | "delete" | "arrow_left" | "arrow_right" | "add";
+    title: string;
+    icon: InteractionIconName;
     callbacks: { execute: () => void }
+}
+
+export interface WholeComponentMultiInteraction extends InteractionBase {
+    type: "whole_component_multi";
+    title: string;
+    icon?: InteractionIconName;
+    callbacks: { execute: (id :any) => void };
+    options: {name: string, icon?: InteractionIconName, id: any}[];
 }
 
 export interface OnSelectionInteraction extends InteractionBase {
@@ -386,7 +579,7 @@ export interface OnSelectionInteraction extends InteractionBase {
     }
 }
 
-export type Interaction = ButtonInteraction | HandleInteraction | WholeComponentInteraction | OnSelectionInteraction;
+export type Interaction = ButtonInteraction | HandleInteraction | WholeComponentInteraction | WholeComponentMultiInteraction | OnSelectionInteraction;
 
 export interface DesignInfo {
     propertyDescriptions: PropertyDescriptionBase[];
@@ -441,13 +634,19 @@ export interface DroppingSpecification {
     creating?: CreatingObject;
     dragging?: {type: "component" | "slot", name: string}[];
     pasting?: PastingObjects;
+
+    // Slots use these to communicate their requirements to their target containers. They will filter DropZones
+    // afterwards anyway, but you (a container) can take notice of these if you wish.
+    // For example, HTMLPanels use this to avoid creating unnecessary dropzones (which might mess up a layout if they are in the DOM, regardless of whether the slot filters them out.)
+    // For example, ColumnPanels use this to offer dropzones in Columns that don't exist yet, if that's what the slot is looking for.
     pyLayoutProperties?: pyDict<pyStr,pyObject>;
+    minChildIdx?: number;
+    maxChildIdx?: number;
 }
 
 export interface AnvilHooks extends Partial<HasRelevantHooks> {
     setupDom: () => Suspension | HTMLElement;
     readonly domElement: HTMLElement | undefined | null;
-    setDataBindingListener(listenerFn: ListenerFn): void | Suspension | pyObject;
     setPropertyValues?(updates: { [propName: string]: any}): void;
     updateDesignName?(name: string): void;
     getDesignInfo?(asLayout: boolean): DesignInfo;
@@ -459,20 +658,27 @@ export interface AnvilHooks extends Partial<HasRelevantHooks> {
     cleanupLayoutProperties?(): PropertyUpdates;
 }
 
+type HookDescriptors = Partial<Record<keyof AnvilHooks, pyObject>>;
+
 export interface ComponentConstructor extends pyType<Component> {
     new (): Component;
     _ComponentClass: {
         allowedEvents: Set<string>,
-        providesHooksInPython: boolean;
+        providesHooksInPython: HookDescriptors;
     }
 }
 
 export interface Component extends pyObject {
-    readonly constructor: ComponentConstructor;
     _Component: ComponentState;
     anvil$hooks: AnvilHooks;
+    anvilComponent$setParent(
+        this: Component,
+        pyParent: Component,
+        { onRemove, setVisibility }: { onRemove: () => void; setVisibility?: (visible: boolean) => void }
+    ): pyNoneType;
     $verifyEventName(this: Component, pyEventName: pyStr, msg: string): string;
     $verifyCallable(this: Component, eventName: string, pyHandler: pyObject): void;
+    anvilComponent$onRemove(this: Component, remove: () => void): void;
 }
 
 export interface LayoutProperties {
@@ -514,6 +720,14 @@ export interface ToolboxItemComponent {
     components?: ToolboxItemComponent[];
 }
 
+export interface ToolboxSection {
+    packageName?: string; // Top-level app if missing
+    title?: string; // If you don't specify a title for your ToolboxSection, its items will end up in the default section for this package.
+    description?: string;
+    items: ToolboxItem[];
+    defaultExpanded?: boolean;
+}
+
 export interface ToolboxItem {
     title: string;
     icon?: ToolboxIcon;
@@ -549,19 +763,40 @@ export interface PastingSlot extends PastingObject {
 }
 export type PastingObjects = (PastingComponent | PastingSlot)[];
 
+// All custom components defined in JS/React need to be able to produce one of these to be sent to the IDE.
+export interface CustomComponentSpec {
+    // Right now, name must be fully-qualified with the package name. It would be nice to separate this out, but we can do it later.
+    name: string;
+    properties?: (PropertyDescription & { defaultValue?: any })[];
+    layoutProperties?: PropertyDescriptionBase[];
+    events?: EventDescription[];
+    container?: boolean;
+    // TODO: layout?: boolean; (probably +slots)
+
+    // If true, this component will automatically appear in this app's "Custom Components" toolbox section.
+    // Otherwise it won't appear unless you manually add it to an explicitly-defined ToolboxSection
+    showInToolbox?: boolean;
+}
+
 export const EMPTY_DESIGN_INFO : DesignInfo = {
     propertyDescriptions: [],
     events: {},
     interactions: [],
 };
 
+export const EMPTY_CONTAINER_DESIGN_INFO : ContainerDesignInfo = {
+    layoutPropertyDescriptions: []
+};
+
 export const Component: ComponentConstructor = buildNativeClass("anvil.Component", {
     constructor: function Component() {},
     slots: {
         tp$new(args, kws) {
-            const cls = this.constructor;
+            const cls = this.constructor as ComponentConstructor;
             const self = new cls();
-            const {_ComponentClass: {allowedEvents, providesHooksInPython}} = cls;
+            const {
+                _ComponentClass: { allowedEvents, providesHooksInPython },
+            } = cls;
             self._Component = {
                 allowedEvents,
                 eventHandlers: {},
@@ -569,14 +804,15 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
                 defaultDepId: defaultDepId as string,
             };
             defaultDepId = undefined;
-            if (providesHooksInPython) {
-                self.anvil$hooks = mkJsHooksForPython(self);
-            }
+            overrideJsHooksWithPython(self, cls);
 
             if (onNextInstantiation) {
                 onNextInstantiation(self);
                 onNextInstantiation = undefined;
             }
+
+            yamlStackForThisComponent = yamlStackForNextComponent;
+            yamlStackForNextComponent = undefined;
 
             //console.log("Class", cls.toString(), "has permitted events", allowedEvents);
             return self;
@@ -591,7 +827,7 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
         },
     },
     proto: {
-        $verifyEventName(pyEventName: pyStr, msg: string) : string {
+        $verifyEventName(pyEventName: pyStr, msg: string): string {
             const { allowedEvents } = this._Component;
             if (!Sk.builtin.checkString(pyEventName)) {
                 throw new Sk.builtin.TypeError("expected the first argument to be a string");
@@ -600,26 +836,39 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
             if (eventName.startsWith("x-") || allowedEvents.has(eventName)) {
                 return eventName;
             } else {
-                throw new Sk.builtin.ValueError(`Cannot ${msg} for unknown event '${eventName}' on ${this.tp$name} component. Custom event names must start with 'x-'.`);
+                throw new Sk.builtin.ValueError(
+                    `Cannot ${msg} for unknown event '${eventName}' on ${this.tp$name} component. Custom event names must start with 'x-'.`
+                );
             }
         },
         $verifyCallable(eventName: string, pyHandler: pyObject) {
             if (!Sk.builtin.checkCallable(pyHandler)) {
-                throw new Sk.builtin.TypeError(`The '${eventName}' event handler added to ${this.tp$name} must be a callable, not type '${Sk.abstr.typeName(pyHandler)}'`);
+                throw new Sk.builtin.TypeError(
+                    `The '${eventName}' event handler added to ${
+                        this.tp$name
+                    } must be a callable, not type '${Sk.abstr.typeName(pyHandler)}'`
+                );
             }
         },
-        anvilComponent$setParent(pyParent: Component, remove: () => void) {
-            this._Component.parent = { pyParent, remove: [remove] };
+        anvilComponent$setParent(pyParent, { onRemove, setVisibility }) {
+            if (!onRemove) {
+                // Invalid!
+                // debugger;
+            }
+            this._Component.parent = { pyParent, remove: [onRemove], setVisibility };
+            if (setVisibility && this._Component.lastVisibility !== undefined) {
+                setVisibility(this._Component.lastVisibility);
+            }
+            return pyNone;
         },
         anvilComponent$onRemove(remove: () => void) {
             this._Component.parent?.remove.push(remove);
-        }
+        },
     },
     methods: {
         /*!defBuiltinMethod(,event_name,handler_func:callable)!2*/
         "set_event_handler": {
             $meth: function (pyEventName, pyHandler) {
-                const {allowedEvents, eventHandlers} = this._Component;
                 const eventName = this.$verifyEventName(pyEventName, "set event handler for");
                 if (Sk.builtin.checkNone(pyHandler)) {
                     // we delete as a signal that the event handlers for this event don't exist. See link click event for example
@@ -658,13 +907,17 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
                 this.$verifyCallable(eventName, pyHandler);
                 const currentHandlers = this._Component.eventHandlers[eventName];
                 if (currentHandlers === undefined) {
-                    throw new Sk.builtin.LookupError(`event handler '${pyHandler}' was not found in '${eventName}' event handlers for this component`);
+                    throw new Sk.builtin.LookupError(
+                        `event handler '${pyHandler}' was not found in '${eventName}' event handlers for this component`
+                    );
                 }
                 const eventHandlers = currentHandlers.filter(
                     (handler) => handler !== pyHandler && Sk.misceval.richCompareBool(handler, pyHandler, "NotEq")
                 );
                 if (eventHandlers.length === currentHandlers.length) {
-                    throw new Sk.builtin.LookupError(`event handler '${pyHandler}' was not found in '${eventName}' event handlers for this component`);
+                    throw new Sk.builtin.LookupError(
+                        `event handler '${pyHandler}' was not found in '${eventName}' event handlers for this component`
+                    );
                 } else if (eventHandlers.length) {
                     this._Component.eventHandlers[eventName] = eventHandlers;
                 } else {
@@ -679,22 +932,9 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
         /*!defBuiltinMethod(,event_name,**event_args)!2*/
         "raise_event": {
             $meth: function (args, kws) {
-                Sk.abstr.checkOneArg("raise_event", args);
+                checkOneArg("raise_event", args);
                 const eventName = this.$verifyEventName(args[0], "raise event");
-
-                const listeners = this._Component.eventHandlers[eventName];
-                if (!listeners) {
-                    return pyNone;
-                }
-
-                const eventArgs = kwToObj(kws);
-                eventArgs["sender"] = this;
-                eventArgs["event_name"] = args[0];
-
-                return Sk.misceval.chain(
-                    pyNone,
-                    ...listeners.map((pyFn) => () => Sk.misceval.callsimOrSuspendArray(pyFn, [], objToKw(eventArgs)))
-                );
+                return chainOrSuspend(pyNone, ...getListenerCallbacks(this, eventName, kws));
             },
             $flags: { FastCall: true },
             $doc: "Trigger the event on this component. Any keyword arguments are passed to the handler function.",
@@ -714,6 +954,17 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
             },
             $flags: { NoArgs: true },
             $doc: "Remove this component from its parent container.",
+        },
+        "_notify_parent_of_visibility": {
+            $meth(visible: pyBool) {
+                const v = Sk.misceval.isTrue(visible);
+                this._Component.lastVisibility = v;
+                const setVisibility = this._Component.parent?.setVisibility;
+                setVisibility?.(v);
+                return setVisibility ? pyTrue : pyFalse;
+            },
+            $flags: { OneArg: true },
+            $doc: "Notify this component's parent of its visible status",
         },
         /*!defBuiltinMethod(,smooth=False)!2*/ // "scroll_into_view" {$doc: "Scroll the window to make sure this component is in view."}
         "scroll_into_view": {
@@ -743,7 +994,11 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
                 return getPyParent(this) || Sk.builtin.none.none$;
             },
             $set() {
-                throw new Sk.builtin.AttributeError("Cannot set a '" + this.tp$name + "' component's parent this way - use 'add_component' on the container instead");
+                throw new Sk.builtin.AttributeError(
+                    "Cannot set a '" +
+                        this.tp$name +
+                        "' component's parent this way - use 'add_component' on the container instead"
+                );
             },
         },
         __name__: {
@@ -765,12 +1020,7 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
             },
             $doc: "Use this property to store any extra information about this component",
         },
-        _anvil_hooks_: {
-            // If this doesn't get overridden, we're using JS hooks, so return a wrapper.
-            $get() {
-                return (this._Component.pyHookWrapper ??= new PyHooks(this));
-            },
-        },
+        ...pythonMethodDescriptorsForJsHooks,
     },
     flags: {
         sk$klass: true, // tell skulpt we can be treated like a regular klass for tp$setatttr
@@ -779,14 +1029,22 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
 
 export const getComponentParent = (component: Component) : Component | pyNoneType => Component.prototype.parent.tp$descr_get(component, null);
 
-export const raiseEventOrSuspend = (component: Component, pyName: pyStr) =>
-    pyCallOrSuspend(component.tp$getattr<pyCallable>(s_raise_event), [pyName]);
+export const raiseEventOrSuspend = (component: Component, pyName: pyStr, kws?: Kws) =>
+    pyCallOrSuspend(component.tp$getattr<pyCallable>(s_raise_event), [pyName], kws);
 
 export const addEventHandler = (component: Component, pyName: pyStr, handler: (k: Kws) => Suspension | pyObject | void) =>
     pyCallOrSuspend(component.tp$getattr<pyCallable>(s_add_event_handler), [
         pyName,
-        PyDefUtils.funcFastCall((_args: Args, kws: Kws = []) => chainOrSuspend(handler(kws), () => pyNone)),
+        PyDefUtils.funcFastCall((_args, kws = []) => chainOrSuspend(handler(kws), () => pyNone)),
     ]);
 
 /*!defClass(anvil,Component)!*/
+
+function getListenerCallbacks(c: Component, eventName: string, kws?: Kws) {
+    const listeners = c._Component.eventHandlers[eventName] ?? [];
+    const eventArgs = kwToObj(kws);
+    eventArgs["sender"] = c;
+    eventArgs["event_name"] = new pyStr(eventName);
+    return listeners.map((pyFn) => () => pyCallOrSuspend(pyFn, [], objToKw(eventArgs)));
+}
 

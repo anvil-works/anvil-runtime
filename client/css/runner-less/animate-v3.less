@@ -1,0 +1,80 @@
+/* 
+Necessary classes for Notification animation
+See animate.css v3.5.1
+https://github.com/animate-css/animate.css/blob/3.5.1/animate.css
+*/
+
+@import "variables.less";
+
+.@{prefix}animated {
+    -webkit-animation-duration: .3s;
+    animation-duration: .3s;
+    /* Originally 1s */
+    -webkit-animation-fill-mode: both;
+    animation-fill-mode: both;
+}
+
+@fadeInDown: ~"@{prefix}fadeInDown";
+@fadeOutUp: ~"@{prefix}fadeOutUp";
+
+@-webkit-keyframes @fadeInDown {
+    from {
+        opacity: 0;
+        -webkit-transform: translate3d(0, -100%, 0);
+        transform: translate3d(0, -100%, 0);
+    }
+
+    to {
+        opacity: 1;
+        -webkit-transform: none;
+        transform: none;
+    }
+}
+
+@keyframes @fadeInDown {
+    from {
+        opacity: 0;
+        -webkit-transform: translate3d(0, -100%, 0);
+        transform: translate3d(0, -100%, 0);
+    }
+
+    to {
+        opacity: 1;
+        -webkit-transform: none;
+        transform: none;
+    }
+}
+
+.@{fadeInDown} {
+    -webkit-animation-name: @fadeInDown;
+    animation-name: @fadeInDown;
+}
+
+@-webkit-keyframes @fadeOutUp {
+    from {
+        opacity: 1;
+    }
+
+    to {
+        opacity: 0;
+        -webkit-transform: translate3d(0, -100%, 0);
+        transform: translate3d(0, -100%, 0);
+    }
+}
+
+@keyframes @fadeOutUp {
+    from {
+        opacity: 1;
+    }
+
+    to {
+        opacity: 0;
+        -webkit-transform: translate3d(0, -100%, 0);
+        transform: translate3d(0, -100%, 0);
+    }
+}
+
+.@{fadeOutUp} {
+    -webkit-animation-name: @fadeOutUp;
+    animation-name: @fadeOutUp;
+}

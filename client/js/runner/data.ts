@@ -1,6 +1,7 @@
 // data.ts: Store the actual app YAML.
 
-import { pyObject } from "../@Sk";
+import type { pyObject } from "../@Sk";
+import type { Component, ToolboxSection } from "@runtime/components/Component";
 
 export interface DataBindingYaml {
     code: string;
@@ -47,6 +48,16 @@ export interface SlotDefYaml {
     index: number;
 }
 
+export type SlotDefsYaml = { [slotName: string]: SlotDefYaml };
+
+export interface CustomComponentEvents {
+    name: string;
+    parameters?: { name: string; description: string }[];
+    description?: string;
+    default_event?: boolean;
+    important?: boolean;
+}
+
 export interface FormYaml {
     class_name: string;
     is_package?: boolean;
@@ -60,10 +71,11 @@ export interface FormYaml {
     components_by_slot?: { [slotName: string]: ComponentYaml[] };
 
     // If this form *provides* slots
-    slots?: { [slotName: string]: SlotDefYaml };
+    slots?: SlotDefsYaml;
 
     // If this is a custom component:
     custom_component?: boolean;
+    custom_component_container?: boolean; // TODO is this the right place to put this?
     properties?: {
         name: string;
         type: string;
@@ -72,13 +84,10 @@ export interface FormYaml {
         important?: boolean;
         group?: string;
         options?: string[];
+        allow_binding_writeback?: boolean;
+        binding_writeback_events?: string[];
     }[];
-    events?: {
-        name: string;
-        parameters?: { name: string; description: string }[];
-        description?: string;
-        default_event?: boolean;
-    }[];
+    events?: CustomComponentEvents[];
 
     item_type?: any; // TODO express this type properly
 }
@@ -106,6 +115,13 @@ export interface DependencyYaml {
     forms: FormYaml[];
     modules: ModuleYaml[];
     runtime_options: { client_version?: string; version?: number };
+    toolbox_sections?: ToolboxSection[];
+}
+
+export interface ThemeRole {
+    name: string;
+    title?: string;
+    components?: string[];
 }
 
 export interface AppConfig {
@@ -115,15 +131,23 @@ export interface AppConfig {
         color_scheme: ThemeColors;
         vars: ThemeVars;
         html?: { [filename: string]: string };
+        parameters?: {
+            roles: ThemeRole[];
+        }
     };
     services?: { source: string; client_config: object }[];
     runtime_options: { client_version?: string; version?: number };
+    toolbox_sections?: ToolboxSection[];
+    dependency_ids: {[logicalDepId: string]: string};
+    // Temporary, while we're fixing some broken apps that worked by accident
+    correct_dependency_ids: {[logicalDepId: string]: string};
 }
 
 export interface AppYaml extends DependencyYaml, AppConfig {
     //server_modules: ModuleYaml[]; - not in client
     //dependencies: {app_id: string, version: any}[];
     dependency_code: DependencyCode; // client version
+    dependency_ids: {[dep_id: string]: string};
 }
 
 interface ServerParams {
@@ -138,6 +162,7 @@ interface Data {
     appId: string;
     appPackage: string;
     dependencyPackages: { [depId: string]: string };
+    logicalDepIds: { [logicalDepId: string]: string };
     appOrigin: string;
     serverParams: ServerParams;
 }
@@ -148,8 +173,10 @@ declare global {
     interface Window {
         anvilCDNOrigin: string;
         anvilAppDependencies: DependencyCode;
+        anvilAppDependencyIds: { [depId: string]: string };
         debugAnvilData: Data;
         anvilAppMainPackage: string;
+        anvilAppMainModule: string;
         anvilParams: ServerParams & { appId: string; appOrigin: string };
         anvilAppOrigin: string;
         anvilServiceClientConfig: any;
@@ -177,10 +204,11 @@ export function setData({ app, appId, appOrigin, ...serverParams }: SetDataParam
             .filter(([_id, package_name]) => package_name !== undefined)
     );
 
-    data = { app, appId, appOrigin, serverParams, appPackage: app.package_name || "main_package", dependencyPackages };
+    data = { app, appId, appOrigin, serverParams, appPackage: app.package_name || "main_package", dependencyPackages, logicalDepIds: app.dependency_ids };
 
     //used by RepeatingPanel
     window.anvilAppDependencies = data.app.dependency_code;
+    window.anvilAppDependencyIds = data.app.dependency_ids;
 
     //for debug purposes
     window.debugAnvilData = data;
@@ -197,18 +225,18 @@ export function setData({ app, appId, appOrigin, ...serverParams }: SetDataParam
 
     const customComponentProperties: any = {};
 
-    const updateCustomProperties = (depId: string | null, { forms }: DependencyYaml) => {
+    const updateCustomProperties = (depAppId: string | null, { forms }: DependencyYaml) => {
         if (!forms) return; // can this be null?
         for (const { custom_component, class_name, properties } of forms) {
             if (!custom_component) continue;
-            customComponentProperties[depId + ":" + class_name] = properties;
+            customComponentProperties[depAppId + ":" + class_name] = properties;
         }
     };
 
     updateCustomProperties(null, app);
 
-    for (const [depId, depYaml] of Object.entries(app.dependency_code)) {
-        updateCustomProperties(depId, depYaml);
+    for (const [depAppId, depYaml] of Object.entries(app.dependency_code)) {
+        updateCustomProperties(depAppId, depYaml);
     }
 
     window.anvilCustomComponentProperties = customComponentProperties;
@@ -218,3 +246,11 @@ export function setData({ app, appId, appOrigin, ...serverParams }: SetDataParam
     window.anvilThemeColors = data.app.theme?.color_scheme ?? {};
     window.anvilThemeVars = data.app.theme?.vars ?? {};
 }
+
+export const topLevelForms = {
+    openForm: null as null | Component,
+    alertForms: new Set<Component>(),
+    has(c: Component) {
+        return topLevelForms.openForm === c || topLevelForms.alertForms.has(c);
+    },
+};

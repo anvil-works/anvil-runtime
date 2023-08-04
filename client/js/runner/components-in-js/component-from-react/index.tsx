@@ -3,12 +3,14 @@
 import {
     Component,
     ComponentConstructor, ComponentProperties,
+    CustomComponentSpec,
     DropInfo,
     DroppingSpecification, DropZone,
     EventDescription,
     initComponentSubclass, Interaction, LayoutProperties,
     PropertyDescription, PropertyDescriptionBase,
     ToolboxItem,
+    ToolboxSection,
 } from "@runtime/components/Component";
 import { Container } from "@runtime/components/Container";
 import type { Kws } from "@Sk";
@@ -28,10 +30,9 @@ import {
 } from "@Sk";
 import type * as ReactType from "react";
 import type { createRoot as createRootType } from "react-dom/client";
-import {designerApi, DesignerState, SectionUpdates} from "../../component-designer-api";
-import {s_anvil_events, s_raise_event, s_slot} from "../../py-util";
-import { customToolboxItems, jsComponentModules, whenEnvironmentReady } from "../common";
-import { kwargsToJsObject } from "@runtime/runner/instantiation";
+import {designerApi, SectionUpdates} from "../../component-designer-api";
+import {kwargsToJsObject, s_anvil_events, s_raise_event, s_slot} from "../../py-util";
+import { customToolboxSections, jsCustomComponents, whenEnvironmentReady } from "../common";
 
 // TODO:
 //   React.render -> ReactDOM.render
@@ -53,13 +54,9 @@ function setRef<T>(ref: ReactRef<T> | undefined | null, value: T): void {
 
 type ReactRef<T> = ReactType.RefCallback<T> | ReactType.MutableRefObject<T> | null;
 
-interface ComponentSpec {
-    name: string;
-    properties?: (PropertyDescription & { defaultValue: any })[];
-    layoutProperties?: PropertyDescriptionBase[];
-    events?: EventDescription[];
+
+interface ReactComponentDefinition extends CustomComponentSpec {
     component: (props: ComponentProps, ref?: ReactType.ForwardedRef<any>) => ReactType.ReactElement | null; // React component
-    container?: boolean;
     autoDropZones?: boolean;
     autoDropZoneProps?: React.ComponentProps<any>;
 }
@@ -67,6 +64,7 @@ interface ComponentSpec {
 interface ChildWithLayoutProperties {
     child: ReactType.ReactNode;
     childIdx: number;
+    key: string;
     layoutProperties: LayoutProperties;
 }
 
@@ -75,35 +73,19 @@ interface SectionSpec {
     title: string;
     sectionProperties: PropertyDescription[];
     sectionPropertyValues: ComponentProperties;
-    setSectionPropertyValues: (sectionId: string, updates: any) => void;
-    interactions: Interaction[];
+    setSectionPropertyValues: (updates: any) => void;
 }
+
+type InteractionSpec = (Interaction & {sectionId?: string}) | undefined | false | null;
 
 type Section = SectionSpec & { element: HTMLElement };
-
-interface ComponentDesignerApi {
-    inDesigner: boolean;
-    useInteraction(interaction: Interaction): void;
-    useInlineEdit(propName: string, otherRef?: ReactRef<HTMLElement>): any;
-    useInlineEditSection(sectionId: string, propName: string, otherRef?: ReactRef<HTMLElement>): any;
-    useSectionRef: (sectionSpec: SectionSpec, otherRef?: ReactRef<HTMLElement>) => void;
-    updateProperties: (updates: any, sectionUpdates?: SectionUpdates) => void; // TODO: sectionUpdates, once I've worked out what they are...
-    designerState: DesignerState;
-    componentName?: string;
-}
 
 interface ComponentProps {
     children?: ReactType.ReactNode;
     childrenWithoutDropZones: ReactType.ReactNode,
     childrenWithLayoutProperties?: ChildWithLayoutProperties[];
     properties: any;
-    actions: any;
-    designerApi: ComponentDesignerApi;
     components?: any;
-    dropInfo: {
-        dropping: boolean;
-        DropZone: ReactType.FC;
-    };
     childKeys: WeakMap<Component, string>;
 }
 
@@ -115,10 +97,14 @@ let React: typeof ReactType;
 let createRoot: typeof createRootType;
 let flushSync: any;
 
-export const setReactImpl = (react: any, reactDomCreateRoot: any, reactDomFlushSync: any) => {
+const setReactImpl = (react: any, reactDomCreateRoot: any, reactDomFlushSync: any) => {
     React = react;
     createRoot = reactDomCreateRoot;
     flushSync = reactDomFlushSync;
+
+    // The hooks won't work outside our context, so null is fine as default.
+    HooksContext = React.createContext<AnvilReactHooks>(null as unknown as AnvilReactHooks);
+    DropZoneContext = React.createContext<DropZoneContextType>(null as unknown as DropZoneContextType);
 };
 
 const ElementWrapper = ({ el }: { el: HTMLElement }) => {
@@ -149,12 +135,14 @@ interface ReactComponentWrapper extends Component {
         propertyInterface: any;
         dropZones: DropZone[];
         sections: Map<string, Section>;
-        interactions: Interaction[];
+        sectionInteractions: Map<string, Map<string, Interaction>>; // sectionId => interactionId => interactions
+        interactions: Map<string, Interaction>;
         inlineEditInteractions: Map<string, Interaction>; // propName => interaction
         sectionInlineEditInteractions: Map<string, Map<string, Interaction>>; // sectionId => propName => interactions
         componentKeys: WeakMap<Component, number>;
         nextComponentKey: number;
         designName?: string;
+        nextDesignerStateId: number;
     };
 }
 
@@ -163,6 +151,37 @@ interface DropZoneSpec {
     expandable?: boolean;
     dropInfo: DropInfo;
 }
+
+interface DropZoneContextType {
+    dropping: DroppingSpecification | null | undefined;
+    dropZones: DropZone[];
+}
+
+let DropZoneContext: ReactType.Context<DropZoneContextType>;
+
+const DropZone = ({ minChildIdx=undefined, maxChildIdx=undefined, childIdx=undefined, layoutProperties=undefined, ...props }: React.ComponentProps<any>) => {
+    const ctx = React.useContext(DropZoneContext);
+    if (!ctx.dropping) return null;
+
+    if (minChildIdx === undefined && maxChildIdx === undefined && childIdx !== undefined) {
+        minChildIdx = maxChildIdx = childIdx;
+    } else if (childIdx !== undefined && (minChildIdx !== undefined || maxChildIdx !== undefined)) {
+        console.warn("DropZones only accept either childIdx or minChildIdx,maxChildIdx. Not both.")
+    }
+
+    const ref = (element: HTMLElement) => {
+        // Callable ref can be called with a null element if it's somehow vanished from the DOM already.
+        if (element) {
+            ctx.dropZones.push({
+                element,
+                expandable: true,
+                dropInfo: {minChildIdx, maxChildIdx, layout_properties: layoutProperties},
+            });
+        }
+    };
+
+    return <div ref={ref} {...props} />;
+};
 
 const mkComponentClass = ({
     name,
@@ -173,7 +192,7 @@ const mkComponentClass = ({
     container,
     autoDropZones = true,
     autoDropZoneProps,
-}: ComponentSpec) => {
+}: ReactComponentDefinition) => {
     const cls: ReactComponentWrapperConstructor = buildNativeClass(name, {
         constructor: function ReactComponentWrapper() {},
         base: container ? Container : Component,
@@ -204,7 +223,7 @@ const mkComponentClass = ({
                 self.$d = new pyDict();
 
                 const pyRaiseEvent = self.tp$getattr<pyCallable>(s_raise_event);
-                const actions = {
+                const actions: AnvilReactActions = {
                     raiseEvent(eventName: string, args: object = {}) {
                         const pyKw: Kws = [];
                         for (const [k, v] of Object.entries(args)) {
@@ -213,8 +232,20 @@ const mkComponentClass = ({
                         return suspensionToPromise(() => pyCallOrSuspend(pyRaiseEvent, [new pyStr(eventName)], pyKw));
                     },
                     setProperty(propName: string, value: any) {
-                        // This is experimental: Is this a good API? Should it be unified with designerApi.updateProperties()?
-                        self._ReactComponentWrapper.propertyInterface[propName] = value;
+                        if (designerApi.inDesigner) {
+                            flushSync(() => {
+                                _.propertyInterface[propName] = value; // Invoke setter, which will cause render
+                            });
+                            designerApi.updateComponentProperties(self, {[propName]: value}, {});
+
+                            // TODO: Only do this if the sections have changed.
+                            // When setSectionProperties is called from the IDE, if the value of the sections is what was asked for by setSectionProperties, don't do this update:
+                            designerApi.updateComponentSections(self);
+
+                        } else {
+                            // Don't need the synchronous render in this case
+                            _.propertyInterface[propName] = value; // Invoke setter, which will cause render
+                        }
                     }
                 };
 
@@ -222,19 +253,34 @@ const mkComponentClass = ({
                     properties?.map(({ name, defaultValue }) => [name, defaultValue]) || []
                 );
 
-                const exposedDesignerApi: ComponentDesignerApi = {
-                    inDesigner: designerApi.inDesigner,
-                    useInteraction: (interaction: Interaction) => {
-                        _.interactions.push(interaction);
+                const designerApiContext: AnvilReactDesignerApi = {
+                    designName: null,
+                };
+
+                const hooksContext: AnvilReactHooks = {
+                    useActions: () => actions,
+                    useDesignerApi: () => ({...designerApiContext, designName: designerApi.getDesignName(self)}),
+                    useInteraction: (maybeInteraction: InteractionSpec) => { // Maybe make second arg an object?
+                        const id = React.useId()
+                        if (maybeInteraction) {
+                            const {sectionId, ...interaction} = maybeInteraction;
+                            if (sectionId) {
+                                _.sectionInteractions.has(sectionId) || _.sectionInteractions.set(sectionId, new Map<string, Interaction>());
+                                _.sectionInteractions.get(sectionId)!.set(id, interaction);
+                            } else {
+                                console.log("Use Interaction", maybeInteraction);
+                                _.interactions.set(id, interaction);
+                            }
+                        }
                     },
-                    useInlineEdit: (propName, otherRef?) => {
+                    useInlineEditRef: (propName, otherRef?) => {
                         return (element: HTMLElement) => {
                             setRef(otherRef, element);
 
                             if (element) {
                                 _.inlineEditInteractions.set(propName, {
                                     type: "whole_component",
-                                    name: `Edit ${propName}`,
+                                    title: `Edit ${propName}`,
                                     icon: "edit",
                                     default: true,
                                     callbacks: {
@@ -251,7 +297,7 @@ const mkComponentClass = ({
                             }
                         };
                     },
-                    useInlineEditSection(sectionId, propName, otherRef?): any {
+                    useInlineEditSectionRef(sectionId, propName, otherRef?): any {
                         return (element: HTMLElement) => {
                             setRef(otherRef, element);
 
@@ -259,7 +305,7 @@ const mkComponentClass = ({
                                 _.sectionInlineEditInteractions.has(sectionId) || _.sectionInlineEditInteractions.set(sectionId, new Map<string, Interaction>());
                                 _.sectionInlineEditInteractions.get(sectionId)!.set(propName, {
                                     type: "whole_component",
-                                    name: `Edit ${propName}`,
+                                    title: `Edit ${propName}`,
                                     icon: "edit",
                                     default: true,
                                     callbacks: {
@@ -282,41 +328,49 @@ const mkComponentClass = ({
                             _.sections.set(section.id, {...section, element});
                         }
                     },
-                    updateProperties(updates, sectionUpdates) {
-                        for (const [name, newValue] of Object.entries(updates || {})) {
-                            _.propertyInterface[name] = newValue; // Invoke setter, which will cause render
+                    useComponentState: (initialState) => {
+                        if (designerApi.inDesigner) {
+                            const [_s, setS] = React.useState(initialState); // Just to force a render when designerState changes.
+                            const id = `${_.nextDesignerStateId++}`;
+                            const state = designerApi.getDesignerState(self);
+                            let currentValue: any;
+                            if (state.has(id)) {
+                                currentValue = state.get(id);
+                            } else {
+                                state.set(id, initialState);
+                                currentValue = initialState;
+                            }
+                            return [currentValue, (newStateOrFn: any) => {
+                                const newState = typeof newStateOrFn === "function" ? newStateOrFn(state.get(id)) : newStateOrFn;
+                                state.set(id, newState);
+                                setS(newState); // Force re-render if necessary
+                            }];
+                        } else {
+                            return React.useState<any>(initialState);
                         }
-                        designerApi.updateComponentProperties(self, updates, {}, sectionUpdates);
                     },
-                    designerState: designerApi.inDesigner ? designerApi.getDesignerState(self) : {},
-                    // TODO: More things.
-                };
+                }
 
-                const addDropZone = (dz: DropZoneSpec) => {
-                    _.dropZones.push(dz);
-                };
+                const WrappedComponent = React.forwardRef<any,  ComponentProps>((props, ref) => {
+                    // Clear on every render
+                    _.interactions.clear();
+                    _.inlineEditInteractions.clear();
+                    _.sections.clear();
+                    _.sectionInlineEditInteractions.clear();
+                    _.sectionInteractions.clear();
+                    _.nextDesignerStateId = 0;
 
-                const DropZone = ({ minChildIdx=undefined, maxChildIdx=undefined, layoutProperties=undefined, ...props }: React.ComponentProps<any>) => {
-                    if (!_.dropping) return null;
-
-                    const ref = (element: HTMLElement) => {
-                        // Callable ref can be called with a null element if it's somehow vanished from the DOM already.
-                        if (element) {
-                            addDropZone({
-                                element,
-                                expandable: true,
-                                dropInfo: {minChildIdx, maxChildIdx, layout_properties: layoutProperties},
-                            });
-                        }
-                    };
-
-                    return <div ref={ref} {...props} />;
-                };
-
-                const WrappedComponent = React.forwardRef(component);
+                    return component(props, ref);
+                });
                 const InnerComponent = () => {
                     const _ = self._ReactComponentWrapper;
                     _.forceRender = React.useReducer(() => ({}), {})[1];
+
+                    _.dropZones = [];
+                    const dropZoneContext = {
+                        dropping: _.dropping,
+                        dropZones: _.dropZones,
+                    }
 
                     const children: any[] = [];
                     const childKeys: WeakMap<any, string> = new WeakMap();
@@ -344,6 +398,7 @@ const mkComponentClass = ({
                             child,
                             layoutProperties: _.componentLayoutProps.get(c)!,
                             childIdx: i,
+                            key,
                         })
                         childKeys.set(child, key);
                         if (autoDropZones) {
@@ -352,20 +407,10 @@ const mkComponentClass = ({
                         i++;
                     }
 
-                    // Clear on every render
-                    _.dropZones = [];
-                    _.interactions = [];
-                    _.inlineEditInteractions.clear();
-                    _.sections.clear();
-                    _.sectionInlineEditInteractions.clear();
-
                     const props: ComponentProps = {
                         children,
                         // TODO: This only passes non-undefined properties. Decide whether this is right.
                         properties: Object.fromEntries(Object.entries(_.propertyInterface).filter(([k, v]) => v !== undefined)),
-                        actions,
-                        designerApi: {...exposedDesignerApi, componentName: _.designName},
-                        dropInfo: { dropping: !!_.dropping, DropZone },
                         childrenWithLayoutProperties,
                         childrenWithoutDropZones,
                         childKeys,
@@ -381,9 +426,16 @@ const mkComponentClass = ({
                         designerApi.inDesigner && designerApi.notifyDomNodeChanged(self);
                     }, [_.ref.current]);
 
-                    console.log("Render", name);
+                    console.group("Render", name, self.anvil$designerPath);
 
-                    return <WrappedComponent ref={_.ref} {...props} />;
+                    const c = <HooksContext.Provider value={hooksContext}>
+                        <DropZoneContext.Provider value={dropZoneContext}>
+                            <WrappedComponent ref={_.ref} {...props} />
+                        </DropZoneContext.Provider>
+                    </HooksContext.Provider>;
+                    console.log("Rendered", self.anvil$designerPath, c, _);
+                    console.groupEnd();
+                    return c;
                 };
                 self._ReactComponentWrapper = {
                     reactComponent: <InnerComponent />,
@@ -398,12 +450,14 @@ const mkComponentClass = ({
                         },
                     }),
                     dropZones: [],
-                    sections: new Map<string, Section>(),
-                    interactions: [],
-                    inlineEditInteractions: new Map<string, Interaction>(),
-                    sectionInlineEditInteractions: new Map<string, Map<string, Interaction>>(),
+                    sections: new Map(),
+                    sectionInteractions: new Map(),
+                    interactions: new Map(),
+                    inlineEditInteractions: new Map(),
+                    sectionInlineEditInteractions: new Map(),
                     nextComponentKey: 0,
                     componentKeys: new WeakMap(),
+                    nextDesignerStateId: 0,
                 };
 
                 const _ = self._ReactComponentWrapper;
@@ -424,8 +478,8 @@ const mkComponentClass = ({
                     get domElement() {
                         return _.rootElement || _.ref?.current;
                     },
-                    setDataBindingListener: (fn) => {}, // TODO: This.
                     getDesignInfo() {
+                        // console.log("GDI for", self.anvil$designerPath, _);
                         return {
                             propertyDescriptions: (properties || []).map((description) => ({ ...description })),
                             events: (events || []).reduce((es, e) => {
@@ -433,7 +487,7 @@ const mkComponentClass = ({
                                 return es;
                             }, {} as { [propName: string]: EventDescription }),
                             interactions: [
-                                ..._.interactions,
+                                ..._.interactions.values(),
                                 ..._.inlineEditInteractions.values(),
                             ],
                         };
@@ -467,18 +521,19 @@ const mkComponentClass = ({
                     },
                     getSections() {
                         return Array.from(_.sections.values(), ({
+                            id,
                             sectionProperties,
                             sectionPropertyValues,
                             setSectionPropertyValues,
-                            interactions,
                             ...section
                         }) => ({
+                            id,
                             ...section,
                             propertyDescriptions: sectionProperties,
                             propertyValues: sectionPropertyValues,
                             interactions: [
-                                ...interactions || [],
-                                ..._.sectionInlineEditInteractions.get(section.id)?.values() || []],
+                                ..._.sectionInteractions.get(id)?.values() || [],
+                                ..._.sectionInlineEditInteractions.get(id)?.values() || []],
                         }));
                     },
                     getSectionDomElement(id: string) {
@@ -486,7 +541,7 @@ const mkComponentClass = ({
                     },
                     setSectionPropertyValues(id: string, updates: { [p: string]: any } | null) {
                         const section = _.sections.get(id)!;
-                        section.setSectionPropertyValues(id, updates);
+                        section.setSectionPropertyValues(updates);
                     },
                     updateDesignName(name: string) {
                         _.designName = name;
@@ -527,10 +582,10 @@ const mkComponentClass = ({
                           }
                           _.componentLayoutProps.set(pyComponent, layoutProperties);
                           _.forceRender?.();
-                          pyComponent.anvilComponent$setParent(this, () => {
+                          pyComponent.anvilComponent$setParent(this, {onRemove: () => {
                               _.components = _.components.filter((c) => c !== pyComponent);
                               _.forceRender?.();
-                          });
+                          }});
                           return pyNone;
                       },
                       $flags: { FastCall: true },
@@ -550,7 +605,10 @@ const mkComponentClass = ({
     return cls;
 };
 
-export const registerReactComponent = (component: ComponentSpec) => {
+const reactComponentToSpec = ({name, properties, events, layoutProperties, container, showInToolbox}: ReactComponentDefinition) =>
+    ({name, properties, events, layoutProperties, container, showInToolbox});
+
+export const registerReactComponent = (component: ReactComponentDefinition) => {
     const leafName = component.name.replace(/^.*\./, "");
     const cls = mkComponentClass(component);
 
@@ -564,12 +622,12 @@ export const registerReactComponent = (component: ComponentSpec) => {
         pyMod.init$dict(pyName, pyNone);
         pyMod.$d[leafName] = cls;
         Sk.sysmodules.mp$ass_subscript(pyName, pyMod);
-        jsComponentModules[component.name] = pyMod;
+        jsCustomComponents[component.name] = {pyMod, spec: reactComponentToSpec(component)};
     });
 };
 
-export const registerToolboxItem = (item: ToolboxItem) => {
-    customToolboxItems.push(item);
+export const registerToolboxSection = (section: ToolboxSection) => {
+    customToolboxSections.push(section);
 };
 
 export const getReactComponents = (React: any, Hooks?: any) => {
@@ -656,4 +714,41 @@ export const getReactComponents = (React: any, Hooks?: any) => {
     };
 
     return { useComponentsRef, useComponentSlots };
+};
+
+interface AnvilReactDesignerApi {
+    designName: string | null;
+}
+interface AnvilReactActions {
+    raiseEvent(eventName: string, args: object): void;
+    setProperty(propName: string, value: any): void;
+}
+interface AnvilReactHooks {
+    useActions(): AnvilReactActions;
+    useComponentState<T>(initialState?: T): [T, (newState: T | ((oldState: T) => T)) => void];
+    useDesignerApi(): AnvilReactDesignerApi;
+    useInteraction(interaction: Interaction, sectionId?: string): void;
+    useInlineEditRef(propName: string, otherRef?: ReactRef<HTMLElement>): any;
+    useInlineEditSectionRef(sectionId: string, propName: string, otherRef?: ReactRef<HTMLElement>): any;
+    useSectionRef(sectionSpec: SectionSpec, otherRef?: ReactRef<HTMLElement>): void;
+}
+
+let HooksContext: ReactType.Context<AnvilReactHooks>;
+
+export const _react : {hooks: AnvilReactHooks, [k:string]: any} = {
+    //@ts-ignore
+    inDesigner: !!window.anvilInDesigner,
+    DropZone,
+    hooks: {
+        useActions: () => React.useContext(HooksContext).useActions(),
+        useDesignerApi: () => React.useContext(HooksContext).useDesignerApi(),
+        useComponentState: (...args) => React.useContext(HooksContext).useComponentState(...args),
+        useInteraction: (...args) => React.useContext(HooksContext).useInteraction(...args),
+        useInlineEditRef: (...args) => React.useContext(HooksContext).useInlineEditRef(...args),
+        useInlineEditSectionRef: (...args) => React.useContext(HooksContext).useInlineEditSectionRef(...args),
+        useSectionRef: (...args) => React.useContext(HooksContext).useSectionRef(...args),
+    },
+    registerReactComponent,
+    registerToolboxSection,
+    setReactImpl,
 };

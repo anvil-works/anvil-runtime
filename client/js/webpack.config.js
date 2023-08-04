@@ -31,11 +31,12 @@ const babelLoader = {
 
 const plugins = [
     new MiniCssExtractPlugin({
-        filename: "runner.min.css",
+        filename: "[name]",
     }),
     new OptimizeCssAssetsPlugin(),
     new webpack.DefinePlugin({
         ANVIL_IN_DESIGNER: JSON.stringify(false),
+        BUILD_TIME: JSON.stringify(Date.now()),
     }),
 ];
 
@@ -52,7 +53,8 @@ module.exports = {
         runner: ["./runner.js"],
         runner2: ["./runner/index.ts"],
         sw: ["./sw.js"],
-        css: ["../css/runner.css"]
+        "runner.min.css": ["../css/runner.css"],
+        "runner-v3.min.css": ["../css/runner-v3.css"]
     },
 
     // Make PyDefUtils available as window.PyDefUtils

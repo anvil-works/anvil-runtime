@@ -35,7 +35,7 @@ class AnvilAppOnline {
         this.updateStatus(rv);
         return rv;
     }
-    checkStatus(): boolean | Promise<boolean> {
+    async checkStatus(): Promise<boolean> {
         // this function is only called inside anvil.server.is_app_online()
         if (this.lastCheck > Date.now() - this.offlineTimeout) {
             // use the cached value we have

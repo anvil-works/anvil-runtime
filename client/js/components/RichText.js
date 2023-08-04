@@ -17,158 +17,210 @@ description: |
 var PyDefUtils = require("PyDefUtils");
 
 import { Remarkable } from "remarkable";
+import { isTrue } from "../@Sk";
 import { isInvisibleComponent } from "./helpers";
-// import { linkify } from "remarkable/linkify";
+import { validateChild } from "./Container";
+// import { linkify } from "remarkable/linkify"
 
-// Taken from the default list in the sanitize-html package.
-const SAFE_TAGS = [
-  "address", "article", "aside", "footer", "header", "h1", "h2", "h3", "h4",
-  "h5", "h6", "hgroup", "main", "nav", "section", "blockquote", "dd", "div",
-  "dl", "dt", "figcaption", "figure", "hr", "li", "main", "ol", "p", "pre",
-  "ul", "a", "abbr", "b", "bdi", "bdo", "br", "cite", "code", "data", "dfn",
-  "em", "i", "kbd", "mark", "q", "rb", "rp", "rt", "rtc", "ruby", "s", "samp",
-  "small", "span", "strong", "sub", "sup", "time", "u", "var", "wbr", "caption",
-  "col", "colgroup", "table", "tbody", "td", "tfoot", "th", "thead", "tr",
-];
+// Approach taken from bootstrap/src/js/util/sanitizer.js
+const EMPTY_SET = new Set();
+const URI_ATTRIBUTES = new Set(["background", "cite", "href", "itemtype", "longdesc", "poster", "src", "xlink:href"]);
+const ARIA_ATTRIBUTE_PATTERN = /^aria-[\w-]*$/i;
+/**
+ * A pattern that recognizes a commonly useful subset of URLs that are safe.
+ * Shout-out to Angular https://github.com/angular/angular/blob/12.2.x/packages/core/src/sanitization/url_sanitizer.ts
+ */
+//  const SAFE_URL_PATTERN = /^(?:(?:https?|mailto|ftp|tel|file|sms):|[^#&/:?]*(?:[#/?]|$))/i;
+const SAFE_URL_PATTERN = /^(\/|_\/theme\/|https?:\/\/)/;
 
-// https://developer.mozilla.org/en-US/docs/Glossary/empty_element
-// subset based on the SAFE_TAGS
-const EMPTY_TAGS = new Set(["br", "col", "hr", "img", "wbr"]);
+/**
+ * A pattern that matches safe data URLs. Only matches image, video and audio types.
+ * Shout-out to Angular https://github.com/angular/angular/blob/12.2.x/packages/core/src/sanitization/url_sanitizer.ts
+ */
+const DATA_URL_PATTERN =
+    /^data:(?:image\/(?:bmp|gif|jpeg|jpg|png|tiff|webp)|video\/(?:mpeg|mp4|ogg|webm)|audio\/(?:mp3|oga|ogg|opus));base64,[\d+/a-z]+=*$/i;
 
-const REMOVE_TAGS = new Set(["script", "style"]);
-
-const needsClose = tag => tag !== "p" && tag !== "li";
-const ANY = x => true;
-const URL = x => /^(\/|_\/theme\/|https?:\/\/)/.test(x);
-
-const allowedTags = {};
-
-for (let t of SAFE_TAGS) { allowedTags[t] = {}; }
-
-// allowedTags["div"] = {}; // was {"class": ANY}, but then realised that we don't actually want content being allowed to "burst its banks"
-allowedTags["a"] = { "href": URL };
-allowedTags["img"] = { "src": URL };
-
-const escapeHtml = str => str.replace(/[<>&]/g, tag => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;'
-}[tag] || tag));
-
-const escapeHtmlPreservingEntities = str => str.replace(/&(?![a-zA-Z]+;)|<|>|"/g, tag => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': "&quot;",
-}[tag] || tag));
-
-const escapeHtmlPreservingEntitiesAndEscapingBraces = str => str.replace(/&(?![a-zA-Z]+;)|<|>|"|{|}/g, tag => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    '{': '{{',
-    '}': '}}'
-}[tag] || tag));
-
-
-const sanitizeHtml = (unsafeHtml, escapeBracesInAttrs) => {
-    // Importantly, this regex is *not* safety-critical. If it fails to identify HTML, we miss tags (and render them as escaped text)
-    const tagFinder = /([^<]*)(<\s*(\/?)\s*([^\s"''>]*)\s*(([^'">\s]+(?=['">\s])|'[^']*'|"[^"]*"|\s+)*)>)?/g;
-    let safeHtml = "";
-    const tagStack = [], tagPeek = () => tagStack[tagStack.length - 1];
-
-    let e = escapeHtmlPreservingEntities;
-    let m;
-    while ((m = tagFinder.exec(unsafeHtml)) !== null) {
-        let preText = m[1], _wholeTag = m[2], isClose = m[3], tagName = m[4], attrs = m[5];
-        safeHtml += e(preText);
-        if (!tagName) { break; }
-        tagName = tagName.toLowerCase();
-
-        let allowedAttrs = allowedTags[tagName];
-        //console.log("Tag", tagName, "->", allowedAttrs);
-        if (REMOVE_TAGS.has(tagName) && !isClose) {
-            const re = new RegExp("<\\s*/\\s*" + tagName + "\\s*>", "i");
-            console.log(re);
-            const closeMatch = unsafeHtml.substring(tagFinder.lastIndex).match(re);
-            if (!closeMatch) {
-                break;
-            } else {
-                console.log(closeMatch, closeMatch.index);
-                tagFinder.lastIndex += closeMatch.index + closeMatch[0].length
-                continue;
-            }
-        } else if (!allowedAttrs) {
-            continue;
-        } else if (isClose) {
-            while (tagStack.length && tagPeek() !== tagName && !needsClose(tagPeek())) {
-                tagStack.pop();
-            }
-            if (tagStack.length && (tagName === tagPeek())) {
-                safeHtml += "</" + e(tagName) + ">";
-                tagStack.pop();
-            } // else ignore
-        } else {
-            // OK, parse our tag
-            let attrFinder = /([^\s]+)\s*=\s*("[^"]*"|'[^']*'|[^\s"'&>]+)\s*|(.+)/g;
-            let am;
-            let safeAttrs = {};
-            while ((am = attrFinder.exec(attrs)) !== null) {
-                //tr (4)["class=x", "class", "x", undefined, index: 0, input: "class=x", groups: undefined]
-                let [_, attrName, attrValue, garbage] = am;
-                if (garbage) { break; }
-                attrName = attrName.toLowerCase();
-                if (attrValue[0] === '"' || attrValue[0] === "'") {
-                    attrValue = attrValue.substring(1, attrValue.length-1);
-                }
-                let attrPred = allowedAttrs[attrName];
-                //console.log("Attr pred", attrPred, "for", attrName, "=", attrValue);
-                if (attrPred && attrPred(attrValue)) {
-                    safeAttrs[attrName] = attrValue;
-                }
-            }
-            let safeTag = "<" + tagName;
-            for (let attrName in safeAttrs) {
-                let attrValue = safeAttrs[attrName];
-                safeTag += " " + attrName + "=\"" + (escapeBracesInAttrs ? escapeHtmlPreservingEntitiesAndEscapingBraces(attrValue) : e(attrValue)) + "\"";
-            }
-            safeTag += ">";
-            safeHtml += safeTag;
-            if (!EMPTY_TAGS.has(tagName)) {
-                // don't push empty tags onto the stack - they shouldn't have children
-                tagStack.push(tagName);
-            }
-        }
-        //console.log("Spinning on tags:", m);
-    }
-
-    while (tagStack.length) {
-        safeHtml += "</" + tagStack.pop() + ">";
-    }
-
-    // console.log("Sanitised", unsafeHtml, "to", safeHtml);
-
-    return safeHtml;
+const ALLOWED_ATTRIBUTES = {
+    // Global attributes allowed on any supplied element below.
+    // "*": new Set(["class", "dir", "id", "lang", "role", ARIA_ATTRIBUTE_PATTERN]),
+    a: new Set(["target", "href", "title", "rel"]),
+    img: new Set(["src", /*"srcset",*/ "alt", "title", "width", "height"]),
 };
 
-const mkSlot = (nameAndMaybeFormat) => {
-    let [slotName, ...format] = nameAndMaybeFormat.split(":");
-    format = format.join(":").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+// prettier-ignore-start
+const DISALLOWED_TAGS = new Set(["script", "style"]);
+
+// Taken from the default list in the sanitize-html package.
+const ALLOWED_TAGS = new Set([
+    "address", "article", "aside", "footer", "header", "h1", "h2", "h3", "h4",
+    "h5", "h6", "hgroup", "main", "nav", "section", "blockquote", "dd", "div",
+    "dl", "dt", "figcaption", "figure", "hr", "li", "main", "ol", "p", "pre",
+    "ul", "a", "abbr", "b", "bdi", "bdo", "br", "cite", "code", "data", "dfn",
+    "em", "i", "kbd", "mark", "q", "rb", "rp", "rt", "rtc", "ruby", "s", "samp",
+    "small", "span", "strong", "sub", "sup", "time", "u", "var", "wbr", "caption",
+    "col", "colgroup", "table", "tbody", "td", "tfoot", "th", "thead", "tr", "img"
+]);
+
+const ALLOWED_STYLES = new Set([
+    "margin", "margin-left", "margin-top", "margin-bottom", "margin-right",
+    "padding", "padding-left", "padding-top", "padding-bottom", "padding-right",
+    "font-size", "font-family", "font-weight", "font-style",
+    "border", "background-color", "color", 
+]);
+// prettier-ignore-end
+
+const allowedAttribute = (attribute, allowedAttributeSet) => {
+    const attributeName = attribute.name;
+    if (allowedAttributeSet.has(attributeName)) {
+        if (URI_ATTRIBUTES.has(attributeName)) {
+            return Boolean(SAFE_URL_PATTERN.test(attribute.nodeValue) || DATA_URL_PATTERN.test(attribute.nodeValue));
+        }
+        return true;
+    }
+    return false;
+};
+
+const sanitizeStyle = (styleObj) => {
+    for (const nameString of styleObj) {
+        if (!ALLOWED_STYLES.has(nameString)) {
+            styleObj.removeProperty(nameString);
+        }
+    }
+};
+
+const SLOT_REGEX = /(?:{{)|(?:}})|(?:{([a-zA-Z0-9\-_ :!.%&;^<>'"]*)})/g;
+
+function getSlotNodes(textContent, slots) {
+    // fast path things like "\n";
+    if (textContent.length < 2) return null;
+
+    const nodes = [];
+    let match;
+    let prevIndex = 0;
+
+    // we might as well concatenate strings where possible
+    const pushOrConcatText = (text) => {
+        if (text === "") return;
+        const lastIndex = nodes.length - 1;
+        if (typeof nodes[lastIndex] === "string") {
+            nodes[lastIndex] += text;
+        } else {
+            nodes.push(text);
+        }
+    };
+
+    while ((match = SLOT_REGEX.exec(textContent))) {
+        const [fullMatch, nameAndMaybeFormat] = match;
+        let upTo = match.index;
+        if (fullMatch === "{{" || fullMatch === "}}") {
+            upTo++;
+        }
+        pushOrConcatText(textContent.slice(prevIndex, upTo));
+        if (nameAndMaybeFormat) {
+            nodes.push(mkSlot(nameAndMaybeFormat, slots));
+        }
+        prevIndex = SLOT_REGEX.lastIndex;
+    }
+
+    // we didn't find anything to replace
+    if (nodes.length === 0) return null;
+
+    pushOrConcatText(textContent.slice(prevIndex));
+
+    return nodes;
+}
+
+function walkTextNodesInsertingSlots(rootNode, slots) {
+    const tree = document.createTreeWalker(rootNode, NodeFilter.SHOW_TEXT);
+    let prevNode;
+    let node = tree.nextNode();
+    while (node) {
+        // we're walking textNodes so we can only access the textContent property
+        const replaceNodes = getSlotNodes(node.textContent, slots);
+        prevNode = node;
+        // set node before maybe replacing it in the dom
+        node = tree.nextNode();
+        if (replaceNodes !== null) {
+            // text will be inserted as textNodes
+            prevNode.replaceWith(...replaceNodes);
+        }
+    }
+}
+
+function sanitizeHtml(unsafeHtml) {
+    const domParser = new window.DOMParser();
+    const inertDocument = domParser.parseFromString(unsafeHtml, "text/html");
+    const tree = inertDocument.createTreeWalker(inertDocument.body, NodeFilter.SHOW_ELEMENT);
+
+    let node;
+    while ((node = tree.nextNode())) {
+        const nodeName = node.nodeName.toLowerCase();
+
+        if (DISALLOWED_TAGS.has(nodeName)) {
+            // script and style tags should be removed entirely
+            tree.previousNode();
+            node.remove();
+            continue;
+        }
+
+        if (!ALLOWED_TAGS.has(nodeName)) {
+            // use childNodes over children so we keep the inner text nodes
+            const childNodes = [...node.childNodes];
+            tree.previousNode();
+            node.replaceChildren();
+            node.replaceWith(...childNodes);
+            continue;
+        }
+
+        const allowedAttributes = ALLOWED_ATTRIBUTES[nodeName] ?? EMPTY_SET;
+
+        for (const attribute of [...node.attributes]) {
+            const attributeName = attribute.name;
+            if (attributeName === "style") {
+                sanitizeStyle(node.style);
+            } else if (ARIA_ATTRIBUTE_PATTERN.test(attributeName)) {
+                continue;
+            } else if (!allowedAttribute(attribute, allowedAttributes)) {
+                node.removeAttribute(attributeName);
+            }
+        }
+    }
+
+    return inertDocument.body;
+}
+
+/**
+ * @param {string} nameAndMaybeFormat The f-string like expression
+ * @param {any} slots Mutates this in place with details about the slot inserted
+ * @returns {HTMLSpanElement}
+ */
+const mkSlot = (nameAndMaybeFormat, slots) => {
+    const formatIndex = nameAndMaybeFormat.indexOf(":");
+    let slotName,
+        format = "";
+    if (formatIndex === -1) {
+        slotName = nameAndMaybeFormat;
+    } else {
+        slotName = nameAndMaybeFormat.slice(0, formatIndex);
+        format = nameAndMaybeFormat.slice(formatIndex + 1);
+    }
     let flag = null;
     slotName = slotName.replace(/![sr]$/, (m) => {
         flag = m;
         return "";
     });
-    return {
-        slotName,
-        format,
-        flag,
-        hasComponents: false,
-        slotHTML: `<span style="display: inline-block;" x-anvil-slot="${slotName}" className="anvil-always-inline-container"><code class="anvil-slot-name">{${nameAndMaybeFormat}}</code></span>`,
-    };
+    const [domNode, { placeHolder }] = (
+        <span style="display: inline-block;" x-anvil-slot={slotName} className="anvil-always-inline-container">
+            <code refName="placeHolder" class="anvil-slot-name">
+                {nameAndMaybeFormat}
+            </code>
+        </span>
+    );
+
+    slots[slotName] = { format, flag, hasComponents: false, domNode, placeHolder };
+
+    return domNode;
 };
-const slotRegex = /(?:{{)|(?:}})|(?:{([a-zA-Z0-9\-_ :!.%&;^<>]*)})/g;
 
 module.exports = (pyModule) => {
 
@@ -212,50 +264,38 @@ module.exports = (pyModule) => {
     };
 
     const updateContent = (self, e) => {
-        const content = self._anvil.props.content?.toString() || "";
+        const content = self._anvil.props.content?.toString() ?? "";
         const format = self._anvil.props.format?.toString();
-        const enableSlots = self._anvil.props.enable_slots?.v;
+        const enableSlots = isTrue(self._anvil.props.enable_slots);
+        const slots = (self._anvil.slots = {});
+        const components = self._anvil.components;
 
-        let rawText = "";
-        let rawHtml = undefined;
+        let rootNode;
+        let isText = false;
         if (format === "markdown") {
-            rawHtml = md.render(content);
+            rootNode = document.createElement("div");
+            rootNode.innerHTML = md.render(content);
         } else if (format === "restricted_html") {
-            rawHtml = sanitizeHtml(content, !!enableSlots);
+            rootNode = sanitizeHtml(content);
         } else {
-            rawText = content;
+            rootNode = document.createElement("div");
+            rootNode.innerText = content;
+            isText = true;
         }
-
-        e.classList.toggle("has-text", !!content);
-
         // We're about to wipe out the contents of this DOM element, so we need to preserve our children.
         // Start by detaching them, then later we'll put them back.
-        const components = self._anvil.components;
         for (let c of components) {
-            $(c.component.anvil$hooks.domElement).detach();
+            c.component.anvil$hooks.domElement.remove();
         }
 
-        let html = rawHtml ? rawHtml.trim() : escapeHtml(rawText);
-        const slots = (self._anvil.slots = {});
         if (enableSlots) {
-            // TODO: Surely there's a nicer way to do this?!
-            e.innerHTML = html.replace(slotRegex, (doubleBracket, nameAndMaybeFormat) => {
-                if (doubleBracket === "{{") return "{";
-                if (doubleBracket === "}}") return "}";
-                const { slotName, slotHTML, ...slot } = mkSlot(nameAndMaybeFormat);
-                slots[slotName] = slot;
-                return slotHTML;
-            });
-            e.querySelectorAll("[x-anvil-slot]").forEach((domNode) => {
-                const slotName = domNode.getAttribute("x-anvil-slot");
-                slots[slotName].domNode = domNode;
-                slots[slotName].placeHolder = domNode.firstElementChild;
-            });
-        } else {
-            e.innerHTML = html;
+            walkTextNodesInsertingSlots(rootNode, slots);
         }
 
-        e.style.whiteSpace = rawHtml ? "unset" : "pre-wrap";
+        e.replaceChildren(...rootNode.childNodes);
+        e.classList.toggle("has-text", !!content);
+        e.style.whiteSpace = isText ? "pre-wrap" : "unset";
+
 
         for (let c of components) {
             addComponentToDom(self, c.component, c.layoutProperties);
@@ -320,11 +360,11 @@ module.exports = (pyModule) => {
         // Clear all slots we previously filled, but haven't replaced this time.
         for (let slotName of slotsToClearOrReplace) {
             if (self._anvil.populatedDataSlots.indexOf(slotName) === -1) {
-                fns.push(() => PyDefUtils.pyCallOrSuspend(clear, [], ["slot", new Sk.builtin.str(slotName)]))
+                fns.push(() => PyDefUtils.pyCallOrSuspend(clear, [], ["slot", new Sk.builtin.str(slotName)]));
             }
         }
         return Sk.misceval.chain(null, ...fns);              
-    }
+    };
 
     pyModule["RichText"] = PyDefUtils.mkComponentCls(pyModule, "RichText", {
         base: pyModule["ClassicContainer"],
@@ -404,9 +444,9 @@ module.exports = (pyModule) => {
             });
 
 
-            /*!defMethod(_,component,slot)!2*/ "Add a component to this panel, in the specified slot"
+            /*!defMethod(_,component,slot)!2*/ "Add a component to this panel, in the specified slot";
             $loc["add_component"] = new PyDefUtils.funcWithKwargs(function (kwargs, self, component) {
-                pyModule["ClassicContainer"]._check_no_parent(component);
+                validateChild(component);
 
                 return Sk.misceval.chain(component.anvil$hooks.setupDom(), (elt) => {
                     if (isInvisibleComponent(component)) {
@@ -429,7 +469,7 @@ module.exports = (pyModule) => {
             });
 
             const removeFromParentStr = new Sk.builtin.str("remove_from_parent");
-            /*!defMethod(_,[slot="slot_name"])!2*/ "clear the Rich Text Component of all components or clear a specific slot of components."
+            /*!defMethod(_,[slot="slot_name"])!2*/ "clear the Rich Text Component of all components or clear a specific slot of components.";
             $loc["clear"] = new PyDefUtils.funcWithKwargs(function (kwargs, self) {
                 const components = self._anvil.components.slice(0);
                 const slot = kwargs["slot"];
@@ -467,3 +507,14 @@ module.exports = (pyModule) => {
 };
 
 /*!defClass(anvil,RichText,Container)!*/
+
+
+/** Polyfill for replaceChildren - not supported below Safari 14 so we probably should polyfill - core-js doesn't */
+Document.prototype.replaceChildren ??= replaceChildren;
+DocumentFragment.prototype.replaceChildren ??= replaceChildren;
+Element.prototype.replaceChildren ??= replaceChildren;
+
+function replaceChildren() {
+    this.innerHTML = "";
+    this.append.apply(this, arguments);
+}

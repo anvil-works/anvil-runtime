@@ -37,7 +37,7 @@ def _has_content(method):
 #     url: "The request will be made to this URL.",
 #     method: "The HTTP method. Defaults to 'GET'.",
 #     data: "The data to send in the request body",
-#     json: "If set to True, the response is parsed into Python objects (dicts/lists/etc), and ‘data’ is JSON-encoded before sending. If False, the response will be a Media object.",
+#     json: "If set to True, the response is parsed into Python objects (dicts/lists/etc), and 'data' is JSON-encoded before sending. If False, the response will be a Media object.",
 #     headers: "A dict of strings to set HTTP headers",
 #     username: "If specified, used to perform HTTP Basic authentication",
 #     password: "If specified, used to perform HTTP Basic authentication",

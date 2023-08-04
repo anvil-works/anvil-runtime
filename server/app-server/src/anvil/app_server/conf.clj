@@ -10,6 +10,8 @@
 (defmacro def-config-var [sym kw]
   `(defn ~sym [] (~kw @config)))
 
+(def-config-var get-dep-ids :dep-id)
+
 (def-config-var get-app-origin :origin)
 
 (def-config-var get-main-app-id :app)
@@ -31,6 +33,8 @@
 (def-config-var get-client-uplink-key :client-uplink-key)
 
 (def-config-var is-proxied? :proxied?)
+
+(def-config-var get-google-refresh-token :google-refresh-token)
 
 (defn set-config! [conf]
   (reset! config (-> (merge DEFAULTS conf)

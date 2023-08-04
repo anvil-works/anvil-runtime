@@ -10,6 +10,7 @@ import {pyCall, pyList, pyObject, pyStr} from "../@Sk";
 import {Component} from "../components/Component";
 import {runPostSetupHooks} from "./components-in-js/common";
 import {pyDesignerApi} from "./component-designer-api";
+import { Container } from "@runtime/components/Container";
 
 export const skulptFiles: {[filename:string]: string} = {};
 
@@ -33,7 +34,7 @@ function builtinRead(path: string) {
                 
                 // this is undefined when this module first loads since the runner is loaded before we set window.anvilSkulptLib
                 
-                const fetchUrl = window.anvilSkulptLib.replace("file-number", ""+file);
+                const fetchUrl = window.anvilSkulptLib[file];
                 xhr.open("GET", fetchUrl, true);
                 xhr.onload = function () {
                     const newFiles = JSON.parse(this.responseText);
@@ -59,8 +60,6 @@ function loadOrdinaryModulesReturningAnvilModule() {
 
     // Preload all modules we will ever load under the "anvil" package now, because we might need to duplicate
     // them later for v1 runtime apps
-    const jsonModule = require("../modules/json")();
-    PyDefUtils.loadModule("json", jsonModule);
 
     const base64Module = require("../modules/base64")();
     PyDefUtils.loadModule("base64", base64Module);
@@ -125,7 +124,7 @@ function setupAppSourceCode() {
     const dependencyPackageNames = [];
     const dataBindingCompilations = {};
 
-    for (const [depId, depApp] of Object.entries(data.app.dependency_code)) {
+    for (const [depAppId, depApp] of Object.entries(data.app.dependency_code)) {
         if (!depApp.package_name) { continue; }
 
         if (dependencyPackageNames.indexOf(depApp.package_name) == -1) {
@@ -177,7 +176,7 @@ window.anvilFormTemplates = [];
 
 function setupAppTemplates(
     yaml: AppYaml | DependencyYaml,
-    depId: string | null,
+    depAppId: string | null,
     appPackage: string,
     anvilModule: PyModMap
 ) {
@@ -219,7 +218,7 @@ function setupAppTemplates(
             `/*INSERT*/ mod['${className}Template'] = window.anvilFormTemplates[${aft.length}];`
         );
 
-        const pyTemplateClass = createFormTemplateClass(form, depId, className, anvilModule);
+        const pyTemplateClass = createFormTemplateClass(form, depAppId, className, anvilModule);
         aft[aft.length] = pyTemplateClass;
         if (perAppAnvilModule) {
             perAppAnvilModule[`${className}Template`] = pyTemplateClass;
@@ -243,6 +242,7 @@ export function setupPythonEnvironment(preloadModules: string[]) {
 
     // This runner *does* expose the root "Component" class
     anvilModule["Component"] = Component;
+    anvilModule["Container"] = Container;
 
     // Inject the theme HTML assets into the HtmlTemplate component
     anvilModule["HtmlTemplate"].$_anvilThemeAssets = data.app.theme?.html || {};
@@ -256,12 +256,12 @@ export function setupPythonEnvironment(preloadModules: string[]) {
 
     runPostSetupHooks();
 
-    for (const [depId, depApp] of Object.entries(data.app.dependency_code)) {
+    for (const [depAppId, depApp] of Object.entries(data.app.dependency_code)) {
 
         if (!depApp.package_name)
             continue;
 
-        setupAppTemplates(depApp, depId, depApp.package_name, anvilModule);
+        setupAppTemplates(depApp, depAppId, depApp.package_name, anvilModule);
     }
 
     setupAppTemplates(data.app, null, data.appPackage, anvilModule);

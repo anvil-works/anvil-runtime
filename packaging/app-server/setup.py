@@ -1,7 +1,7 @@
 from setuptools import setup,find_packages
 setup(
     name="anvil-app-server",
-    version="1.8.0",
+    version="1.9.0",
     packages=find_packages(),
     install_requires=["pychrome", "anvil-uplink==0.4.2", "progressbar2", "wheel", "psutil"],
 

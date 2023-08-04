@@ -32,7 +32,7 @@
                                      (:value (secrets/get-global-app-secret-value *app-info* "google-service/client-secret" encrypted-client-secret)))
                                    (get-in google-service [:server_config :client_secret])
                                    (and (:custom? conf/google-client-config) (:client-secret conf/google-client-config)))]
-      (:access_token (anvil.core.google-oauth2/refresh-access-token refresh-token google-client-id google-client-secret)))))
+      (:access_token (anvil.core.sso.google/refresh-access-token refresh-token google-client-id google-client-secret)))))
 
 (defn- get-config [_kwargs]
   (:client_config (first (filter #(= (:source %) "/runtime/services/google.yml") (:services *app*)))))

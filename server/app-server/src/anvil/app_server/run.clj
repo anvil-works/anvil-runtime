@@ -39,7 +39,7 @@
             [anvil.runtime.app-log :as app-log]
             [clojure.java.jdbc :as jdbc]
             [anvil.dispatcher.background-tasks :as background-tasks]
-            [cheshire.core :as json]
+            [anvil.dispatcher.native-rpc-handlers.google.util :as google-util]
             [anvil.dispatcher.native-rpc-handlers.email :as email])
   (:gen-class)
   (:import (org.subethamail.smtp.server SMTPServer)
@@ -56,17 +56,16 @@
 ;; This will invalidate persistent downlinks.
 (def next-app-revision (atom 0))
 
-(defn- load-app [app-id]
+(defn- load-app [package-name]
   (let [now (delay (System/currentTimeMillis))]
-    (if (re-matches #"[a-zA-Z0-9_]+" app-id)
-      (let [app-id ^String (conf/get-app-package app-id)
-            {:keys [app loaded last-touched] :as cache} (get @app-cache app-id)]
+    (if (re-matches #"[a-zA-Z0-9_]+" package-name)
+      (let [{:keys [app loaded last-touched] :as cache} (get @app-cache package-name)]
         (if (and app (> last-touched (- @now 500)) (> loaded (- @now 10000)))
           (do
-            (swap! app-cache assoc-in [app-id :last-touched] @now)
+            (swap! app-cache assoc-in [package-name :last-touched] @now)
             app)
 
-          (let [f (File. ^String (conf/get-app-path) app-id)]
+          (let [f (File. ^String (conf/get-app-path) package-name)]
             (when (.isDirectory f)
               (let [yaml (read-app-storage/get-app-yaml-from-resource-directory (.toURL f) true false)
 
@@ -82,22 +81,23 @@
                                           (assoc-in service [:server_config :user_table] table-name)
                                           service))))
 
-                    prev-app (get-in @app-cache [app-id :app])
+                    prev-app (get-in @app-cache [package-name :app])
 
-                    app {:id      app-id
+                    app {:id      package-name
                          :content yaml
-                         :info    {:id    app-id
-                                   :name  (or (:name yaml) app-id)
-                                   :alias "UNUSED"}}
+                         :info    {:id      package-name
+                                   :dep_ids (conf/get-dep-ids)
+                                   :name    (or (:name yaml) package-name)
+                                   :alias   "UNUSED"}}
                     app (if (= app (dissoc prev-app :version))
                           prev-app
                           (let [v (swap! next-app-revision inc)]
                             (log/trace "Invalidating; new version" v)
                             (assoc app :version v)))]
-                (swap! app-cache assoc app-id {:app app, :loaded @now :last-touched @now})
+                (swap! app-cache assoc package-name {:app app, :loaded @now :last-touched @now})
 
                 app)))))
-      (log/error (str "Cannot load app '" app-id "' - this is not a valid Python package name. Valid names may include only letters, numbers and underscores (_).")))))
+      (log/error (str "Cannot load app '" package-name "' - this is not a valid Python package name. Valid names may include only letters, numbers and underscores (_).")))))
 
 (defn launch-shell! [uplink-key server-host server-port]
   (doto (Thread. ^Runnable
@@ -198,6 +198,10 @@
                                                     (throw+ {:anvil/server-error "No SMTP server has been configured"}))
 
                                                   (email/open-smtp-connection smtp-config)))})
+
+(google-util/set-google-token-hooks! {:get-delegation-refresh-token (fn [app-info service-config]
+                                                                      (or (conf/get-google-refresh-token)
+                                                                          (:delegation_refresh_token service-config)))})
 
 ;; AGPL compliance: Serve up our source code (or, if we are an official release package, a GitHub link)
 (def source-link (delay
@@ -324,6 +328,7 @@
                               [nil "--google-client-id CLIENT_ID" "Client ID to use for Google authentication"]
                               [nil "--google-client-secret CLIENT_SECRET" "Client secret to use for Google authentication"]
                               [nil "--google-api-key KEY" "API key to use for Google integration"]
+                              [nil "--google-refresh-token TOKEN" "Refresh token to use for delegated Google access (eg App Files)"]
                               [nil "--facebook-app-id APP_ID" "App ID to use for Facebook authentication"]
                               [nil "--facebook-app-secret APP_SECRET" "App secret to use for Facebook authentication"]
                               [nil "--microsoft-app-id APP_ID" "App ID to use for Microsoft authentication"]

@@ -42,7 +42,8 @@
         "base64DecToStr": "readonly",
         "base64EncStr": "readonly",
         "Sk": "readonly",
-        "ANVIL_IN_DESIGNER": "readonly"
+        "ANVIL_IN_DESIGNER": "readonly",
+        "BUILD_TIME": "readonly"
     },
     "ignorePatterns": [
         "lib/*.js"

@@ -2,7 +2,7 @@
 
 [Anvil](https://anvil.works) is a platform for building full-stack web apps with nothing but Python. The Anvil Runtime is the open-source engine that powers those apps.
 
-The [Anvil App Server](../README.md) serves Anvil apps, which follow a certain directory structure. You can create an Anvil app from scratch using your Text Editor, using the [create-anvil-app](creating-and-editing-apps.md) command, or by [cloning an app with Git](https://anvil.works/docs/version-control/git) from the [online IDE](https://anvil.works/build) (the [Anvil Editor](https://anvil.works/docs/editor)).
+The [Anvil App Server](../README.md) serves Anvil apps, which follow a certain directory structure. You can create an Anvil app from scratch using your Text Editor, using the [create-anvil-app](creating-and-editing-apps.md) command, or by [cloning an app with Git](https://anvil.works/docs/version-control-new-ide/git) from the [online IDE](https://anvil.works/build) (the [Anvil Editor](https://anvil.works/docs/editor)).
 
 ## Anvil app structure
 
@@ -379,7 +379,7 @@ If the database is already configured with a different schema, the App Server wi
 
 Anvil's [Users Service](https://anvil.works/docs/users) handles authentication, including signup, login and user permissions, and provides a range of functionality to make user management easy and flexible.
 
-The best way to enable the Users Service is to enable it in the [online IDE](https://anvil.works/build), and then [clone your app onto your local machine](https://anvil.works/docs/version-control/git). You can also enable the Users Service in `anvil.yaml`, as well as configuring the service itself. 
+The best way to enable the Users Service is to enable it in the [online IDE](https://anvil.works/build), and then [clone your app onto your local machine](https://anvil.works/docs/version-control-new-ide/git). You can also enable the Users Service in `anvil.yaml`, as well as configuring the service itself. 
 
 If you're using the Users Service, user accounts are stored in a Data Table, conventionally called "users" (see above for information on Data Tables).
 

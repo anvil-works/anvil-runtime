@@ -1,11 +1,12 @@
 "use strict";
 
-import {s_add_component, s_clear} from "../runner/py-util";
+import {pyCall, pyDict, pyFunc, pyMappingProxy, pyNone, pyProperty, pyStr, toPy} from "@Sk";
+import { s_add_component, s_clear } from "../runner/py-util";
+import { Slot } from "../runner/python-objects";
+import { isInvisibleComponent } from "./helpers";
+import { validateChild } from "./Container";
 
 var PyDefUtils = require("PyDefUtils");
-import { isInvisibleComponent } from "./helpers";
-import {Slot} from "../runner/python-objects";
-import {chainOrSuspend, pyCallOrSuspend, pyStr, retryOptionalSuspensionOrThrow} from "../@Sk";
 
 module.exports = (pyModule) => {
 
@@ -26,43 +27,63 @@ module.exports = (pyModule) => {
                 initialize: true,
                 set(s, e, v) {
                     const components = s._anvil.components;
+                    const domNode = s.anvil$hooks.domElement;
+                    let rv;
+
                     components.forEach(({component}) => {
-                        $(component.anvil$hooks.domElement).detach();
+                        component.anvil$hooks.domElement.remove();
                     });
+
                     v = v.toString();
                     const m = v.match(/^@theme:(.*)$/);
                     if (m) {
                         v = pyModule["HtmlTemplate"].$_anvilThemeAssets[m[1]] || "";
                     }
                     try {
-                        e.html(v);
+                        domNode.innerHTML = v;
                     } catch (exc) {
                         console.log("Probably irrelevant HTML/Javascript-parsing exception:", exc);
                     }
 
                     // Loading CSS can cause height changes
-                    e.find("link").on("load", (e) => {
-                        if (PyDefUtils.updateHeight) PyDefUtils.updateHeight();
-                    });
+                    for (const link of domNode.querySelectorAll("link")) {
+                        link.addEventListener("load", (e) => {
+                            PyDefUtils.updateHeight?.();
+                        });
+                    }
 
-                    s._anvil.scripts = Array.from(e.find("script")).map((script) => {
+                    s._anvil.scripts = Array.from(domNode.querySelectorAll("script")).map((script) => {
                         const textContent = script.textContent;
                         script.textContent = "";
                         const src = script.src;
                         if (src) script.removeAttribute("src");
                         // we will add the textConent and src in the pageEvents.add callback
                         // this is to prevent jquery append doing it for us!
-                        const isAsync = script.attributes.async?.value;
+                        const isAsync = script.getAttribute("async") != null;
                         // because firefox sets the async property to true for dynamically created scripts
                         // div.innerHtml = "<script src='..'></script>" in firefox async is true, chrome it's false
                         // https://developer.mozilla.org/en-US/docs/Web/HTML/Element/script#compatibility_notes
                         return { script, textContent, src, isAsync };
                     });
                     // we need to store these now and add them dom when the component is added to the dom
+                    // unless we're already on the page
+                    if (s._anvil.onPage) {
+                        rv = loadScripts(s);
+                    }
+
+                    s._anvil.pyElements = new pyMappingProxy(
+                        new pyDict(
+                            [].concat(
+                                ...Array.from(domNode.querySelectorAll("[anvil-name]")).map((elt) => [
+                                    new pyStr(elt.getAttribute("anvil-name")),
+                                    toPy(elt),
+                                ])
+                            )
+                        )
+                    );
 
                     const slots = (s._anvil.slots = {});
-                    const outer = s._anvil.elements.outer;
-                    outer.querySelectorAll("[anvil-slot]").forEach((element) => {
+                    domNode.querySelectorAll("[anvil-slot]").forEach((element) => {
                         element.classList.add("anvil-inline-container"); // is this right?
                         const slotName = element.getAttribute("anvil-slot");
                         if (slotName) {
@@ -75,7 +96,7 @@ module.exports = (pyModule) => {
                         }
                     });
 
-                    outer.querySelectorAll("[anvil-slot-repeat]").forEach((element) => {
+                    domNode.querySelectorAll("[anvil-slot-repeat]").forEach((element) => {
                         s._anvil.slots[element.getAttribute("anvil-slot-repeat")] = {
                             element,
                             hide_if_empty: [],
@@ -85,7 +106,7 @@ module.exports = (pyModule) => {
                         };
                     });
 
-                    outer.querySelectorAll("[anvil-hide-if-slot-empty], [anvil-if-slot-empty]").forEach((elt) => {
+                    domNode.querySelectorAll("[anvil-hide-if-slot-empty], [anvil-if-slot-empty]").forEach((elt) => {
                         let slot = slots[elt.getAttribute("anvil-hide-if-slot-empty")];
                         if (slot) {
                             slot.hide_if_empty.push(elt);
@@ -113,10 +134,11 @@ module.exports = (pyModule) => {
                     // 2. Nuke pyLayoutSlots
                     s._anvil.pyLayoutSlots = new Sk.builtin.dict();
 
+                    // Add all the non-slot components to the dom
                     components.forEach((c) => {
                         const component = c.component;
-                        const removeFn = addComponentToDom(s, component, c.layoutProperties["slot"]);
-                        component.anvilComponent$setParent(s, removeFn);
+                        const callbacks = addComponentToDom(s, component, c.layoutProperties["slot"]);
+                        component.anvilComponent$setParent(s, callbacks);
                     });
 
                     // 3. Rebuild pyLayoutSlots
@@ -139,9 +161,10 @@ module.exports = (pyModule) => {
 
                         const addComponent = slot.tp$getattr(s_add_component);
                         for (const component of oldSlot?.components || []) {
-                            Sk.misceval.callsimArray(addComponent, [component]);
+                            pyCall(addComponent, [component]);
                         }
                     }
+                    return rv;
                 },
             },
         }),
@@ -166,10 +189,13 @@ module.exports = (pyModule) => {
                 // Store this on self so we can call it from DesignHtmlPanel
                 self._anvil.addComponentToDom = addComponentToDom;
 
-                self._anvil.slots || (self._anvil.slots = {});
-                self._anvil.scripts || (self._anvil.scripts = []);
+                self._anvil.slots ||= {};
+                self._anvil.scripts ||= [];
 
                 self._anvil.pyLayoutSlots ||= new Sk.builtin.dict();
+
+                self._anvil.pyElements ||= new Sk.builtin.dict();
+                self._anvil.pyElementsOverwrite = undefined; // the '.element' property was introduced in 2023, so we need to make sure it's overwritable
 
                 self._anvil.element.on("_anvil-call", (e, resolve, reject, fn, ...args) => {
                     const err = (msg) => {
@@ -222,45 +248,8 @@ module.exports = (pyModule) => {
 
                 self._anvil.pageEvents = {
                     beforeAdd() {
-                        let promise;
-                        self._anvil.scripts.forEach(({script: oldScript, textContent, src, isAsync}) => {
-                            if (src) oldScript.src = src;
-                            
-                            const newScript = document.createElement("script");
-                            newScript.async = isAsync;
-                            newScript.textContent = textContent;
-                            for (const attr of oldScript.attributes) {
-                                newScript.setAttribute(attr.name, attr.value);
-                            }
-                            // this is a varaition on what jQuery does 
-                            // it means that functions exist in the window name space when we add them to the dom
-                            // just adding the component to the dom isn't enough
-                            // since the script tags were initially added via the jquery html mechanism
-                            const parentNode = oldScript.isConnected ? oldScript.parentNode : null;
-                            // The parentNode might be null if the html was replaced before being added to the screen
-                            // This might happen if anvil.js was used and the innerHTML was changed via dom manipulation
-                            // if there is no parentNode or domNode.isConnected === false
-                            // then we shouldn't add the scripts to the dom. (polyfill for isConnected below)
-                            if (promise) {
-                                promise = promise.then(() => parentNode?.replaceChild(newScript, oldScript));
-                            } else {
-                                parentNode?.replaceChild(newScript, oldScript);
-                            }
-                            if (parentNode && src && (oldScript.type || "").toLowerCase() !== "module" && !isAsync) {
-                                const p = new Promise((resolve) => {
-                                    newScript.onload = resolve;
-                                    newScript.onerror = () => {
-                                        Sk.builtin.print([new Sk.builtin.str(`Warning: failed to load script with src: ${oldScript.src}`)])
-                                        console.error(`error loading ${oldScript.src}`);
-                                        resolve();
-                                    };
-                                });
-                                promise = promise ? promise.then(() => p) : p;
-                            }
-                        });
+                        return loadScripts(self);
 
-                        self._anvil.scripts = [];
-                        return promise && Sk.misceval.promiseToSuspension(promise);
                     }
                 };
 
@@ -272,9 +261,18 @@ module.exports = (pyModule) => {
                 })
             );
 
+            /*!defAttr()!1*/ ({name: "dom_nodes", type: "dict", description: "A read-only dictionary allowing you to look up the DOM node by name for any HTML tag in this component's HTML that has an anvil-name= attribute."});
+            $loc["dom_nodes"] = new pyProperty(
+                new pyFunc(self => self._anvil.pyElementsOverwrite ?? self._anvil.pyElements),
+                new pyFunc((self, value) => {
+                    self._anvil.pyElementsOverwrite = value;
+                    return pyNone;
+                })
+            );
+
             /*!defMethod(_,component,[slot="default"])!2*/ "Add a component to the named slot of this HTML templated panel. If no slot is specified, the 'default' slot will be used."
             $loc["add_component"] = new PyDefUtils.funcWithKwargs(function (kwargs, self, component) {
-                pyModule["ClassicContainer"]._check_no_parent(component);
+                validateChild(component);
 
                 return Sk.misceval.chain(
                     component.anvil$hooks.setupDom(),
@@ -282,9 +280,9 @@ module.exports = (pyModule) => {
                         if (isInvisibleComponent(component)) {
                             return pyModule["ClassicContainer"]._doAddComponent(self, component);
                         }
-                        const detachDom = addComponentToDom(self, component, kwargs["slot"]);
+                        const {onRemove, setVisibility} = addComponentToDom(self, component, kwargs["slot"], kwargs["index"]);
 
-                        return pyModule["ClassicContainer"]._doAddComponent(self, component, kwargs, { detachDom });
+                        return pyModule["ClassicContainer"]._doAddComponent(self, component, kwargs, { detachDom: onRemove, setVisibility });
                     });
             });
 
@@ -312,8 +310,8 @@ module.exports = (pyModule) => {
     pyModule["HtmlTemplate"].$_anvilThemeAssets = {};
 
 
-    // Returns removeFn
-    function addComponentToDom(self, pyComponent, slotName) {
+    // Returns {onRemove, setVisibility}
+    function addComponentToDom(self, pyComponent, slotName, index) {
         const celt = pyComponent.anvil$hooks.domElement;
         const isDropzone = celt.hasAttribute("anvil-dropzone");
 
@@ -326,6 +324,25 @@ module.exports = (pyModule) => {
             });
         };
 
+        // Unless index is undefined, we're inserting before a particular component in this slot.
+        // We want to identify this component, find its container component, and insert before it.
+
+        let insertingBeforeComponentInSlot;
+        if (index !== undefined) {
+            // Find the next component after `index` that's in this slot
+            for (let i=index; i < self._anvil.components.length; i++) {
+                const sn = self._anvil.components[i].layoutProperties?.slot ?? "default";
+                if (sn === slotName) {
+                    insertingBeforeComponentInSlot = self._anvil.components[i].component;
+                    break;
+                }
+            }
+        }
+
+        // We want to know
+        // * Which component we're inserting be
+        // * The insertion index
+
         // Is there a spec for this slot
         const slot = self._anvil.slots[slotName];
 
@@ -335,10 +352,22 @@ module.exports = (pyModule) => {
                 // we only need to do this if we are an empty slot
                 delEmptyMarkers(slot, true);
             }
-            slot.components.push(pyComponent);
+
+            // If we're inserting before a component in this slot, identify it and grab its largest per-component element
+            const idxInSlot = slot.components.findIndex(({component}) => component === insertingBeforeComponentInSlot);
+            const insertingBeforeElement = idxInSlot !== -1 && slot.components[idxInSlot].carrierElement;
+
+            let onRemove, setVisibility;
+
+            const slotRecord = {component: pyComponent, carrierElement: pyComponent.anvil$hooks.domElement};
+            if (idxInSlot === -1) {
+                slot.components.push(slotRecord);
+            } else {
+                slot.components.splice(idxInSlot, 0, slotRecord);
+            }
 
             if (slot.repeat) {
-                const s_copy = slotElt.cloneNode(true);
+                const s_copy = slotRecord.carrierElement = slotElt.cloneNode(true);
                 s_copy.removeAttribute("anvil-slot-repeat");
                 s_copy.setAttribute("anvil-slot-repeated", slotName);
                 const dropZone = s_copy.querySelector("[anvil-slot]");
@@ -351,35 +380,98 @@ module.exports = (pyModule) => {
                 } else {
                     s_copy.appendChild(celt);
                 }
-                slotElt.insertAdjacentElement("beforebegin", s_copy);
-                return () => {
+                (insertingBeforeElement || slotElt).insertAdjacentElement("beforebegin", s_copy);
+                onRemove = () => {
                     s_copy.remove();
-                    slot.components = slot.components.filter((c) => c !== pyComponent);
+                    slot.components = slot.components.filter((c) => c.component !== pyComponent);
                     if (!slot.components.length) {
                         delEmptyMarkers(slot, false);
                     }
                     return Sk.builtin.none.none$;
                 };
+                let visibleDisplayState = s_copy.style.display;
+                setVisibility = (v) => {
+                    s_copy.style.display = v ? visibleDisplayState : "none";
+                };
             } else {
-                slotElt.appendChild(celt);
-                return () => {
+                if (insertingBeforeElement) {
+                    insertingBeforeElement.insertAdjacentElement("beforebegin", celt);
+                } else {
+                    slotElt.appendChild(celt);
+                }
+                onRemove = () => {
                     celt.remove();
-                    slot.components = slot.components.filter((c) => c !== pyComponent);
+                    slot.components = slot.components.filter((c) => c.component !== pyComponent);
                     if (!slot.components.length) {
                         delEmptyMarkers(slot, false);
                     }
                     return Sk.builtin.none.none$;
                 };
             }
+            return {onRemove, setVisibility};
         }
 
+        // We don't have an explicit slot of that name. Fall back to the default slot.
+        // If we are already trying to insert into "default" and there *still* isn't a slot
+        // of that name, we manually add component elements to the end of our DOM node - in the correct order.
 
         if (slotName === "default") {
             // fall-through to appending to ourselves!
-            self._anvil.elements.outer.appendChild(celt);
+            if (insertingBeforeComponentInSlot) {
+                insertingBeforeComponentInSlot.anvil$hooks.domElement.insertAdjacentElement("beforebegin", celt);
+            } else {
+                self._anvil.elements.outer.appendChild(celt);
+            }
+            return {onRemove: () => celt.remove()};
         } else {
-            return addComponentToDom(self, pyComponent, "default");
+            return addComponentToDom(self, pyComponent, "default", index);
         }
+    }
+
+
+    function loadScripts(self) {
+        let promise;
+        const scripts = self._anvil.scripts;
+        self._anvil.scripts = [];
+
+        scripts.forEach(({script: oldScript, textContent, src, isAsync}) => {
+            if (src) oldScript.src = src;
+            
+            const newScript = document.createElement("script");
+            newScript.async = isAsync;
+            newScript.textContent = textContent;
+            for (const attr of oldScript.attributes) {
+                newScript.setAttribute(attr.name, attr.value);
+            }
+            // this is a varaition on what jQuery does 
+            // it means that functions exist in the window name space when we add them to the dom
+            // just adding the component to the dom isn't enough
+            // since the script tags were initially added via the jquery html mechanism
+            const parentNode = oldScript.isConnected ? oldScript.parentNode : null;
+            // The parentNode might be null if the html was replaced before being added to the screen
+            // This might happen if anvil.js was used and the innerHTML was changed via dom manipulation
+            // if there is no parentNode or domNode.isConnected === false
+            // then we shouldn't add the scripts to the dom. (polyfill for isConnected below)
+            if (promise) {
+                promise = promise.then(() => parentNode?.replaceChild(newScript, oldScript));
+            } else {
+                parentNode?.replaceChild(newScript, oldScript);
+            }
+            if (parentNode && src && (oldScript.type || "").toLowerCase() !== "module" && !isAsync) {
+                const p = new Promise((resolve) => {
+                    newScript.onload = resolve;
+                    newScript.onerror = () => {
+                        Sk.builtin.print([new Sk.builtin.str(`Warning: failed to load script with src: ${oldScript.src}`)])
+                        console.error(`error loading ${oldScript.src}`);
+                        resolve();
+                    };
+                });
+                promise = promise ? promise.then(() => p) : p;
+            }
+        });
+
+        
+        return promise && Sk.misceval.promiseToSuspension(promise);
     }
 
 };

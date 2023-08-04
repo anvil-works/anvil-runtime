@@ -19,7 +19,7 @@ import {
     pyTuple,
     pyType,
     toPy,
-} from "../../@Sk";
+} from "@Sk";
 
 type Path = (string | number)[];
 
@@ -42,12 +42,18 @@ export interface SerializationInfo extends pyObject {
     $defaultKey: any;
     $enableTxData: boolean;
     $originalData: any;
-    $toJson(): any;
-    $resolveKey(key: any): void;
-    $setDataFactory(_data: any, resolvedKey: any, factory: any): any;
-    $updatePath(path: Path, val: any): void;
-    $setTxDataAvailable(enable: boolean): void;
-    $setDefaultKey(key: string): void;
+    $toJson(this: SerializationInfo): pyObject;
+    $resolveKey(this: SerializationInfo, key: any): void;
+    $setDataFactory(this: SerializationInfo, _data: any, resolvedKey: any, factory?: pyCallable): any;
+    $updatePath(this: SerializationInfo, path: Path, val: any): void;
+    $setTxDataAvailable(this: SerializationInfo, enable: boolean): void;
+    $setDefaultKey(this: SerializationInfo, key: string): void;
+    $sharedData(
+        this: SerializationInfo,
+        key: any,
+        transmittedDataFactory?: pyCallable,
+        localDataFactory?: pyCallable
+    ): [pyObject, pyObject];
 }
 
 export const SerializationInfo: SerializationInfoType = buildNativeClass("anvil.server.SerializeInfo", {
@@ -85,7 +91,7 @@ export const SerializationInfo: SerializationInfoType = buildNativeClass("anvil.
             wrappedSlots.map((slotName) => [
                 slotName,
                 function (this: SerializationInfo, ...args: any[]) {
-                    const transmittedData = this.$sharedData("GLOBAL").valueOf()[0];
+                    const transmittedData = this.$sharedData("GLOBAL")[0];
                     if (transmittedData === pyNone) {
                         // using the old API so better to throw here
                         throw new pyRuntimeError(
@@ -186,7 +192,7 @@ export const SerializationInfo: SerializationInfoType = buildNativeClass("anvil.
         $setTxDataAvailable(enable: boolean) {
             this.$enableTxData = enable;
         },
-        $setDataFactory(_data: any, resolvedKey: any, factory: any) {
+        $setDataFactory(_data: any, resolvedKey: any, factory?: pyCallable) {
             let data = _data.quick$lookup(resolvedKey);
             if (data === undefined) {
                 data = pyCall(factory ?? pyDict);
@@ -194,7 +200,7 @@ export const SerializationInfo: SerializationInfoType = buildNativeClass("anvil.
             }
             return data;
         },
-        $sharedData(key: any, transmittedDataFactory: any, localDataFactory: any) {
+        $sharedData(key: any, transmittedDataFactory?: pyCallable, localDataFactory?: pyCallable) {
             key = this.$resolveKey(key);
             const localData = this.$setDataFactory(this.$localData, key, localDataFactory);
             if (!isTrue(this.$enableTxData)) {

@@ -122,7 +122,7 @@ def merge_dict_with_compact(row_data, g_row_data, row_cache_spec, g_cache_spec):
         if not g_is_cached:
             # we could use the incoming caller wins here
             if is_cached:
-                row_data.pop(i)
+                row_data.pop(i, None)
             continue
 
         g_val = next(iter_g_row_data)

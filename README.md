@@ -92,6 +92,7 @@ The standalone app server supports the following options:
       --google-client-id CLIENT_ID          Client ID to use for Google authentication
       --google-client-secret CLIENT_SECRET  Client secret to use for Google authentication
       --google-api-key KEY                  API key to use for Google integration
+      --google-refresh-token TOKEN          Refresh token to use for delegated Google access (eg App Files)
       --facebook-app-id APP_ID              App ID to use for Facebook authentication
       --facebook-app-secret APP_SECRET      App secret to use for Facebook authentication
       --microsoft-app-id APP_ID             App ID to use for Microsoft authentication
@@ -324,6 +325,11 @@ If your app uses Anvil's [Google Service](https://anvil.works/docs/integrations/
 #### google-client-secret
 
 If your app uses Anvil's [Google Service](https://anvil.works/docs/integrations/google), for login or anything else, you will need a client secret for Google's API. Specify it with this option.
+
+#### google-refresh-token
+
+If your app uses [App Files](https://anvil.works/docs/integrations/google/google-drive#drive-app-files) from Anvil's [Google Service](https://anvil.works/docs/integrations/google), it needs credentials to access those App Files -- specifically, a Refresh Token (corresponding to the Google OAuth Client ID and Secret) with access to your app's App Files.
+
 
 #### facebook-app-id
 

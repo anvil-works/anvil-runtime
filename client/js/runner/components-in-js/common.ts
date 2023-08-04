@@ -1,5 +1,5 @@
 import { pyModule, pyNone, pyObject, pyStr, retryOptionalSuspensionOrThrow, Suspension } from "../../@Sk";
-import {ToolboxItem} from "@runtime/components/Component";
+import { CustomComponentSpec, ToolboxItem, ToolboxSection } from "@runtime/components/Component";
 
 let environmentSetupHooks: (() => void)[] | null = [];
 export const runPostSetupHooks = () => {
@@ -8,9 +8,9 @@ export const runPostSetupHooks = () => {
 };
 export const whenEnvironmentReady = (f: () => void) => (environmentSetupHooks ? environmentSetupHooks.push(f) : f());
 
-export const jsComponentModules: { [name: string]: pyModule } = {};
+export const jsCustomComponents: { [name: string]: { pyMod: pyModule; spec: CustomComponentSpec } } = {};
 
-export const customToolboxItems: ToolboxItem[] = [];
+export const customToolboxSections: ToolboxSection[] = [];
 
 function getOrCreateModule(modName: string) {
     const pyName = new pyStr(modName);
@@ -30,10 +30,10 @@ function getOrCreateModule(modName: string) {
     return mod;
 }
 
-export function registerModule(modName: string, attributes: { [attr: string]: pyObject }) {
+export function registerModule(modName: string, attributes: { [attr: string]: pyObject }, spec: CustomComponentSpec) {
     whenEnvironmentReady(() => {
-        const mod = getOrCreateModule(modName);
-        Object.assign(mod.$d, attributes);
-        jsComponentModules[modName] = mod;
+        const pyMod = getOrCreateModule(modName);
+        Object.assign(pyMod.$d, attributes);
+        jsCustomComponents[modName] = { pyMod, spec };
     });
 }

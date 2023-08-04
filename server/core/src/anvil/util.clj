@@ -18,6 +18,7 @@
   (:import (java.sql SQLException)
            (javax.crypto Mac)
            (javax.crypto.spec SecretKeySpec)
+           (javax.net.ssl SSLContext)
            (org.mindrot.jbcrypt BCrypt)
            (clojure.lang Keyword)
            (java.net InetAddress)
@@ -49,7 +50,8 @@
 
 (alter-var-root #'org.httpkit.client/*default-client* (fn [_] (http/make-client {:ssl-configurer (partial https/ssl-configurer {:hostname-verification? true})})))
 (def insecure-client (http/make-client {}))
-(def make-ssl-engine (constantly nil))
+(defn get-default-ssl-engine []
+  (.createSSLEngine (SSLContext/getDefault)))
 
 ;; To define hookable functions, in runtime:
 ;;     (def set-foo-hooks! (hook-setter #{foo bar baz})
@@ -121,6 +123,10 @@
   (if (keyword? val)
     (.substring (.toString ^Keyword val) 1)
     val))
+
+(defn string-keys [map]
+  (into {} (for [[key value] map]
+             [(preserve-slashes key) value])))
 
 (defn write-json-str [val & options]
   (apply json/write-str val :key-fn preserve-slashes options))
@@ -254,40 +260,36 @@
                                                     ~@body))))
 (defonce db-locks (atom {})) ;; So we can look up locks by number if necessary
 
+(def ^:dynamic *db-locks* {})
+
+(defn -with-db-lock [lock-name flags f]
+  (let [flags (if (boolean? flags) {:shared? flags} flags)
+        {:keys [shared? try?]} flags]
+    (if-let [lock (get *db-locks* lock-name)]
+      (if (or (:shared? flags) (not (:shared? lock)))
+        (f)
+        (throw (Exception. (str "Tried to upgrade from a shared to an exclusive lock for " lock-name))))
+      (let [lock-number (.hashCode (str lock-name))]
+        (swap! db-locks assoc lock-number lock-name)
+        (try
+          (jdbc/with-db-transaction [db-t db]               ;; Note that we don't actually use this txn connection for anything except locking.
+            (let [FN_NAME (str "pg_" (when try? "try_") "advisory_xact_lock" (when shared? "_shared"))
+                  gained-try-lock? (:success (first (jdbc/query db-t [(str "SELECT " FN_NAME "(?::bigint) AS success") lock-number])))]
+              (when (and try? (not gained-try-lock?))
+                (throw+ {:anvil/lock-unavailable lock-name}))
+              (binding [*db-locks* (assoc *db-locks* lock-name {:shared? shared?})]
+                (f))))
+          (finally
+            (swap! db-locks dissoc lock-number)))))))
+
+(defmacro with-db-lock [lock-name flags & body]
+  `(-with-db-lock ~lock-name ~flags (fn [] ~@body)))
+
 (defn -with-try-db-lock [lock-name f]
-  (let [lock-number (.hashCode (str lock-name))]
-    (swap! db-locks assoc lock-number lock-name)
-    (try
-      (jdbc/with-db-transaction [db-t db]                   ;; Note that we don't actually use this txn connection for anything except locking.
-        (if (:locked (first (jdbc/query db-t ["SELECT pg_try_advisory_xact_lock(?::bigint) as locked;" lock-number])))
-          (f)
-          (throw+ {:anvil/lock-unavailable lock-name})))
-      (finally
-        (swap! db-locks dissoc lock-number)))))
+  (-with-db-lock lock-name {:try? true} f))
 
 (defmacro with-try-db-lock [lock-name & body]
   `(-with-try-db-lock ~lock-name (fn [] ~@body)))
-
-(def ^:dynamic *db-locks* {})
-
-(defn -with-db-lock [lock-name shared? f]
-  (if-let [lock (get *db-locks* lock-name)]
-    (if (or shared? (not (:shared? lock)))
-      (f)
-      (throw (Exception. (str "Tried to upgrade from a shared to an exclusive lock for " lock-name))))
-    (let [lock-number (.hashCode (str lock-name))]
-      (swap! db-locks assoc lock-number lock-name)
-      (try
-        (jdbc/with-db-transaction [db-t db]                 ;; Note that we don't actually use this txn connection for anything except locking.
-          (jdbc/query db-t [(if shared? "SELECT pg_advisory_xact_lock_shared(?::bigint)" "SELECT pg_advisory_xact_lock(?::bigint)")
-                            lock-number])
-          (binding [*db-locks* (assoc *db-locks* lock-name {:shared? true})]
-            (f)))
-        (finally
-          (swap! db-locks dissoc lock-number))))))
-
-(defmacro with-db-lock [lock-name shared? & body]
-  `(-with-db-lock ~lock-name (boolean ~shared?) (fn [] ~@body)))
 
 (defn- double-escape [^String x]
   (.replace (.replace x "\\" "\\\\") "$" "\\$"))
@@ -314,8 +316,9 @@
      (log/trace ~desc "completed in" (- (System/currentTimeMillis) s#) "ms")
      r#))
 
+;; Not currently supported by ring-core - https://github.com/ring-clojure/ring/pull/479
 (def additional-mime-types
-  {"woff2" "application/font-woff2"})
+  {"wasm" "application/wasm" "woff2" "application/font-woff2"})
 
 (defn iso-instant [^Instant instant]
   (.format (.withZone (DateTimeFormatter/ofPattern "yyyy-MM-dd'T'HH:mm:ss'Z'")

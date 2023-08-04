@@ -1,5 +1,5 @@
-import type { pyBool, pyFloat, pyInt, pyNoneType, pyNotImplementedType, pyObject, pyStr, pyType, Suspension } from "./";
-import type { Args, CompareOp, Kws } from "./";
+import type { pyBool, pyFloat, pyInt, pyNoneType, pyNotImplementedType, pyObject, pyStr, pyType, Suspension } from "./index";
+import type { Args, CompareOp, Kws } from "./index";
 
 export interface tpSlots<T> {
     tp$name: string;
@@ -12,7 +12,7 @@ export interface tpSlots<T> {
     tp$setattr(this: T, attr: pyStr, value: pyObject | undefined, canSuspend?: boolean): void;
     // tp$flags;
     readonly tp$doc: string | null;
-    tp$richcompare(this: T, other: pyObject, op: CompareOp): pyNotImplementedType | pyBool | pyObject;
+    tp$richcompare(this: T, other: pyObject, op: CompareOp): pyNotImplementedType | pyBool | pyObject | boolean;
     tp$iter(this: T): pyObject; // we make this a symbol iterators
     tp$iternext(this: T): { value: pyObject | undefined; done: boolean }; // we make this a next
 

@@ -1,19 +1,21 @@
 "use strict";
 
+import * as PyDefUtils from "../PyDefUtils";
 import {
-    s_parent,
     s_raise_event,
     s_remove_from_parent,
     s_x_anvil_propagate_page_added,
-    s_x_anvil_propagate_page_removed, s_x_anvil_propagate_page_shown
+    s_x_anvil_propagate_page_removed,
+    s_x_anvil_propagate_page_shown,
 } from "../runner/py-util";
-import * as PyDefUtils from "../PyDefUtils";
-import {getPyParent, raiseEventOrSuspend} from "./Component";
-import {pyCallOrSuspend} from "../@Sk";
+import { raiseEventOrSuspend } from "./Component";
+import { Container, validateChild } from "./Container";
 
 module.exports = function(pyModule) {
 
     pyModule["ClassicContainer"] = PyDefUtils.mkComponentCls(pyModule, "ClassicContainer", {
+        base: [pyModule["ClassicComponent"], Container],
+        events: PyDefUtils.assembleGroupEvents("ClassicContainer", ["universal"]),
         locals($loc) {
             $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicComponent"], (self) => {
                 // we override the addedToPage here our children don't know about us yet
@@ -64,7 +66,7 @@ module.exports = function(pyModule) {
             /*!defMethod(,event_name,**event_args)!2*/ "Trigger the 'event_name' event on all children of this component. Any keyword arguments are passed to the handler function."
             $loc["raise_event_on_children"] = new Sk.builtin.func(PyDefUtils.withRawKwargs(function(kwargs, self, pyEventName) {
                 const eventName = Sk.ffi.remapToJs(pyEventName);
-                if (eventName in self._anvil.eventTypes || eventName in (self._anvil.customComponentEventTypes || {}) || eventName.match(/^x\-/)) {
+                if (eventName in self._anvil.eventTypes || eventName.match(/^x-/)) {
                     return Sk.misceval.chain(Sk.builtin.none.none$, ...self._anvil.components.map(({component}) => () => Sk.misceval.callsimOrSuspendArray(component.tp$getattr(s_raise_event), [pyEventName], kwargs)));
                 } else {
                     throw new Sk.builtin.ValueError("Cannot raise unknown event '" + eventName + "' on " + self.tp$name + " component. Custom events must have the 'x-' prefix.");
@@ -102,30 +104,19 @@ module.exports = function(pyModule) {
     });
 
     // private methods since they're directly on the class - python can't introspect this.
-    pyModule["ClassicContainer"]._check_no_parent = _check_no_parent;
     pyModule["ClassicContainer"]._doAddComponent = doAddComponent;
     
-    function _check_no_parent(pyComponent) {
-        if (!pyComponent?.anvil$hooks) {
-            throw new Sk.builtin.TypeError("Argument to add_component must be a component");
-        }
-        if (getPyParent(pyComponent)) {
-            throw new Sk.builtin.ValueError("This component is already added to a container, call remove_from_parent() first");
-        }
-        return Sk.builtin.none.none$;
-    }
-
-    function doAddComponent(self, pyComponent, jsLayoutProperties = {}, { detachDom, afterRemoval } = {}) {
+    function doAddComponent(self, pyComponent, jsLayoutProperties = {}, { detachDom, afterRemoval, setVisibility } = {}) {
         /**
          * subclasses should:
-         *  - call pyModule["ClassicContainer"]._check_no_parent(pyComponent) (private js function to ensure that it is a component and does not have a parent)
+         *  - call validateChild(pyComponent) (private js function to ensure that it is a component and does not have a parent)
          *  - add the pyComponent._anvil.domNode to their own ._anvil.domNode (however they wish and this *must* be done before calling this function)
          *  - (pyComponent should be added to the screen before calling this function otherwise show event might be raised before the component is on the screen)
          *  - call this function
          *  - make any adjustments to pyComponent e.g. ._anvil.parent.remove function or their own list of ._anvil.components
          *  - return None
          */
-        _check_no_parent(pyComponent); // this is a cheap check - so we do this again even though a subclass did this
+        validateChild(pyComponent); // this is a cheap check - so we do this again even though a subclass did this
         // who knows someone might try to call this function directly!?
 
         if (self._anvil.components.length === 0) {
@@ -141,27 +132,44 @@ module.exports = function(pyModule) {
             components.push(c);
         }
 
-        pyComponent.anvilComponent$setParent(self._anvil.overrideParentObj || self, () => {
-            if (detachDom) {
-                detachDom();
-            } else {
-                const elt = pyComponent.anvil$hooks.domElement;
-                elt.parentElement?.removeChild?.(elt);
-            }
-
-            for (var i = 0; i < self._anvil.components.length; i++) {
-                if (self._anvil.components[i].component === pyComponent) {
-                    self._anvil.components.splice(i, 1);
-                    break;
+        pyComponent.anvilComponent$setParent(self._anvil.overrideParentObj || self, {
+            onRemove: () => {
+                if (detachDom) {
+                    detachDom();
+                } else {
+                    const elt = pyComponent.anvil$hooks.domElement;
+                    elt.parentElement?.removeChild?.(elt);
                 }
-            }
-            if (self._anvil.components.length === 0) {
-                self._anvil.domNode.classList.remove("has-components");
-            }
-            if (self._anvil.onPage) {
-                return Sk.misceval.chain(raiseEventOrSuspend(pyComponent, s_x_anvil_propagate_page_removed), () => afterRemoval?.());
-            } else {
-                return afterRemoval?.();
+
+                for (var i = 0; i < self._anvil.components.length; i++) {
+                    if (self._anvil.components[i].component === pyComponent) {
+                        self._anvil.components.splice(i, 1);
+                        break;
+                    }
+                }
+                if (self._anvil.components.length === 0) {
+                    self._anvil.domNode.classList.remove("has-components");
+                }
+                if (self._anvil.onPage) {
+                    return Sk.misceval.chain(raiseEventOrSuspend(pyComponent, s_x_anvil_propagate_page_removed), () => afterRemoval?.());
+                } else {
+                    return afterRemoval?.();
+                }
+            },
+            setVisibility: (visible) => {
+                if (setVisibility) {
+                    setVisibility(visible);
+                } else {
+                    let elt = pyComponent.anvil$hooks.domElement?.parentElement;
+                    const domNode = (self._anvil.overrideParentObj ?? self)._anvil.domNode;
+                    while (elt && elt !== domNode) {
+                        if (elt.classList.contains("hide-with-component")) {
+                            elt.classList.toggle("visible-false", !visible);
+                            break;
+                        }
+                        elt = elt.parentElement;
+                    }
+                }
             }
         });
 

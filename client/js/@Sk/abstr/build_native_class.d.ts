@@ -1,4 +1,4 @@
-import type { pyObject, pyType, Suspension } from "../";
+import type { pyObject, pyType, Suspension } from "../index";
 import type { Flags } from "../namespace";
 import type { numberSlots, seqMapSlots, tpSlots } from "../slots";
 import { ConstructorOverloadParameters, InstanceOverloadType } from "./overload_types";
@@ -15,6 +15,7 @@ interface AbstractMethodDef {
     $flags: Flags;
     $doc?: string | null;
     $textsig?: string | null;
+    $name?: string;
 }
 
 interface MethDef<I extends pyObject> extends AbstractMethodDef {
@@ -51,7 +52,7 @@ interface NativeClassDefn<I extends pyObject, T extends pyNewableType> {
     getsets?: { [key: string]: GetSetDef<I> };
     base?: pyType;
     meta?: pyType;
-    proto?: { [attr: string]: ((this: I, ...args: any[]) => any) | any };
+    proto?: Partial<I>;
 }
 
 interface pyNewableType<I extends pyObject = pyObject> extends pyType<I> {

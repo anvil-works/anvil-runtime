@@ -183,7 +183,11 @@ module.exports = function () {
                 type = toJs(type);
                 name = toJs(name);
                 if (blob instanceof Blob) {
-                    // pass
+                    if (blob instanceof File) {
+                        // special case
+                        return PyDefUtils.pyCallOrSuspend(anvilMod.FileMedia, [blob]);
+                    }
+                    // else pass
                 } else if (Array.isArray(blob)) {
                     // assume they've passed an array of sensible types
                     type || (type = blob[0]?.type);

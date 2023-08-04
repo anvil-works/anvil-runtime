@@ -29,6 +29,28 @@ class AppTables(object):
 
     def __setattr__(self, name, val):
         raise Exception("app_tables is read-only")
+    
+    def __iter__(self):
+        return AppTableIterator()
+    
+
+class AppTableIterator:
+    def __init__(self):
+        self._it = None
+
+    def __iter__(self):
+        return self
+    
+    def __next__(self):
+        # because __iter__ can't suspend
+        if AppTables.cache is None:
+            AppTables.cache = anvil.server.call("anvil.private.tables.get_app_tables")
+        if self._it is None:
+            self._it = AppTables.cache.keys().__iter__()
+        return next(self._it)
+    
+    next = __next__
+
 
 _set_class = object.__dict__["__class__"].__set__
 
@@ -59,6 +81,7 @@ class _LazyAppTables(object):
     __setattr__ = _wrap_dunder("__setattr__")
     __getitem__ = _wrap_dunder("__getitem__")
     __dir__ = _wrap_dunder("__dir__")
+    __iter__ = AppTables.__iter__
 
 
 class _LazyContext(object):

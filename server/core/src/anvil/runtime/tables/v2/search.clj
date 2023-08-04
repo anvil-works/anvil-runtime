@@ -346,8 +346,20 @@
               [options (conj query-args arg)]))
           [{} []] search-args))
 
+;; because if order-by cols are not included, our cursor approach falls apart
+(defn include-order-by-cols [requesting-cols order-by]
+  (if (map? requesting-cols)
+    (reduce (fn [requesting-cols {col-name :column_name}]
+              (if (not (contains? requesting-cols col-name))
+                (assoc requesting-cols col-name true)
+                requesting-cols))
+            requesting-cols
+            order-by)
+    requesting-cols))
+
 (defn get-page [tables db-c {table-id :id, :keys [restrict] :as view-spec} requested-cols query order-by chunk-size cursor]
   (let [query (cond-> query restrict (both-queries restrict))
+        requested-cols (include-order-by-cols requested-cols order-by)
         fetch-spec (basic-ops/compute-fetch-spec tables view-spec requested-cols)
         PRIMARY-QUERY (PRIMARY-QUERY tables table-id fetch-spec query order-by chunk-size cursor)
 

@@ -1,4 +1,4 @@
-import { pyBytes, pyStr, toJs } from "../../@Sk";
+import { pyBytes, pyStr, toJs } from "@Sk";
 
 export function pyBytesOrStr2ab(py_bytes: pyBytes | pyStr) {
     if (Sk.__future__.python3) {

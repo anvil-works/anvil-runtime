@@ -141,7 +141,8 @@
 
 (defonce get-task-tags-for-http-request (fn [r] [:http]))
 (defonce get-task-tags-for-dispatch-request (fn [r] [:dispatch]))
-(def set-tag-hooks! (util/hook-setter #{get-task-tags-for-http-request get-task-tags-for-dispatch-request}))
+(defonce get-task-tags-for-app (fn [app-info] [:app-task]))
+(def set-tag-hooks! (util/hook-setter #{get-task-tags-for-http-request get-task-tags-for-dispatch-request get-task-tags-for-app}))
 
 (defmacro run-task! [& code]
   (let [info (first code)

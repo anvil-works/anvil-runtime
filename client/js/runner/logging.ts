@@ -34,7 +34,7 @@ export function stdout(text: string, fromServer?: boolean) {
         console.log((fromServer ? "SERVER: " : "CLIENT: ") + text);
     }
 
-    onStdout(text);
+    onStdout(text, fromServer);
 
     if (!fromServer) {
         if (accumulatingPrints === null) {

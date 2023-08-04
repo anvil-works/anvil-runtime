@@ -100,6 +100,7 @@
                                   func (or (:command data) (:method (:liveObjectCall data)))
                                   request-id (:id data)
                                   responder (serial-responder request-id)
+                                  ;; respond causes the dispatcher to return update doesn't (e.g. print output)
                                   return-path {:respond!
                                                #(responder % true)
                                                :update!
@@ -124,7 +125,8 @@
                                     (sessions/persist! app-session)
                                     (responder {:response (sessions/url-token app-session)}
                                                true))
-                                  (if (:anvil.runtime/replacement-session @app-session)
+                                  (if (and (:anvil.runtime/replacement-session @app-session)
+                                           (not (.startsWith (str (:command data)) "anvil.record_schema.get/")))
                                     (do
                                       ;; Set the session type here, just in case something (like a log event) causes the replacement session to be logged.
                                       (sessions/resolve-ambiguous-client-type! app-session "browser")
@@ -141,6 +143,7 @@
                                                                                                   :message "Error processing object from expired session"
                                                                                                   :trace   [["<rpc>", 0]]}}
                                                                                          true)))]
+                                      ;; this does the server call
                                       (dispatcher/dispatch! (assoc request-template
                                                               :vt_global (:vt_global deserialised-data)
                                                               :call (assoc (select-keys deserialised-data [:args :kwargs])

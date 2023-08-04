@@ -1,8 +1,49 @@
+import type { Kws, pyObject, pyTuple } from "../@Sk";
+import {
+    Args,
+    chainOrSuspend,
+    checkArgsLen,
+    checkOneArg,
+    iterForOrSuspend,
+    promiseToSuspension,
+    pyBaseException,
+    pyBuiltinFunctionOrMethod,
+    pyCall,
+    pyCallable,
+    pyCallOrSuspend,
+    pyDict,
+    pyFunc,
+    pyIter,
+    pyKeyError,
+    pyList,
+    pyNewableType,
+    pyNone,
+    pyRecursionError,
+    pyStr,
+    pySuper,
+    retryOptionalSuspensionOrThrow,
+    Suspension,
+    toPy,
+    tryCatchOrSuspend,
+} from "../@Sk";
+import { AnvilHooks, Component, getYamlStackForThisComponent } from "../components/Component";
 import * as PyDefUtils from "../PyDefUtils";
 import { addFormComponentsToLayout, setupFormComponents, SetupResult } from "./component-creation";
-import type { ComponentYaml, DataBindingYaml, FormContainerYaml, FormLayoutYaml, FormYaml } from "./data";
+import { designerApi } from "./component-designer-api";
+import type {
+    ComponentYaml,
+    CustomComponentEvents,
+    DataBindingYaml,
+    FormContainerYaml,
+    FormLayoutYaml,
+    FormYaml,
+} from "./data";
+import { BindingError, CustomAnvilError, isCustomAnvilError } from "./error-handling";
+import { getAnvilComponentClass, resolveStringComponent } from "./instantiation"; // for type stub
 import {
+    kwargsToJsObject,
     kwToObj,
+    objectToKwargs,
     PyModMap,
     s_add_component,
     s_add_event_handler,
@@ -10,35 +51,8 @@ import {
     s_item,
     s_raise_event,
     s_refreshing_data_bindings,
-    s_slots,
 } from "./py-util";
-import { WithLayout } from "./python-objects";
-import {
-    Args,
-    chainOrSuspend,
-    iterForOrSuspend,
-    pyBaseException,
-    pyBuiltinFunctionOrMethod,
-    pyCall,
-    pyCallable,
-    pyCallOrSuspend,
-    pyIter,
-    pyKeyError,
-    pyList,
-    pyDict,
-    pyNewableType,
-    pyNone,
-    pyStr,
-    retryOptionalSuspensionOrThrow,
-    Suspension,
-    toPy,
-    tryCatchOrSuspend,
-} from "../@Sk";
-import type { pyObject, pyTuple, Kws } from "../@Sk";
-import { AnvilHooks, Component, setDefaultDepId } from "../components/Component";
-import {getAnvilComponentClass, kwargsToJsObject, objectToKwargs, resolveStringComponent} from "./instantiation"; // for type stub
-import { BindingError, CustomAnvilError, isCustomAnvilError } from "./error-handling";
-import { designerApi } from "./component-designer-api";
+import { Slot, WithLayout } from "./python-objects";
 
 const walkComponents = (
     yaml: FormYaml,
@@ -129,23 +143,20 @@ const setupDataBindings = (yaml: FormYaml) => {
 };
 
 const applyBindings = (pyForm: FormTemplate, dataBindings: DataBindings) => {
-    const writeBackChildBoundData = async (bindingsForThisComponent: DataBinding[], pyComponent: Component, attrName: string) => {
-        for (const binding of bindingsForThisComponent) {
-            if (binding.pyComponent === pyComponent && binding.property === attrName && binding.pySave) {
-                try {
-                    return await PyDefUtils.callAsyncWithoutDefaultError(binding.pySave, undefined, undefined, undefined, pyForm, pyComponent);
-                } catch (e) {
-                    if (e instanceof Sk.builtin.KeyError) {
-                        return; // Unremarkable
-                    }
-                    console.error(e);
-                    if (e instanceof Sk.builtin.BaseException && e.args.v[0] instanceof Sk.builtin.str) {
-                        const name = binding.componentName ? `self.${binding.componentName}` : "self";
-                        e.args.v[0] = new Sk.builtin.str(e.args.v[0].v + "\n while setting " + binding.code + " = " + name + "." + binding.property + "\n in a data binding for " + name);
-                    }
-                    window.onerror(null, null, null, null, e);
-                }
+    const writeBackChildBoundData = async (binding: DataBinding, pyComponent: Component): Promise<pyObject> => {
+        try {
+            return (await PyDefUtils.callAsyncWithoutDefaultError(binding.pySave, undefined, undefined, undefined, pyForm, pyComponent)) as pyObject;
+        } catch (e) {
+            if (e instanceof Sk.builtin.KeyError) {
+                return pyNone; // Unremarkable
             }
+            console.error(e);
+            if (e instanceof Sk.builtin.BaseException && e.args.v[0] instanceof Sk.builtin.str) {
+                const name = binding.componentName ? `self.${binding.componentName}` : "self";
+                e.args.v[0] = new Sk.builtin.str(e.args.v[0].v + "\n while setting " + binding.code + " = " + name + "." + binding.property + "\n in a data binding for " + name);
+            }
+            window.onerror(null, null, null, null, e);
+            return pyNone;
         }
     };
 
@@ -154,10 +165,13 @@ const applyBindings = (pyForm: FormTemplate, dataBindings: DataBindings) => {
         for (const binding of bindings) {
             binding.pyComponent = pyComponent;
             binding.componentName = componentName;
+            if (binding.writeback) {
+                pyCall((pyComponent as Component).tp$getattr(s_add_event_handler)!, [
+                    new pyStr("x-anvil-write-back-" + binding.property),
+                    new pyFunc(PyDefUtils.withRawKwargs(() => promiseToSuspension(writeBackChildBoundData(binding, pyComponent))))
+                ]);
+            }
         }
-        (pyComponent as Component).anvil$hooks.setDataBindingListener((pyComponent: Component, attrName: string) =>
-            writeBackChildBoundData(bindings, pyComponent, attrName)
-        );
     }
 };
 
@@ -169,7 +183,7 @@ const getComponentNames = (formYaml: FormYaml) => {
     return componentNames;
 };
 
-export const FORM_EVENTS = [
+export const FORM_EVENTS: CustomComponentEvents[] = [
     {name: "show", description: "When the form is shown on the page",
         parameters: [], important: true},
     {name: "hide", description: "When the form is removed from the page",
@@ -191,58 +205,93 @@ export function setupCustomComponentHooks(yaml: FormYaml, c: Component, kws: Kws
     if (!ANVIL_IN_DESIGNER) return;
 
     const oldHooks = c.anvil$hooks;
-    c.anvil$hooks = {
+    const newHooks: AnvilHooks = {
         setupDom: oldHooks.setupDom,
         get domElement() { return oldHooks.domElement },
-        setDataBindingListener: oldHooks.setDataBindingListener,
-        enableDropMode: oldHooks.enableDropMode,
+        enableDropMode: (dropping, flags) => flags?.asComponent ? [] : oldHooks.enableDropMode?.(dropping, flags) ?? [],
         disableDropMode: oldHooks.disableDropMode,
-    };
-    // TODO: include the item property here
-
-    if (!yaml.custom_component) {
-        c.anvil$hooks.getDesignInfo = () => ({
+        getDesignInfo: (asLayout: boolean) => ({
             propertyDescriptions: [ITEM_PROPERTY],
             propertyValues: {item: null},
             events: FORM_EVENTS_BY_NAME,
             interactions: [],
-        });
-        return;
+        })
     }
 
-    const { properties = [], events = [] } = yaml;
+    // TODO: include the item property here
 
-    const kwsObj = kwargsToJsObject(kws);
+    if (yaml.custom_component) {
 
-    Object.assign(c.anvil$hooks, {
-        getDesignInfo: () => ({
-            propertyDescriptions: properties,
-            events: {
-                ...FORM_EVENTS_BY_NAME,
-                ...Object.fromEntries(events.map(({ name, description, parameters, default_event: defaultEvent }) => [
-                    name,
-                    {
+        const {properties = [], events = []} = yaml;
+
+        const kwsObj = kwargsToJsObject(kws);
+
+        Object.assign(newHooks, {
+            getDesignInfo: () => ({
+                propertyDescriptions: properties.map(({name, type, default_value, description, important, group, options, allow_binding_writeback}) => ({
+                    name, type, defaultValue: default_value, description, important, options, group, supportsWriteback: allow_binding_writeback
+                })),
+                events: {
+                    ...FORM_EVENTS_BY_NAME,
+                    ...Object.fromEntries(events.map(({name, description, parameters, default_event: defaultEvent}) => [
                         name,
-                        description,
-                        parameters,
-                        defaultEvent,
-                    },
-                ]))
+                        {
+                            name,
+                            description,
+                            parameters,
+                            defaultEvent,
+                        },
+                    ]))
+                },
+                propertyValues: Object.fromEntries(
+                    properties.map(({name, default_value}) => [name, name in kwsObj ? kwsObj[name] : default_value])
+                ),
+                interactions: [],
+            }),
+            setPropertyValues(updates) {
+                Object.assign(kwsObj, updates);
+                designerApi.updateComponentProperties(c, updates, {});
+                if (passive) return;
+                for (const [key, val] of Object.entries(updates)) {
+                    c.tp$setattr(new pyStr(key), toPy(val));
+                }
             },
-            propertyValues: Object.fromEntries(
-                properties.map(({ name, default_value }) => [name, name in kwsObj ? kwsObj[name] : default_value])
-            ),
-            interactions: [],
-        }),
-        setPropertyValues(updates) {
-            Object.assign(kwsObj, updates);
-            designerApi.updateComponentProperties(c, updates, {});
-            if (passive) return;
-            for (const [key, val] of Object.entries(updates)) {
-                c.tp$setattr(new pyStr(key), toPy(val));
-            }
-        },
-    } as Partial<AnvilHooks>);
+        } as Partial<AnvilHooks>);
+
+        if (yaml.custom_component_container) {
+            // Custom container support. It's a hack for a special case.
+            //
+            // Custom containers are designer-created custom components that also expose the container behaviour of their root
+            // container at design time. This allows Anvil developers to create their own containers without going low-level.
+            // The catch here is that the custom form might have its own components, so custom containers need to constrain their
+            // drag-and-drop behaviour to insert components at the *start* of the list, where component and designer agree on
+            // component indices. We do this by:
+            //
+            //   1. Overriding add_component to add all components via a Slot at index 0, reusing the slot's bookkeeping to
+            //      keep inserts before existing components
+            //
+            //   2. Overriding the enableDropMode hook to filter out drop zones that lie outside the slot. (We can't use the
+            //      Slot's enableDropMode() for this directly, because it would attempt to call _our_ enableDropMode(), and
+            //      cause infinite recursion, so we do it ourselves; it's not hard.)
+            //
+            // We do this with a grungy hack - overwriting add_component on the instance itself, after already having
+            // added components from the YAML. We could attempt to de-grunge this by splitting this into two implementations:
+            // one for YAML carriers, doing essentially what we do here, and one for FormTemplates, providing an actual override
+            // for add_component. This would involve duplication, and the FormTemplate version wouldn't be much cleaner (it
+            // still needs to switch implementations after initial component construction), so we're leaving this like this
+            // for now. If someone fancies cleaning this up in the future, that would be lovely.
+
+            const slot = new Slot(() => c, 0);
+            // A little massage - get the slot to look up our current/original addComponent before we overwrite it
+            retryOptionalSuspensionOrThrow(slot._slotState.fillCache());
+            const slotAddComponent = slot.tp$getattr(s_add_component) as pyCallable;
+            c.$d.mp$ass_subscript(s_add_component, slotAddComponent);
+            newHooks.enableDropMode = (dropping, flags) =>
+                (oldHooks.enableDropMode?.(dropping, flags) ?? []).filter(({dropInfo: {minChildIdx}}) => minChildIdx === undefined || minChildIdx <= slot._slotState.components.length);
+
+        }
+    }
+    c.anvil$hooks = newHooks;
 }
 
 type FormTemplateConstructor = pyNewableType<FormTemplate>;
@@ -255,25 +304,26 @@ export interface FormTemplate extends Component {
         slotDict: pyDict;
     };
     anvil$itemValue?: pyObject;
+    anvil$customProps?: { [name: string]: pyObject };
     _anvil?: any;
 }
 
 export const createFormTemplateClass = (
     yaml: FormYaml,
-    depId: string | null,
+    depAppId: string | null,
     className: string,
     anvilModule: PyModMap
 ): FormTemplateConstructor => {
     const pyBase = yaml.container ? (
-        getAnvilComponentClass(anvilModule, yaml.container.type)!
-        || resolveStringComponent(yaml.container.type.substring(5), depId)
+        getAnvilComponentClass(anvilModule, yaml.container.type)
+        || retryOptionalSuspensionOrThrow(resolveStringComponent(yaml.container.type.substring(5), depAppId))!
     ) : WithLayout;
 
     // Legacy bits of _anvil we can't get rid of yet
     const _anvil: any = {};
+    const events = [...FORM_EVENTS];
     if (yaml.custom_component) {
-        _anvil.customComponentEventTypes = Object.fromEntries((yaml.events || []).map((e) => [e.name, e]));
-        _anvil.customComponentProperties = yaml.properties;
+        events.push(...(yaml.events ?? []));
     }
 
     const dataBindings = setupDataBindings(yaml);
@@ -282,13 +332,13 @@ export const createFormTemplateClass = (
     // "item" is a special descriptor that triggers the underlying descriptor on write if there is one.
     const pyBaseItem = pyBase.$typeLookup(s_item);
 
-    return PyDefUtils.mkComponentCls(anvilModule, className + "Template", {
+    const FormTemplate = PyDefUtils.mkComponentCls(anvilModule, className + "Template", {
         base: pyBase,
 
-        kwargs: yaml.layout ? ["layout", { type: yaml.layout.type, defaultDepId: depId }] : undefined,
+        kwargs: yaml.layout ? ["layout", { type: yaml.layout.type, defaultDepId: depAppId }] : undefined,
 
         /*!componentEvents(form)!1*/
-        events: FORM_EVENTS,
+        events,
 
         properties: [],
 
@@ -311,10 +361,8 @@ export const createFormTemplateClass = (
             const baseConstructionKwargs: Kws = objectToKwargs({__ignore_property_exceptions: true, ...(subYaml.properties || {})});
             const baseNew = Sk.abstr.typeLookup<pyCallable>(pyBase, Sk.builtin.str.$new);
 
-            const skeletonNew = (cls: FormTemplateConstructor) => {
-                setDefaultDepId(depId);
-                return pyCallOrSuspend<FormTemplate>(baseNew, [cls, ...baseConstructionArgs], baseConstructionKwargs);
-            };
+            const skeletonNew = (cls: FormTemplateConstructor) =>
+                pyCallOrSuspend<FormTemplate>(baseNew, [cls, ...baseConstructionArgs], baseConstructionKwargs);
 
             // Back half of __new__ for conventionally constructed objects;
             // __deserialize__ for deserialized ones
@@ -342,10 +390,21 @@ export const createFormTemplateClass = (
             };
 
             $loc["__new__"] = new Sk.builtin.func(
-                PyDefUtils.withRawKwargs((kws: Kws, cls: FormTemplateConstructor) => {
-                    return chainOrSuspend(skeletonNew(cls), (c) =>
-                        commonSetup(c, (c: FormTemplate) =>
-                            chainOrSuspend(setupFormComponents(yaml, c), (setupResult) => {
+                PyDefUtils.withRawKwargs((kws: Kws, cls: FormTemplateConstructor) =>
+                    chainOrSuspend(skeletonNew(cls), (c) => {
+                        const nextYamlCreationStack = getYamlStackForThisComponent();
+                        console.log("Creating", className, "with stack", nextYamlCreationStack);
+                        let ys = nextYamlCreationStack;
+                        while (ys) {
+                            if (ys.form === cls) {
+                                throw new pyRecursionError(`Cannot nest ${className} inside itself`);
+                            }
+                            ys = ys.prev;
+                        }
+
+                        const yamlStack = {form: cls, prev: nextYamlCreationStack};
+                        return commonSetup(c, (c: FormTemplate) =>
+                            chainOrSuspend(setupFormComponents(yaml, c, depAppId, yamlStack), (setupResult) => {
                                 if (setupResult.slots) {
                                     for (const [name, slot] of Object.entries(setupResult.slots)) {
                                         c.anvil$formState.slotDict.mp$ass_subscript(new pyStr(name), slot);
@@ -353,9 +412,9 @@ export const createFormTemplateClass = (
                                 }
                                 setupCustomComponentHooks(yaml, c, kws);
                             })
-                        )
-                    );
-                })
+                        );
+                    })
+                )
             );
 
 
@@ -489,7 +548,7 @@ export const createFormTemplateClass = (
                 }
 
                 return Sk.misceval.chain(
-                    undefined,
+                    pyNone,
                     () => {
                         self.anvil$formState.refreshOnItemSet = false;
                     },
@@ -526,6 +585,21 @@ export const createFormTemplateClass = (
                     })
                 );
             }
+
+            $loc["raise_event"] = PyDefUtils.funcFastCall((args: Args, kws?: Kws) => {
+                const [self, pyEventName] = args;
+                checkArgsLen("raise_event", args, 2, 2);
+                const eventName = String(pyEventName);
+                const superRaise = new pySuper(FormTemplate, self as FormTemplate).tp$getattr<pyCallable>(s_raise_event);
+                if (!yaml.custom_component) {
+                    return pyCallOrSuspend(superRaise, [pyEventName], kws);
+                }
+                const chainedFns = (yaml.properties ?? [])
+                    .filter((p) => (p.binding_writeback_events ?? []).includes(eventName))
+                    .map((p) => () => PyDefUtils.suspensionFromPromise(self._anvil.dataBindingWriteback(self, p.name)));
+                
+                return chainOrSuspend(pyNone, ...chainedFns, () => pyCallOrSuspend(superRaise, [pyEventName], kws));
+            });
 
             $loc["refresh_data_bindings"] = new Sk.builtin.func(function (self) {
 
@@ -682,5 +756,7 @@ export const createFormTemplateClass = (
             $loc[s_anvil_events.toString()] = existingEvents ? formEvents.sq$concat(existingEvents) : formEvents;
        }
     }) as FormTemplateConstructor;
+
+    return FormTemplate;
 };
 

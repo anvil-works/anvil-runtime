@@ -9,7 +9,7 @@ Follow this how-to guide to export an Anvil app from the online IDE and run it o
 All you need to do to run your app locally is:
 
 1. Install the Anvil App Server
-2. [Clone an Anvil app onto your local machine with git](https://anvil.works/docs/version-control/git)
+2. [Clone an Anvil app onto your local machine with git](https://anvil.work/docs/version-control-new-ide/git)
 3. Launch your app
 
 ## Set up your environment

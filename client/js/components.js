@@ -62,15 +62,15 @@ module.exports.defineSystemComponents = function defineSystemComponents(pyModule
             if (!obj || obj === Sk.builtin.none.none$)
               return self;
 
-            return (obj._anvil.customProps && obj._anvil.customProps[self._anvil.propName]) || self._anvil.defaultPyVal;
+            return (obj.anvil$customProps?.[self._anvil.propName]) || self._anvil.defaultPyVal;
         });
 
         $loc["__set__"] = new Sk.builtin.func( (self, obj, pyVal) => {
             if (!obj || obj === Sk.builtin.none.none$) {
                 throw new Error("Cannot set custom component property value on null object.");
             }
-            obj._anvil.customProps = obj._anvil.customProps || {};
-            obj._anvil.customProps[self._anvil.propName] = pyVal;
+            obj.anvil$customProps ??= {};
+            obj.anvil$customProps[self._anvil.propName] = pyVal;
             return Sk.builtin.none.none$;
         });
 
@@ -208,16 +208,22 @@ module.exports.newPythonComponent = function newPythonComponent(component, compo
     var m = component.type.match(/^form:(.*)$/);
     if (m) {
         // It's a custom component!
-        let [, depId, formName, className] = m[1].match(/^(?:([^:]*):)?((?:.*\.)?([^.]*))$/);
+        let [, logicalDepId, formName, className] = m[1].match(/^(?:([^:]*):)?((?:.*\.)?([^.]*))$/);
+        let depId = logicalDepId ? window.anvilAppDependencyIds[logicalDepId] : null;
         let appPackageName = window.anvilAppMainPackage;
 
-        depId = depId || (module.exports.newPythonComponent.dependencyTrace && module.exports.newPythonComponent.dependencyTrace.depId);
+        if (logicalDepId && !depId) {
+            console.error("Logical dep ID " + logicalDepId + " not found");
+            pyComponent = mkInvalidComponent(anvilMod, "Missing dependency for form '" + formName + "'");
+        }
 
-        if (depId) {
+        depId = depId || module.exports.newPythonComponent.dependencyTrace?.depId;
+
+        if (depId && !pyComponent) {
             let dep = dependencies[depId];
             if (!dep) {
-                console.error("Dependency not found: "+ depId);
-                pyComponent = mkInvalidComponent(anvilMod, "Dependency missing: No such form '" + formName + "'");
+                console.error("Dependency mapped but not found: " + depId + " (logical " + logicalDepId + ")");
+                pyComponent = mkInvalidComponent(anvilMod, "Dependency missing for form '" + formName + "'");
             } else {
                 appPackageName = dep.package_name;
             }

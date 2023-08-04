@@ -23,12 +23,13 @@ window.anvilCurrentlyConstructingForms = [];
 import * as componentModule from "../components";
 import * as PyDefUtils from "../PyDefUtils";
 import {setupPythonEnvironment} from "./python-environment";
-import {getReactComponents, registerReactComponent, registerToolboxItem, setReactImpl} from "./components-in-js/component-from-react";
+import * as _jsComponentApi from "./components-in-js/public-api";
 import { registerSolidComponent, solidComponents } from "./components-in-js/component-from-solid";
 import { pyCallable, pyCallOrSuspend, pyDict, pyStr, pyTuple, toJs } from "../@Sk";
 import { isCustomAnvilError } from "./error-handling";
 import { Component } from "../components/Component";
 import { anvilMod, anvilServerMod } from "../utils";
+import { setLegacyOptions } from "./legacy-features";
 
 
 let hooks: {onLoadedApp?: () => void} = {};
@@ -328,12 +329,9 @@ window.anvil = {
             });
         }
     },
-    setReactImpl,
-    registerReactComponent,
-    registerToolboxItem,
-    getReactComponents,
     registerSolidComponent,
     solidComponents,
+    _jsComponentApi,
     _loadAppAfter: [] as Promise<any>[],
     deferLoad() {
         let r;
@@ -345,6 +343,7 @@ window.anvil = {
         );
         return r;
     },
+    enableLegacy: setLegacyOptions
 };
 
 

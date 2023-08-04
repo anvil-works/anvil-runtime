@@ -3,7 +3,7 @@
         [clojure.pprint]
         [slingshot.slingshot])
   (:require [anvil.runtime.conf :as conf]
-            [anvil.core.google-oauth2 :as oauth]
+            [anvil.core.sso.google :as google-sso]
             [org.httpkit.client :as http]
             [clojure.data.json :as json]
             [clojure.data.xml :as xml]
@@ -22,6 +22,12 @@
                                  (and (:custom? conf/google-client-config) (:client-id conf/google-client-config)))]
                (and client-id (not= "" client-id)))))
 
+(defn get-delegation-refresh-token [app-info google-service-server-config]
+  (let [{:keys [delegation_refresh_token enc_delegation_refresh_token]} google-service-server-config
+        refresh-token (or delegation_refresh_token
+                          (:value (secrets/get-global-app-secret-value app-info "google-service/delegation-refresh-token" enc_delegation_refresh_token)))]
+    refresh-token))
+
 (defn add-credentials [httpkit-map creds]
   (condp = creds
     "google-user" (assoc-in httpkit-map [:headers "Authorization"]
@@ -30,11 +36,9 @@
                          (when (or (not (-> @*session-state* :google :delegation-access-token))
                                    ;; Refresh access token if it's about to expire.
                                    (> (.getTime (Date.)) (+ 60000 (.getTime (-> @*session-state* :google :delegation-access-token :expires_at)))))
-                           (let [{:keys [delegation_refresh_token enc_delegation_refresh_token]} (:server_config (get-google-service-props))
-                                 refresh-token (or delegation_refresh_token
-                                                   (:value (secrets/get-global-app-secret-value rpc-util/*app-info* "google-service/delegation-refresh-token" enc_delegation_refresh_token)))]
+                           (let [refresh-token (get-delegation-refresh-token rpc-util/*app-info* (:server_config (get-google-service-props)))]
                              (swap! *session-state* #(assoc-in % [:google :delegation-access-token]
-                                                               (oauth/refresh-access-token refresh-token
+                                                               (google-sso/refresh-access-token refresh-token
                                                                                            (:client-id conf/google-client-config)
                                                                                            (:client-secret conf/google-client-config)))))
                            (log/debug "Access token updated:" (-> @*session-state* :google :delegation-access-token)))
@@ -129,3 +133,4 @@
   ([type id creds writing?] (ensure-whitelist-ok type id creds writing? nil))
   ([type id creds writing? action] (ensure-whitelist-access-ok (get-whitelist-access type id creds) writing? action)))
 
+(def set-google-token-hooks! (util/hook-setter [get-delegation-refresh-token]))

@@ -1,0 +1,47 @@
+/* Styles that override modern-normalize: https://github.com/sindresorhus/modern-normalize */
+
+/**
+Adjust modern-normalize's 1.15 line-height;
+*/
+html {
+    line-height: 1.5;
+}
+
+button,
+input,
+optgroup,
+select,
+textarea {
+    line-height: inherit;
+}
+
+/*
+Interactive
+===========
+*/
+
+button,
+[role="button"] {
+    cursor: pointer;
+}
+
+/*
+Make sure disabled buttons don't get the pointer cursor.
+*/
+:disabled {
+    cursor: not-allowed;
+}
+
+/* Make elements with the HTML hidden attribute stay hidden by default */
+[hidden] {
+    display: none;
+}
+
+label {
+    display: inline-block;
+}
+
+/* Avoid default browser outline on textboxes/textareas */
+input:focus, textarea:focus, select:focus {
+    outline: 0;
+}

@@ -1,10 +1,13 @@
 "use strict";
 
 import { anvilServerMod, defer, getRandomStr } from "../utils";
-import {getPyParent, raiseEventOrSuspend} from "../components/Component";
+import { raiseEventOrSuspend } from "../components/Component";
 import Modal, { BOOTSTRAP_MODAL_BG } from "./modal";
 import {s_x_anvil_propagate_page_added, s_x_anvil_propagate_page_removed} from "../runner/py-util";
 import { pyFunc, pyInt, pyNone, pyStr, toJs } from "../@Sk";
+import { getCssPrefix } from "@runtime/runner/legacy-features";
+import { topLevelForms } from "@runtime/runner/data";
+import { validateChild } from "@runtime/components/Container";
 
 module.exports = function(appOrigin, uncaughtExceptions) {
 
@@ -254,7 +257,6 @@ module.exports = function(appOrigin, uncaughtExceptions) {
     }];
     pyModule["app"] = PyDefUtils.pyCall(appInfoClass);
 
-    let pyCurrentForm = null;
     const appPlaceHolder = document.getElementById("appGoesHere");
 
     function clearPlaceHolder() {
@@ -264,31 +266,30 @@ module.exports = function(appOrigin, uncaughtExceptions) {
     }
 
     function openFormInstance(pyForm) {
-        if (!pyForm.anvil$hooks) {
-            throw new Sk.builtin.TypeError(
-                `Attempting to open a form which is not an anvil component, (got type ${pyForm?.tp$name})`
-            );
+        if (pyForm !== topLevelForms.openForm) {
+            // it's ok to call open_form on the same form
+            validateChild(pyForm, "open_form");
         }
 
         clearPlaceHolder();
 
         const fns = [];
-        if (pyCurrentForm) {
-            const f = pyCurrentForm;
+        if (topLevelForms.openForm) {
+            const f = topLevelForms.openForm;
             fns.push(() => raiseEventOrSuspend(f, s_x_anvil_propagate_page_removed));
-            pyCurrentForm = null;
+            topLevelForms.openForm = null;
             fns.push(() => {
-                if (pyCurrentForm !== null) {
+                if (topLevelForms.openForm !== null) {
                     Sk.builtin.print(["WARNING: You are likely calling 'open_form()' from inside the hide event of the outgoing form (or from one of its components). This may not be what you want."]);
                 }
             });
         }
 
-        fns.push(() => pyForm.anvil$hooks.setupDom())
+        fns.push(() => pyForm.anvil$hooks.setupDom());
 
         fns.push(() => {
             appPlaceHolder.appendChild(pyForm.anvil$hooks.domElement);
-            pyCurrentForm = pyForm;
+            topLevelForms.openForm = pyForm;
         });
 
         fns.push(() => raiseEventOrSuspend(pyForm, s_x_anvil_propagate_page_added));
@@ -349,7 +350,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
 
     /*!defFunction(anvil,!)!2*/ "Returns the form most recently opened with open_form()."
     pyModule["get_open_form"] = new Sk.builtin.func(function() {
-        return pyCurrentForm || Sk.builtin.none.none$;
+        return topLevelForms.openForm || Sk.builtin.none.none$;
     });
 
 
@@ -901,6 +902,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
 
     let activeModalLength = 0;
 
+
     function modal(kwargs) {
         let pyForm,
             returnValue = Sk.builtin.none.none$;
@@ -917,13 +919,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         if (content instanceof pyModule["Component"]) {
             pyForm = content;
             body = true;
-            // TODO we can currently only detect "already added to an alert" for ClassicComponents
-            if (getPyParent(pyForm) || pyForm._anvil?.inAlert) {
-                // you can't add a component to an alert if it already has a parent
-                throw new Sk.builtin.RuntimeError(
-                    "This component is already added to a container, or is already inside an alert"
-                );
-            }
+            validateChild(content, "alert");
         } else if (content) {
             body = content.toString();
         }
@@ -980,9 +976,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
             setTimeout(() => {
                 if (pyForm) {
                     $(pyForm.anvil$hooks.domElement).detach();
-                    if (pyForm._anvil) {
-                        delete pyForm._anvil.inAlert;
-                    }
+                    topLevelForms.alertForms.delete(pyForm);
                     PyDefUtils.asyncToPromise(() => raiseEventOrSuspend(pyForm, s_x_anvil_propagate_page_removed)).then(
                         () => resolveReturn(returnValue)
                     );
@@ -1018,10 +1012,10 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                     a.once("show", () => {
                         // do this synchronously
                         // it's possible for hide to be called before shown
-                        pyForm._anvil.inAlert = true;
+                        topLevelForms.alertForms.add(pyForm);
                     });
                     a.once("shown", () => {
-                        loadResolve(PyDefUtils.asyncToPromise(pyForm._anvil.addedToPage));
+                        loadResolve(PyDefUtils.asyncToPromise(() => raiseEventOrSuspend(pyForm, s_x_anvil_propagate_page_added)));
                     });
                 } else {
                     a.once("shown", () => {
@@ -1198,14 +1192,24 @@ module.exports = function(appOrigin, uncaughtExceptions) {
     pyModule["Notification"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
         // adjusted in runtimeVersion >= 3 to prefix bootstrap classes e.g. .col-sm-4 and .close
         // still relies on animate.css
-        let template, animate;
-        if (window.anvilParams.runtimeVersion >= 3) {
-            template = `<div data-notify="container" class="aw-col-xs-11 aw-col-sm-4 aw-alert aw-alert-{0}" role="alert">
-            <button type="button" aria-hidden="true" class="aw-close" data-notify="dismiss">&times;</button>
-            <span data-notify="icon"></span> <span data-notify="title">{1}</span> <span data-notify="message">{2}</span>
-            `;
-            animate = { enter: "aw-animated aw-fadeInDown", exit: "aw-animated aw-fadeOutUp" };
-        }
+        let templateArgs;
+        const getTemplateArgs = () => {
+            if (!templateArgs || window.anvilParams.runtimeVersion >= 3) {
+                const prefix = getCssPrefix();
+                const template = `<div data-notify="container" class="${prefix}col-xs-11 ${prefix}col-sm-4 ${prefix}alert ${prefix}alert-{0}" role="alert">
+                <button type="button" aria-hidden="true" class="${prefix}close" data-notify="dismiss">&times;</button>
+                <span data-notify="icon"></span> <span data-notify="title">{1}</span> <span data-notify="message">{2}</span>
+                `;
+                const animate = {
+                    enter: `${prefix}animated ${prefix}fadeInDown`,
+                    exit: `${prefix}animated ${prefix}fadeOutUp`,
+                };
+                templateArgs = { template, animate };
+            }
+
+            return (templateArgs ??= {});
+        };
+
 
         function _show(self) {
             if (self._anvil.notification) {
@@ -1213,6 +1217,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
             }
 
             const {message, title, style: type, timeout} = self._anvil;
+            const { template, animate } = getTemplateArgs();
 
             self._anvil.notification = $.notify(
                 { message, title },

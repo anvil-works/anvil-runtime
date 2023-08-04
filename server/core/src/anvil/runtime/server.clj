@@ -6,12 +6,15 @@
         anvil.runtime.util)
   (:require [anvil.runtime.conf :as conf]
             [anvil.runtime.browser-ws :as browser-ws]
+            [anvil.runtime.browser-http :as browser-http]
             [anvil.runtime.secrets :as secrets]
             [digest]
             [ring.util.response :as resp]
             [ring.util.mime-type :as mime-type]
+            [crawlers.detector :as crawlers]
             [clojure.data.json :as json]
-            [anvil.core.google-oauth2 :as oauth]
+            [anvil.core.sso.google :as google-sso]
+            [anvil.core.sso.azure :as azure-sso]
             [hiccup.util :as hiccup-util]
             [anvil.runtime.app-data :as app-data]
             [anvil.util :as utils]
@@ -30,8 +33,6 @@
             [ring.util.codec :as codec]
             [anvil.dispatcher.native-rpc-handlers.cookies :as cookies]
             [ring.middleware.cookies]
-            [buddy.sign.jwt]
-            [buddy.core.keys]
             [clj-yaml.core :as yaml]
             [clojure.java.io :as io]
             [anvil.util :as util]
@@ -39,6 +40,7 @@
             [anvil.core.worker-pool :as worker-pool]
             [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]
             [anvil.runtime.sessions :as sessions]
+
             [anvil.runtime.util :as runtime-util]
             [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks])
   (:import (java.io ByteArrayInputStream)
@@ -51,6 +53,7 @@
 
 (clj-logging-config.log4j/set-logger! :level :info)
 (clj-logging-config.log4j/set-logger! "com.onelogin.saml2" :level :debug)
+
 
 (defn app-500
   ([req] (app-500 req "An internal error occurred"))
@@ -75,6 +78,18 @@
        (resp/content-type "text/html")
        (resp/set-cookie "anvil-test-cookie" true)
        (resp/status (if app-exists-but-no-key? 403 404)))))
+
+
+(defn block-app [{:keys [app-id app-origin] :as req} message]
+  (log/debug "Couldn't load app" app-id ":" message)
+  (-> (resp/response (-> (slurp (runtime-client-resource req "/block-app.html"))
+                         (.replace "{{canonical-url}}" (hiccup-util/escape-html app-origin))
+                         (.replace "{{anvil-error}}" (hiccup-util/escape-html message))
+                         (clojure.string/replace #"\{\{cdn\-origin\}\}" (runtime-util/get-static-origin req))))
+      (resp/header "x-anvil-sig" (secrets/encrypt-str-with-global-key :anvil-sig-header ""))
+      (resp/content-type "text/html")
+      (resp/set-cookie "anvil-test-cookie" true)
+      (resp/status 404)))                                 ;TODO maybe a different 4xx?
 
 
 (defonce get-embedding-restrictions (fn [app-map]
@@ -173,336 +188,341 @@
             google-api-key (utils/or-str (-> google-service :client_config :api_key)
                                          (:maps-api-key conf/google-client-config))
             _ (checkpoint! "Google configured")
-
             {:keys [body-class]} (app-data/get-extra-rendering-info app-id app-session {})
             runnerVersion (if (get-in app-map [:runtime_options :preview_v3])
                             3
                             (get-in app-map [:runtime_options :version] 0))
-            client-params (assoc client-params :runtimeVersion runnerVersion)
+            client-params (-> client-params
+                              (assoc :runtimeVersion runnerVersion)
+                              (assoc :isCrawler
+                                     (crawlers/crawler? (get-in req [:headers "user-agent"]))))
 
             new-ui-runtime? (>= runnerVersion 3)]
+        (if-let [error-message (app-data/should-app-be-blocked? app-id app-session environment)]
+          (block-app req error-message)
+          (do
+            (log/debug "Serving app" app-id)
+            (sessions/resolve-ambiguous-client-type! app-session "browser")
+            (sessions/ensure-logged! app-session)
 
-        (log/debug "Serving app" app-id)
+            ;; We are loading this app from scratch, so we don't care if our old session has expired.
+            ;; We also reset the environment in this session to match what the URL told us, so that refreshing
+            ;; the page gets you the latest version
+            (swap! app-session assoc
+                   :anvil.runtime/replacement-session false
+                   :environment environment)
+            (reload-anvil-cookies! (:app-session req) req)
+            (metrics/inc! :api/runtime-serve-app-total)
 
-        (sessions/resolve-ambiguous-client-type! app-session "browser")
-        (sessions/ensure-logged! app-session)
+            (sessions/persist! app-session)
 
-        ;; We are loading this app from scratch, so we don't care if our old session has expired.
-        ;; We also reset the environment in this session to match what the URL told us, so that refreshing
-        ;; the page gets you the latest version
-        (swap! app-session assoc
-               :anvil.runtime/replacement-session false
-               :environment environment)
-        (reload-anvil-cookies! (:app-session req) req)
-        (metrics/inc! :api/runtime-serve-app-total)
-
-        (sessions/persist! app-session)
-
-        (-> (serve-templated-html req (runtime-client-resource req (if new-ui-runtime? "/runner2.html" "/runner.html"))
-                                  {"{{body-class}}"         (or body-class "")
-                                   "{{app-name}}"           (hiccup-util/escape-html
-                                                              (util/or-str (:title meta) (:name app-info) (:name app-map)))
-                                   "{{app-title}}"          (hiccup-util/escape-html
-                                                              (util/or-str (:title meta) (:name app-info) (:name app-map)))
-                                   "{{ms-tile-image}}"      (image-from-metadata app-origin meta :logo_img "/mstile-144x144.png")
-                                   "{{favicon}}"            (image-from-metadata app-origin meta :logo_img "/favicon-96x96.png")
-                                   "{{social-image}}"       (image-from-metadata app-origin meta :logo_img "/img/logo-square-padded.png")
-                                   "{{social-description}}" (render-app-description (:description meta))
-                                   "{{canonical-url}}"      (hiccup-util/escape-html app-origin)
-                                   "{{anvil-version}}"      conf/anvil-version
-                                   "{{google-api-key}}"     (or google-api-key "")
-                                   "{{session-token}}"      (or (:session-url-token req)
-                                                                (get-in @app-session [::sessions/tokens :url])
-                                                                (get-in @app-session [::sessions/tokens :burned])
-                                                                "")
-                                   "{{manifest-url}}"       (str (hiccup-util/escape-html app-origin) "/_/manifest.json")
-                                   "{{theme-color}}"        (:primary-color style)
-                                   "{{shim-css}}"           (:css-shims style)
-                                   "{{theme-css}}"          (:css style)
-                                   "{{root-vars}}"          (:root-vars style)
-                                   "{{head-html}}"          head-html
-                                   "{{extra-snippets}}"     (get-service-snippets app-map)
-                                   "{{app-info-object}}"    (util/write-json-str (runtime-util/get-runtime-app-info environment))
-                                   "{{load-app-code}}"      (str "\n$(function() {"
-                                                                 (get-service-code app-map)
-                                                                 "window.loadApp(" (util/write-json-str (merge {"app"       app-map
-                                                                                                                "appId"     app-id
-                                                                                                                "appOrigin" app-origin}
-                                                                                                               client-params)) ", anvilServicePreloadModules);"
-                                                                 "const loadAppAfter = window.anvil._loadAppAfter || [];"
-                                                                 "Promise.all(loadAppAfter).then(function() {"
-                                                                 (condp = action
-                                                                   :run-app (let [startup (or (:startup app-map) {:type "form" :module (:startup_form app-map)})]
-                                                                              (if (= "module" (:type startup))
-                                                                                (str "window.openMainModule(" (util/write-json-str (:module startup)) ");")
-                                                                                (str "window.openForm(" (util/write-json-str (:module startup)) ")")))
-                                                                   :print (str "window.printComponents(" (util/write-json-str print-id) "," (util/write-json-str print-key) ");"))
-                                                                 "});"
-                                                                 "});")})
-            (resp/header "Referrer-Policy" "no-referrer")
-            (resp/header "X-UA-Compatible" "IE=edge")
-            (resp/header "Content-Type" "text/html")
-            (resp/header "X-Anvil-Cacheable" true)
-            (resp/header "Access-Control-Expose-Headers" "X-Anvil-Cacheable")
-            (resp/set-cookie "anvil-test-cookie" true)
-            (#(if-not (contains? (:cookies req) (:shared conf/app-cookie-names))
-                (assoc-in % [:cookies (:shared conf/app-cookie-names)] (merge {:value     "x"
-                                                                               :max-age   2147483647
-                                                                               :domain    (:shared-cookie-domain @(:app-session req))
-                                                                               :path      "/"
-                                                                               :http-only true}
-                                                                              (when conf/force-secure-cookies?
-                                                                                {:same-site :none
-                                                                                 :secure    true})))
-                %))
-            (#(if-let [restrict-embedding-origins (get-embedding-restrictions app-map)]
-                (-> %
-                    (resp/header "X-Frame-Options" (str "allow-from " restrict-embedding-origins))
-                    (resp/header "Content-Security-Policy" (str "frame-ancestors " restrict-embedding-origins)))
-                %))))
+            (-> (serve-templated-html req (runtime-client-resource req (if new-ui-runtime? "/runner2.html" "/runner.html"))
+                                      {"{{body-class}}"         (or body-class "")
+                                       "{{app-name}}"           (hiccup-util/escape-html
+                                                                  (util/or-str (:title meta) (:name app-info) (:name app-map)))
+                                       "{{app-title}}"          (hiccup-util/escape-html
+                                                                  (util/or-str (:title meta) (:name app-info) (:name app-map)))
+                                       "{{ms-tile-image}}"      (image-from-metadata app-origin meta :logo_img "/mstile-144x144.png")
+                                       "{{favicon}}"            (image-from-metadata app-origin meta :logo_img "/favicon-96x96.png")
+                                       "{{social-image}}"       (image-from-metadata app-origin meta :logo_img "/img/logo-square-padded.png")
+                                       "{{description}}"        (render-app-description (:description meta))
+                                       "{{canonical-url}}"      (hiccup-util/escape-html app-origin)
+                                       "{{anvil-version}}"      conf/anvil-version
+                                       "{{google-api-key}}"     (or google-api-key "")
+                                       "{{session-token}}"      (or (:session-url-token req)
+                                                                    (get-in @app-session [::sessions/tokens :url])
+                                                                    (get-in @app-session [::sessions/tokens :burned])
+                                                                    "")
+                                       "{{manifest-url}}"       (str (hiccup-util/escape-html app-origin) "/_/manifest.json")
+                                       "{{theme-color}}"        (:primary-color style)
+                                       "{{shim-css}}"           (:css-shims style)
+                                       "{{theme-css}}"          (:css style)
+                                       "{{root-vars}}"          (:root-vars style)
+                                       "{{head-html}}"          head-html
+                                       "{{extra-snippets}}"     (get-service-snippets app-map)
+                                       "{{app-info-object}}"    (util/write-json-str (runtime-util/get-runtime-app-info environment))
+                                       "{{load-app-code}}"      (str "\n$(function() {"
+                                                                     (get-service-code app-map)
+                                                                     "window.loadApp(" (util/write-json-str (merge {"app"       app-map
+                                                                                                                    "appId"     app-id
+                                                                                                                    "appOrigin" app-origin}
+                                                                                                                   client-params)) ", anvilServicePreloadModules);"
+                                                                     "const loadAppAfter = window.anvil._loadAppAfter || [];"
+                                                                     "Promise.all(loadAppAfter).then(function() {"
+                                                                     (condp = action
+                                                                       :run-app (let [startup (or (:startup app-map) {:type "form" :module (:startup_form app-map)})]
+                                                                                  (if (= "module" (:type startup))
+                                                                                    (str "window.openMainModule(" (util/write-json-str (:module startup)) ");")
+                                                                                    (str "window.openForm(" (util/write-json-str (:module startup)) ")")))
+                                                                       :print (str "window.printComponents(" (util/write-json-str print-id) "," (util/write-json-str print-key) ");"))
+                                                                     "});"
+                                                                     "});")})
+                (resp/header "Referrer-Policy" "no-referrer")
+                (resp/header "X-UA-Compatible" "IE=edge")
+                (resp/header "Content-Type" "text/html")
+                (resp/header "X-Anvil-Cacheable" true)
+                (resp/header "Access-Control-Expose-Headers" "X-Anvil-Cacheable")
+                (resp/set-cookie "anvil-test-cookie" true)
+                (#(if-not (contains? (:cookies req) (:shared conf/app-cookie-names))
+                    (assoc-in % [:cookies (:shared conf/app-cookie-names)] (merge {:value     "x"
+                                                                                   :max-age   2147483647
+                                                                                   :domain    (:shared-cookie-domain @(:app-session req))
+                                                                                   :path      "/"
+                                                                                   :http-only true}
+                                                                                  (when conf/force-secure-cookies?
+                                                                                    {:same-site :none
+                                                                                     :secure    true})))
+                    %))
+                (#(if-let [restrict-embedding-origins (get-embedding-restrictions app-map)]
+                    (-> %
+                        (resp/header "X-Frame-Options" (str "allow-from " restrict-embedding-origins))
+                        (resp/header "Content-Security-Policy" (str "frame-ancestors " restrict-embedding-origins)))
+                    %))))))
       (catch :anvil/app-loading-error e
         (app-500 req (:message e))))))
 
 (defn serve-api-request
   ([path request] (serve-api-request path request "http"))
-  ([path request task-prefix]
+  ([path {:keys [app-id app-origin environment environment-from-url request-method body cross-origin app-session new-session] :as request} task-prefix]
    (log/trace "API hit" request)
-   (log/trace "Session:" (:app-session request))
-   (sessions/resolve-ambiguous-client-type! (:app-session request) "http")
-   (sessions/ensure-logged! (:app-session request))
-   (with-channel request channel
-     (try+
-       (let [anvil-cookies-updated? (atom false)
+   (log/trace "Session:" app-session)
+   (sessions/resolve-ambiguous-client-type! app-session "http")
+   (sessions/ensure-logged! app-session)
+   (if-let [error-message (app-data/should-app-be-blocked? app-id app-session (or environment environment-from-url))]
+     (block-app request error-message)
+     (with-channel request channel
+                   (try+
+                     (let [anvil-cookies-updated? (atom false)
 
-             responded? (atom false)
+                           responded? (atom false)
 
-             with-safe-anvil-cookies (fn [resp headers]
-                                       (let [resp-with-safe-headers (reduce (fn [resp [k v]]
-                                                                              (let [h (.toLowerCase (name k))]
-                                                                                (cond
-                                                                                  (and (= h "set-cookie")
-                                                                                       ((set (vals conf/app-cookie-names)) (first (string/split v #"[=\s]+"))))
-                                                                                  resp
+                           with-safe-anvil-cookies (fn [resp headers]
+                                                     (let [resp-with-safe-headers (reduce (fn [resp [k v]]
+                                                                                            (let [h (.toLowerCase (name k))]
+                                                                                              (cond
+                                                                                                (and (= h "set-cookie")
+                                                                                                     ((set (vals conf/app-cookie-names)) (first (string/split v #"[=\s]+"))))
+                                                                                                resp
 
-                                                                                  (= h "content-type")
-                                                                                  ; Because this has already been set, we need to explicitly override it
-                                                                                  (assoc-in resp [:headers "Content-Type"] v)
+                                                                                                (= h "content-type")
+                                                                                                ; Because this has already been set, we need to explicitly override it
+                                                                                                (assoc-in resp [:headers "Content-Type"] v)
 
-                                                                                  :else
-                                                                                  (update-in resp [:headers h] conj v))))
-                                                                            resp headers)]
-                                         (if (and @anvil-cookies-updated? (not (:cross-origin request)))
-                                           (-> resp-with-safe-headers
-                                               (with-anvil-cookies (:app-session request))
-                                               (ring.middleware.cookies/cookies-response))
-                                           resp-with-safe-headers)))
+                                                                                                :else
+                                                                                                (update-in resp [:headers h] conj v))))
+                                                                                          resp headers)]
+                                                       (if (and @anvil-cookies-updated? (not cross-origin))
+                                                         (-> resp-with-safe-headers
+                                                             (with-anvil-cookies app-session)
+                                                             (ring.middleware.cookies/cookies-response))
+                                                         resp-with-safe-headers)))
 
-             _ (when (:new-session request)
-                 (swap! (:app-session request) assoc-in [:client :type] :http))
+                           _ (when new-session
+                               (swap! app-session assoc-in [:client :type] :http))
 
-             method (.toUpperCase (name (:request-method request)))
+                           method (.toUpperCase (name request-method))
 
-             session (:app-session request)
-             _ (reload-anvil-cookies! session request)
+                           session app-session
+                           _ (reload-anvil-cookies! session request)
 
-             ;; TODO: Work out how to get the path and method into session data that may have already been logged.
-             [session alternate-session] (if (:cross-origin request)
-                                           ;; N.B This session doesn't get logged immediately, because it might be thrown away if the http_endpoint allows cross-origin sessions.
-                                           ;; If it needs logging (because we ended up using it), that will happen in anvil.private.switch_session!
-                                           [(sessions/new-unlogged-session-with-state (sessions/new-session-state-from-request request :http)
-                                                                                      (-> (app-log/log-data-from-ring-request request)
-                                                                                          (assoc :path path
-                                                                                                 :method method)))
-                                            session]
-                                           [session nil])
+                           ;; TODO: Work out how to get the path and method into session data that may have already been logged.
+                           [session alternate-session] (if cross-origin
+                                                         ;; N.B This session doesn't get logged immediately, because it might be thrown away if the http_endpoint allows cross-origin sessions.
+                                                         ;; If it needs logging (because we ended up using it), that will happen in anvil.private.switch_session!
+                                                         [(sessions/new-unlogged-session-with-state (sessions/new-session-state-from-request request :http)
+                                                                                                    (-> (app-log/log-data-from-ring-request request)
+                                                                                                        (assoc :path path
+                                                                                                               :method method)))
+                                                          session]
+                                                         [session nil])
 
-             dispatcher-request (promise)
+                           dispatcher-request (promise)
 
-             trace-id nil                                   ;; TODO NEW TRACE API
-             return-path {:update!
-                          (fn [{:keys [output set-cookie] :as r}]
-                            (cond
-                              set-cookie
-                              (reset! anvil-cookies-updated? true)
+                           trace-id nil                     ;; TODO NEW TRACE API
+                           return-path {:update!
+                                        (fn [{:keys [output set-cookie] :as r}]
+                                          (cond
+                                            set-cookie
+                                            (reset! anvil-cookies-updated? true)
 
-                              (string? output)
-                              ;; TODO which session do we log this into?!
-                              (app-log/record-event! session trace-id "print" output nil)))
+                                            (string? output)
+                                            ;; TODO which session do we log this into?!
+                                            (app-log/record-event! session trace-id "print" output nil)))
 
-                          :respond!
-                          (fn [{{:keys [status body headers] :or {headers []}} :response :keys [response error] :as r}]
+                                        :respond!
+                                        (fn [{{:keys [status body headers] :or {headers []}} :response :keys [response error] :as r}]
 
-                            (when (get-in @(sessions/ephemeral-cache session) [::sessions/dirty])
-                              (sessions/notify-session-update! session))
+                                          (when (get-in @(sessions/ephemeral-cache session) [::sessions/dirty])
+                                            (sessions/notify-session-update! session))
 
-                            (binding [rpc-util/*environment* (:environment request)]
-                              (try+
-                                (cond
-                                  (= (:type error) "RateLimitExceeded")
-                                  (send! channel (-> {:body (str "Rate limit exceeded: " (:message error))}
-                                                     (resp/status 429)
-                                                     (resp/content-type "text/plain")))
+                                          (binding [rpc-util/*environment* environment]
+                                            (try+
+                                              (cond
+                                                (= (:type error) "RateLimitExceeded")
+                                                (send! channel (-> {:body (str "Rate limit exceeded: " (:message error))}
+                                                                   (resp/status 429)
+                                                                   (resp/content-type "text/plain")))
 
-                                  error
-                                  ;; NoServerFunctionError -> 404; anything else -> 500
-                                  (if (and (= (:type error) "anvil.server.NoServerFunctionError")
-                                           (re-find #"http:" (:message error)))
-                                    (do
-                                      (send! channel (-> {:body "No matching API endpoint"}
-                                                         (resp/status 404)
-                                                         (resp/content-type "text/plain")))
-                                      ;; TODO which session do we log this into?
-                                      (let [error (assoc error :message (str "API request routing failed. No @anvil.server.http_endpoint exists with path matching '" (subs path 0 (min (count path) 100)) (when (> (count path) 100) "...") "'"))]
-                                        (app-log/record-event! session trace-id "err" (str (:type error) ": " (:message error)) error)))
+                                                error
+                                                ;; NoServerFunctionError -> 404; anything else -> 500
+                                                (if (and (= (:type error) "anvil.server.NoServerFunctionError")
+                                                         (re-find #"http:" (:message error)))
+                                                  (do
+                                                    (send! channel (-> {:body "No matching API endpoint"}
+                                                                       (resp/status 404)
+                                                                       (resp/content-type "text/plain")))
+                                                    ;; TODO which session do we log this into?
+                                                    (let [error (assoc error :message (str "API request routing failed. No @anvil.server.http_endpoint exists with path matching '" (subs path 0 (min (count path) 100)) (when (> (count path) 100) "...") "'"))]
+                                                      (app-log/record-event! session trace-id "err" (str (:type error) ": " (:message error)) error)))
 
-                                    (do
-                                      (send! channel (-> {:body "An exception was raised. Check the application logs for details."}
-                                                         (resp/status 500)
-                                                         (resp/content-type "text/plain")))
-                                      (when-not @responded?
-                                        (app-log/record-event! session trace-id "err" (str (:type error) ": " (:message error)) error))))
+                                                  (do
+                                                    (send! channel (-> {:body "An exception was raised. Check the application logs for details."}
+                                                                       (resp/status 500)
+                                                                       (resp/content-type "text/plain")))
+                                                    (when-not @responded?
+                                                      (app-log/record-event! session trace-id "err" (str (:type error) ": " (:message error)) error))))
 
-                                  (or (instance? Media body) (instance? anvil.dispatcher.types.LazyMedia body))
-                                  (worker-pool/run-task! {:type :task
-                                                          :name ::serve-api-lazy-media
-                                                          :tags (worker-pool/get-task-tags-for-http-request request)}
-                                    (try+
-                                      (send! channel (-> {:body   (blocking-hacks/?->InputStream @dispatcher-request body)
-                                                          :status status}
-                                                         (resp/content-type (.getContentType ^MediaDescriptor body))
-                                                         (with-safe-anvil-cookies headers)))
-                                      (catch Exception e
-                                        (let [error-id (random/hex 6)]
-                                          (log/error e "Error in app API Lazy Media response:" error-id)
-                                          (send! channel (-> {:body (str "Internal server error serving Lazy Media: " error-id)}
-                                                             (resp/status 500)
-                                                             (resp/content-type "text/plain")))))))
+                                                (or (instance? Media body) (instance? anvil.dispatcher.types.LazyMedia body))
+                                                (worker-pool/run-task! {:type :task
+                                                                        :name ::serve-api-lazy-media
+                                                                        :tags (worker-pool/get-task-tags-for-http-request request)}
+                                                                       (try+
+                                                                         (send! channel (-> {:body   (blocking-hacks/?->InputStream @dispatcher-request body)
+                                                                                             :status status}
+                                                                                            (resp/content-type (.getContentType ^MediaDescriptor body))
+                                                                                            (with-safe-anvil-cookies headers)))
+                                                                         (catch Exception e
+                                                                           (let [error-id (random/hex 6)]
+                                                                             (log/error e "Error in app API Lazy Media response:" error-id)
+                                                                             (send! channel (-> {:body (str "Internal server error serving Lazy Media: " error-id)}
+                                                                                                (resp/status 500)
+                                                                                                (resp/content-type "text/plain")))))))
 
-                                  (instance? ChunkedStream body)
-                                  (do
-                                    (send! channel (-> {:status status}
-                                                       (resp/content-type (.getContentType ^MediaDescriptor body))
-                                                       (with-safe-anvil-cookies headers)) false)
-                                    (types/consume ^ChunkedStream body
-                                                   (fn [chunk-idx last-chunk? data]
-                                                     (send! channel {:body (ByteArrayInputStream. data)} last-chunk?))))
+                                                (instance? ChunkedStream body)
+                                                (do
+                                                  (send! channel (-> {:status status}
+                                                                     (resp/content-type (.getContentType ^MediaDescriptor body))
+                                                                     (with-safe-anvil-cookies headers)) false)
+                                                  (types/consume ^ChunkedStream body
+                                                                 (fn [chunk-idx last-chunk? data]
+                                                                   (send! channel {:body (ByteArrayInputStream. data)} last-chunk?))))
 
-                                  (string? body)
-                                  (send! channel (-> {:body   body,
-                                                      :status status}
-                                                     (resp/content-type "text/plain; charset=utf-8")
-                                                     (with-safe-anvil-cookies headers)))
+                                                (string? body)
+                                                (send! channel (-> {:body   body,
+                                                                    :status status}
+                                                                   (resp/content-type "text/plain; charset=utf-8")
+                                                                   (with-safe-anvil-cookies headers)))
 
-                                  :else
-                                  (do
-                                    ((fn check-json [value path]
-                                       (let [fail! #(throw+ {:anvil/server-error (format "Cannot send a %s object over HTTP as response%s.\nYou must return either Media, a string, or a JSON-compatible object (lists/dicts/strings/numbers/None).\n"
-                                                                                         (.getSimpleName (.getClass value))
-                                                                                         (apply str (for [p (reverse path)] (str "[" (pr-str p) "]"))))})]
-                                         (cond
-                                           (or (string? value) (number? value) (nil? value))
-                                           :ok
+                                                :else
+                                                (do
+                                                  ((fn check-json [value path]
+                                                     (let [fail! #(throw+ {:anvil/server-error (format "Cannot send a %s object over HTTP as response%s.\nYou must return either Media, a string, or a JSON-compatible object (lists/dicts/strings/numbers/None).\n"
+                                                                                                       (.getSimpleName (.getClass value))
+                                                                                                       (apply str (for [p (reverse path)] (str "[" (pr-str p) "]"))))})]
+                                                       (cond
+                                                         (or (string? value) (number? value) (nil? value))
+                                                         :ok
 
-                                           (and (map? value) (not (record? value)))
-                                           (doseq [[k v] value] (check-json v (cons (name k) path)))
+                                                         (and (map? value) (not (record? value)))
+                                                         (doseq [[k v] value] (check-json v (cons (name k) path)))
 
-                                           (or (seq? value) (vector? value))
-                                           (doall (map-indexed #(check-json %2 (cons %1 path)) value))
+                                                         (or (seq? value) (vector? value))
+                                                         (doall (map-indexed #(check-json %2 (cons %1 path)) value))
 
-                                           :else
-                                           (fail!))))
-                                     body nil)
-                                    (send! channel (-> {:body   (util/write-json-str body),
-                                                        :status status}
-                                                       (resp/content-type "application/json")
-                                                       (with-safe-anvil-cookies headers)))))
+                                                         :else
+                                                         (fail!))))
+                                                   body nil)
+                                                  (send! channel (-> {:body   (util/write-json-str body),
+                                                                      :status status}
+                                                                     (resp/content-type "application/json")
+                                                                     (with-safe-anvil-cookies headers)))))
 
-                                (reset! responded? true)
-                                (catch :anvil/server-error e
-                                  (log/trace e)
-                                  (send! channel (-> {:body (:anvil/server-error e)}
-                                                     (resp/status 500)
-                                                     (resp/content-type "text/plain"))))
-                                (catch Exception _e
-                                  (log/trace _e)
-                                  (send! channel (-> {:body   "This response cannot be transmitted over HTTP. You must return either Media, a string, or a JSON-compatible object (lists/dicts/strings/numbers/None)"
-                                                      :status 500}
-                                                     (resp/content-type "text/plain")))))))}
+                                              (reset! responded? true)
+                                              (catch :anvil/server-error e
+                                                (log/trace e)
+                                                (send! channel (-> {:body (:anvil/server-error e)}
+                                                                   (resp/status 500)
+                                                                   (resp/content-type "text/plain"))))
+                                              (catch Exception _e
+                                                (log/trace _e)
+                                                (send! channel (-> {:body   "This response cannot be transmitted over HTTP. You must return either Media, a string, or a JSON-compatible object (lists/dicts/strings/numbers/None)"
+                                                                    :status 500}
+                                                                   (resp/content-type "text/plain")))))))}
 
-             body-media (when (:body request)
-                          ; For some reason, if there's no Content-Type header, the body has already been read. Reset it.
-                          (.reset (:body request))
-                          (InputStreamMedia. (get-in request [:headers "content-type"])
-                                             (:body request)
-                                             (second (re-matches #"attachment;\s*filename=\"(.*)\"\s*"
-                                                                 (get-in request [:headers "content-disposition"] "")))
-                                             (get-in request [:headers "content-length"])))
-             authorization (get-in request [:headers "authorization"] "")
-             [[_ username password]] (try
-                                       (when-let [m (re-matches #"\s*Basic\s+(.+)" authorization)]
-                                         (-> m
-                                             ^String second
-                                             (.getBytes "UTF-8")
-                                             Base64/decodeBase64
-                                             (String. "UTF-8")
-                                             (#(re-seq #"([^:]*):(.*)" %))))
-                                       (catch Exception e
-                                         (throw+ {::api-error (str "Invalid Authorization header for HTTP Basic auth: " authorization)})))
+                           body-media (when body
+                                        ; For some reason, if there's no Content-Type header, the body has already been read. Reset it.
+                                        (.reset body)
+                                        (InputStreamMedia. (get-in request [:headers "content-type"])
+                                                           body
+                                                           (second (re-matches #"attachment;\s*filename=\"(.*)\"\s*"
+                                                                               (get-in request [:headers "content-disposition"] "")))
+                                                           (get-in request [:headers "content-length"])))
+                           authorization (get-in request [:headers "authorization"] "")
+                           [[_ username password]] (try
+                                                     (when-let [m (re-matches #"\s*Basic\s+(.+)" authorization)]
+                                                       (-> m
+                                                           ^String second
+                                                           (.getBytes "UTF-8")
+                                                           Base64/decodeBase64
+                                                           (String. "UTF-8")
+                                                           (#(re-seq #"([^:]*):(.*)" %))))
+                                                     (catch Exception e
+                                                       (throw+ {::api-error (str "Invalid Authorization header for HTTP Basic auth: " authorization)})))
 
 
-             headers-without-app-cookies (update-in (:headers request) ["cookie"] (fn [cookies-header]
-                                                                                    (when cookies-header
-                                                                                      (apply str (interpose "; " (filter
-                                                                                                                   #(not ((set (vals conf/app-cookie-names)) (first (string/split % #"="))))
-                                                                                                                   (string/split cookies-header #"; ")))))))]
+                           headers-without-app-cookies (update-in (:headers request) ["cookie"] (fn [cookies-header]
+                                                                                                  (when cookies-header
+                                                                                                    (apply str (interpose "; " (filter
+                                                                                                                                 #(not ((set (vals conf/app-cookie-names)) (first (string/split % #"="))))
+                                                                                                                                 (string/split cookies-header #"; ")))))))]
 
-         (deliver dispatcher-request {:call          {:func (str task-prefix ":" path),
-                                                      :args [] :kwargs {:method                    method
-                                                                        :path                      path
-                                                                        :origin                    (get headers-without-app-cookies "origin")
-                                                                        :query_params              (:query-params request)
-                                                                        :form_params               (:form-params request)
-                                                                        :headers                   headers-without-app-cookies
-                                                                        :remote_address            (:remote-addr request)
-                                                                        :body                      body-media
-                                                                        :username                  username
-                                                                        :password                  password
-                                                                        :same_app_alternate_origin (:alternate-app-origin request)}}
-                                      :app-id        (:app-id request), :app-origin (:app-origin request)
-                                      :environment   (or (:environment-from-url request) (:environment request))
-                                      :session-state session
-                                      :origin        :http_endpoint
-                                      :call-stack    (list {:type :http})
-                                      :thread-id     (str "endpoint-" (:app-id request) "-" (random/hex 16))
-                                      :use-quota?    true
-                                      :anvil.dispatcher/alternate-session alternate-session})
-         (metrics/inc! :api/runtime-serve-api-total)
-         (dispatcher/dispatch! @dispatcher-request
-                               return-path))
+                       (deliver dispatcher-request {:call                               {:func (str task-prefix ":" path),
+                                                                                         :args [] :kwargs {:method                    method
+                                                                                                           :path                      path
+                                                                                                           :origin                    (get headers-without-app-cookies "origin")
+                                                                                                           :query_params              (:query-params request)
+                                                                                                           :form_params               (:form-params request)
+                                                                                                           :headers                   headers-without-app-cookies
+                                                                                                           :remote_address            (:remote-addr request)
+                                                                                                           :body                      body-media
+                                                                                                           :username                  username
+                                                                                                           :password                  password
+                                                                                                           :same_app_alternate_origin (:alternate-app-origin request)}}
+                                                    :app-id                             app-id, :app-origin app-origin
+                                                    :environment                        (or environment-from-url environment)
+                                                    :session-state                      session
+                                                    :origin                             :http_endpoint
+                                                    :call-stack                         (list {:type :http})
+                                                    :thread-id                          (str "endpoint-" app-id "-" (random/hex 16))
+                                                    :use-quota?                         true
+                                                    :anvil.dispatcher/alternate-session alternate-session})
+                       (metrics/inc! :api/runtime-serve-api-total)
+                       (dispatcher/dispatch! @dispatcher-request
+                                             return-path))
 
-       (catch ::api-error e
-         (send! channel (-> {:body (::api-error e)}
-                            (resp/status 400)
-                            (resp/content-type "text/plain"))))
-       (catch :anvil/server-error e
-         (log/trace "Serving error" e)
-         (send! channel (-> {:body (:anvil/server-error e)}
-                            (resp/status 500)
-                            (resp/content-type "text/plain"))))
+                     (catch ::api-error e
+                       (send! channel (-> {:body (::api-error e)}
+                                          (resp/status 400)
+                                          (resp/content-type "text/plain"))))
+                     (catch :anvil/server-error e
+                       (log/trace "Serving error" e)
+                       (send! channel (-> {:body (:anvil/server-error e)}
+                                          (resp/status 500)
+                                          (resp/content-type "text/plain"))))
 
-       (catch :anvil/app-loading-error e
-         (let [error-id (random/hex 6)]
-           (log/warn (str "App dependency error when loading app " (:app-id request) " for API call to " path ": " error-id))
-           (send! channel (-> {:body (str "Internal server error: " error-id)}
-                              (resp/status 500)
-                              (resp/content-type "text/plain")))))
+                     (catch :anvil/app-loading-error e
+                       (let [error-id (random/hex 6)]
+                         (log/warn (str "App dependency error when loading app " app-id " for API call to " path ": " error-id))
+                         (send! channel (-> {:body (str "Internal server error: " error-id)}
+                                            (resp/status 500)
+                                            (resp/content-type "text/plain")))))
 
-       (catch Exception e
-         (let [error-id (random/hex 6)]
-           (log/error e "Error in app API:" error-id)
-           (send! channel (-> {:body (str "Internal server error: " error-id)}
-                              (resp/status 500)
-                              (resp/content-type "text/plain")))))))))
+                     (catch Exception e
+                       (let [error-id (random/hex 6)]
+                         (log/error e "Error in app API:" error-id)
+                         (send! channel (-> {:body (str "Internal server error: " error-id)}
+                                            (resp/status 500)
+                                            (resp/content-type "text/plain"))))))))))
 
 (defn serve-lazy-media [manager media-key media-id nodl request]
   (log/trace "Request for media" request)
@@ -610,7 +630,7 @@
                             (filter #(= (:name %) asset-name))
                             (first))]
         (log/trace "Serving an asset: " (:name asset))
-        (let [mime-type (mime-type/ext-mime-type asset-name)]
+        (let [mime-type (mime-type/ext-mime-type asset-name util/additional-mime-types)]
           (-> (Base64/decodeBase64 ^String (:content asset))
               (ByteArrayInputStream.)
               (resp/response)
@@ -623,6 +643,17 @@
 
   (ANY ["/_/api:path", :path #".*"] [path :as request]
     (serve-api-request path request))
+
+  (POST "/_/server-call-http" request
+    (if-let [other-origin (:cross-origin request)]
+      (do (log/warn (str "Origin header mismatch connection to " (:app-origin request) ": " other-origin))
+          (-> (resp/response "Invalid origin")
+              (resp/status 403)))
+      (try+
+        (when-let [app (get-app-from-request request false)]
+          (browser-http/http-handler (assoc-in request [:environment :commit-id] (:version app)) (:content app)))
+        (catch :anvil/app-loading-error e
+          (log/error (:throwable &throw-context) "App dependency error when connecting")))))
 
   (ANY ["/_/ws:old-key" :old-key #".*"] request
     (if-let [other-origin (:cross-origin request)]
@@ -679,13 +710,13 @@
 
           (resp/redirect (str conf/static-root-url "/runtime-new/runtime/client_auth_error.html#" (codec/url-encode "No client ID specified in Google API service config.")))
 
-          (let [login-response (oauth/get-login-response request (sessions/get-id (:app-session request)) google-client-id redirect (:scope params) offline-access)]
-            ;; Need to get csrf-token out of the cookie session and into app-session
+          (let [[url csrf-token] (google-sso/get-login-url (sessions/get-id (:app-session request)) google-client-id redirect (:scope params) offline-access)]
+            ;; Store csrf-token in app-session rather than ring session.
             (swap! (:app-session request) assoc
-                   ::google-csrf-token (-> login-response :session :anvil.core.google-oauth2/csrf-token)
+                   ::google-csrf-token csrf-token
                    ::google-redirect redirect)              ;; Saves working out the redirect again in the callback.
             (sessions/notify-session-update! (:app-session request))
-            login-response)))))
+            (resp/redirect url))))))
 
   (GET "/_/client_auth_id_token" request
     (resp/response (-> @(:app-session request) :google :user-tokens :id-token)))
@@ -776,16 +807,10 @@
                      (not app-secret-provided?)))
           (resp/redirect (str conf/static-root-url "/runtime-new/runtime/microsoft_auth_error.html#" (codec/url-encode "To specify custom permissions (scopes), you must provide an Application ID and Application Secret in the Microsoft service config.")))
 
-          (do (swap! (:app-session request) assoc ::microsoft-csrf-token csrf-token ::microsoft-nonce nonce)
-              (sessions/notify-session-update! (:app-session request))
-              (resp/redirect (str "https://login.microsoftonline.com/" (URLEncoder/encode (util/or-str tenant-id "common")) "/oauth2/v2.0/authorize?"
-                                  "&client_id=" application-id
-                                  "&response_type=" (if app-id-provided? "code" "id_token")
-                                  "&redirect_uri=" (codec/url-encode (str conf/runtime-common-url "/_/microsoft_auth_callback"))
-                                  "&response_mode=form_post"
-                                  "&state=" (sessions/get-id (:app-session request)) "G" (codec/url-encode csrf-token)
-                                  "&nonce=" (codec/url-encode nonce)
-                                  "&scope=" (codec/url-encode scope))))))))
+          (let [[url nonce] (azure-sso/get-login-url (sessions/get-id (:app-session request)) tenant-id application-id (if app-id-provided? "code" "id_token") scope (str conf/runtime-common-url "/_/microsoft_auth_callback"))]
+            (swap! (:app-session request) assoc ::microsoft-nonce nonce)
+            (sessions/notify-session-update! (:app-session request))
+            (resp/redirect url))))))
 
   (GET "/_/saml-sp-metadata" request
     (let [app (:content (get-app-from-request request))
@@ -914,12 +939,12 @@
           (log/trace "Client auth callback in session" session-id (str "(app " (get request :app-id) ")"))
 
           (try
-            (let [tokens (oauth/process-callback (-> req :params :code)
-                                                 (-> req :params :state)
-                                                 (::google-csrf-token session-state)
-                                                 google-client-id
-                                                 google-client-secret
-                                                 (::google-redirect session-state))]
+            (let [tokens (google-sso/process-callback (-> req :params :code)
+                                                      (-> req :params :state)
+                                                      (::google-csrf-token session-state)
+                                                      google-client-id
+                                                      google-client-secret
+                                                      (::google-redirect session-state))]
 
               (log/debug "CLIENT AUTH COMPLETE")
               (log/trace (with-out-str (pprint tokens)))
@@ -1008,7 +1033,7 @@
   (POST "/_/microsoft_auth_callback" req
     ;; Tokens reference: https://docs.microsoft.com/en-us/azure/active-directory/develop/active-directory-v2-tokens
     (let [redirect-uri (str conf/runtime-common-url "/_/microsoft_auth_callback")
-          session-id (clojure.string/replace (or (-> req :params :state) "") #"G[^G]*$" "")
+          session-id (-> req :params :state)
           app-session (sessions/load-session-by-id-without-authentication session-id)]
 
       (if-not app-session
@@ -1021,71 +1046,22 @@
                   request (merge req {:app-session app-session} (select-keys session-state [:app-id :app-info :environment]))
                   app (:content (get-app-from-request request))
                   microsoft-service (first (filter #(= (:source %) "/runtime/services/anvil/microsoft.yml") (:services app)))
-                  provided-csrf-token (last (.split ^String (-> req :params :state) "G"))
-                  load-id-token! (fn [id-token]
-                                   (let [{:keys [kid alg]} (json/read-str (String. ^bytes (b64/decode (.getBytes ^String id-token))) :key-fn keyword)
 
-                                         ; Only allow some algorithms, so we're not vulnerable to attacks that involve switching e.g. rs256 to hs256. See https://auth0.com/blog/critical-vulnerabilities-in-json-web-token-libraries/
-                                         allowed-algs #{:rs256}
+                  application-id (or (get-in microsoft-service [:server_config :application_id])
+                                     (and (:custom? conf/microsoft-client-config) (:application-id conf/microsoft-client-config)))
+                  application-secret (or (when-let [encrypted-app-secret (get-in microsoft-service [:server_config :application_secret_enc])]
+                                           (:value (secrets/get-global-app-secret-value (:app-info session-state) "microsoft-service/application-secret" encrypted-app-secret)))
+                                         (get-in microsoft-service [:server_config :application_secret])
+                                         (and (:custom? conf/microsoft-client-config) (:application-secret conf/microsoft-client-config)))
+                  tenant-id (or (when (get-in microsoft-service [:server_config :application_id])
+                                  (get-in microsoft-service [:server_config :tenant_id]))
+                                (and (:custom? conf/microsoft-client-config) (:tenant-id conf/microsoft-client-config)))
+                  nonce (::microsoft-nonce session-state)
 
-                                         alg (some #{(keyword (.toLowerCase alg))} allowed-algs)
+                  tokens (azure-sso/process-callback req nonce tenant-id application-id application-secret redirect-uri)]
 
-                                         tenant-id (when (get-in microsoft-service [:server_config :application_id])
-                                                     (get-in microsoft-service [:server_config :tenant_id]))
-                                         openid-config (json/read-str (:body @(http/get (str "https://login.microsoftonline.com/" (URLEncoder/encode (or tenant-id "common")) "/v2.0/.well-known/openid-configuration") {:keepalive -1})) :key-fn keyword)
-                                         jwks (:keys (json/read-str (:body @(http/get (:jwks_uri openid-config) {:keepalive -1})) :key-fn keyword))
-                                         jwk (first (filter #(= (:kid %) kid) jwks))
-
-                                         public-key (buddy.core.keys/jwk->public-key jwk)
-
-                                         verified-claims (buddy.sign.jwt/unsign id-token public-key {:alg alg})]
-
-                                     (if (not= (:nonce verified-claims) (::microsoft-nonce session-state))
-                                       (throw (Exception. "NONCE CHECK FAILED"))
-                                       (swap! app-session assoc-in [:microsoft :id-token] verified-claims))))]
-
-              ;; First, check the CSRF token matches the one we put in the session
-              (if (not= provided-csrf-token (::microsoft-csrf-token session-state))
-
-                ;; CSRF does not match. Fail.
-                (throw (Exception. "CSRF CHECK FAILED"))
-
-                ;; CSRF matches. Choose either the OpenID flow, or the auth code flow.
-                (if-let [id-token (-> req :params :id_token)]
-                  ; OpenID flow
-                  (do
-                    (load-id-token! id-token)
-                    (sessions/notify-session-update! app-session))
-
-                  ;; There was no ID token, so we must be using the full auth code flow.
-                  (let [application-id (or (get-in microsoft-service [:server_config :application_id])
-                                           (and (:custom? conf/microsoft-client-config) (:application-id conf/microsoft-client-config)))
-                        application-secret (or (when-let [encrypted-app-secret (get-in microsoft-service [:server_config :application_secret_enc])]
-                                                 (:value (secrets/get-global-app-secret-value (:app-info session-state) "microsoft-service/application-secret" encrypted-app-secret)))
-                                               (get-in microsoft-service [:server_config :application_secret])
-                                               (and (:custom? conf/microsoft-client-config) (:application-secret conf/microsoft-client-config)))
-                        tenant-id (or (get-in microsoft-service [:server_config :tenant_id]) (and (:custom? conf/microsoft-client-config) (:tenant-id conf/microsoft-client-config)))
-                        body-json (:body @(http/post (str "https://login.microsoftonline.com/" (URLEncoder/encode (util/or-str tenant-id "common")) "/oauth2/v2.0/token")
-                                                     {:keepalive   -1
-                                                      :form-params {:code          (-> req :params :code)
-                                                                    :client_id     application-id
-                                                                    :client_secret application-secret
-                                                                    :redirect_uri  redirect-uri
-                                                                    :grant_type    "authorization_code"}}))
-                        body (json/read-str body-json :key-fn keyword)]
-
-                    (if (:error body)
-
-                      ;; Something went wrong.
-                      (throw (Exception. (str "FAILED TO GET ACCESS TOKEN: " body-json)))
-
-                      ;; There was no error, so we should be able to find the tokens
-                      (do
-                        (load-id-token! (:id_token body))
-                        (swap! app-session update-in [:microsoft] merge {:refresh-token  (:refresh_token body)
-                                                                         :access-token   (:access_token body)
-                                                                         :application-id application-id})
-                        (sessions/notify-session-update! app-session))))))
+              (swap! app-session update-in [:microsoft] merge tokens)
+              (sessions/notify-session-update! app-session)
 
               (-> (resp/response (-> (slurp (runtime-client-resource req "/microsoft_auth_success.html"))
                                      (.replace "{{canonical-url}}" ^String (hiccup-util/escape-html (:app-origin session-state)))))

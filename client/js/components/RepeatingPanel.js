@@ -144,7 +144,7 @@ module.exports = (pyModule, componentsModule) => {
                 // from it when given ambiguous item_template strings.
                 const dependencyTrace = componentsModule.newPythonComponent.dependencyTrace;
                 if (dependencyTrace?.depId) {
-                    // NB: window.anvilAppDependencies isn't defined in the designer
+                    // NB: window.anvilAppDependencies isn't defined in the (old) designer
                     self._anvil.defaultAppPackage = window.anvilAppDependencies?.[dependencyTrace.depId]?.package_name;
                 }
 
@@ -261,7 +261,7 @@ module.exports = (pyModule, componentsModule) => {
 
         const adder = self._anvil.pyHiddenContainer.tp$getattr(new Sk.builtin.str("add_component"));
         const addComponent = (pyC) => {
-            // pyC is always a new component so we can skip _check_no_parent
+            // pyC is always a new component so we can skip validateChild
             self._anvil.elements.items.appendChild(pyC._anvil.domNode);
             if (self._anvil.dataGrid && pyC._anvil) {
                 pyC._anvil.dataGrid = self._anvil.dataGrid;
@@ -555,10 +555,11 @@ module.exports = (pyModule, componentsModule) => {
 
             s._anvil.missingDependency = false;
 
-            let [, depId, className] = v.match(/^(?:([^:]*):)?([^:]*)$/) || [];
-            const appPackage = depId ? window.anvilAppDependencies[depId] : (s._anvil.defaultAppPackage || window.anvilAppMainPackage);
-            if (depId && !appPackage) {
-                console.error("Dependency not found when setting RepeatingPanel template: " + depId);
+            let [, logicalDepId, className] = v.match(/^(?:([^:]*):)?([^:]*)$/) || [];
+            const depId = logicalDepId ? window.anvilAppDependencyIds[logicalDepId] : null;
+            const appPackage = depId ? window.anvilAppDependencies[depId]?.package_name : (s._anvil.defaultAppPackage || window.anvilAppMainPackage);
+            if (logicalDepId && (!depId || !appPackage)) {
+                console.error("Dependency not found when setting RepeatingPanel template: ", logicalDepId, "->", depId, "->", appPackage);
                 s._anvil.missingDependency = true;
                 return;
             }
@@ -597,7 +598,7 @@ module.exports = (pyModule, componentsModule) => {
         self._anvil.constructItemTemplate = undefined;
         return Sk.misceval.chain(
             Sk.misceval.tryCatch(() => Sk.misceval.chain(
-                getFormInstantiator(self, template),
+                getFormInstantiator({requestingComponent: self}, template),
                 instantiate => {
                     console.log("Got instantiator:", instantiate);
                     self._anvil.constructItemTemplate = pyItem => instantiate(["item", pyItem]);

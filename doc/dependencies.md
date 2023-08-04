@@ -2,7 +2,7 @@
 
 [Anvil](https://anvil.works) gives you the ability to reuse [Forms](https://anvil.works/docs/client/components/forms), [Custom Components](https://anvil.works/docs/client/custom-components) and code from one Anvil app in another.
 
-Follow this how-to guide to learn how to take two apps that depend on one another, [clone them onto your local machine](https://anvil.works/docs/version-control/git), and run them locally using the Anvil App Server. For information on how dependencies work in Anvil, see the [reference docs](https://anvil.works/docs/deployment/dependencies).
+Follow this how-to guide to learn how to take two apps that depend on one another, [clone them onto your local machine](https://anvil.works/docs/version-control-new-ide/git), and run them locally using the Anvil App Server. For information on how dependencies work in Anvil, see the [reference docs](https://anvil.works/docs/deployment/dependencies).
 
 ### Prerequisites
 
@@ -22,7 +22,7 @@ When running apps locally using the Anvil App Server, there are a few steps you 
 
 Say you have an app called 'MyApp' which depends on another app called ‘HelloWorldApp’. 
 
-The first step is to [clone your main app (MyApp)](https://anvil.works/docs/version-control/git) onto your local machine:
+The first step is to [clone your main app (MyApp)](https://anvil.works/docs/version-control-new-ide/git) onto your local machine:
 
 ```bash
 # Clone MyApp into a local directory named 'MyApp'

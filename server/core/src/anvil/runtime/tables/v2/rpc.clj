@@ -32,9 +32,12 @@
    (util-v2/str-view-key {:id table-id})
    table-id])
 
+(defn get-service-config []
+  (first (filter #(= (:source %) "/runtime/services/tables.yml") (:services rpc-util/*app*))))
+
 (defn can-auto-create? []
-  (-> (if-let [props (first (filter #(= (:source %) "/runtime/services/tables.yml") (:services rpc-util/*app*)))]
-        (merge (:client_config props) (:server_config props))
+  (-> (if-let [config (get-service-config)]
+        (merge (:client_config config) (:server_config config))
         nil)
       (:auto_create_missing_columns)))
 
@@ -297,6 +300,21 @@
         [table-id query cols escape-for-excel?] (json/read-str media-id :key-fn keyword)]
     (csv/serve-query-csv-lazy-media tables (db) table-id query cols escape-for-excel?)))
 
+(defn get-table-schema [_kwargs]
+  (let [tables (util-v2/get-tables)
+        server-config (-> (get-service-config) :server_config)
+        available? (->> server-config :expose_record_types keys (map util/preserve-slashes) set)]
+    {:name         "Data Tables"
+     :description  "Tables from Anvil's built-in database"
+     :record_types (for [[table-id {:keys [columns name python_name]}] (sort-by #(:name (second %)) tables)
+                         :when (available? python_name)]
+                     {:id     python_name,
+                      :name   name
+                      :fields (for [[name {:keys [type]}] (sort-by #(:ui-order (second %)) columns)]
+                                {:key name
+                                 :type (or (#{"string" "number" "bool" "date" "datetime" "media"} type)
+                                           "object")})})}))
+
 (defn- wrap-native-fn [f]
   (rpc-util/wrap-native-fn #(old-tables-util/with-transform-err (apply f %&)) :db-time))
 
@@ -332,7 +350,9 @@
    "anvil.private.tables.v2.row.update"            (wrap-native-fn row-update)
    "anvil.private.tables.v2.row.batch_delete"      (wrap-native-fn row-batch-delete)
    "anvil.private.tables.v2.row.delete"            (wrap-native-fn (fn [_kws row-cap] (row-batch-delete _kws [row-cap])))
-   "anvil.private.tables.v2.row.batch_update"      (wrap-native-fn row-batch-update)})
+   "anvil.private.tables.v2.row.batch_update"      (wrap-native-fn row-batch-update)
+
+   "anvil.record_schema.get/anvil.tables"          (wrap-native-fn get-table-schema)})
 
 (swap! dispatcher/native-rpc-handlers merge tables-v2-rpc-handlers)
 (swap! dispatcher/db-only-native-rpc-handlers merge tables-v2-rpc-handlers)

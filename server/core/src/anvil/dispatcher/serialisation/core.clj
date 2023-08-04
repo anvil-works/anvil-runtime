@@ -211,7 +211,7 @@
   The payload map may contain LiveObjects and Media.
   send! will be called with one parameter for string-shaped things, and two parameters
   for string header + byte[] payload."
-  [payload send! serialise-errors? & [extra-liveobject-key strip-item-caches? disallow-media?]]
+  [payload send! serialise-errors? & {:keys [extra-liveobject-key strip-item-caches? disallow-media? on-complete!]}]
 
   (log/trace "Serialising" payload)
 
@@ -233,7 +233,13 @@
         payload-json (assoc payload-json :objects
                                          (map #(dissoc % :binary-media) objects))
 
-        media-objects (filter :binary-media objects)]
+        media-objects (filter :binary-media objects)
+
+        media-objects-remaining (atom (count media-objects))
+        check-complete #(when (zero? @media-objects-remaining)
+                         (when on-complete!
+                           (on-complete!)))
+        ]
 
     (log/trace "Payload disassembled into json:\n" (with-out-str (pprint (dissoc payload-json :objects))))
     (log/trace "and objects:\n" (with-out-str (pprint objects)))
@@ -247,7 +253,10 @@
         (.consume binary-media (fn [chunk-idx last-chunk? data]
                                  (send! (util/write-json-str {:type       "CHUNK_HEADER", :requestId request-id, :mediaId id,
                                                               :chunkIndex chunk-idx, :lastChunk last-chunk?})
-                                        data)))
+                                        data)
+                                 (when last-chunk?
+                                   (swap! media-objects-remaining dec)
+                                   (check-complete))))
 
         ;; It's Media, not a ChunkedStream. All we have is an InputStream, so we soldier on...
         (let [^InputStream is (.getInputStream binary-media)
@@ -264,9 +273,11 @@
 
               (if last-chunk?
                 (.close is)
-                (recur (inc idx))))))))))
+                (recur (inc idx)))))
+          (swap! media-objects-remaining dec))))
+    (check-complete)))
 
-(defn serialise-to-websocket-like! [payload lockable send-text-fn send-bytes-fn serialise-errors? session-liveobject-key]
+(defn serialise-to-websocket-like! [payload lockable send-text-fn send-bytes-fn serialise-errors? session-liveobject-key & [on-complete!]]
   (serialise! payload (fn [^String json & [^bytes bytes]]
                         (when (or (>= (alength (.getBytes json)) conf/max-websocket-payload)
                                   (and bytes (>= (alength bytes) conf/max-websocket-payload)))
@@ -275,21 +286,56 @@
                           (send-text-fn json)
                           (when bytes
                             (send-bytes-fn bytes))))
-              serialise-errors? session-liveobject-key))
+              serialise-errors?
+              :extra-liveobject-key session-liveobject-key :on-complete! on-complete!))
 
 (defn serialise-to-websocket! [payload channel serialise-errors? session-liveobject-key]
   (serialise-to-websocket-like! payload channel #(ws/send! channel %) #(ws/send! channel %) serialise-errors? session-liveobject-key))
+
+
+(def boundary "AnvilServerResponseXef1fLxmoUdYZWXp")
+
+(defn send-text-http [channel]
+  (fn [data]
+    (ws/send! channel (str "\r\n--" boundary "\r\n" "Content-Type: application/json\r\n\r\n") false)
+    (ws/send! channel data false)))
+
+(defn send-binary-http [channel]
+  (fn [data]
+    (ws/send! channel (str "\r\n--" boundary "\r\n" "Content-Type: application/octet-stream\r\n"
+                           "Content-Transfer-Encoding: binary\r\n\r\n") false)
+    (ws/send! channel data false)))
+
+(defn serialise-to-http! [payload channel serialise-errors? session-liveobject-key & [on-complete!]]
+  (serialise-to-websocket-like! payload channel (send-text-http channel) (send-binary-http channel) serialise-errors? session-liveobject-key on-complete!))
+
+
 
 ;; Serialise something to a map for storage
 (defn serialise-to-map [payload]
   (let [r (atom nil)
         p (if (contains? payload :id) payload (assoc payload :id "DUMMY"))]
     (serialise! p (fn [json & _] (reset! r (json/read-str json, :key-fn keyword))) false
-                nil false true true)
+                :disallow-media? true)
     (if (contains? payload :id) @r (dissoc @r :id))))
 
 
+(defn- assoc-in-json [obj [k & ks :as key-seq] v]
+  (cond
+    (empty? key-seq)
+    v
 
+    (or (and (number? k)
+             (vector? obj)
+             (< k (count obj)))
+        (and (or (string? k) (keyword? k))
+             (map? obj)))
+    (assoc obj k (assoc-in-json (get obj k) ks v))
+
+    :else
+    (do
+      (log/warn "assoc-in-json ignoring:" (pr-str obj) (pr-str key-seq) (pr-str v))
+      obj)))
 
 ;; TODO: Expire media streams we haven't heard anything from for a while
 
@@ -310,9 +356,9 @@
                      (let [path (map #(if (string? %) (keyword %) %) path)
                            deserialised-obj (assemble-object outstanding-media (:id payload) serialisation-config known-liveobject-methods obj)]
                        (condp = (:type obj)
-                         ["ValueType"] (assoc-in json path (SerializedPythonObject. deserialised-obj (get-in json path)) #_(with-meta (get-in json path) {:anvil/type deserialised-obj}))
-                         ["ClassType"] (assoc-in json path (SerializedPythonClass. deserialised-obj))
-                         (assoc-in json path deserialised-obj))))
+                         ["ValueType"] (assoc-in-json json path (SerializedPythonObject. deserialised-obj (get-in json path)) #_(with-meta (get-in json path) {:anvil/type deserialised-obj}))
+                         ["ClassType"] (assoc-in-json json path (SerializedPythonClass. deserialised-obj))
+                         (assoc-in-json json path deserialised-obj))))
                    (dissoc payload :objects)
                    (:objects payload))))
        (processBlobHeader [_this hdr]

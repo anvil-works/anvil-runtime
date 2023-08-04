@@ -1,6 +1,7 @@
 "use strict";
 
 var PyDefUtils = require("PyDefUtils");
+import { getCssPrefix, getInlineStyles } from "@runtime/runner/legacy-features";
 import { setHandled } from "./events";
 
 /*#
@@ -23,6 +24,7 @@ extra_props: [checked]
 
 module.exports = (pyModule) => {
     const { isTrue } = Sk.misceval;
+    const inlineStyle = getInlineStyles("checkbox");
 
     pyModule["CheckBox"] = PyDefUtils.mkComponentCls(pyModule, "CheckBox", {
         properties: PyDefUtils.assembleGroupProperties(/*!componentProps(CheckBox)!2*/ ["interaction", "layout", "text", "appearance", "tooltip", "user data"], {
@@ -102,6 +104,7 @@ module.exports = (pyModule) => {
         }),
 
         element({ underline, bold, font_size, checked, ...props }) {
+            const prefix = getCssPrefix();
             let textStyle = "";
             let labelStyle = "";
             if (isTrue(underline)) {
@@ -122,8 +125,8 @@ module.exports = (pyModule) => {
             }
             return (
                 <PyDefUtils.OuterElement className="anvil-inlinable" {...props}>
-                    <div refName="checkbox" className="checkbox">
-                        <label refName="label" style={"padding:7px 7px 7px 20px;" + labelStyle}>
+                    <div refName="checkbox" className={prefix + "checkbox"}>
+                        <label refName="label" style={inlineStyle + labelStyle}>
                             <input refName="input" className="to-disable" type="checkbox" {...inputAttrs} />
                             <span refName="text" style={"display: inline-block; min-height: 1em;" + textStyle}>
                                 {Sk.builtin.checkNone(props.text) ? "" : props.text.toString()}

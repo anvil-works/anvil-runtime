@@ -183,34 +183,36 @@
 
     (if (util/app-locked? app-id)
       (throw (RejectException. "App down for maintenance."))
-      (try+
-        (dispatcher/dispatch! {:call          {:func (str "email:handle_message"),
-                                               :args [transformed-email] :kwargs {}}
-                               :app           (:content app)
-                               :app-id        app-id
-                               :app-origin    (:app-origin @app-session)
-                               :session-state app-session
-                               :environment   environment
-                               :origin        :email
-                               :thread-id     (str "email-" (:id app-info) "-" (random/hex 16))
-                               :call-stack    (list {:type :email_server})
-                               :use-quota?    true}
-                              return-path)
+      (if-let [error-message (app-data/should-app-be-blocked? app-id app-session environment)]
+        (throw (RejectException. error-message))
+        (try+
+          (dispatcher/dispatch! {:call          {:func (str "email:handle_message"),
+                                                 :args [transformed-email] :kwargs {}}
+                                 :app           (:content app)
+                                 :app-id        app-id
+                                 :app-origin    (:app-origin @app-session)
+                                 :session-state app-session
+                                 :environment   environment
+                                 :origin        :email
+                                 :thread-id     (str "email-" (:id app-info) "-" (random/hex 16))
+                                 :call-stack    (list {:type :email_server})
+                                 :use-quota?    true}
+                                return-path)
 
-        (when-let [{:keys [code message]} (:error @response-promise)]
-          (throw (RejectException. code message)))
+          (when-let [{:keys [code message]} (:error @response-promise)]
+            (throw (RejectException. code message)))
 
 
-        (catch :anvil/server-error e
-          (dispatcher/respond! return-path {:error e})
-          (let [{:keys [code message]} (:error @response-promise)]
-            (throw (RejectException. code message))))
-        (catch RejectException e
-          (throw e))
-        (catch Exception e
-          (let [error-id (random/hex 6)]
-            (log/error e "Error in app API:" error-id)
-            (throw (RejectException. (str "Internal server error: " error-id)))))))))
+          (catch :anvil/server-error e
+            (dispatcher/respond! return-path {:error e})
+            (let [{:keys [code message]} (:error @response-promise)]
+              (throw (RejectException. code message))))
+          (catch RejectException e
+            (throw e))
+          (catch Exception e
+            (let [error-id (random/hex 6)]
+              (log/error e "Error in app API:" error-id)
+              (throw (RejectException. (str "Internal server error: " error-id))))))))))
 
 
 (def smtp-listener-factory (SimpleMessageListenerAdapter. (reify SimpleMessageListener

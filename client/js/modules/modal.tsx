@@ -4,6 +4,8 @@
 // Copyright 2020 Kane Cohen <https://github.com/KaneCohen>
 // Available under BSD-3-Clause license
 
+import { getCssPrefix } from "@runtime/runner/legacy-features";
+
 function reflow(element: HTMLElement) {
     element.offsetHeight;
 }
@@ -62,8 +64,7 @@ function setPrefix() {
     // in versions less than 3 we use bootstrap modal styling so no prefix
     if (prefix != null) return;
     // we could import the data module but this file has to work for both runner3.js and runner.js
-    const runtimeVersion = window.anvilParams.runtimeVersion;
-    prefix = runtimeVersion >= 3 ? "aw-" : "";
+    prefix = getCssPrefix();
     ANIMATE_CLASS = prefix + ANIMATE_CLASS;
     ANIMATE_IN_CLASS = prefix + ANIMATE_IN_CLASS;
 }

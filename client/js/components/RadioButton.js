@@ -1,5 +1,6 @@
 "use strict";
 
+import { getCssPrefix, getInlineStyles } from "@runtime/runner/legacy-features";
 import { setHandled } from "./events";
 var PyDefUtils = require("PyDefUtils");
 
@@ -47,6 +48,7 @@ description: |
 
 module.exports = (pyModule) => {
     const {isTrue} = Sk.misceval;
+    const inlineStyle = getInlineStyles("radio");
 
     pyModule["RadioButton"] = PyDefUtils.mkComponentCls(pyModule, "RadioButton", {
         properties: PyDefUtils.assembleGroupProperties(/*!componentProps(RadioButton)!2*/ ["text", "layout", "interaction", "appearance", "tooltip", "user data"], {
@@ -128,6 +130,7 @@ module.exports = (pyModule) => {
         }),
 
         element({ bold, underline, selected, value, group_name, ...props }) {
+            const prefix = getCssPrefix();
             const style = PyDefUtils.getOuterStyle({ bold, underline });
             const inputAttrs = {};
             if (isTrue(selected)) {
@@ -137,8 +140,8 @@ module.exports = (pyModule) => {
                 inputAttrs.disabled = "";
             }
             return (
-                <PyDefUtils.OuterElement refName="outer" className="radio anvil-inlinable" {...props}>
-                    <label refName="label" style="padding: 7px 7px 7px 20px">
+                <PyDefUtils.OuterElement refName="outer" className={prefix+"radio anvil-inlinable"} {...props}>
+                    <label refName="label" style={inlineStyle}>
                         <input
                             refName="input"
                             className="to-disable"

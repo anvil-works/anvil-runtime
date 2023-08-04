@@ -1,6 +1,7 @@
 "use strict";
 
 var PyDefUtils = require("PyDefUtils");
+import { validateChild } from "./Container";
 import { isInvisibleComponent } from "./helpers";
 
 /*#
@@ -56,7 +57,7 @@ module.exports = (pyModule) => {
 
             /*!defMethod(_,component,[index=None])!2*/ "Add a component to this LinearPanel, in the 'index'th position. If 'index' is not specified, adds to the bottom."
             $loc["add_component"] = PyDefUtils.funcWithKwargs(function (kwargs, self, component) {
-                pyModule["ClassicContainer"]._check_no_parent(component);
+                validateChild(component);
 
                 let celt;
                 const idx = kwargs["index"];

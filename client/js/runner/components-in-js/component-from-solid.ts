@@ -15,7 +15,7 @@ import {
 } from "../../@Sk";
 import {
     Component,
-    ComponentConstructor,
+    ComponentConstructor, CustomComponentSpec,
     EventDescription,
     initComponentSubclass,
     PropertyDescription,
@@ -23,8 +23,7 @@ import {
 import { Container } from "../../components/Container";
 import { suspensionFromPromise } from "../../PyDefUtils";
 import { designerApi } from "../component-designer-api";
-import { kwargsToJsObject } from "../instantiation";
-import { s_anvil_events, s_raise_event } from "../py-util";
+import { kwargsToJsObject, s_anvil_events, s_raise_event } from "../py-util";
 import { registerModule } from "./common";
 
 const solid: any = {};
@@ -42,12 +41,8 @@ async function loadSolid() {
     _loaded = true;
 }
 
-interface ComponentSpec {
-    name: string;
-    properties: (PropertyDescription & { defaultValue: any })[];
-    events: EventDescription[];
+interface SolidComponentDefinition extends CustomComponentSpec {
     component(props: any): any;
-    container?: boolean;
 }
 
 interface SolidComponentConstructor extends ComponentConstructor {
@@ -74,7 +69,7 @@ function mkComponentClass({
     properties = [],
     component = () => {},
     container = false,
-}: ComponentSpec) {
+}: SolidComponentDefinition) {
     const pyEvents = toPy(events || []);
     const leafName = name.match(/[^.]+$/);
 
@@ -110,9 +105,6 @@ function mkComponentClass({
                 },
                 get domElement() {
                     return self.rootElement;
-                },
-                setDataBindingListener(listenFn) {
-                    /* TODO this really does actually need to do something */
                 },
                 setPropertyValues(updates) {
                     setProps(updates);
@@ -186,9 +178,9 @@ function mkComponentClass({
                         );
                     }
                     const component = args[0];
-                    component.anvilComponent$setParent(this, () => {
+                    component.anvilComponent$setParent(this, {onRemove: () => {
                         this.setComponents(this.components.filter((entry: any) => entry.component !== component));
-                    });
+                    }});
                     const layoutProperties = kwargsToJsObject(kws);
                     return chainOrSuspend(component.anvil$hooks.setupDom(), (element) => {
                         this.setComponents(this.components.length, { component, element, layoutProperties });
@@ -219,9 +211,12 @@ function mkComponentClass({
     return SolidComponent;
 }
 
-export const registerSolidComponent = (component: ComponentSpec) => {
+const solidComponentToSpec = ({name, events, container, layoutProperties, properties, showInToolbox}: SolidComponentDefinition) =>
+    ({name, events, container, layoutProperties, properties, showInToolbox});
+
+export const registerSolidComponent = (component: SolidComponentDefinition) => {
     const leafName = component.name.replace(/^.*\./, "");
-    registerModule(component.name, { [leafName]: mkComponentClass(component) });
+    registerModule(component.name, { [leafName]: mkComponentClass(component) }, solidComponentToSpec(component));
 };
 
 // because we're being inconsistent about use of solid-html and solid-jsx

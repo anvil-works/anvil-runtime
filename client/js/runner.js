@@ -1,4 +1,6 @@
 "use strict";
+import {Component} from "@runtime/components/Component";
+
 let v = null;
 let o = v?.u?.k?.l;
 let x = new Promise((y) => y());
@@ -8,9 +10,10 @@ v ??= 1;
 require("./messages");
 require("./extra-python-modules.js");
 
-import { pyNone } from "./@Sk";
+import {chainOrSuspend, checkArgsLen, promiseToSuspension, pyCall, pyCallOrSuspend, pyFunc, pyNone, pyStr, pySuper} from "./@Sk";
 import Modal from "./modules/modal";
 import { anvilMod, anvilServerMod } from "./utils";
+import {s_add_event_handler, s_raise_event} from "@runtime/runner/py-util";
 
 if (navigator.userAgent.indexOf("Trident/") > -1) {
     window.isIE = true;
@@ -86,7 +89,7 @@ function initComponentsOnForm(components, pyForm, eventBindingsByName) {
                     // only do warnings in the IDE
                     continue;
                 }
-                if (!(evt in pyComponent._anvil.eventTypes) && !(evt in (pyComponent._anvil.customComponentEventTypes ?? {}))) {
+                if (!(evt in pyComponent._anvil.eventTypes)) {
                     // ignore this event - bad yaml definition
                     continue;
                 }
@@ -165,6 +168,7 @@ function loadApp(app, appId, appOrigin, preloadModules) {
 
 
     window.anvilAppDependencies = app.dependency_code;
+    window.anvilAppDependencyIds = app.dependency_ids;
 
     // Load all the available app modules
 
@@ -273,7 +277,7 @@ function loadApp(app, appId, appOrigin, preloadModules) {
                     const xhr = new XMLHttpRequest();
                     // this variable is created in runner.html - we create it there so that a sha can be added
                     // when this file includes a sha value it can be aggressively cached by the browser
-                    const fetchUrl = window.anvilSkulptLib.replace("file-number", file);
+                    const fetchUrl = window.anvilSkulptLib[file];
                     xhr.open("GET", fetchUrl, true);
                     xhr.onload = function () {
                         const newFiles = JSON.parse(this.responseText);
@@ -548,10 +552,20 @@ function loadApp(app, appId, appOrigin, preloadModules) {
         styleSheet.textContent = text;
     }
 
-    window.anvilCustomComponentProperties = {}; // {'depId:class_name' => properties}
+    window.anvilCustomComponentProperties = {}; // {'depAppId:class_name' => properties}
     var defineForm = function(f, anvilModule, topLevelPackage, depId=null) {
 
+        const events = [
+            {name: "show", description: "When the form is shown on the page",
+                parameters: [], important: true},
+            {name: "hide", description: "When the form is removed from the page",
+                parameters: [], important: true},
+            {name: "refreshing_data_bindings", important: true, parameters: [],
+                description: "When refresh_data_bindings is called"},
+        ];
+
         if (f.custom_component) {
+            events.push(...(f.events ?? []));
             window.anvilCustomComponentProperties[depId + ":" + f.class_name] = f.properties;
         }
 
@@ -593,19 +607,12 @@ function loadApp(app, appId, appOrigin, preloadModules) {
 
         appModules[templateModulePath] = templateModule.replace(/..INSERT../, "/*INSERT*/ mod['"+className+"Template'] = window.anvilFormTemplates["+aft.length+"];");
 
-        aft[aft.length] = anvilModule[className + "Template"] = PyDefUtils.mkComponentCls(anvilModule, className + "Template", {
+        const FormTemplate = aft[aft.length] = anvilModule[className + "Template"] = PyDefUtils.mkComponentCls(anvilModule, className + "Template", {
 
             base: anvilModule[f.container.type],
 
             /*!componentEvents(form)!1*/
-            events: [
-                {name: "show", description: "When the form is shown on the page",
-                    parameters: [], important: true},
-                {name: "hide", description: "When the form is removed from the page",
-                    parameters: [], important: true},
-                {name: "refreshing_data_bindings", important: true, parameters: [],
-                    description: "When refresh_data_bindings is called"},
-            ],
+            events,
 
             /*!componentProp(form)!1*/
             properties: [{
@@ -642,34 +649,22 @@ function loadApp(app, appId, appOrigin, preloadModules) {
 
                     c._anvil.refreshOnItemSet = true;
 
+                    // Keep this around in runtimeV2 - touched by anvil extras (remove in runtimeV3)
                     if (f.custom_component) {
-                        c._anvil.customComponentEventTypes = {};
-                        for (let e of f.events || []) {
-                            c._anvil.customComponentEventTypes[e.name] = e;
-                        }
                         c._anvil.customComponentProperties = f.properties;
                     }
 
-                    var writeBackChildBoundData = function(pyComponent, attrName, pyNewValue) {
-                        if (pyNewValue === undefined) {
-                            pyNewValue = pyComponent.tp$getattr(new Sk.builtin.str(attrName));
-                        }
-                        for (var i in c._anvil.dataBindings) {
-                            var binding = c._anvil.dataBindings[i];
-                            if (binding.pyComponent === pyComponent && binding.property === attrName && binding.pySave) {
-                                return PyDefUtils.callAsyncWithoutDefaultError(binding.pySave, undefined, undefined, undefined, c, pyComponent).catch(function (e) {
-                                    if (e instanceof Sk.builtin.KeyError) {
-                                        return; // Unremarkable
-                                    }
-                                    console.error(e);
-                                    if (e instanceof Sk.builtin.BaseException && e.args.v[0] instanceof Sk.builtin.str) {
-                                        e.args.v[0] = new Sk.builtin.str(e.args.v[0].v + "\n while setting " + binding.code + " = self." + binding.component_name + "." + binding.property + "\n in a data binding for self." + binding.component_name);
-                                    }
-                                    window.onerror(null, null, null, null, e);
-                                });
+                    var writeBackChildBoundData = function(binding) {
+                        return PyDefUtils.callAsyncWithoutDefaultError(binding.pySave, undefined, undefined, undefined, c, binding.pyComponent).catch(function (e) {
+                            if (e instanceof Sk.builtin.KeyError) {
+                                return; // Unremarkable
                             }
-                        }
-                        return Promise.resolve();
+                            console.error(e);
+                            if (e instanceof Sk.builtin.BaseException && e.args.v[0] instanceof Sk.builtin.str) {
+                                e.args.v[0] = new Sk.builtin.str(e.args.v[0].v + "\n while setting " + binding.code + " = self." + binding.component_name + "." + binding.property + "\n in a data binding for self." + binding.component_name);
+                            }
+                            window.onerror(null, null, null, null, e);
+                        });
                     };
 
                     c._anvil.props["item"] = new Sk.builtin.dict([]);
@@ -689,8 +684,6 @@ function loadApp(app, appId, appOrigin, preloadModules) {
                         }, 
                         () => {
                             c._anvil.dataBindings.forEach((binding) => {
-                                binding.pyComponent._anvil.dataBindingWriteback = writeBackChildBoundData;
-
                                 if (binding.code) {
 
                                     const readCode = "def update_val(self, _anvil_component):\n" +
@@ -736,6 +729,13 @@ function loadApp(app, appId, appOrigin, preloadModules) {
                                     binding.pyUpdate = modlocs["update_val"];
                                     binding.pyClear = modlocs["clear_val"];
                                     binding.pySave = modlocs["save_val"];
+
+                                    if (binding.pySave) {
+                                        pyCall(binding.pyComponent.tp$getattr(s_add_event_handler), [
+                                            new pyStr("x-anvil-write-back-" + binding.property),
+                                            new pyFunc(PyDefUtils.withRawKwargs(() => promiseToSuspension(writeBackChildBoundData(binding))))
+                                        ]);
+                                    }
                                 }
                             })
                         },
@@ -915,6 +915,21 @@ function loadApp(app, appId, appOrigin, preloadModules) {
                     });
                 }
 
+                $loc["raise_event"] = PyDefUtils.funcFastCall((args, kws) => {
+                    const [self, pyEventName] = args;
+                    checkArgsLen("raise_event", args, 2, 2);
+                    const eventName = String(pyEventName);
+                    const superRaise = new pySuper(FormTemplate, self).tp$getattr(s_raise_event);
+                    if (!f.custom_component) {
+                        return pyCallOrSuspend(superRaise, [pyEventName], kws);
+                    }
+                    const chainedFns = (f.properties ?? [])
+                        .filter((p) => (p.binding_writeback_events ?? []).includes(eventName))
+                        .map((p) => () => PyDefUtils.suspensionFromPromise(self._anvil.dataBindingWriteback(self, p.name)));
+                    
+                    return chainOrSuspend(pyNone, ...chainedFns, () => pyCallOrSuspend(superRaise, [pyEventName], kws));
+                });
+
                 
                 $loc["refresh_data_bindings"] = new Sk.builtin.func(function(self) {
                     const chainArgs = [];
@@ -1075,9 +1090,6 @@ function loadApp(app, appId, appOrigin, preloadModules) {
     }
 
     PyDefUtils.loadModule("anvil", anvilModule);
-
-    var jsonModule = require("./modules/json")();
-    PyDefUtils.loadModule("json", jsonModule);
 
     var base64Module = require("./modules/base64")();
     PyDefUtils.loadModule("base64", base64Module);
@@ -1329,7 +1341,10 @@ window.anvil = {
             });
         }
     },
-}
+    enableLegacy() {
+        // noop
+    },
+};
 
 module.exports = {
     PyDefUtils: PyDefUtils,

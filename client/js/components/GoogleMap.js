@@ -2361,7 +2361,7 @@ module.exports = function(pyModule) {
                 if (jsMap) {
                     var pyMap = jsMap._pyVal;
                     jsVal.addListener("addfeature", function(e) {
-                        PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature) }, pyMap, "data_add_feature");
+                        PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature) }, pyMap, "data_addfeature");
                     });
                     jsVal.addListener("click", function(e) {
                         PyDefUtils.raiseEventAsync({ feature: remapToPy(e.feature), lat_lng: remapToPy(e.latLng) }, pyMap, "data_click");
