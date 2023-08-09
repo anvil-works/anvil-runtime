@@ -2,6 +2,7 @@
 
 var PyDefUtils = require("PyDefUtils");
 import { validateChild } from "./Container";
+import { getCssPrefix } from "@runtime/runner/legacy-features";
 import { isInvisibleComponent } from "./helpers";
 
 /*#
@@ -79,9 +80,10 @@ module.exports = (pyModule) => {
                 important: false,
                 priority: 0,
                 set(s, e, v) {
+                    const prefix = getCssPrefix();
                     v = v.toString();
                     ["none", "tiny", "small", "medium", "large", "huge"].forEach((i) => {
-                        s._anvil.domNode.classList.toggle("flow-spacing-" + i, v === i);
+                        s._anvil.domNode.classList.toggle(prefix + "flow-spacing-" + i, v === i);
                     });
                 },
             },
@@ -108,7 +110,8 @@ module.exports = (pyModule) => {
         ],
 
         element({ align, spacing, ...props }) {
-            spacing = " flow-spacing-" + spacing.toString();
+            const prefix = getCssPrefix();
+            spacing = prefix + "flow-spacing-" + spacing.toString();
             align =
                 "justify-content: " +
                 ({
@@ -117,17 +120,18 @@ module.exports = (pyModule) => {
                     justify: "space-between",
                 }[align.toString()] || "flex-start") +
                 ";";
-
+            
             return (
-                <PyDefUtils.OuterElement className={"flow-panel anvil-container anvil-container-overflow" + spacing} {...props}>
-                    <div refName="gutter" className="flow-panel-gutter" style={align} />
+                <PyDefUtils.OuterElement className={`${prefix}flow-panel anvil-container anvil-container-overflow ${spacing}`} {...props}>
+                    <div refName="gutter" className={`${prefix}flow-panel-gutter`} style={align} />
                 </PyDefUtils.OuterElement>
             );
         },
 
         locals($loc) {
             const ContainerElement = ({ visible, width, expand }) => {
-                visible = !Sk.misceval.isTrue(visible) ? " visible-false" : "";
+                const prefix = getCssPrefix();
+                visible = !Sk.misceval.isTrue(visible) ? ` ${prefix}visible-false` : "";
                 let style = "";
                 if (width) {
                     style += "width: " + PyDefUtils.cssLength(width.toString()) + ";";
@@ -135,7 +139,7 @@ module.exports = (pyModule) => {
                 if (expand) {
                     style += "flex: 1;";
                 }
-                return <div className={"flow-panel-item anvil-always-inline-container hide-with-component" + visible} style={style}></div>;
+                return <div className={`${prefix}flow-panel-item anvil-always-inline-container ${prefix}hide-with-component` + visible} style={style}></div>;
             };
 
             /*!defMethod(_,component,[index=],[width=],[expand=])!2*/ "Add a component to this panel. Optionally specify the position in the panel to add it, or the width to apply to components that can't self-size width-wise."

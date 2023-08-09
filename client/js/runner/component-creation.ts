@@ -7,7 +7,7 @@ import {
     pyException,
     pyHasAttr,
     pyIsInstance, pyNone,
-    pyNoneType,
+    pyNoneType, pyRecursionError,
     pyStr,
     pyTrue,
     pyType,
@@ -21,21 +21,50 @@ import {ComponentYaml, data, FormContainerYaml, FormYaml, SlotTarget, SlotTarget
 import * as py from "./py-util";
 import {Slot} from "./python-objects";
 import {s_add_component, s_layout, s_slots, strError, objectToKwargs} from "./py-util";
-import {instantiateComponentFromYamlSpec, yamlSpecToQualifiedFormName} from "./instantiation";
+import {
+    getAnvilComponentInstantiator,
+    getNamedFormInstantiator,
+    ResolvedForm,
+    resolveFormSpec,
+    YamlInstantiationContext
+} from "./instantiation";
 import {
     Component,
     ComponentConstructor,
     getDefaultDepIdForComponent,
-    LayoutProperties,
+    LayoutProperties, setDefaultDepIdForNextComponent,
     ToolboxItem
 } from "../components/Component";
+import {setYamlStackForNextComponent} from "@runtime/components/Component";
 
 const warnedAboutEventBinding = new Set();
 
 export type YamlCreationStack = {
-    form: pyType;
+    formSpec: ResolvedForm;
     prev: YamlCreationStack;
 } | undefined;
+
+let nextCreationStack: YamlCreationStack;
+export const setNextCreationStack = (ncs: YamlCreationStack) => { nextCreationStack = ncs; };
+export const getAndCheckNextCreationStack = (formName: string, depAppId: string | null) => {
+    let yamlStack = nextCreationStack;
+    nextCreationStack = undefined;
+    console.log("Creating", formName, depAppId, "with stack", JSON.stringify(yamlStack));
+    if (yamlStack?.formSpec.formName === formName && yamlStack.formSpec.depId === depAppId) {
+        console.log("It's me!");
+    } else {
+        yamlStack = undefined;
+    }
+    let ys = yamlStack?.prev;
+    while (ys) {
+        if (ys.formSpec.formName === formName && ys.formSpec.depId === depAppId) {
+            throw new pyRecursionError(`Cannot nest ${formName} inside itself`);
+        }
+        ys = ys.prev;
+    }
+
+    return yamlStack;
+};
 
 export function mkInvalidComponent(message: string) {
     return pyCall(py.getValue("anvil", "InvalidComponent"), [], ["text", new pyStr(message)]);
@@ -100,12 +129,36 @@ function addEventHandlers(pyComponent: Component, pyForm: Component, yaml: Compo
 
 const pyAlwaysThrow = new Sk.builtin.func(() => { throw new Sk.builtin.Exception() });
 
+export const instantiateComponentFromYamlSpec = (
+    context: YamlInstantiationContext,
+    yamlSpec: string,
+    properties: { [prop: string]: any },
+    yamlStack: YamlCreationStack,
+    name?: string
+) => {
+    if (yamlSpec.startsWith("form:")) {
+        const formSpec = resolveFormSpec(yamlSpec.substring(5), context.defaultDepId);
+        return chainOrSuspend(getNamedFormInstantiator(formSpec, context.requestingComponent), (instantiate) => {
+            // Tell this component it was created by YAML from this app, so if it has any form
+            // properties it knows how to look them up
+            setDefaultDepIdForNextComponent(context.defaultDepId);
+            nextCreationStack = {formSpec, prev: yamlStack};
+            return instantiate(objectToKwargs(properties), name)
+        });
+    } else {
+        const instantiate = getAnvilComponentInstantiator(context, yamlSpec);
+        setDefaultDepIdForNextComponent(context.defaultDepId);
+        return instantiate(objectToKwargs(properties), name);
+    }
+}
+
 function createComponents(formYaml: FormYaml, pyForm: Component, defaultDepId: string | null, setupHandlers: boolean, yamlStack: YamlCreationStack, rootComponent?: Component) {
+    const instantiationContext: YamlInstantiationContext = {requestingComponent: pyForm, fromYaml: true, defaultDepId};
     const setupResult : SetupResult = {components: {}, orphanedComponents: [], form: pyForm};
     const setupComponent = (yaml: ComponentYaml, pyAddToParent: pyObject | null, ancestors: Component[], index: number, targetSlot?: string): Suspension | null | pyNoneType =>
         chainOrSuspend(
             tryCatchOrSuspend(
-                () => instantiateComponentFromYamlSpec({requestingComponent: pyForm, fromYaml: true, defaultDepId}, yaml.type, {__ignore_property_exceptions: true, ...yaml.properties}, yamlStack, yaml.name),
+                () => instantiateComponentFromYamlSpec(instantiationContext, yaml.type, {__ignore_property_exceptions: true, ...yaml.properties}, yamlStack, yaml.name),
                 (exception) => {
                     console.error(`Error instantiating ${yaml?.name}`, ": ", exception, "YAML:", yaml, "\n", strError(exception));
                     window.onerror(null, null, null, null, exception);
@@ -196,7 +249,7 @@ function createComponents(formYaml: FormYaml, pyForm: Component, defaultDepId: s
                 let templateToolboxItem: ToolboxItem | undefined;
                 if (template) {
                     templateToolboxItem = {
-                        component: {...template, type: template.type.startsWith("form:") ? yamlSpecToQualifiedFormName(template.type.substring(5), getDefaultDepIdForComponent(pyForm)) : `anvil.${template.type}`},
+                        component: {...template, type: template.type.startsWith("form:") ? resolveFormSpec(template.type.substring(5), defaultDepId).qualifiedClassName : `anvil.${template.type}`},
                         title: "Template",
                     }
                 }

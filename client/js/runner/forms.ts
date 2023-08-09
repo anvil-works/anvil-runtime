@@ -1,6 +1,7 @@
 import type { Kws, pyObject, pyTuple } from "../@Sk";
 import {
     Args,
+    buildNativeClass,
     chainOrSuspend,
     checkArgsLen,
     checkOneArg,
@@ -21,14 +22,20 @@ import {
     pyRecursionError,
     pyStr,
     pySuper,
+    pyType,
     retryOptionalSuspensionOrThrow,
     Suspension,
     toPy,
     tryCatchOrSuspend,
 } from "../@Sk";
-import { AnvilHooks, Component, getYamlStackForThisComponent } from "../components/Component";
+import { AnvilHooks, Component } from "../components/Component";
 import * as PyDefUtils from "../PyDefUtils";
-import { addFormComponentsToLayout, setupFormComponents, SetupResult } from "./component-creation";
+import {
+    addFormComponentsToLayout, getAndCheckNextCreationStack,
+    getAndClearNextCreationStack,
+    setupFormComponents,
+    SetupResult
+} from "./component-creation";
 import { designerApi } from "./component-designer-api";
 import type {
     ComponentYaml,
@@ -39,11 +46,12 @@ import type {
     FormYaml,
 } from "./data";
 import { BindingError, CustomAnvilError, isCustomAnvilError } from "./error-handling";
-import { getAnvilComponentClass, resolveStringComponent } from "./instantiation"; // for type stub
+import {getAnvilComponentClass, getFormClassObject, resolveFormSpec} from "./instantiation"; // for type stub
 import {
     kwargsToJsObject,
     kwToObj,
     objectToKwargs,
+    objToKw,
     PyModMap,
     s_add_component,
     s_add_event_handler,
@@ -308,6 +316,26 @@ export interface FormTemplate extends Component {
     _anvil?: any;
 }
 
+
+const MetaCustomComponent: pyNewableType<FormTemplateConstructor> = buildNativeClass("anvil.MetaCustomComponent", {
+    constructor: function () {},
+    base: pyType,
+    slots: {
+        tp$call(args, kws) {
+            const customProps = this.prototype.anvil$customProps;
+            if (customProps) {
+                const asMap = kwToObj(kws);
+                for (const propName in customProps) {
+                    if (propName in asMap) continue;
+                    asMap[propName] = customProps[propName];
+                }
+                kws = objToKw(asMap);
+            }
+            return pyType.prototype.tp$call.call(this, args, kws);
+        },
+    },
+});
+
 export const createFormTemplateClass = (
     yaml: FormYaml,
     depAppId: string | null,
@@ -316,7 +344,7 @@ export const createFormTemplateClass = (
 ): FormTemplateConstructor => {
     const pyBase = yaml.container ? (
         getAnvilComponentClass(anvilModule, yaml.container.type)
-        || retryOptionalSuspensionOrThrow(resolveStringComponent(yaml.container.type.substring(5), depAppId))!
+        || retryOptionalSuspensionOrThrow(getFormClassObject(resolveFormSpec(yaml.container.type.substring(5), depAppId)))!
     ) : WithLayout;
 
     // Legacy bits of _anvil we can't get rid of yet
@@ -332,10 +360,18 @@ export const createFormTemplateClass = (
     // "item" is a special descriptor that triggers the underlying descriptor on write if there is one.
     const pyBaseItem = pyBase.$typeLookup(s_item);
 
+    const kwargs = [];
+    if (yaml.layout) {
+        kwargs.push("layout", { type: yaml.layout.type, defaultDepId: depAppId });
+    }
+    if (yaml.custom_component) {
+        kwargs.push("metaclass", MetaCustomComponent);
+    }
+
     const FormTemplate = PyDefUtils.mkComponentCls(anvilModule, className + "Template", {
         base: pyBase,
 
-        kwargs: yaml.layout ? ["layout", { type: yaml.layout.type, defaultDepId: depAppId }] : undefined,
+        kwargs,
 
         /*!componentEvents(form)!1*/
         events,
@@ -392,17 +428,7 @@ export const createFormTemplateClass = (
             $loc["__new__"] = new Sk.builtin.func(
                 PyDefUtils.withRawKwargs((kws: Kws, cls: FormTemplateConstructor) =>
                     chainOrSuspend(skeletonNew(cls), (c) => {
-                        const nextYamlCreationStack = getYamlStackForThisComponent();
-                        console.log("Creating", className, "with stack", nextYamlCreationStack);
-                        let ys = nextYamlCreationStack;
-                        while (ys) {
-                            if (ys.form === cls) {
-                                throw new pyRecursionError(`Cannot nest ${className} inside itself`);
-                            }
-                            ys = ys.prev;
-                        }
-
-                        const yamlStack = {form: cls, prev: nextYamlCreationStack};
+                        const yamlStack = getAndCheckNextCreationStack(yaml.class_name, depAppId);
                         return commonSetup(c, (c: FormTemplate) =>
                             chainOrSuspend(setupFormComponents(yaml, c, depAppId, yamlStack), (setupResult) => {
                                 if (setupResult.slots) {
@@ -521,7 +547,7 @@ export const createFormTemplateClass = (
 
             // Kept for backwards compatibility.
             $loc["init_components"] = $loc["__init__"] = PyDefUtils.funcFastCall(function __init__(args: Args, pyKwargs?: Kws) {
-                Sk.abstr.checkArgsLen("init_components", args, 1, 1);
+                checkOneArg("init_components", args);
                 const self = args[0] as FormTemplate;
                 // Sort out property attrs.
                 const validKwargs = new Set(["item"]);
@@ -529,11 +555,8 @@ export const createFormTemplateClass = (
                 const propMap = kwToObj(pyKwargs);
 
                 if (yaml.custom_component) {
-                    for (const {name, type, default_value} of yaml.properties || []) {
+                    for (const { name } of yaml.properties ?? []) {
                         validKwargs.add(name);
-                        if (type !== "object" && !(name in propMap)) {
-                            propMap[name] = toPy(default_value);
-                        }
                     }
                 }
 
@@ -756,6 +779,12 @@ export const createFormTemplateClass = (
             $loc[s_anvil_events.toString()] = existingEvents ? formEvents.sq$concat(existingEvents) : formEvents;
        }
     }) as FormTemplateConstructor;
+
+    FormTemplate.prototype.anvil$customProps = Object.fromEntries(
+        (yaml.properties ?? [])
+            .filter((pt) => pt.type !== "object")
+            .map((pt) => [pt.name, toPy(pt.default_value || null)])
+    );
 
     return FormTemplate;
 };

@@ -14,11 +14,20 @@ import {
     pyObject,
     setUpModuleMethods,
     pyDict,
-    checkString
+    checkString,
+    pyType, Suspension, pyValueError, pyNotImplementedType, pyBool, pyNotImplemented
 } from "../@Sk";
-import type {Component, ComponentConstructor, Interaction, PropertyDescriptionBase, Section, StringPropertyDescription} from "../components/Component";
+import type {
+    Component,
+    ComponentConstructor,
+    Interaction,
+    PropertyDescriptionBase,
+    Section,
+    StringPropertyDescription,
+    ToolboxItem
+} from "../components/Component";
 import {ComponentProperties} from "../components/Component";
-import {getFormInstantiator} from "@runtime/runner/instantiation";
+import {getFormInstantiator, InstantiatorFunction, ResolvedForm} from "@runtime/runner/instantiation";
 import PyDefUtils from "PyDefUtils";
 
 const NOT_AVAILABLE = (...args: any[]) => {
@@ -131,18 +140,6 @@ setUpModuleMethods("designer", pyDesignerApi, {
             return pyNone;
         },
         $flags: { OneArg: true },
-    },
-    get_constructor_for_form_property: {
-        $meth: (parentForm: Component, formProperty: pyStr | ComponentConstructor | (pyCallable & { anvil$isFormInstantiator: true })) =>
-            formProperty?.anvil$isFormInstantiator ?
-                formProperty :
-                chainOrSuspend(getFormInstantiator({requestingComponent: parentForm}, formProperty as pyStr | ComponentConstructor), instantiate => {
-                    const r = new Sk.builtin.func(PyDefUtils.withRawKwargs((kws: Kws, pathStep?: pyObject) =>
-                        chainOrSuspend(instantiate(kws, pathStep ? toJs(pathStep) as string | number : undefined))));
-                    r.anvil$isFormInstantiator = true;
-                    return r;
-                }),
-        $flags: { NamedArgs: ["parent_form", "property_value"] }
     },
     get_design_component: {
         $meth: ((pyComponentClass: ComponentConstructor) =>

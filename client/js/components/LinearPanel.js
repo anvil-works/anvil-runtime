@@ -2,6 +2,7 @@
 
 var PyDefUtils = require("PyDefUtils");
 import { validateChild } from "./Container";
+import { getCssPrefix } from "@runtime/runner/legacy-features";
 import { isInvisibleComponent } from "./helpers";
 
 /*#
@@ -44,7 +45,7 @@ module.exports = (pyModule) => {
 
         element: (props) => (
             <PyDefUtils.OuterElement className="anvil-container" {...props}>
-                <ul refName="lpul" className="linear-panel"></ul>
+                <ul refName="lpul" className={`${getCssPrefix()}linear-panel`}></ul>
             </PyDefUtils.OuterElement>
         ),
 

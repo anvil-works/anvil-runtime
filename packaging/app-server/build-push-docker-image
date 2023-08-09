@@ -7,7 +7,7 @@
 #
 
 docker build -t anvilworks/anvil-app-server:latest \
-             -t anvilworks/anvil-app-server:1.7.3 .
+             -t anvilworks/anvil-app-server:1.9.0 .
 
 docker push anvilworks/anvil-app-server:latest
-docker push anvilworks/anvil-app-server:1.7.3
+docker push anvilworks/anvil-app-server:1.9.0

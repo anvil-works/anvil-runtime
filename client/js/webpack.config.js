@@ -41,8 +41,12 @@ const plugins = [
 ];
 
 const cssLoader = {
-    test: /\.css$/,
-    use: [MiniCssExtractPlugin.loader, "css-loader"],
+    test: /\.(sa|sc|c)ss$/,
+    use: [
+        MiniCssExtractPlugin.loader,
+        "css-loader",
+        "sass-loader",
+    ],
 };
 
 module.exports = {
@@ -53,8 +57,8 @@ module.exports = {
         runner: ["./runner.js"],
         runner2: ["./runner/index.ts"],
         sw: ["./sw.js"],
-        "runner.min.css": ["../css/runner.css"],
-        "runner-v3.min.css": ["../css/runner-v3.css"]
+        "runner.min.css": ["../css/runner.scss"],
+        "runner-v3.min.css": ["../css/runner-v3.scss"]
     },
 
     // Make PyDefUtils available as window.PyDefUtils

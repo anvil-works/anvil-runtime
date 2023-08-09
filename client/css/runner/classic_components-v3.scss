@@ -1,0 +1,318 @@
+@import "variables.scss";
+
+/* Anvil Component */
+
+/* Anvil Button */
+
+// Button sizes
+@mixin button-size($padding-vertical, $padding-horizontal, $font-size, $line-height, $border-radius) {
+    padding: $padding-vertical $padding-horizontal;
+    // font-size: $font-size;
+    line-height: $line-height;
+    border-radius: $border-radius;
+}
+
+.anvil-btn {
+    display: inline-block;
+    margin-bottom: 0; // For input.btn
+    // font-weight: $btn-font-weight;
+    text-align: center;
+    white-space: nowrap;
+    vertical-align: middle;
+    touch-action: manipulation;
+    cursor: pointer;
+    background-image: none; // Reset unusual Firefox-on-Android default style; see https://github.com/necolas/normalize.css/issues/214
+    border: 1px solid transparent;
+    @include button-size($padding-base-vertical, $padding-base-horizontal, $font-size-base, $line-height-base, $btn-border-radius-base);
+    user-select: none;
+
+    &,
+    &:active,
+    &.active {
+        &:focus,
+        &.focus {
+            // .tab-focus();
+        }
+    }
+
+    &:hover,
+    &:focus,
+    &.focus {
+        color: $btn-default-color;
+        text-decoration: none;
+    }
+
+    &:active,
+    &.active {
+        background-image: none;
+        outline: 0;
+        //   .box-shadow(inset 0 3px 5px rgba(0, 0, 0, .125));
+    }
+
+    &.disabled,
+    &[disabled] {
+        //   cursor: $cursor-disabled;
+        opacity: 0.65;
+        box-shadow: none;
+    }
+}
+
+// Alternate buttons
+// --------------------------------------------------
+
+@mixin button-variant($color, $background, $border) {
+    color: $color;
+    background-color: $background;
+    border-color: $border;
+
+    &:focus,
+    &.focus {
+        color: $color;
+        background-color: darken($background, 10%);
+        border-color: darken($border, 25%);
+    }
+    &:hover {
+        color: $color;
+        background-color: darken($background, 10%);
+        border-color: darken($border, 12%);
+    }
+    &:active,
+    &.active {
+        color: $color;
+        background-color: darken($background, 10%);
+        background-image: none;
+        border-color: darken($border, 12%);
+
+        &:hover,
+        &:focus,
+        &.focus {
+            color: $color;
+            background-color: darken($background, 17%);
+            border-color: darken($border, 25%);
+        }
+    }
+    &.anvil-disabled,
+    &[disabled] {
+        &:hover,
+        &:focus,
+        &.focus {
+            background-color: $background;
+            border-color: $border;
+        }
+    }
+}
+
+.#{$prefix}btn-default {
+    @include button-variant($btn-default-color, $btn-default-bg, $btn-default-border);
+}
+.#{$prefix}btn-primary {
+    @include button-variant($btn-primary-color, $btn-primary-bg, $btn-primary-border);
+}
+// Success appears as green
+.#{$prefix}btn-success {
+    @include button-variant($btn-success-color, $btn-success-bg, $btn-success-border);
+}
+// Info appears as blue-green
+.#{$prefix}btn-info {
+    @include button-variant($btn-info-color, $btn-info-bg, $btn-info-border);
+}
+// Warning appears as orange
+.#{$prefix}btn-warning {
+   @include button-variant($btn-warning-color, $btn-warning-bg, $btn-warning-border);
+}
+// Danger and error appear as red
+.#{$prefix}btn-danger {
+    @include button-variant($btn-danger-color, $btn-danger-bg, $btn-danger-border);
+}
+
+.#{$prefix}btn-default {
+    background-image: linear-gradient(to bottom, rgba(255, 255, 255, 0.1), rgba(0, 0, 0, 0.1));
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5);
+    &:hover,
+    &:focus {
+        background-image: linear-gradient(rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.1));
+        background-position: 0 0;
+    }
+}
+
+.#{$prefix}btn {
+    min-height: calc(12px + 1.5em); /* account for padding */
+}
+
+.anvil-button > button > .#{$prefix}button-text {
+    white-space: pre-wrap;
+}
+
+.anvil-component-icon-present.#{$prefix}left_edge-icon > button {
+    position: relative;
+    padding-left: 1.75em;
+}
+.anvil-component-icon-present.#{$prefix}right_edge-icon > button {
+    position: relative;
+    padding-right: 1.75em;
+}
+
+/* Anvil Canvas */
+
+/* Anvil CheckBox/RadioButton */
+
+// Checkboxes and radios
+//
+// Indent the labels to position radios/checkboxes as hanging controls.
+
+.#{$prefix} {
+    &checkbox,
+    &radio {
+        position: relative;
+        display: block;
+        margin-top: 10px;
+        margin-bottom: 10px;
+
+        &[disabled] label {
+            cursor: not-allowed;
+        }
+
+        label {
+            cursor: pointer;
+            padding: 7px 7px 7px 20px;
+            min-height: 20px;
+            margin-bottom: 0;
+        }
+
+        input {
+            position: absolute;
+            margin-left: -20px;
+            line-height: normal;
+            margin-top: calc(0.75em - 7px);
+        }
+    }
+}
+
+div.#{$prefix}checkbox {
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+/* Anvil Column Panel */
+
+/* Anvil Data Grid */
+
+/* Anvil Data Row Panel */
+
+/* Anvil Date Picker */
+
+/* Anvil DropDown */
+
+/* Anvil File Loader */
+
+/* Anvil Flow Panel */
+
+.#{$prefix}flow-panel > .#{$prefix}flow-panel-gutter {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: top;
+    align-content: flex-start;
+}
+.#{$prefix}flow-panel > .#{$prefix}flow-panel-gutter > .#{$prefix}flow-panel-item {
+    flex: 0 1 auto;
+}
+
+.#{$prefix}flow-panel.#{$prefix}flow-spacing-none > .#{$prefix}flow-panel-gutter {
+    margin-left: 0;
+    margin-right: 0;
+}
+.#{$prefix}flow-panel.#{$prefix}flow-spacing-tiny > .#{$prefix}flow-panel-gutter {
+    margin-left: -5px;
+    margin-right: -5px;
+}
+.#{$prefix}flow-panel.#{$prefix}flow-spacing-small > .#{$prefix}flow-panel-gutter {
+    margin-left: -10px;
+    margin-right: -10px;
+}
+.#{$prefix}flow-panel.#{$prefix}flow-spacing-medium > .#{$prefix}flow-panel-gutter {
+    margin-left: -15px;
+    margin-right: -15px;
+}
+.#{$prefix}flow-panel.#{$prefix}flow-spacing-large > .#{$prefix}flow-panel-gutter {
+    margin-left: -20px;
+    margin-right: -20px;
+}
+.#{$prefix}flow-panel.#{$prefix}flow-spacing-huge > .#{$prefix}flow-panel-gutter {
+    margin-left: -30px;
+    margin-right: -30px;
+}
+
+.#{$prefix}flow-panel.#{$prefix}flow-spacing-none > .#{$prefix}flow-panel-gutter > .#{$prefix}flow-panel-item {
+    margin-left: 0;
+    margin-right: 0;
+}
+.#{$prefix}flow-panel.#{$prefix}flow-spacing-tiny > .#{$prefix}flow-panel-gutter > .#{$prefix}flow-panel-item {
+    margin-left: 5px;
+    margin-right: 5px;
+}
+.#{$prefix}flow-panel.#{$prefix}flow-spacing-small > .#{$prefix}flow-panel-gutter > .#{$prefix}flow-panel-item {
+    margin-left: 10px;
+    margin-right: 10px;
+}
+.#{$prefix}flow-panel.#{$prefix}flow-spacing-medium > .#{$prefix}flow-panel-gutter > .#{$prefix}flow-panel-item {
+    margin-left: 15px;
+    margin-right: 15px;
+}
+.#{$prefix}flow-panel.#{$prefix}flow-spacing-large > .#{$prefix}flow-panel-gutter > .#{$prefix}flow-panel-item {
+    margin-left: 20px;
+    margin-right: 20px;
+}
+.#{$prefix}flow-panel.#{$prefix}flow-spacing-huge > .#{$prefix}flow-panel-gutter > .#{$prefix}flow-panel-item {
+    margin-left: 30px;
+    margin-right: 30px;
+}
+
+/* Anvil Goolge Map */
+
+/* Anvil Grid Panel */
+
+/* Anvil Html Panel */
+
+/* Anvil Image */
+
+/* Anvil Invalid Component */
+
+/* Anvil Lable */
+
+/* Anvil Linear Panel */
+
+.#{$prefix}linear-panel {
+    padding: 0px;
+    /* overflow settings removed because they cause scroll bars on FF. Don't think we need them anyway. */
+    /*overflow-y: auto;
+	overflow-x: hidden;*/
+}
+
+ul.#{$prefix}linear-panel {
+    list-style-type: none;
+    margin: 0;
+}
+
+/* Anvil Link */
+
+/* Anvil Paginator */
+
+/* Anvil Plot */
+
+/* Anvil Repeating Panel */
+
+/* Anvil RichText */
+
+/* Anvil Spacer */
+
+/* Anvil TextArea */
+
+/* Anvil TextBox */
+
+/* Anvil XY Panel */
+
+.anvil-xy-panel > .anvil-holder > .anvil-component {
+    margin: 0;
+}
+
+/* Anvil YouTube Video */

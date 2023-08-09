@@ -1,5 +1,6 @@
 "use strict";
 
+import { getCssPrefix } from "@runtime/runner/legacy-features";
 import {getFormInstantiator} from "../runner/instantiation";
 
 /*#
@@ -112,11 +113,14 @@ module.exports = (pyModule, componentsModule) => {
 
         events: PyDefUtils.assembleGroupEvents("RepeatingPanel", /*!componentEvents(RepeatingPanel)!1*/ ["universal"]),
 
-        element: (props) => (
-            <PyDefUtils.OuterElement className="component-namespace repeating-panel" {...props}>
-                <div refName="items" className="hide-while-paginating"></div>
-            </PyDefUtils.OuterElement>
-        ),
+        element: (props) => { 
+            const prefix = getCssPrefix()
+            return (
+                <PyDefUtils.OuterElement className={`anvil-designer-component-namespace ${prefix}repeating-panel` }{...props}>
+                    <div refName="items" className={`${prefix}hide-while-paginating`}></div>
+                </PyDefUtils.OuterElement>
+            );
+         },
 
         locals($loc) {
             $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicComponent"], (self) => {
@@ -239,6 +243,8 @@ module.exports = (pyModule, componentsModule) => {
 
         if (ANVIL_IN_DESIGNER) { return [0, null, true]; }
 
+        const prefix = getCssPrefix();
+
 
         if (updatedChild?._anvil?.pagination) {
             const i = self._anvil.lastPagination.findIndex(([,,,templateInstance]) => templateInstance == updatedChild);
@@ -298,7 +304,7 @@ module.exports = (pyModule, componentsModule) => {
         const currentPagination = [];
         currentPagination.pyIterator = self._anvil.pyIterator;
 
-        self._anvil.element.addClass("paginating");
+        self._anvil.element.addClass(prefix + "paginating");
 
         return Sk.misceval.chain(
             undefined,
@@ -498,7 +504,7 @@ module.exports = (pyModule, componentsModule) => {
                 }
             },
             (r) => {
-                self._anvil.element.removeClass("paginating");
+                self._anvil.element.removeClass(prefix + "paginating");
                 return Sk.misceval.chain(
                     null,
                     () => {

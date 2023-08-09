@@ -4,9 +4,9 @@ See animate.css v3.5.1
 https://github.com/animate-css/animate.css/blob/3.5.1/animate.css
 */
 
-@import "variables.less";
+@import "variables.scss";
 
-.@{prefix}animated {
+.#{$prefix}animated {
     -webkit-animation-duration: .3s;
     animation-duration: .3s;
     /* Originally 1s */
@@ -14,10 +14,10 @@ https://github.com/animate-css/animate.css/blob/3.5.1/animate.css
     animation-fill-mode: both;
 }
 
-@fadeInDown: ~"@{prefix}fadeInDown";
-@fadeOutUp: ~"@{prefix}fadeOutUp";
+$fadeInDown: "#{$prefix}fadeInDown";
+$fadeOutUp: "#{$prefix}fadeOutUp";
 
-@-webkit-keyframes @fadeInDown {
+@-webkit-keyframes #{$fadeInDown} {
     from {
         opacity: 0;
         -webkit-transform: translate3d(0, -100%, 0);
@@ -31,7 +31,7 @@ https://github.com/animate-css/animate.css/blob/3.5.1/animate.css
     }
 }
 
-@keyframes @fadeInDown {
+@keyframes #{$fadeInDown} {
     from {
         opacity: 0;
         -webkit-transform: translate3d(0, -100%, 0);
@@ -45,12 +45,12 @@ https://github.com/animate-css/animate.css/blob/3.5.1/animate.css
     }
 }
 
-.@{fadeInDown} {
-    -webkit-animation-name: @fadeInDown;
-    animation-name: @fadeInDown;
+.#{$fadeInDown} {
+    -webkit-animation-name: $fadeInDown;
+    animation-name: $fadeInDown;
 }
 
-@-webkit-keyframes @fadeOutUp {
+@-webkit-keyframes #{$fadeOutUp} {
     from {
         opacity: 1;
     }
@@ -62,7 +62,7 @@ https://github.com/animate-css/animate.css/blob/3.5.1/animate.css
     }
 }
 
-@keyframes @fadeOutUp {
+@keyframes #{$fadeOutUp} {
     from {
         opacity: 1;
     }
@@ -74,7 +74,7 @@ https://github.com/animate-css/animate.css/blob/3.5.1/animate.css
     }
 }
 
-.@{fadeOutUp} {
-    -webkit-animation-name: @fadeOutUp;
-    animation-name: @fadeOutUp;
+.#{$fadeOutUp} {
+    -webkit-animation-name: $fadeOutUp;
+    animation-name: $fadeOutUp;
 }

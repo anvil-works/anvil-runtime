@@ -2,6 +2,7 @@
 
 var PyDefUtils = require("PyDefUtils");
 import { validateChild } from "./Container";
+import { getCssPrefix } from "@runtime/runner/legacy-features";
 import { isInvisibleComponent } from "./helpers";
 
 /*#
@@ -92,7 +93,7 @@ module.exports = function(pyModule) {
                 },
                 getJS(s, e) {
                     return s._anvil.jsCols;
-                }
+                },
             },
 
             auto_header: /*!componentProp(DataGrid)!1*/ {
@@ -136,8 +137,10 @@ module.exports = function(pyModule) {
                 important: true,
                 set(self, e, v) {
                     v = v.toString();
-                    e[0].classList.remove("wrap-never", "wrap-mobile", "wrap-tablet");
-                    e[0].classList.add("wrap-" + v);
+                    const prefix = getCssPrefix();
+                    const domNode = self._anvil.domNode;
+                    domNode.classList.remove(prefix + "wrap-never", prefix + "wrap-tablet", prefix + "wrap-mobile");
+                    domNode.classList.add(prefix + "wrap-" + v);
                 },
             },
 
@@ -156,28 +159,36 @@ module.exports = function(pyModule) {
             },
         ],
 
-        element: ({ show_page_controls, wrap_on, ...props }) => (
-            <PyDefUtils.OuterElement className={`anvil-container anvil-data-grid anvil-paginator wrap-${wrap_on}`} {...props}>
-                <div refName="childPanel" className="data-grid-child-panel"></div>
-                <div refName="footerPanel" className="data-grid-footer-panel">
-                    <div refName="footerSlot" className="footer-slot"></div>
-                    <div refName="paginationButtons" className="pagination-buttons" style={"display:" + (isTrue(show_page_controls) ? "block" : "none") + ";"}>
-                        <a refName="firstPage" href="javascript:void(0)" className="first-page disabled">
-                            <i refName="iconFirst" className="fa fa-angle-double-left" />
-                        </a>
-                        <a refName="prevPage" href="javascript:void(0)" className="previous-page disabled">
-                            <i refName="iconPrev" className="fa fa-angle-left" />
-                        </a>
-                        <a refName="nextPage" href="javascript:void(0)" className="next-page disabled">
-                            <i refName="iconNext" className="fa fa-angle-right" />
-                        </a>
-                        <a refName="lastPage" href="javascript:void(0)" className="last-page disabled">
-                            <i refName="iconLast" className="fa fa-angle-double-right" />
-                        </a>
+        element: ({ show_page_controls, wrap_on, ...props }) => {
+            const prefix = getCssPrefix();
+            return (
+                <PyDefUtils.OuterElement
+                    className={`anvil-container anvil-data-grid anvil-paginator ${prefix}wrap-${wrap_on}`}
+                    {...props}>
+                    <div refName="childPanel" className={`${prefix}data-grid-child-panel`}></div>
+                    <div refName="footerPanel" className={`${prefix}data-grid-footer-panel`}>
+                        <div refName="footerSlot" className={`${prefix}footer-slot`}></div>
+                        <div
+                            refName="paginationButtons"
+                            className={`${prefix}pagination-buttons`}
+                            style={"display:" + (isTrue(show_page_controls) ? "block" : "none") + ";"}>
+                            <a refName="firstPage" href="javascript:void(0)" className={`${prefix}first-page ${prefix}disabled`}>
+                                <i refName="iconFirst" className="fa fa-angle-double-left" />
+                            </a>
+                            <a refName="prevPage" href="javascript:void(0)" className={`${prefix}previous-page ${prefix}disabled`}>
+                                <i refName="iconPrev" className="fa fa-angle-left" />
+                            </a>
+                            <a refName="nextPage" href="javascript:void(0)" className={`${prefix}next-page ${prefix}disabled`}>
+                                <i refName="iconNext" className="fa fa-angle-right" />
+                            </a>
+                            <a refName="lastPage" href="javascript:void(0)" className={`${prefix}last-page ${prefix}disabled`}>
+                                <i refName="iconLast" className="fa fa-angle-double-right" />
+                            </a>
+                        </div>
                     </div>
-                </div>
-            </PyDefUtils.OuterElement>
-        ),
+                </PyDefUtils.OuterElement>
+            );
+        },
 
         locals($loc) {
             $loc["__new__"] = PyDefUtils.mkNew(pyModule["Paginator"], (self) => {
@@ -212,7 +223,7 @@ module.exports = function(pyModule) {
             });
 
 
-            /*!defMethod(_,component,[index=None],[pinned=False])!2*/ "Add a component to this DataGrid, in the 'index'th position. If 'index' is not specified, adds to the bottom."
+            /*!defMethod(_,component,[index=None],[pinned=False])!2*/ ("Add a component to this DataGrid, in the 'index'th position. If 'index' is not specified, adds to the bottom.");
             $loc["add_component"] = PyDefUtils.funcWithKwargs(function add_component(kwargs, self, component) {
                 validateChild(component);
                 
@@ -231,7 +242,7 @@ module.exports = function(pyModule) {
                             // TODO: How would you do this in the new world?
                             component._anvil.dataGrid = self;
                         }
-                        // celt.classList.toggle("hide-while-paginating", !pinned);
+                        // celt.classList.toggle(prefix + "hide-while-paginating", !pinned);
 
                         const elts = self._anvil.elements.childPanel.children;
                         if (slot === "footer") {
@@ -283,13 +294,14 @@ module.exports = function(pyModule) {
     });
 
     let updateColStyles = (self, cols) => {
+        const prefix = getCssPrefix();
         let style = self._anvil.styleSheet;
 
         while(style.cssRules.length > 0) {
             style.deleteRule(0);
         }
         for (let col of cols || []) {
-            let rule = `.data-row-col[data-grid-id="${self._anvil.dataGridId}"][data-grid-col-id="${col.id}"] {`;
+            let rule = `.${prefix}data-row-col[data-grid-id="${self._anvil.dataGridId}"][data-grid-col-id="${col.id}"] {`;
 
             if (col.width)
                 rule += `width: ${col.width}px; flex-grow: 0;`;
@@ -307,6 +319,7 @@ module.exports = function(pyModule) {
 
     let updateColumns = (self, element) => {
         let cols = self._anvil.getPropJS("columns");
+        const prefix = getCssPrefix();
 
         self._anvil.updateColStyles(cols);
 
@@ -314,11 +327,11 @@ module.exports = function(pyModule) {
             self._anvil.updateConfigHeader();
         }
 
-        element.find(".anvil-data-row-panel:not(.auto-grid-header)")
+        element.find(`.anvil-data-row-panel:not(${prefix}auto-grid-header)`)
             .map((_,e) => $(e).data("anvilPyComponent"))
             .each((_,c) => c._anvil.updateColumns(true));
 
-        let h = element.find(".auto-grid-header").map((_,e) => $(e).data("anvilPyComponent"));
+        let h = element.find(`.${prefix}auto-grid-header`).map((_,e) => $(e).data("anvilPyComponent"));
         if (isTrue(self._anvil.getProp("auto_header"))) {
             let headerData = {};
             for (let c of cols || []) {
@@ -328,8 +341,8 @@ module.exports = function(pyModule) {
             if (h.length === 0) {
                 h = PyDefUtils.pyCall(pyModule["DataRowPanel"], [], ["bold", Sk.builtin.bool.true$]);
                 h._anvil.autoGridHeader = true;
-                h._anvil.domNode.classList.add("no-hit", "auto-grid-header");
-                // h._anvil.domNode.classList.remove("hide-while-paginating");
+                h._anvil.domNode.classList.add("anvil-designer-no-hit", `${prefix}auto-grid-header`);
+                // h._anvil.domNode.classList.remove(prefix + "hide-while-paginating");
                 PyDefUtils.pyCall(self.tp$getattr(new Sk.builtin.str("add_component")), [h], ["index", new Sk.builtin.int_(0)])
             } else {
                 h = h[0];

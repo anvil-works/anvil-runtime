@@ -96,8 +96,9 @@
                                       (when-not (or (:allow_embedding app-map) (nil? (:allow_embedding app-map)))
                                         "none")))
 
+(defonce always-serve-v3-runtime? (fn [app-id session-state] false))
 
-(def set-app-embedding-impl! (util/hook-setter #{get-embedding-restrictions}))
+(def set-app-embedding-impl! (util/hook-setter #{get-embedding-restrictions always-serve-v3-runtime?}))
 
 (defn get-app-from-request
   ([request] (get-app-from-request request true))
@@ -189,15 +190,19 @@
                                          (:maps-api-key conf/google-client-config))
             _ (checkpoint! "Google configured")
             {:keys [body-class]} (app-data/get-extra-rendering-info app-id app-session {})
-            runnerVersion (if (get-in app-map [:runtime_options :preview_v3])
-                            3
-                            (get-in app-map [:runtime_options :version] 0))
+            runnerVersion (get-in app-map [:runtime_options :version] 0)
+            new-ui-runtime? (or (>= runnerVersion 3)
+                                (get-in app-map [:runtime_options :preview_v3])
+                                (always-serve-v3-runtime? app-id app-session))
             client-params (-> client-params
-                              (assoc :runtimeVersion runnerVersion)
+                              (assoc :runtimeVersion (max runnerVersion (if new-ui-runtime? 3 0)))
                               (assoc :isCrawler
                                      (crawlers/crawler? (get-in req [:headers "user-agent"]))))
 
-            new-ui-runtime? (>= runnerVersion 3)]
+            head-html (str head-html
+                           ;; make sure this is the final line - otherwise an import map defined in a native dep will break
+                           (when (and new-ui-runtime? (< (get-in app-map [:runtime_options :version] 0) 3))
+                             "\n<script type='module'>window.anvil.enableLegacy({bootstrap3: true, classNames: true});</script>\n"))]
         (if-let [error-message (app-data/should-app-be-blocked? app-id app-session environment)]
           (block-app req error-message)
           (do

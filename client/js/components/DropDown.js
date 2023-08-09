@@ -1,5 +1,6 @@
 "use strict";
 
+const { getCssPrefix } = require("@runtime/runner/legacy-features");
 var PyDefUtils = require("PyDefUtils");
 
 
@@ -206,11 +207,12 @@ module.exports = (pyModule) => {
             }
 
             const selectAttrs = !isTrue(props.enabled) ? {disabled: ""} : {};
+            const prefix = getCssPrefix();
 
             return (
                 <PyDefUtils.OuterElement className="anvil-inlinable anvil-dropdown" {...props}>
-                    <form refName="form" className="form-inline" {...(width ? { style: width } : {})}>
-                        <select refName="select" className="form-control to-disable" style={selectStyle + width} {...selectAttrs}></select>
+                    <form refName="form" className={`${prefix}form-inline`} {...(width ? { style: width } : {})}>
+                        <select refName="select" className={`${prefix}form-control ${prefix}to-disable`} style={selectStyle + width} {...selectAttrs}></select>
                     </form>
                 </PyDefUtils.OuterElement>
             );

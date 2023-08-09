@@ -1,0 +1,165 @@
+@import "variables.scss";
+
+
+@mixin form-control-focus($color: $input-border-focus) {
+    $color-rgba: rgba(red($color), green($color), blue($color), 0.6);
+
+    &:focus {
+        border-color: $color;
+        outline: 0;
+        // .box-shadow("inset 0 1px 1px rgba(0, 0, 0, .075), 0 0 8px #{$color-rgba}");
+    }
+}
+
+@mixin placeholder($color: $input-color-placeholder) {
+    // Firefox
+    &::-moz-placeholder {
+        color: $color;
+        opacity: 1; // Override Firefox's unusual default opacity; see https://github.com/twbs/bootstrap/pull/11526
+    }
+    &:-ms-input-placeholder {
+        color: $color;
+    } // Internet Explorer 10+
+    &::-webkit-input-placeholder {
+        color: $color;
+    } // Safari and Chrome
+}
+
+.#{$prefix}form-control {
+    display: block;
+    width: 100%;
+    height: $input-height-base; // Make inputs at least the height of their button counterpart (base line-height + padding + border)
+    padding: $padding-base-vertical $padding-base-horizontal;
+    font-size: $font-size-base;
+    line-height: $line-height-base;
+    color: $input-color;
+    background-color: $input-bg;
+    background-image: none; // Reset unusual Firefox-on-Android default style; see https://github.com/necolas/normalize.css/issues/214
+    border: 1px solid $input-border;
+    border-radius: $input-border-radius; // Note: This has no effect on <select>s in some browsers, due to the limited stylability of <select>s in CSS.
+    // .box-shadow(inset 0 1px 1px rgba(0, 0, 0, .075));
+    // .transition("border-color ease-in-out .15s, box-shadow ease-in-out .15s");
+
+    // Customize the `:focus` state to imitate native WebKit styles.
+    @include form-control-focus();
+
+    // Placeholder
+    @include placeholder();
+
+    // Disabled and read-only inputs
+    //
+    // HTML5 says that controls under a fieldset > legend:first-child won't be
+    // disabled if the fieldset is disabled. Due to implementation difficulty, we
+    // don't honor that edge case; we style them as disabled anyway.
+    &[disabled],
+    &[readonly] {
+        background-color: $input-bg-disabled;
+        opacity: 1; // iOS fix for unreadable disabled content; see https://github.com/twbs/bootstrap/issues/11655
+    }
+
+    &[disabled] {
+        cursor: $cursor-disabled;
+    }
+
+    // Reset height for `textarea`s
+    textarea {
+        height: auto;
+    }
+}
+
+.#{$prefix}form-inline {
+    // Kick in the inline
+    @media (min-width: $screen-sm-min) {
+        // Inline-block all the things for "inline"
+        //   .form-group {
+        //     display: inline-block;
+        //     margin-bottom: 0;
+        //     vertical-align: middle;
+        //   }
+
+        //   In navbar-form, allow folks to *not* use `.form-group`
+        .form-control {
+            display: inline-block;
+            width: auto; // Prevent labels from stacking above inputs in `.form-group`
+            vertical-align: middle;
+        }
+
+        //   // Make static controls behave like regular ones
+        //   .form-control-static {
+        //     display: inline-block;
+        //   }
+
+        //   .input-group {
+        //     display: inline-table;
+        //     vertical-align: middle;
+
+        //     .input-group-addon,
+        //     .input-group-btn,
+        //     .form-control {
+        //       width: auto;
+        //     }
+        //   }
+
+        // Input groups need that 100% width though
+        //   .input-group > .form-control {
+        //     width: 100%;
+        //   }
+
+        //   .control-label {
+        //     margin-bottom: 0;
+        //     vertical-align: middle;
+        //   }
+
+        // Remove default margin on radios/checkboxes that were used for stacking, and
+        // then undo the floating of radios and checkboxes to match.
+        .#{$prefix}radio,
+        .#{$prefix}checkbox {
+            display: inline-block;
+            margin-top: 0;
+            margin-bottom: 0;
+            vertical-align: middle;
+
+            label {
+                padding-left: 0;
+            }
+        }
+        .#{$prefix}radio input[type="radio"],
+        .#{$prefix}checkbox input[type="checkbox"] {
+            position: relative;
+            margin-left: 0;
+        }
+    }
+}
+
+.#{$prefix}sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    border: 0;
+}
+
+// Scaffolding
+a {
+    color: $link-color;
+    text-decoration: none;
+
+    &:hover,
+    &:focus {
+        color: $link-hover-color;
+        text-decoration: $link-hover-decoration;
+    }
+
+    // &:focus {
+    //   .tab-focus();
+    // }
+}
+
+// Syntax
+.anvil-err {
+    color: #a00;
+    background-color: #faa;
+}

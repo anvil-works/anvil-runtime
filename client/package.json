@@ -33,6 +33,8 @@
     "mini-css-extract-plugin": "1.6.2",
     "optimize-css-assets-webpack-plugin": "^6.0.1",
     "regenerator-runtime": "0.13.7",
+    "sass": "^1.64.2",
+    "sass-loader": "^10.4.1",
     "terser-webpack-plugin": "^4.2.3",
     "ts-loader": "~8.2.0",
     "typescript": "4.7.3",

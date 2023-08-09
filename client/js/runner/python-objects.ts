@@ -30,7 +30,7 @@ import {
     raiseEventOrSuspend,
     ToolboxItem
 } from "../components/Component";
-import {getAnvilComponentInstantiator, getNamedFormInstantiator} from "./instantiation";
+import {getAnvilComponentInstantiator, getNamedFormInstantiator, ResolvedForm, resolveFormSpec} from "./instantiation";
 
 interface SlotConstructor extends pyType<Slot> {
     new (
@@ -216,7 +216,7 @@ export const Slot: SlotConstructor = Sk.abstr.buildNativeClass("anvil.Slot", {
         clear: {
             $meth() {
                 for (const c of [...this._slotState.components]) {
-                    Sk.misceval.callsim(Sk.builtin.gattr(c, s_remove_from_parent));
+                    Sk.misceval.callsim(Sk.abstr.gattr(c, s_remove_from_parent));
                 }
                 this._slotState.components = []; // just in case
                 return pyNone;
@@ -289,9 +289,9 @@ export function getComponentClass(typeSpec: string, defaultDepId: string) {
 }
 
 type InstantiateFn = (kwargs?: Kws, pathId?: string | number) => Component | Suspension;
+
 interface LayoutSubclassHooks {
-    instantiate?: InstantiateFn;
-    mkInstantiate?(requestingComponent: Component): Suspension | InstantiateFn;
+    layout: {type: "form", formSpec: ResolvedForm} | {type: "builtin", name: string} | {type: "constructor", constructor: pyCallable};
 }
 interface WithLayoutConstructor extends ComponentConstructor {
     _withLayoutSubclass?: LayoutSubclassHooks;
@@ -385,20 +385,17 @@ export const WithLayout: WithLayoutConstructor = Sk.abstr.buildNativeClass("anvi
                     // Delay the actual type lookup until the first one gets instantiated; otherwise you might try to look up
                     // a form template that hasn't been created yet. Not an issue for layouts created directly in Python.
                     const {type, defaultDepId} = layoutClass;
+                    const isForm = type.startsWith("form:");
                     this._withLayoutSubclass = {
-                        // TODO fix this type
-                        mkInstantiate(requestingComponent: any) {
-                            return type.startsWith("form:")
-                                ? getNamedFormInstantiator(requestingComponent, type.substring(5), {asLayout: true})
-                                : getAnvilComponentInstantiator(requestingComponent, type);
-                        }
+                        layout: isForm
+                            ? {type: "form", formSpec: resolveFormSpec(type.substring(5), defaultDepId)}
+                            : {type: "builtin", name: type},
                     };
+
                 } else if (layoutClass && (layoutClass instanceof pyType) && isTrue(pyIsSubclass(layoutClass, Component))) {
                     delete kwMap["layout"];
                     this._withLayoutSubclass = {
-                        instantiate(kwargs?: Kws, pathId?: string | number) {
-                            return pyCallOrSuspend(layoutClass, [], kwargs);
-                        }
+                        layout: {type: "constructor", constructor: layoutClass}
                     };
                 } else if (!layoutClass && this.prototype.tp$base?._withLayoutSubclass) {
                     this._withLayoutSubclass = this.prototype.tp$base._withLayoutSubclass;
@@ -414,29 +411,28 @@ export const WithLayout: WithLayoutConstructor = Sk.abstr.buildNativeClass("anvi
     getsets: {
         "layout": {
             $get() {
-                // We don't necessarily have to use the dict here, but we might as well.
                 const {pyLayout, kwargs, onCreate, _withLayoutSubclass} = this._withLayout;
                 if (pyLayout) { return pyLayout; }
 
                 // First touch! Time to create.
 
                 if (!_withLayoutSubclass) { return pyNone; }
+                const l = _withLayoutSubclass.layout;
+
+                const t = l.type;
 
                 return chainOrSuspend(
-                    !_withLayoutSubclass.instantiate && _withLayoutSubclass.mkInstantiate!(this),
-                    (instantiator) => {
-                        if (instantiator) {
-                            _withLayoutSubclass.instantiate = instantiator;
-                        }
-                        return _withLayoutSubclass.instantiate!(kwargs);
-                    },
+                    l.type === "form" ? getNamedFormInstantiator(l.formSpec, this) :
+                        l.type === "builtin" ? getAnvilComponentInstantiator({fromYaml: false, requestingComponent: this}, l.name) :
+                            (kws?: Kws) => pyCallOrSuspend(l.constructor, [], kws),
+                    (instantiate) => instantiate(kwargs) as Component,
                     (pyL) => {
                         this._withLayout.pyLayout = pyL;
                         if (onCreate) {
                             return onCreate(pyL, this);
                         }
                     },
-                    () => this._withLayout.pyLayout as Component
+                    () => this._withLayout.pyLayout!
                 );
             },
             $set(newLayout) {

@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 python:3
+FROM --platform=linux/amd64 python:3-buster
 
 RUN apt-get -yyy update && apt-get -yyy install software-properties-common && \
     wget -O- https://apt.corretto.aws/corretto.key | apt-key add - && \
@@ -8,13 +8,13 @@ RUN wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.d
     (dpkg -i google-chrome-stable_current_amd64.deb || apt install -y --fix-broken) && \
     rm google-chrome-stable_current_amd64.deb 
 
-
 RUN apt-get -yyy update && apt-get -yyy install java-1.8.0-amazon-corretto-jdk ghostscript
 
+RUN pip install --upgrade pip
 RUN pip install anvil-app-server
 RUN anvil-app-server || true
 
-VOLUME /apps
+RUN mkdir /apps
 WORKDIR /apps
 
 RUN mkdir /anvil-data

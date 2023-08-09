@@ -306,10 +306,7 @@
              (concat
                (for [dep-id (:dependency_order yaml)]
                  (get-in yaml [:dependency_code dep-id :native_deps :head_html]))
-               [(get-in yaml [:native_deps :head_html])
-                ;; make sure this is the final line - otherwise an import map defined in a native dep will break
-                (when (get-in yaml [:runtime_options :preview_v3])
-                  "\n<script type='module'>window.anvil.enableLegacy({bootstrap3: true, classNames: true});</script>\n")]))
+               [(get-in yaml [:native_deps :head_html])]))
       (:version app)])))
 
 

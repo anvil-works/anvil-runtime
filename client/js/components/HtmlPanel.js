@@ -5,6 +5,7 @@ import { s_add_component, s_clear } from "../runner/py-util";
 import { Slot } from "../runner/python-objects";
 import { isInvisibleComponent } from "./helpers";
 import { validateChild } from "./Container";
+import { getCssPrefix } from "@runtime/runner/legacy-features";
 
 var PyDefUtils = require("PyDefUtils");
 
@@ -171,7 +172,12 @@ module.exports = (pyModule) => {
 
         events: PyDefUtils.assembleGroupEvents("HTML panel", /*!componentEvents(HtmlTemplate)!1*/ ["universal"]),
 
-        element: (props) => <PyDefUtils.OuterElement className="html-templated-panel anvil-container anvil-always-inline-container" {...props} />,
+        element: (props) => (
+            <PyDefUtils.OuterElement
+                className={`${getCssPrefix()}html-templated-panel anvil-container anvil-always-inline-container`}
+                {...props}
+            />
+        ),
 
         layouts: [
             {

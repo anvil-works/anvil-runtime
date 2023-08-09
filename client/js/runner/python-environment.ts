@@ -11,6 +11,7 @@ import {Component} from "../components/Component";
 import {runPostSetupHooks} from "./components-in-js/common";
 import {pyDesignerApi} from "./component-designer-api";
 import { Container } from "@runtime/components/Container";
+import {pyPropertyUtilsApi} from "@runtime/runner/component-property-utils-api";
 
 export const skulptFiles: {[filename:string]: string} = {};
 
@@ -95,6 +96,8 @@ function loadOrdinaryModulesReturningAnvilModule() {
     PyDefUtils.loadModule("anvil.code_completion_hints", require("../modules/code-completion-hints")());
 
     PyDefUtils.loadModule("anvil.designer", pyDesignerApi);
+
+    PyDefUtils.loadModule("anvil.property_utils", pyPropertyUtilsApi);
 
     // TODO there are more elegant ways to do this! (I think we just need to include "anvil.tables" in the preloadModules)
     try {

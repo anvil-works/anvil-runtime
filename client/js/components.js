@@ -275,7 +275,7 @@ module.exports.newPythonComponent = function newPythonComponent(component, compo
                         }
                         pyComponent._anvil.dataBindingProp = "item";
                         pyComponent._anvil.componentsByName = nestedComponentsByName;
-                        pyComponent._anvil.element.addClass("anvil-custom-component component-namespace namespace-region");
+                        pyComponent._anvil.element.addClass("anvil-custom-component anvil-designer-component-namespace anvil-designer-namespace-region");
                         return pyComponent;
                     }
                 );

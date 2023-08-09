@@ -144,7 +144,7 @@ module.exports = (pyModule) => {
                     <label refName="label" style={inlineStyle}>
                         <input
                             refName="input"
-                            className="to-disable"
+                            className={`${prefix}to-disable`}
                             type="radio"
                             name={group_name.toString()}
                             value={Sk.builtin.checkNone(value) ? "" : value.toString()}

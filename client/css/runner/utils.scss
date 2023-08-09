@@ -1,0 +1,15 @@
+@mixin clearfix() {
+    &:before,
+    &:after {
+        display: table; // 2
+        content: " "; // 1
+    }
+
+    &:after {
+        clear: both;
+    }
+}
+
+.anvil-clearfix {
+    @include clearfix();
+}

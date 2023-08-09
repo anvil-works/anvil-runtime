@@ -1,4 +1,5 @@
 "use strict";
+import { getCssPrefix } from "@runtime/runner/legacy-features";
 import { setHandled, isHandled } from "./events";
 var PyDefUtils = require("PyDefUtils");
 const { isTrue } = Sk.misceval;
@@ -50,8 +51,9 @@ module.exports = (pyModule) => {
                 dataBindingProp: true,
                 set(s, e, v) {
                     v = Sk.builtin.checkNone(v) ? "" : v.toString();
+                    const prefix = getCssPrefix();
                     const { outer, holder } = s._anvil.elements;
-                    outer.classList.toggle("has-text", !!v);
+                    outer.classList.toggle(prefix + "has-text", !!v);
                     holder.textContent = v;
                     holder.style.display = v ? "inline-block" : "none";
                 },
@@ -108,11 +110,12 @@ module.exports = (pyModule) => {
         }),
 
         element({ col_spacing, ...props }) {
+            const prefix = getCssPrefix();
             const outerClass = PyDefUtils.getOuterClass(props);
             const outerStyle = PyDefUtils.getOuterStyle(props);
             const outerAttrs = PyDefUtils.getOuterAttrs(props);
             const initialText = (props.text = Sk.builtin.checkNone(props.text) ? "" : props.text.toString());
-            const colSpacing = " col-padding-" + col_spacing.toString();
+            const colSpacing = prefix + "col-padding-" + col_spacing.toString();
             let underlineStyle = "";
             if (isTrue(props.underline)) {
                 underlineStyle = "text-decoration: underline;";
@@ -122,12 +125,12 @@ module.exports = (pyModule) => {
                     refName="outer"
                     ontouchstart=""
                     href="javascript:void(0)"
-                    className={"anvil-inlinable anvil-container column-panel " + outerClass + colSpacing}
+                    className={`anvil-inlinable anvil-container ${prefix}column-panel ${outerClass} ${colSpacing}`}
                     rel="noopener noreferrer"
                     style={outerStyle}
                     {...outerAttrs}>
                     <PyDefUtils.IconComponent side="left" {...props} />
-                    <div refName="holder" className="link-text" style={`display: ${ initialText ? 'inline-block' : 'none'}; ${underlineStyle}`}>
+                    <div refName="holder" className={`${prefix}link-text` }style={`display: ${ initialText ? 'inline-block' : 'none'}; ${underlineStyle}`}>
                         {Sk.builtin.checkNone(props.text) ? "" : props.text.toString()}
                     </div>
                     <PyDefUtils.IconComponent side="right" {...props} />

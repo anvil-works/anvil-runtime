@@ -51,8 +51,16 @@ function mkScript(src: string) {
 
 function setLegacyClassNames() {
     if (!legacyOptions.classNames) return;
+    if (ANVIL_IN_DESIGNER) {
+        document.documentElement.classList.add("designer");
+    } else {
+        document.documentElement.classList.add("runner");
+    }
     const firstLink = getFirstLink();
     document.head.insertBefore(mkLink("/dist/runner.min.css"), firstLink);
+    if (ANVIL_IN_DESIGNER) {
+        document.head.insertBefore(mkLink("/dist/designer.min.css"), firstLink);
+    }
 }
 
 function setLegacyBootstrap3() {

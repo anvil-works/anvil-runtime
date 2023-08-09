@@ -48,7 +48,7 @@ module.exports = (pyModule) => {
 
         events: PyDefUtils.assembleGroupEvents("grid panel", /*!componentEvents(GridPanel)!1*/ ["universal"]),
 
-        element: (props) => <PyDefUtils.OuterElement className="grid-panel anvil-container" {...props} />,
+        element: (props) => <PyDefUtils.OuterElement className={`${getCssPrefix()}grid-panel anvil-container` }{...props} />,
 
         locals($loc) {
             $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicContainer"], (self) => {

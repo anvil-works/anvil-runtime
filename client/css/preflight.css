@@ -7,6 +7,10 @@ html {
     line-height: 1.5;
 }
 
+body {
+    font-size: 14px;
+}
+
 button,
 input,
 optgroup,
@@ -42,6 +46,8 @@ label {
 }
 
 /* Avoid default browser outline on textboxes/textareas */
-input:focus, textarea:focus, select:focus {
+input:focus,
+textarea:focus,
+select:focus {
     outline: 0;
 }

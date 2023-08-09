@@ -1,5 +1,6 @@
 "use strict";
 
+const { getCssPrefix } = require("@runtime/runner/legacy-features");
 var PyDefUtils = require("PyDefUtils");
 const {
     misceval: { isTrue },
@@ -31,15 +32,21 @@ module.exports = (pyModule) => {
 
         events: PyDefUtils.assembleGroupEvents(/*!componentEvents()!2*/ "Label", ["universal"]),
 
-        element: (props) => (
-            <PyDefUtils.OuterElement className="anvil-label anvil-inlinable" {...props}>
-                <PyDefUtils.IconComponent side="left" {...props} />
-                <span refName="text" className="label-text" style={isTrue(props.underline) ? "text-decoration: underline;" : ""}>
-                    {Sk.builtin.checkNone(props.text) ? "" : props.text.toString()}
-                </span>
-                <PyDefUtils.IconComponent side="right" {...props} />
-            </PyDefUtils.OuterElement>
-        ),
+        element: (props) => {
+            const prefix = getCssPrefix();
+            return (
+                <PyDefUtils.OuterElement className="anvil-label anvil-inlinable" {...props}>
+                    <PyDefUtils.IconComponent side="left" {...props} />
+                    <span
+                        refName="text"
+                        className={`${prefix}label-text`}
+                        style={isTrue(props.underline) ? "text-decoration: underline;" : ""}>
+                        {Sk.builtin.checkNone(props.text) ? "" : props.text.toString()}
+                    </span>
+                    <PyDefUtils.IconComponent side="right" {...props} />
+                </PyDefUtils.OuterElement>
+            );
+         },
     });
 };
 

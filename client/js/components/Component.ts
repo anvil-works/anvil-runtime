@@ -329,14 +329,6 @@ export function initComponentSubclass(cls: ComponentConstructor) {
     return pyNone;
 }
 
-// This is something of a hack, so it's pretty self-contained - Component.__new__ just forwards this information
-// to forms.ts
-let yamlStackForNextComponent: YamlCreationStack;
-let yamlStackForThisComponent: YamlCreationStack;
-export const setYamlStackForNextComponent = (yamlStack: YamlCreationStack) => { yamlStackForNextComponent = yamlStack; };
-export const getYamlStackForThisComponent = () => yamlStackForThisComponent;
-// end hack
-
 let defaultDepId: string | undefined | null;
 let onNextInstantiation: ((c: Component) => void) | undefined;
 
@@ -459,13 +451,13 @@ type UriPropertyValue = string;
 type HtmlPropertyvalue = string;
 type RecordTypePropertyValue = string;
 
-type SpacingLength = string | number;
-type MarginPropertyValue =
+export type SpacingLength = string | number;
+export type MarginPropertyValue =
     SpacingLength
     | [SpacingLength, SpacingLength]
     | [SpacingLength, SpacingLength, SpacingLength, SpacingLength];
-type PaddingPropertyValue = MarginPropertyValue;
-type SpacingPropertyValue = {
+export type PaddingPropertyValue = MarginPropertyValue;
+export type SpacingPropertyValue = {
     margin?: MarginPropertyValue;
     padding?: PaddingPropertyValue;
 }
@@ -571,15 +563,23 @@ export interface WholeComponentMultiInteraction extends InteractionBase {
 export interface OnSelectionInteraction extends InteractionBase {
     type: "on_selection",
     callbacks: {
-        onSelect: () => void; // When this component is selected
-        onDeselect: () => void; // When this component is deselected
-        onSelectDescendent: () => void; // When this component or any of its descendents are selected
-        onDeselectDescendent: () => void; // When neither this component nor any of its descendents are selected
-        onSelectOther: () => void; // When a component outside the descendent tree of this component is selected
+        onSelect?: () => void; // When this component is selected
+        onDeselect?: () => void; // When this component is deselected
+        onSelectDescendent?: () => void; // When this component or any of its descendents are selected
+        onDeselectDescendent?: () => void; // When neither this component nor any of its descendents are selected
+        onSelectOther?: () => void; // When a component outside the descendent tree of this component is selected
     }
 }
 
-export type Interaction = ButtonInteraction | HandleInteraction | WholeComponentInteraction | WholeComponentMultiInteraction | OnSelectionInteraction;
+export interface RegionInteraction extends InteractionBase {
+    type: "region";
+    bounds: DOMRect | HTMLElement;
+    callbacks: {
+        doubleClick: () => void;
+    }
+}
+
+export type Interaction = ButtonInteraction | HandleInteraction | WholeComponentInteraction | WholeComponentMultiInteraction | OnSelectionInteraction | RegionInteraction;
 
 export interface DesignInfo {
     propertyDescriptions: PropertyDescriptionBase[];
@@ -810,9 +810,6 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
                 onNextInstantiation(self);
                 onNextInstantiation = undefined;
             }
-
-            yamlStackForThisComponent = yamlStackForNextComponent;
-            yamlStackForNextComponent = undefined;
 
             //console.log("Class", cls.toString(), "has permitted events", allowedEvents);
             return self;

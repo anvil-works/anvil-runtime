@@ -138,7 +138,7 @@ function AlertModal({ id, large, title, footer, dismissible, body }: AlertProps)
     const closeVisible = dismissible ? {} : DISPLAY_NONE;
     const size = large == null ? "" : `${prefix}modal-${large ? "lg" : "sm"}`;
     return (
-        <div refName="modal" id={id} className={`${prefix}modal ${prefix}fade alert-modal`} style={ALERT_MODAL_ZINDEX}>
+        <div refName="modal" id={id} className={`${prefix}modal ${prefix}fade ${prefix}alert-modal`} style={ALERT_MODAL_ZINDEX}>
             <div refName="modalDialog" className={`${prefix}modal-dialog ${size}`}>
                 <div refName="modalContent" className={`${prefix}modal-content`}>
                     <div refName="modalHeader" className={`${prefix}modal-header`} {...titleVisible}>
@@ -151,17 +151,17 @@ function AlertModal({ id, large, title, footer, dismissible, body }: AlertProps)
                             <span refName="closeIcon" aria-hidden="true">
                                 &times;
                             </span>
-                            <span refName="closeText" className="sr-only">
+                            <span refName="closeText" className={`${prefix}sr-only`}>
                                 Close
                             </span>
                         </button>
-                        <h4 refName="modalTitle" className={`${prefix}modal-title alert-title`}>
+                        <h4 refName="modalTitle" className={`${prefix}modal-title ${prefix}alert-title`}>
                             {title}
                         </h4>
                     </div>
                     <div
                         refName="modalBody"
-                        className={`${prefix}modal-body ${typeof body === "string" ? " alert-text" : ""}`}
+                        className={`${prefix}modal-body ${typeof body === "string" ? prefix+"alert-text" : ""}`}
                         {...bodyVisible}>
                         {body}
                     </div>
@@ -174,7 +174,11 @@ function AlertModal({ id, large, title, footer, dismissible, body }: AlertProps)
 
 function AlertButton({ text, style }: { text: string; style?: string }) {
     return (
-        <button refName="alertBtn" type="button" className={"btn btn-" + (style || "default")} data-dismiss="modal">
+        <button
+            refName="alertBtn"
+            type="button"
+            className={`${prefix}btn ${prefix}btn-${style || "default"}`}
+            data-dismiss="modal">
             {text}
         </button>
     );

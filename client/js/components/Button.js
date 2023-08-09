@@ -1,5 +1,6 @@
 "use strict";
 
+import { getCssPrefix } from "@runtime/runner/legacy-features";
 import { setHandled } from "./events";
 var PyDefUtils = require("PyDefUtils");
 
@@ -122,16 +123,17 @@ module.exports = (pyModule) => {
             const buttonStyle = PyDefUtils.getOuterStyle({ font, font_size, bold, italic, underline, background, foreground });
             const buttonAttrs = !isTrue(props.enabled) ? {disabled: ""} : {};
             const inlinable = align !== "full" ? "anvil-inlinable " : ""
+            const prefix = getCssPrefix();
             return (
                 <PyDefUtils.OuterElement className= {inlinable + "anvil-button"} {...props}>
                     <button
                         refName="button"
                         ontouchstart=""
-                        className="btn btn-default to-disable"
+                        className={`${prefix}btn ${prefix}btn-default ${prefix}to-disable`}
                         style={"max-width:100%; text-overflow:ellipsis; overflow:hidden; " + buttonStyle + alignStyle}
                         {...buttonAttrs}>
                         <PyDefUtils.IconComponent side="left" {...props} />
-                        <span refName="text" className="button-text">
+                        <span refName="text" className={`${prefix}button-text`}>
                             {Sk.builtin.checkNone(props.text) ? "" : props.text.toString()}
                         </span>
                         <PyDefUtils.IconComponent side="right" {...props} />

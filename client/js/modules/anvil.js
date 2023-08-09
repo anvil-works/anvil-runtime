@@ -1,10 +1,10 @@
 "use strict";
 
 import { anvilServerMod, defer, getRandomStr } from "../utils";
-import { raiseEventOrSuspend } from "../components/Component";
+import {Component, getPyParent, raiseEventOrSuspend} from "../components/Component";
 import Modal, { BOOTSTRAP_MODAL_BG } from "./modal";
-import {s_x_anvil_propagate_page_added, s_x_anvil_propagate_page_removed} from "../runner/py-util";
-import { pyFunc, pyInt, pyNone, pyStr, toJs } from "../@Sk";
+import {s_clear, s_slots, s_x_anvil_propagate_page_added, s_x_anvil_propagate_page_removed} from "../runner/py-util";
+import {chainOrSuspend, pyCallOrSuspend, pyCheckType, pyFunc, pyInt, pyNone, pyStr, toJs} from "../@Sk";
 import { getCssPrefix } from "@runtime/runner/legacy-features";
 import { topLevelForms } from "@runtime/runner/data";
 import { validateChild } from "@runtime/components/Container";
@@ -265,7 +265,24 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         }
     }
 
+    const layoutsAreCompatible = (a /*: WithLayout*/, b/*: WithLayout*/) => {
+        const aLayout = a._withLayout._withLayoutSubclass.layout, bLayout = b._withLayout._withLayoutSubclass.layout;
+        console.log("Checking layout compatibility between", aLayout, "and", bLayout);
+        return aLayout.type === bLayout.type &&
+            (aLayout.type === "form"
+                ? bLayout.formSpec.qualifiedClassName === aLayout.formSpec.qualifiedClassName
+                : aLayout.type === "builtin"
+                    ? bLayout.name === aLayout.name
+                    : bLayout.constructor === aLayout.constructor);
+    };
+
     function openFormInstance(pyForm) {
+        if (!pyForm.anvil$hooks) {
+            throw new Sk.builtin.TypeError(
+                `Attempting to open a form which is not an anvil component, (got type ${pyForm?.tp$name})`
+            );
+        }
+
         if (pyForm !== topLevelForms.openForm) {
             // it's ok to call open_form on the same form
             validateChild(pyForm, "open_form");
@@ -274,13 +291,30 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         clearPlaceHolder();
 
         const fns = [];
-        if (topLevelForms.openForm) {
-            const f = topLevelForms.openForm;
-            fns.push(() => raiseEventOrSuspend(f, s_x_anvil_propagate_page_removed));
+        const oldForm = topLevelForms.openForm;
+        if (oldForm) {
+            fns.push(() => raiseEventOrSuspend(oldForm, s_x_anvil_propagate_page_removed));
             topLevelForms.openForm = null;
             fns.push(() => {
                 if (topLevelForms.openForm !== null) {
                     Sk.builtin.print(["WARNING: You are likely calling 'open_form()' from inside the hide event of the outgoing form (or from one of its components). This may not be what you want."]);
+                }
+                // Re-use layout instances
+                if (pyForm._withLayout && oldForm?._withLayout && layoutsAreCompatible(pyForm, oldForm)) {
+                    // We can re-use this instance! Remove from the old form, clear its slots, and give it to the new one
+                    const pyLayout = oldForm._withLayout.pyLayout;
+                    oldForm._withLayout.pyLayout = undefined;
+
+                    return chainOrSuspend(null,
+                        ...pyLayout.tp$getattr(s_slots).$items().map(([k, v]) => () => pyCallOrSuspend(v.tp$getattr(s_clear), [])),
+                        ...(function* () {
+                            const {kwargs} = pyForm._withLayout;
+                            for (let i=0; i < kwargs.length; i += 2) {
+                                const k = kwargs[i], v = kwargs[i+1];
+                                yield () => Sk.abstr.sattr(pyLayout, new pyStr(k), v, true);
+                            }
+                        })(),
+                        () => { pyForm._withLayout.pyLayout = pyLayout; return pyForm._withLayout.onCreate?.(pyLayout, pyForm); });
                 }
             });
         }
@@ -990,7 +1024,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
             activeModalLength--;
             // fixes not being able to scroll after stack alert closed
             // https://stackoverflow.com/questions/19305821/multiple-modals-overlay
-            if (activeModalLength) document.body.classList.add("modal-open");
+            if (activeModalLength) document.body.classList.add(getCssPrefix() + "modal-open");
         });
 
         const {promise: loadPromise, resolve: loadResolve} = defer();

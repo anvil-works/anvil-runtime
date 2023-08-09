@@ -20,6 +20,7 @@ import { Remarkable } from "remarkable";
 import { isTrue } from "../@Sk";
 import { isInvisibleComponent } from "./helpers";
 import { validateChild } from "./Container";
+import { getCssPrefix } from "@runtime/runner/legacy-features";
 // import { linkify } from "remarkable/linkify"
 
 // Approach taken from bootstrap/src/js/util/sanitizer.js
@@ -293,7 +294,8 @@ module.exports = (pyModule) => {
         }
 
         e.replaceChildren(...rootNode.childNodes);
-        e.classList.toggle("has-text", !!content);
+        const prefix = getCssPrefix();
+        e.classList.toggle(prefix + "has-text", !!content);
         e.style.whiteSpace = isText ? "pre-wrap" : "unset";
 
 

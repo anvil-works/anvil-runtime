@@ -1,6 +1,7 @@
 "use strict";
 
 const { pyTypeError, pyObject, toPy, Suspension, pyFunc, pyStr, pyCallOrSuspend } = require("./@Sk");
+const { getCssPrefix } = require("./runner/legacy-features");
 const { s_anvil_events, objectToKwargs, s_raise_event } = require("./runner/py-util");
 const { defer } = require("./utils");
 
@@ -643,6 +644,7 @@ PyDefUtils.getOuterClass = function getOuterClass({
     text,
     visible,
 }) {
+    const prefix = getCssPrefix();
     const classList = [];
     const spacing = ["none", "small", "medium", "large"];
 
@@ -662,7 +664,7 @@ PyDefUtils.getOuterClass = function getOuterClass({
         classList.push(icon_align + "-icon");
     }
     if (visible !== undefined && !isTrue(visible)) {
-        classList.push("visible-false");
+        classList.push(prefix + "visible-false");
     }
     if (isTrue(role)) {
         for (let r of PyDefUtils.applyRole(role)) {
@@ -670,7 +672,7 @@ PyDefUtils.getOuterClass = function getOuterClass({
         }
     }
     if (isTrue(text)) {
-        classList.push("has-text");
+        classList.push(prefix + "has-text");
     }
     return classList.join(" ");
 }
@@ -820,23 +822,23 @@ PyDefUtils.IconComponent = ({side, icon, icon_align}) => {
         icon = icon.toString();
         const faclass = icon.split(":");
         if (faclass.length === 2 && faclass[0].startsWith("fa")) {
-            iconClass = " " + faclass[0] + " fa-" + faclass[1];
+            iconClass = faclass[0] + " fa-" + faclass[1];
         } 
         else {
             img = true;
         }
     } 
     const refName = "icon" + side[0].toUpperCase() + side.slice(1);
-    side = side && " " + side;
-    icon_align = isTrue(icon_align) ? " " + icon_align.toString() + "-icon" : "";
+    const prefix = getCssPrefix();
+    icon_align = isTrue(icon_align) ? prefix + icon_align.toString() + "-icon" : "";
     if (img) {
         return (
-            <i refName={refName} className={"anvil-component-icon" + side + icon_align}>
+            <i refName={refName} className={`anvil-component-icon ${prefix}${side} ${icon_align}`}>
                 <img src={icon} style="height: 1em; vertical-align: text-bottom;" />
             </i>
         );
     }
-    return <i refName={refName} className={"anvil-component-icon" + side + iconClass + icon_align}/>
+    return <i refName={refName} className={`anvil-component-icon ${side} ${iconClass} ${icon_align}`}/>;
 }
 
 PyDefUtils.OuterElement = ({refName, style, className, ...props}, ...children) => {
@@ -864,8 +866,9 @@ var propertyGroups = {
             priority: 10,
             set(s, e, v) {
                 v = Sk.builtin.checkNone(v) ? "" : v.toString();
+                const prefix = getCssPrefix();
                 const {outer, text} = s._anvil.elements;
-                outer.classList.toggle("has-text", !!v);
+                outer.classList.toggle(prefix + "has-text", !!v);
                 text.textContent = v;
             },
         },
@@ -879,9 +882,12 @@ var propertyGroups = {
             pyVal: true,
             set(s, e, v) {
                 v = v.toString();
-                e.css("text-align", v).removeClass("align-left align-center align-right");
-                if (["left", "center", "right"].indexOf(v) > -1) {
-                    e.addClass("align-" + v);
+                const domNode = s._anvil.domNode;
+                const prefix = getCssPrefix();
+                domNode.classList.remove(prefix + "align-left", prefix + "align-center", prefix + "align-right");
+                domNode.style.textAlign = v;
+                if (["left", "center", "right"].includes(v)) {
+                    domNode.classList.add(prefix + "align-" + v);
                 }
             },
         },
@@ -1005,18 +1011,22 @@ var propertyGroups = {
             defaultValue: new Sk.builtin.str("left"),
             pyVal: true,
             options: ["left_edge", "left", "top", "right", "right_edge"],
-            set(s, e, v) {
-                var remove = ["right_edge-icon", "left_edge-icon", "top-icon", "right-icon", "left-icon"].join(" ");
+            set(s, _e, v) {
+                const prefix = getCssPrefix();
+                const remove = ["right_edge", "left_edge", "top", "right", "left"]
+                    .map((x) => prefix + x + "-icon");
+                
+                const domNode = s._anvil.domNode;
 
-                e.removeClass(remove);
+                domNode.classList.remove(...remove);
                 let iconElements = e.find(".anvil-component-icon").filter(function () {
                     let parentComponent = $(this).closest(".anvil-component");
                     return parentComponent.length == 0 || parentComponent[0] == e[0];
                 });
                 iconElements.removeClass(remove);
 
-                e.addClass(v + "-icon");
-                iconElements.addClass(v + "-icon");
+                e.addClass(prefix + v + "-icon");
+                iconElements.addClass(prefix + v + "-icon");
             },
         },
     },
@@ -1085,7 +1095,7 @@ var propertyGroups = {
                 // Don't just set "display" property - this needs to behave differently in
                 // designer and runner.
                 const visible = isTrue(v);
-                e.toggleClass("visible-false", !visible);
+                e.toggleClass(getCssPrefix() + "visible-false", !visible);
                 s._anvil.parent?.setVisibility?.(visible);
                 s._Component.lastVisibility = visible;
                 if (visible) {
@@ -1123,7 +1133,7 @@ var propertyGroups = {
                 // Don't just set "display" property - this needs to behave differently in
                 // designer and runner.
                 const visible = isTrue(v);
-                e.toggleClass("visible-false", !visible);
+                e.toggleClass(getCssPrefix() + "visible-false", !visible);
                 s._anvil.parent?.setVisibility?.(visible);
                 s._Component.lastVisibility = visible;
                 if (visible) {
@@ -1147,7 +1157,8 @@ var propertyGroups = {
             designerHint: 'enabled',
             set(s, e, v) {
                 const domNode = s._anvil.domNode;
-                const toDisable = domNode.querySelector(".to-disable");
+                const prefix = getCssPrefix();
+                const toDisable = domNode.querySelector(`.${prefix}to-disable`);
                 if (!isTrue(v)) {
                     domNode.setAttribute("disabled", "");
                     if (toDisable !== null) {
@@ -2050,6 +2061,12 @@ PyDefUtils.resumePrint = key => {
     }
 };
 
+PyDefUtils.pyTryFinally = (f, doFinally) => {
+    let completed = false, result;
+    return Sk.misceval.tryCatch(
+        () => Sk.misceval.chain(f(), r => { completed = true; result = r; return doFinally(); }, () => result),
+        e => Sk.misceval.chain(!completed && doFinally(), () => { throw e; }));
+}
 
 module.exports = PyDefUtils;
 

@@ -1,5 +1,6 @@
 "use strict";
 
+import { getCssPrefix } from "@runtime/runner/legacy-features";
 import * as PyDefUtils from "../PyDefUtils";
 import {
     s_raise_event,
@@ -54,7 +55,7 @@ module.exports = function(pyModule) {
     
             /*!defMethod(_)!2*/ "Remove all components from this container"
             $loc["clear"] = new Sk.builtin.func(function (self) {
-                self._anvil.domNode.classList.remove("has-components");
+                self._anvil.domNode.classList.remove(getCssPrefix() + "has-components");
                 const removeFns = self._anvil.components.map(
                     ({ component }) =>
                         () =>
@@ -107,6 +108,7 @@ module.exports = function(pyModule) {
     pyModule["ClassicContainer"]._doAddComponent = doAddComponent;
     
     function doAddComponent(self, pyComponent, jsLayoutProperties = {}, { detachDom, afterRemoval, setVisibility } = {}) {
+        const prefix = getCssPrefix();
         /**
          * subclasses should:
          *  - call validateChild(pyComponent) (private js function to ensure that it is a component and does not have a parent)
@@ -120,7 +122,7 @@ module.exports = function(pyModule) {
         // who knows someone might try to call this function directly!?
 
         if (self._anvil.components.length === 0) {
-            self._anvil.domNode.classList.add("has-components");
+            self._anvil.domNode.classList.add(prefix + "has-components");
         }
 
         const c = { component: pyComponent, layoutProperties: jsLayoutProperties };
@@ -148,7 +150,7 @@ module.exports = function(pyModule) {
                     }
                 }
                 if (self._anvil.components.length === 0) {
-                    self._anvil.domNode.classList.remove("has-components");
+                    self._anvil.domNode.classList.remove(prefix + "has-components");
                 }
                 if (self._anvil.onPage) {
                     return Sk.misceval.chain(raiseEventOrSuspend(pyComponent, s_x_anvil_propagate_page_removed), () => afterRemoval?.());
@@ -162,9 +164,10 @@ module.exports = function(pyModule) {
                 } else {
                     let elt = pyComponent.anvil$hooks.domElement?.parentElement;
                     const domNode = (self._anvil.overrideParentObj ?? self)._anvil.domNode;
+                    const prefix = getCssPrefix();
                     while (elt && elt !== domNode) {
-                        if (elt.classList.contains("hide-with-component")) {
-                            elt.classList.toggle("visible-false", !visible);
+                        if (elt.classList.contains(prefix + "hide-with-component")) {
+                            elt.classList.toggle(prefix + "visible-false", !visible);
                             break;
                         }
                         elt = elt.parentElement;

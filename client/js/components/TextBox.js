@@ -1,5 +1,6 @@
 "use strict";
 
+const { getCssPrefix } = require("@runtime/runner/legacy-features");
 var PyDefUtils = require("PyDefUtils");
 
 /*#
@@ -110,6 +111,7 @@ module.exports = (pyModule) => {
         }),
 
         element({ hide_text, type, placeholder, text, ...props }) {
+            const prefix = getCssPrefix();
             const outerClass = PyDefUtils.getOuterClass(props);
             const outerStyle = PyDefUtils.getOuterStyle(props);
             const outerAttrs = PyDefUtils.getOuterAttrs(props);
@@ -125,7 +127,7 @@ module.exports = (pyModule) => {
                 <input
                     refName="input"
                     type={type}
-                    className={"form-control to-disable anvil-text-box " + outerClass}
+                    className={`${prefix}form-control ${prefix}to-disable anvil-text-box ${outerClass}`}
                     style={outerStyle}
                     value={text}
                     placeholder={placeholder}

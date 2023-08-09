@@ -127,7 +127,7 @@ module.exports = (pyModule) => {
                 <PyDefUtils.OuterElement className="anvil-inlinable" {...props}>
                     <div refName="checkbox" className={prefix + "checkbox"}>
                         <label refName="label" style={inlineStyle + labelStyle}>
-                            <input refName="input" className="to-disable" type="checkbox" {...inputAttrs} />
+                            <input refName="input" className={`${prefix}to-disable`}type="checkbox" {...inputAttrs} />
                             <span refName="text" style={"display: inline-block; min-height: 1em;" + textStyle}>
                                 {Sk.builtin.checkNone(props.text) ? "" : props.text.toString()}
                             </span>

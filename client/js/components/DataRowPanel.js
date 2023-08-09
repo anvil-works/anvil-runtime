@@ -3,6 +3,7 @@
 var PyDefUtils = require("PyDefUtils");
 const {pyNone} = require("@Sk");
 const { validateChild } = require("./Container");
+const { getCssPrefix } = require("@runtime/runner/legacy-features");
 
 /*#
 id: datarowpanel
@@ -168,15 +169,16 @@ module.exports = function(pyModule) {
     let updateVisible = self => {
         let e = self._anvil.element;
         let v = isTrue(self._anvil.getProp("visible")) && !self._anvil.hideOnThisPage;
+        const prefix = getCssPrefix();
         if (v) {
-            e.removeClass("visible-false");
-            e.parent(".hide-with-component").removeClass("visible-false");
+            e.removeClass(prefix + "visible-false");
+            e.parent().removeClass(prefix + "visible-false");
             // Trigger events for components that need to update themselves when visible
             // (eg Maps, Canvas)
             return self._anvil.shownOnPage();
         } else {
-            e.addClass("visible-false");
-            e.parent(".hide-with-component").addClass("visible-false");
+            e.addClass(prefix + "visible-false");
+            e.parent(`.${prefix}hide-with-component`).addClass(prefix + "visible-false");
         }
     };
 
@@ -209,8 +211,9 @@ module.exports = function(pyModule) {
             ),
             (val) => {
                 if (val !== undefined) {
+                    const prefix = getCssPrefix();
                     const valComponent = PyDefUtils.pyCall(pyModule["Label"], [], ["text", val]);
-                    valComponent._anvil.domNode.classList.add("auto-row-value");
+                    valComponent._anvil.domNode.classList.add(prefix + "auto-row-value");
                     valComponent._anvil.isAutoRow = true;
                     column.autoRow = valComponent;
                     PyDefUtils.pyCall(
@@ -226,7 +229,7 @@ module.exports = function(pyModule) {
     const getDataGridId = (self) => {
         const dataGrid =  getDataGrid(self);
         return dataGrid && dataGrid._anvil.dataGridId;
-    }
+    };
 
     const getDataGrid = (self) => {
         let dataGrid = self._anvil.dataGrid;
@@ -243,11 +246,12 @@ module.exports = function(pyModule) {
             }
         } 
         return dataGrid;
-    }
+    };
 
     const DataRowCol = ({ dataGridId, colId }) => {
         dataGridId = dataGridId === undefined ? "" : dataGridId;
-        return <div className="data-row-col" data-grid-col-id={colId} data-grid-id={dataGridId} />;
+        const prefix = getCssPrefix();
+        return <div className={`${prefix}data-row-col`} data-grid-col-id={colId} data-grid-id={dataGridId} />;
     };
 
     const getColumn = (self, colId) => {
@@ -261,7 +265,7 @@ module.exports = function(pyModule) {
                 self._anvil.updateDataGridId = true;
             }
             if (colId === null) {
-                colEl.classList.add("extra-column");
+                colEl.classList.add(getCssPrefix() + "extra-column");
             }
             col =  { colEl, autoRow: null , dataGridId};
             self._anvil.cols[colId] = col;
@@ -300,6 +304,7 @@ module.exports = function(pyModule) {
 
         // columns ordered as they currently appear in the DOM
         const children = dataRowEl.children;
+        const prefix = getCssPrefix();
         
         dataGridCols.forEach((col, i) => {
             const id = col.id;
@@ -315,7 +320,7 @@ module.exports = function(pyModule) {
             if (ANVIL_IN_DESIGNER || updateData || updateEl) {
                 if (column.extraCol) {
                     column.extraCol = false;
-                    colEl.classList.remove("extra-column");
+                    colEl.classList.remove(prefix + "extra-column");
                 }
                 fns.push(() => self._anvil.updateColData(col, column));
             }
@@ -333,7 +338,7 @@ module.exports = function(pyModule) {
                     delete dataRowCols[id];
                 } else {
                     column.extraCol = true;
-                    column.colEl.classList.add("extra-column");
+                    column.colEl.classList.add(prefix + "extra-column");
                     if (column.dataGridId === undefined) {
                         self._anvil.getColumn("null");
                     }

@@ -1,5 +1,6 @@
 "use strict";
 
+const { getCssPrefix } = require("@runtime/runner/legacy-features");
 var PyDefUtils = require("PyDefUtils");
 
 /*#
@@ -186,6 +187,7 @@ module.exports = (pyModule) => {
         }),
 
         element({ bold, font_size, border, background, foreground, multiple, enabled, file_types, underline, ...props }) {
+            const prefix = getCssPrefix();
             const outerStyle = PyDefUtils.getOuterStyle(props);
             const outerClass = PyDefUtils.getOuterClass(props) + (isTrue(enabled) ? "" : " anvil-disabled");
             const outerAttrs = PyDefUtils.getOuterAttrs(props);
@@ -200,15 +202,15 @@ module.exports = (pyModule) => {
             }
             file_types = isTrue(file_types) ? file_types.toString() : ""
             return (
-                <a refName="outer" className={"file-loader " + outerClass} href="javascript:void(0)" style={outerStyle} {...outerAttrs}>
+                <a refName="outer" className={`${prefix}file-loader ${outerClass}`} href="javascript:void(0)" style={outerStyle} {...outerAttrs}>
                     <label refName="label" className="anvil-inlinable" style={labelStyle}>
                         <PyDefUtils.IconComponent side="left" icon={icon} icon_align={icon_align} />
-                        <span refName="text" className="label-text">
+                        <span refName="text" className={`${prefix}label-text`}>
                             {Sk.builtin.checkNone(props.text) ? "" : props.text.toString()}
                         </span>
                         <PyDefUtils.IconComponent side="right" icon={icon} icon_align={icon_align} />
-                        <form refName="fileUpload" className="file-upload">
-                            <input refName="input" type="file" className="file-upload to-disable" style="display: none" accept={file_types} {...inputAttrs} />
+                        <form refName="fileUpload" className={`${prefix}file-upload`}>
+                            <input refName="input" type="file" className={`${prefix}file-upload ${prefix}to-disable`} style="display: none" accept={file_types} {...inputAttrs} />
                         </form>
                     </label>
                 </a>

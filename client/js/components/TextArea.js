@@ -1,5 +1,6 @@
 "use strict";
 
+const { getCssPrefix } = require("@runtime/runner/legacy-features");
 var PyDefUtils = require("PyDefUtils");
 
 /*#
@@ -32,12 +33,13 @@ module.exports = (pyModule) => {
                     return new Sk.builtin.str(s._anvil.lastChangeVal);
                 },
                 set(s, e, v) {
+                    const domNode = s._anvil.domNode;
                     v = Sk.builtin.checkNone(v) ? "" : v.toString();
                     s._anvil.lastChangeVal = v;
 
-                    e.val(v);
+                    domNode.value = v;
                     if (s._anvil.taAutoExpand) {
-                        setHeightToContent(s, e);
+                        setHeightToContent(s, domNode);
                     }
                 },
                 allowBindingWriteback: true,
@@ -49,10 +51,11 @@ module.exports = (pyModule) => {
                 set(s, e, v) {
                     v = v.toString();
                     s._anvil.taHeight = v;
+                    const domNode = s._anvil.domNode;
                     if (s._anvil.taAutoExpand) {
-                        setHeightToContent(s, e);
+                        setHeightToContent(s, domNode);
                     } else {
-                        e.css("height", v);
+                        domNode.style.height = PyDefUtils.cssLength(v);
                     }
                 },
             },
@@ -75,10 +78,11 @@ module.exports = (pyModule) => {
                 pyVal: true,
                 set(self, e, v) {
                     self._anvil.taAutoExpand = isTrue(v) && !ANVIL_IN_DESIGNER;
+                    const domNode = self._anvil.domNode;
                     if (self._anvil.taAutoExpand) {
-                        setHeightToContent(self, e);
+                        setHeightToContent(self, domNode);
                     } else {
-                        e.css("height", self._anvil.taHeight);
+                        domNode.style.height = PyDefUtils.cssLength(self._anvil.taHeight);
                     }
                 },
             },
@@ -95,6 +99,7 @@ module.exports = (pyModule) => {
         }),
 
         element({ placeholder, text, ...props }) {
+            const prefix = getCssPrefix();
             const outerClass = PyDefUtils.getOuterClass(props);
             const outerStyle = PyDefUtils.getOuterStyle(props);
             const outerAttrs = PyDefUtils.getOuterAttrs(props);
@@ -103,7 +108,7 @@ module.exports = (pyModule) => {
             return (
                 <textarea
                     refName="outer"
-                    className={"form-control to-disable " + outerClass}
+                    className={`anvil-text-area ${prefix}form-control ${prefix}to-disable ${outerClass}`}
                     style={outerStyle}
                     placeholder={placeholder}
                     {...outerAttrs}>
@@ -124,7 +129,7 @@ module.exports = (pyModule) => {
                         }
 
                         if (self._anvil.taAutoExpand) {
-                            setHeightToContent(self, elt);
+                            setHeightToContent(self, self._anvil.domNode);
                         }
                     })
                     .on("focus", function (e) {
@@ -142,7 +147,7 @@ module.exports = (pyModule) => {
                 const adjustHeight = () => {
                     if (self._anvil.taAutoExpand) {
                         self._anvil.taHeightDiff = elt.outerHeight() - elt.height();
-                        setHeightToContent(self, elt);
+                        setHeightToContent(self, self._anvil.domNode);
                     }
                 }
 
@@ -170,7 +175,7 @@ module.exports = (pyModule) => {
         },
     });
 
-    function setHeightToContent(self, elt) {
+    function setHeightToContent(self, domNode) {
         if (!self._anvil.getPropJS("visible")) {
             return;
         }
@@ -183,13 +188,21 @@ module.exports = (pyModule) => {
         } else {
             propHeight = 0;
         }
-        const tmpelt = $('<textarea class="form-control to-disable anvil-component"></textarea>')
-            .val(elt.val())
-            .css({ position: "absolute", width: elt.width(), height: 0, top: "100%", visibility: "hidden" });
-        tmpelt[0].style.height = 0;
-        $("body").append(tmpelt);
-        elt.css("height", Math.max(propHeight, tmpelt[0].scrollHeight + (self._anvil.taHeightDiff || 0)));
-        tmpelt.remove();
+
+        let taDummy = self._anvil.taDummy;
+        if (!taDummy) {
+            taDummy = domNode.cloneNode();
+            taDummy.style.position = "absolute";
+            taDummy.style.top = "100%";
+            taDummy.style.visibility = "hidden";
+            self._anvil.taDummy = taDummy;
+        }
+        taDummy.style.height = 0;
+        taDummy.style.width = domNode.clientWidth + "px";
+        taDummy.value = domNode.value;
+        document.body.appendChild(taDummy);
+        domNode.style.height = PyDefUtils.cssLength(Math.max(propHeight, taDummy.scrollHeight + (self._anvil.taHeightDiff || 0)));
+        taDummy.remove();
     }
 
 }; 

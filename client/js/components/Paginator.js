@@ -1,5 +1,6 @@
 "use strict";
 
+const { getCssPrefix } = require("@runtime/runner/legacy-features");
 var PyDefUtils = require("PyDefUtils");
 
 
@@ -20,6 +21,7 @@ module.exports = (pyModule) => {
             };
 
             let setRepaginating = (self, repaginating, ignoreHeight) => {
+                const prefix = getCssPrefix();
                 self._anvil.repaginating = repaginating;
                 if (ignoreHeight) {
                     self._anvil.ignoreHeight = true;
@@ -30,9 +32,9 @@ module.exports = (pyModule) => {
                 }
                 if (repaginating) {
                     self._anvil.elements.childPanel.style.minHeight = self._anvil.elements.childPanel.clientHeight + "px";
-                    self._anvil.domNode.classList.add("paginating");
+                    self._anvil.domNode.classList.add(prefix + "paginating");
                 } else {
-                    self._anvil.domNode.classList.remove("paginating");
+                    self._anvil.domNode.classList.remove(prefix + "paginating");
                     self._anvil.elements.childPanel.style.minHeight = "0px";
                 }
             }
@@ -44,12 +46,13 @@ module.exports = (pyModule) => {
                 };
     
                 self._anvil.updatePaginationControls = () => {
+                    const prefix = getCssPrefix();
                     const disablePrev = !self._anvil.paginatorPages || self._anvil.paginatorPages.length < 2;
-                    self._anvil.elements.firstPage.classList.toggle("disabled", disablePrev);
-                    self._anvil.elements.prevPage.classList.toggle("disabled", disablePrev);
+                    self._anvil.elements.firstPage.classList.toggle(prefix + "disabled", disablePrev);
+                    self._anvil.elements.prevPage.classList.toggle(prefix + "disabled", disablePrev);
                     const disableNext = self._anvil.pagination.done === true;
-                    self._anvil.elements.nextPage.classList.toggle("disabled", disableNext);
-                    self._anvil.elements.lastPage.classList.toggle("disabled", disableNext);
+                    self._anvil.elements.nextPage.classList.toggle(prefix + "disabled", disableNext);
+                    self._anvil.elements.lastPage.classList.toggle(prefix + "disabled", disableNext);
                 };
             });
     

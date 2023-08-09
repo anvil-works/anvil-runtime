@@ -1,5 +1,6 @@
 "use strict";
 
+const { getCssPrefix } = require("@runtime/runner/legacy-features");
 var PyDefUtils = require("PyDefUtils");
 
 module.exports = (pyModule) => {
@@ -16,9 +17,9 @@ module.exports = (pyModule) => {
             },
         ],
         element: ({ text }) => (
-            <div refName="outer" className="invalid-component">
+            <div refName="outer" className={`${getCssPrefix()}invalid-component`}>
                 <i refName="icon" className="glyphicon glyphicon-remove"></i>
-                <div refName="err" className="err">
+                <div refName="err" className={`${getCssPrefix()}err`}>
                     {text.toString()}
                 </div>
             </div>

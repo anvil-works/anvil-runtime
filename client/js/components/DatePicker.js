@@ -2,6 +2,7 @@
 
 var PyDefUtils = require("PyDefUtils");
 const { datetimeMod, tzMod } = require("../utils");
+const { getCssPrefix } = require("@runtime/runner/legacy-features");
 
 /*#
 id: datepicker
@@ -196,11 +197,12 @@ module.exports = (pyModule) => {
             align: {
                 set(s, e, v) {
                     v = v.toString();
+                    const prefix = getCssPrefix();
                     const input = s._anvil.elements.input;
-                    input.classList.remove("align-left", "align-center", "align-right");
+                    input.classList.remove(prefix + "align-left", prefix + "align-center", prefix + "align-right");
                     input.style.textAlign = v;
                     if (["left", "center", "right"].includes(v)) {
-                        input.classList.add("align-" + v);
+                        input.classList.add(prefix + "align-" + v);
                     }
                 },
             },
@@ -332,6 +334,7 @@ module.exports = (pyModule) => {
 
         element({ background, align, placeholder, foreground, font_size, ...props }) {
             placeholder = isTrue(placeholder) ? placeholder.toString() : "";
+            const prefix = getCssPrefix();
             const color = isTrue(foreground) ? "color: " + PyDefUtils.getColor(foreground) + ";" : "";
             const inputStyle = PyDefUtils.getOuterStyle({ background, align, foreground, font_size });
             const inputClass = PyDefUtils.getOuterClass({ align });
@@ -339,7 +342,7 @@ module.exports = (pyModule) => {
             const iconClass = !isTrue(props.enabled) ? " anvil-disabled" : "";
             return (
                 <PyDefUtils.OuterElement className="anvil-datepicker" {...{ font_size, ...props }}>
-                    <input refName="input" className={"form-control to-disable placehold-this " + inputClass} style={inputStyle + color} placeholder={placeholder} {...inputAttrs}/>
+                    <input refName="input" className={`${prefix}form-control ${prefix}to-disable ` + inputClass} style={inputStyle + color} placeholder={placeholder} {...inputAttrs}/>
                     <i refName="icon" className={"fa fa-calendar" + iconClass} style={color}/>
                 </PyDefUtils.OuterElement>
             );

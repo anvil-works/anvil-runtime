@@ -4,6 +4,7 @@ import { chainOrSuspend, pyCallOrSuspend, pyNone, pyStr } from "@Sk";
 import { getRandomStr } from "../utils";
 import { isInvisibleComponent } from "./helpers";
 import { validateChild } from "./Container";
+import { getCssPrefix } from "@runtime/runner/legacy-features";
 
 var PyDefUtils = require("PyDefUtils");
 
@@ -64,15 +65,16 @@ module.exports = (pyModule) => {
                 important: true,
                 set(self, e, v) {
                     v = v.toString();
+                    const prefix = getCssPrefix();
                     Object.values(self._anvil.rows).forEach((rowContainer) => {
                         const rowElement = rowContainer.el;
-                        rowElement.classList.remove("wrap-never", "wrap-tablet", "wrap-mobile");
-                        rowElement.classList.add("wrap-" + v);
+                        rowElement.classList.remove(prefix + "wrap-never", prefix + "wrap-tablet", prefix + "wrap-mobile");
+                        rowElement.classList.add(prefix + "wrap-" + v);
                     });
                     Object.values(self._anvil.cols).forEach((colContainer) => {
                         const colElement = colContainer.el;
-                        colElement.classList.remove("wrap-never", "wrap-tablet", "wrap-mobile");
-                        colElement.classList.add("wrap-" + v);
+                        colElement.classList.remove(prefix + "wrap-never", prefix + "wrap-tablet", prefix + "wrap-mobile");
+                        colElement.classList.add(prefix + "wrap-" + v);
                     });
                 },
             },
@@ -87,14 +89,15 @@ module.exports = (pyModule) => {
                 important: false,
                 priority: 0,
                 set(s, e, v) {
+                    const prefix = getCssPrefix();
                     v = v.toString();
                     for (let i of ["none", "tiny", "small", "medium", "large", "huge"]) {
-                        s._anvil.domNode.classList.toggle("col-padding-" + i, v === i);
+                        s._anvil.domNode.classList.toggle(prefix + "col-padding-" + i, v === i);
                     }
                     s._anvil.components.forEach(({ component }) => {
                         const el = component.anvil$hooks.domElement;
                         if (!el.parentElement) return;
-                        el.parentElement.className = "col-padding col-padding-" + v + " belongs-to-" + s._anvil.panelId;
+                        el.parentElement.className = `${prefix}col-padding ${prefix}col-padding-${v} belongs-to-${s._anvil.panelId}`;
                     });
                 },
             },
@@ -103,8 +106,9 @@ module.exports = (pyModule) => {
         events: PyDefUtils.assembleGroupEvents("column panel", /*!componentEvents(ColumnPanel)!1*/ ["universal"]),
 
         element({ col_spacing, ...props }) {
-            const colSpacing = " col-padding-" + col_spacing.toString();
-            return <PyDefUtils.OuterElement className={"column-panel anvil-container" + colSpacing} {...props} />;
+            const prefix = getCssPrefix();
+            const colSpacing = ` ${prefix}col-padding-${col_spacing}`;
+            return <PyDefUtils.OuterElement className={`${prefix}column-panel anvil-container ${colSpacing}`} {...props} />;
         },
 
         layouts: [
@@ -192,26 +196,31 @@ module.exports = (pyModule) => {
                 });
             });
 
+
+
             const Section = ({ panelId, full_width_row, row_background }) => {
-                const fwrClass = full_width_row ? " full-width-row" : "";
+                const prefix = getCssPrefix();
+                const fwrClass = full_width_row ? prefix + "full-width-row" : "";
                 const background = row_background ? "background:" + PyDefUtils.getColor(row_background) + ";" : "";
                 return (
-                    <div refName="section" className={"anvil-panel-section belongs-to-" + panelId} style={background}>
-                        <div refName="sectionContainer" className={"anvil-panel-section-container anvil-container-overflow belongs-to-" + panelId + fwrClass}>
-                            <div refName="sectionGutter" className={"anvil-panel-section-gutter belongs-to-" + panelId}></div>
+                    <div refName="section" className={`anvil-panel-section belongs-to-${panelId}`} style={background}>
+                        <div refName="sectionContainer" className={`anvil-panel-section-container anvil-container-overflow belongs-to-${panelId} ${fwrClass}`}>
+                            <div refName="sectionGutter" className={`anvil-panel-section-gutter belongs-to-${panelId}`}></div>
                         </div>
                     </div>
                 );
             };
 
             const Row = ({ rowId, panelId, wrap_on }) => {
-                wrap_on = " wrap-" + wrap_on.toString();
-                return <div refName="row" data-anvil-row-id={rowId} className={"anvil-panel-row anvil-panel-row-" + rowId + " belongs-to-" + panelId + wrap_on}></div>;
+                const prefix = getCssPrefix();
+                wrap_on = prefix + "wrap-" + wrap_on.toString();
+                return <div refName="row" data-anvil-row-id={rowId} className={`anvil-panel-row anvil-panel-row-${rowId} belongs-to-${panelId} ${wrap_on}`}></div>;
             };
 
             const Column = ({ colId, panelId, wrap_on }) => {
-                wrap_on = " wrap-" + wrap_on.toString();
-                return <div refName="col" data-anvil-col-id={colId} className={"anvil-panel-col anvil-panel-col-" + colId + " belongs-to-" + panelId + wrap_on}></div>;
+                const prefix = getCssPrefix();
+                wrap_on = prefix + "wrap-" + wrap_on.toString();
+                return <div refName="col" data-anvil-col-id={colId} className={`anvil-panel-col anvil-panel-col-${colId} belongs-to-${panelId} ${wrap_on}`}></div>;
             };
 
 
@@ -276,15 +285,15 @@ module.exports = (pyModule) => {
             /*
                 ColumnPanel DOM structure:
     
-                .anvil-container.column-panel                     The main container
-                    .anvil-panel-section                          Section deals with full-width-row and row-background, etc. Each top-level row is in its own section
-                    |   .anvil-panel-section-container            Sets width based on responsive breakpoints
-                    |       .anvil-panel-section-gutter           Negative margins for columns
-                    |           .anvil-panel-row                  Container for columns
-                    |               .anvil-panel-col              Column
-                    |               |    .anvil-panel-row         Rows and columns can be arbitrarily nested
+                .anvil-container.(anvil-)column-panel                  The main container
+                    .anvil-panel-section                               Section deals with full-width-row and row-background, etc. Each top-level row is in its own section
+                    |   .anvil-panel-section-container                 Sets width based on responsive breakpoints
+                    |       .anvil-panel-section-gutter                Negative margins for columns
+                    |           .anvil-panel-row                       Container for columns
+                    |               .anvil-panel-col                   Column
+                    |               |    .anvil-panel-row              Rows and columns can be arbitrarily nested
                     |               |        .anvil-panel-col
-                    |               |            .col-padding     Column spacing only in innermost column, around component.
+                    |               |            .(anvil-)col-padding  Column spacing only in innermost column, around component.
                     |               |                <Component>
                     |               |
                     |               *
@@ -302,6 +311,7 @@ module.exports = (pyModule) => {
                         if (isInvisibleComponent(component)) {
                             return pyModule["ClassicContainer"]._doAddComponent(self, component);
                         }
+                        const prefix = getCssPrefix();
 
                         const panelId = self._anvil.panelId;
                         const wrap_on = self._anvil.props["wrap_on"];
@@ -350,8 +360,9 @@ module.exports = (pyModule) => {
                                 componentElement.dataset.anvilDesignerColumnpanelComponent = ""; // So we can use a selector to find all components in this columnpanel later.
                             }
 
+                            const paddingClassName = `${prefix}col-padding belongs-to-${panelId} ${prefix}col-padding-${self._anvil.getPropJS("col_spacing")}`;
                             const [paddingElement] = <div refName="padding"
-                                                          className={"col-padding belongs-to-" + panelId + " col-padding-" + self._anvil.getPropJS("col_spacing")}/>;
+                                                          className={paddingClassName}/>;
                             self._anvil.componentColumnContainers.set(component, currentColContainer);
                             currentColContainer.appendChild(paddingElement);
                             paddingElement.appendChild(componentElement);
@@ -451,15 +462,17 @@ module.exports = (pyModule) => {
 
     // This should only get called from the designer
     function updateSharedLayoutProps(self) {
+        const prefix = getCssPrefix();
+
         self._anvil.element.find(".anvil-component.belongs-to-" + self._anvil.panelId).each(function (_, e) {
             e = $(e);
             var c = e.data("anvil-py-component");
 
             var lps = c._anvil.layoutProps || {};
             if (lps.full_width_row) {
-                e.parents(".anvil-panel-section-container").first().addClass("full-width-row");
+                e.parents(".anvil-panel-section-container").first().addClass(prefix + "full-width-row");
             } else {
-                e.parents(".anvil-panel-section-container").first().removeClass("full-width-row");
+                e.parents(".anvil-panel-section-container").first().removeClass(prefix + "full-width-row");
             }
             let v = "transparent";
             if (lps.row_background) {

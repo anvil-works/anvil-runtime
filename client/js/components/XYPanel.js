@@ -2,6 +2,7 @@
 
 var PyDefUtils = require("PyDefUtils");
 import { validateChild } from "./Container";
+import { getCssPrefix } from "@runtime/runner/legacy-features";
 import { isInvisibleComponent } from "./helpers";
 
 /*#
@@ -93,11 +94,12 @@ module.exports = (pyModule) => {
 
         element({ width, height, ...props }) {
             // todo - should support all units like jquery does
+            const prefix = getCssPrefix();
             width = Sk.builtin.checkNone(width) ? " width: 100%;" : " width: " + PyDefUtils.cssLength(width.toString()) + ";";
             height = "height: " + PyDefUtils.cssLength(height.toString()) + ";"
             return (
-                <PyDefUtils.OuterElement className="xy-panel anvil-container" {...props}>
-                    <div refName="holder" className={"holder xypanel-" + panelId} style={"display: inline-block; position: relative;" + width + height}></div>
+                <PyDefUtils.OuterElement className={`${prefix}xy-panel anvil-container` }{...props}>
+                    <div refName="holder" className={`${prefix}holder xypanel-${panelId}`} style={"display: inline-block; position: relative;" + width + height}></div>
                 </PyDefUtils.OuterElement>
             );
         },
