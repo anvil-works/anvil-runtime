@@ -6,10 +6,10 @@ import {
     buildPyClass,
     chainOrSuspend,
     checkCallable,
-    checkString,
+    checkString, isTrue,
     Kws,
     objectRepr,
-    promiseToSuspension,
+    promiseToSuspension, pyBool,
     pyCall,
     pyCallable,
     pyCallOrSuspend,
@@ -25,7 +25,7 @@ import {
     pyObject,
     pyObjectHash,
     pyRuntimeError,
-    pyStr,
+    pyStr, pyTrue,
     pyType,
     pyTypeError,
     pyValueError,
@@ -579,21 +579,25 @@ module.exports = function (appId: string, appOrigin: string) {
     // Old name, for apps written before portable classes were released
     pyMod["serializable_type"] = pyMod["portable_class"];
 
-    pyMod["get_app_origin"] = new pyFunc(function (pyBranch) {
-        if (pyBranch === undefined || pyBranch === pyNone) {
-            return toPy(window.anvilAppOrigin);
+    const getAppOrigin = (pyEnvironmentType: pyStr | pyNoneType, pyPreferEmphemeralDebug: pyBool) => {
+        if (pyEnvironmentType === pyNone) {
+            return toPy(isTrue(pyPreferEmphemeralDebug) ? window.anvilAppOrigin : (window.anvilEnvironmentOrigin || window.anvilAppOrigin));
         }
-        return pyCallOrSuspend(pyMod["call_s"], [toPy("anvil.private.get_app_origin"), pyBranch || pyNone]);
-    });
-    pyMod["get_app_origin"].func_code.co_varnames = ["branch"];
-    pyMod["get_app_origin"].func_code.$defaults = [pyNone];
+        return pyCallOrSuspend(pyMod["call_s"], [toPy("anvil.private.get_app_origin"), pyEnvironmentType], ["prefer_ephemeral_debug", pyPreferEmphemeralDebug]);
+    }
 
-    pyMod["get_api_origin"] = new pyFunc(function (pyBranch) {
-        if (pyBranch === undefined || pyBranch === pyNone) {
-            return toPy(window.anvilAppOrigin + "/_/api");
-        }
-        return pyCallOrSuspend(pyMod["call_s"], [toPy("anvil.private.get_api_origin"), pyBranch || pyNone]);
+    pyMod["get_app_origin"] = new pyFunc(function (pyEnvironmentType, pyPreferEmphemeralDebug) {
+        return getAppOrigin(pyEnvironmentType, pyPreferEmphemeralDebug);
     });
+    pyMod["get_app_origin"].func_code.co_varnames = ["branch", "prefer_ephemeral_debug"]; // "branch" is the legacy name for the first arg. Leave this as-is, in case anyone has previously passed branch=...
+    pyMod["get_app_origin"].func_code.$defaults = [pyNone, pyNone];
+
+    pyMod["get_api_origin"] = new pyFunc(function (pyEnvironmentType, pyPreferEmphemeralDebug) {
+        return chainOrSuspend(getAppOrigin(pyEnvironmentType, pyPreferEmphemeralDebug),
+            (pyOrigin) => new pyStr(pyOrigin.toString() + "/_/api"));
+    });
+    pyMod["get_api_origin"].func_code.co_varnames = ["branch", "prefer_ephemeral_debug"]; // As above
+    pyMod["get_api_origin"].func_code.$defaults = [pyNone, pyNone];
 
     /*!defFunction(anvil.server,!_)!2*/ ("Returns `True` if this app is online and `False` otherwise.\nIf `anvil.server.is_app_online()` returns `False` we expect `anvil.server.call()` to throw an `anvil.server.AppOfflineError`");
     pyMod["is_app_online"] = new pyFunc(function () {

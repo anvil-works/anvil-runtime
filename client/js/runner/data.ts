@@ -179,6 +179,7 @@ declare global {
         anvilAppMainModule: string;
         anvilParams: ServerParams & { appId: string; appOrigin: string };
         anvilAppOrigin: string;
+        anvilEnvironmentOrigin: string;
         anvilServiceClientConfig: any;
         anvilCustomComponentProperties: any;
         anvilThemeColors: ThemeColors;

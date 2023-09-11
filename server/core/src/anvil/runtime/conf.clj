@@ -66,10 +66,12 @@
 
 (def permit-url-session-tokens? true)
 
+(def regular-thread-dumps? false)
+
 (defn set-config! [hook-map]
   (let [vars (-> (ns-publics 'anvil.runtime.conf)
                  (dissoc 'set-config!))]
     (doseq [[kw val] hook-map]
       (if-let [var (get vars (symbol (name kw)))]
         (alter-var-root var (constantly val))
-        (throw (Exception. (format "%s is not a runtime config var")))))))
+        (throw (Exception. (format "%s is not a runtime config var" kw)))))))

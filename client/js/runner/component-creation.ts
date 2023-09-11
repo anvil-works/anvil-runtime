@@ -49,9 +49,9 @@ export const setNextCreationStack = (ncs: YamlCreationStack) => { nextCreationSt
 export const getAndCheckNextCreationStack = (formName: string, depAppId: string | null) => {
     let yamlStack = nextCreationStack;
     nextCreationStack = undefined;
-    console.log("Creating", formName, depAppId, "with stack", JSON.stringify(yamlStack));
+    // console.log("Creating", formName, depAppId, "with stack", JSON.stringify(yamlStack));
     if (yamlStack?.formSpec.formName === formName && yamlStack.formSpec.depId === depAppId) {
-        console.log("It's me!");
+        // console.log("It's me!");
     } else {
         yamlStack = undefined;
     }

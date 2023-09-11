@@ -1,6 +1,15 @@
-import { pyStr, pyModuleNotFoundError, pyList, pyBaseException, toPy, toJs } from "../@Sk";
-import type { pyObject, Kws } from "../@Sk";
-import { ComponentConstructor } from "../components/Component";
+import {
+    pyStr,
+    pyModuleNotFoundError,
+    pyList,
+    pyBaseException,
+    toPy,
+    toJs,
+    tryCatchOrSuspend,
+    chainOrSuspend,
+} from "../@Sk";
+import type { pyObject, Kws, Suspension } from "../@Sk";
+import type { ComponentConstructor } from "../components/Component";
 
 export const s_add_event_handler = new pyStr("add_event_handler"),
     s_remove_event_handler = new pyStr("remove_event_handler"),
@@ -15,7 +24,7 @@ export const s_add_event_handler = new pyStr("add_event_handler"),
     s_refresh_data_bindings = new pyStr("refresh_data_bindings"),
     s_refreshing_data_bindings = new pyStr("refreshing_data_bindings"),
     s_init = new pyStr("__init__"),
-
+    s_new = new pyStr("__new__"),
     s_anvil_dom_element = new pyStr("_anvil_dom_element_"),
     s_anvil_setup_dom = new pyStr("_anvil_setup_dom_"),
     s_anvil_set_property_values = new pyStr("_anvil_set_property_values_"),
@@ -26,9 +35,8 @@ export const s_add_event_handler = new pyStr("add_event_handler"),
     s_anvil_get_sections = new pyStr("_anvil_get_sections_"),
     s_anvil_get_section_dom_element = new pyStr("_anvil_get_section_dom_element_"),
     s_anvil_set_section_property_values = new pyStr("_anvil_set_section_property_values_"),
-    s_anvil_enable_drop_mode =  new pyStr("_anvil_enable_drop_mode_"),
+    s_anvil_enable_drop_mode = new pyStr("_anvil_enable_drop_mode_"),
     s_anvil_disable_drop_mode = new pyStr("_anvil_disable_drop_mode_"),
-
     s_set_parent = new pyStr("set_parent"),
     s_page_added = new pyStr("page_added"),
     s_page_removed = new pyStr("page_removed"),
@@ -37,14 +45,13 @@ export const s_add_event_handler = new pyStr("add_event_handler"),
     s_get_components = new pyStr("get_components"),
     s_anvil_events = new pyStr("_anvil_events_"),
     s_name = new pyStr("name"),
-    s_form  = new pyStr("form"),
-    s_builtin  = new pyStr("builtin"),
+    s_form = new pyStr("form"),
+    s_builtin = new pyStr("builtin"),
     s_properties = new pyStr("properties"),
     s_clear = new pyStr("clear"),
     s_x_anvil_propagate_page_added = new pyStr("x-anvil-propagate-page-added"),
     s_x_anvil_propagate_page_removed = new pyStr("x-anvil-propagate-page-removed"),
-    s_x_anvil_propagate_page_shown = new pyStr("x-anvil-propagate-page-shown")
-    ;
+    s_x_anvil_propagate_page_shown = new pyStr("x-anvil-propagate-page-shown");
 
 export const getValue = (modName: string, className: string) => {
     const pyModule = Sk.sysmodules.quick$lookup(new pyStr(modName));
@@ -78,7 +85,6 @@ export type PyModMap = { __all__: pyList<pyStr>; [varName: string]: pyObject };
 export const strError = (err: any) =>
     typeof err === "string" ? err : err instanceof Sk.builtin.BaseException ? err.toString() : "<Internal error>";
 
-
 export function reportError(err: pyBaseException) {
     window.onerror(null, null, null, null, err);
 }
@@ -109,7 +115,9 @@ export const kwargsToPyMap = (kws?: Kws) => {
 /** takes a Kws array and converts to Js object (with JS Values) */
 export const kwargsToJsObject = (kws?: Kws) => {
     const obj: any = {};
-    if (kws === undefined) { return obj; }
+    if (kws === undefined) {
+        return obj;
+    }
     for (let i = 0; i < kws.length; i += 2) {
         obj[kws[i] as string] = toJs(kws[i + 1] as pyObject);
     }
@@ -124,3 +132,24 @@ export const pyMapToKwargs = (obj: { [name: string]: pyObject }) => {
     }
     return kwargs;
 };
+
+export function pyTryFinally<T>(f: () => T | Suspension, doFinally: () => void) {
+    let completed = false,
+        result: T;
+    return tryCatchOrSuspend(
+        () =>
+            chainOrSuspend(
+                f(),
+                (rv) => {
+                    completed = true;
+                    result = rv;
+                    return doFinally();
+                },
+                () => result
+            ),
+        (e) =>
+            chainOrSuspend(!completed && doFinally(), () => {
+                throw e;
+            })
+    );
+}

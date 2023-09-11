@@ -1,6 +1,10 @@
+import { pyGetSetDescriptor, pyStr } from "@Sk";
+import type { ComponentConstructor } from "@runtime/components/Component";
+
 const legacyOptions = {
     classNames: false,
     bootstrap3: false,
+    __dict__: false,
 };
 
 type LegacyOptions = typeof legacyOptions;
@@ -21,6 +25,7 @@ export function setLegacyOptions(options: Partial<LegacyOptions>) {
     }
     setLegacyClassNames();
     setLegacyBootstrap3();
+    setLegacyDict();
 }
 
 let _prefix: string;
@@ -34,17 +39,19 @@ export function getCssPrefix() {
 
 const getFirstLink = () => document.head.querySelector("link")!;
 
+const getQueryParam = () => process.env.NODE_ENV === "production" ? "?buildTime=" + BUILD_TIME : "?buildTime=0";
+
 function mkLink(href: string) {
     const link = document.createElement("link");
     link.rel = "stylesheet";
     link.type = "text/css";
-    link.href = window.anvilCDNOrigin + "/runtime" + href + "?buildTime=" + BUILD_TIME;
+    link.href = window.anvilCDNOrigin + "/runtime" + href + getQueryParam();
     return link;
 }
 
 function mkScript(src: string) {
     const script = document.createElement("script");
-    script.src = window.anvilCDNOrigin + "/runtime" + src + "?buildTime=" + BUILD_TIME;
+    script.src = window.anvilCDNOrigin + "/runtime" + src + getQueryParam();
     script.type = "text/javascript";
     return script;
 }
@@ -59,7 +66,7 @@ function setLegacyClassNames() {
     const firstLink = getFirstLink();
     document.head.insertBefore(mkLink("/dist/runner.min.css"), firstLink);
     if (ANVIL_IN_DESIGNER) {
-        document.head.insertBefore(mkLink("/dist/designer.min.css"), firstLink);
+        document.head.insertBefore(mkLink("/css/designer.css"), firstLink);
     }
 }
 
@@ -80,4 +87,16 @@ const INLINE_STYLES = {
 export function getInlineStyles(key: keyof typeof INLINE_STYLES) {
     if (window.anvilParams.runtimeVersion >= 3) return "";
     return INLINE_STYLES[key];
+}
+
+function setLegacyDict() {
+    if (!legacyOptions.__dict__) return;
+    const anvilModule = Sk.sysmodules.quick$lookup(new pyStr("anvil"));
+    if (!anvilModule) return;
+    const ClassicComponent = anvilModule.$d.ClassicComponent as ComponentConstructor;
+    ClassicComponent.tp$setattr(pyStr.$dict, new pyGetSetDescriptor(ClassicComponent, Sk.generic.getSetDict));
+}
+
+export function hasLegacyDict() {
+    return window.anvilParams.runtimeVersion < 3 || legacyOptions.__dict__;
 }

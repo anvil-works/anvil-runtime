@@ -13,6 +13,7 @@ import {
     pyFileNotFoundErrorConstructor,
     pyFloatingPointErrorConstructor,
     pyGeneratorExitConstructor,
+    pyGetSetDescriptorConstructor,
     pyImportErrorConstructor,
     pyIndentationErrorConstructor,
     pyIndexErrorConstructor,
@@ -110,6 +111,8 @@ export namespace Sk {
         const type: pyTypeConstructor;
         const super_: pySuperConstructor;
         const NotImplemented: pyNotImplementedTypeConstructor;
+
+        const getset_descriptor: pyGetSetDescriptorConstructor;
 
         const classmethod: pyClassMethodConstructor;
         const staticmethod: pyStaticMethodConstructor;
@@ -575,7 +578,7 @@ export type Flags = | { OneArg: true }
 | { FastCall: true }
 | { FastCall: true; NoKwargs: true }
 | { MinArgs: number; MaxArgs?: number }
-| { NamedArgs: string[]; Defaults?: any[] };
+| { NamedArgs: (null | string)[]; Defaults?: any[] };
 
 
 type Skulpt = typeof Sk;

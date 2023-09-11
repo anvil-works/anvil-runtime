@@ -120,7 +120,7 @@ const hookMappings: HookMapping[] = [{
     pythonMethod: s_anvil_set_property_values,
     canSuspend: true,
     $flags: { NamedArgs: ["property_values"] },
-    $doc: "Set multiple property values at once",
+    $doc: "Set multiple property values at once, returning the updated values",
 }, {
     jsMethod: "updateDesignName",
     pythonMethod: s_anvil_update_design_name,
@@ -560,8 +560,8 @@ export interface WholeComponentMultiInteraction extends InteractionBase {
     options: {name: string, icon?: InteractionIconName, id: any}[];
 }
 
-export interface OnSelectionInteraction extends InteractionBase {
-    type: "on_selection",
+export interface DesignerEventsInteraction extends InteractionBase {
+    type: "designer_events",
     callbacks: {
         onSelect?: () => void; // When this component is selected
         onDeselect?: () => void; // When this component is deselected
@@ -579,12 +579,12 @@ export interface RegionInteraction extends InteractionBase {
     }
 }
 
-export type Interaction = ButtonInteraction | HandleInteraction | WholeComponentInteraction | WholeComponentMultiInteraction | OnSelectionInteraction | RegionInteraction;
+export type Interaction = ButtonInteraction | HandleInteraction | WholeComponentInteraction | WholeComponentMultiInteraction | DesignerEventsInteraction | RegionInteraction;
 
 export interface DesignInfo {
     propertyDescriptions: PropertyDescriptionBase[];
     propertyValues?: ComponentProperties;
-    events: {[eventName:string]: EventDescription};
+    events: EventDescription[];
     interactions: Interaction[];
 }
 
@@ -619,9 +619,9 @@ export interface DropInfo {
 
 export interface DropZone {
     element: HTMLElement;
-    dropInfo: DropInfo;
+    dropInfo?: DropInfo;
+    freePlacement?: (dropping: {x: number, y: number, width?: number, height?: number}[]) => {dropLocations: {x: number, y: number, width: number, height: number}[], dropInfo: DropInfo};
     expandable?: boolean | 'x' | 'y'; // Probably?
-    freePlacement?: {sourceX?: number, sourceY?: number, sourceWidth: number}[];
     defaultDropZone?: boolean; // Set to true if this is the default DZ in this container. Use it if all we know is that we're dropping in this container.
 }
 
@@ -629,6 +629,8 @@ export interface PropertyUpdates {
     propertyUpdates: {[componentName: string]: ComponentProperties};
     layoutPropertyUpdates: {[componentName: string]: LayoutProperties};
 }
+export type PropertyValueUpdates = { [prop: string]: any }
+
 
 export interface DroppingSpecification {
     creating?: CreatingObject;
@@ -647,14 +649,14 @@ export interface DroppingSpecification {
 export interface AnvilHooks extends Partial<HasRelevantHooks> {
     setupDom: () => Suspension | HTMLElement;
     readonly domElement: HTMLElement | undefined | null;
-    setPropertyValues?(updates: { [propName: string]: any}): void;
+    setPropertyValues?(updates: PropertyValueUpdates): PropertyValueUpdates;
     updateDesignName?(name: string): void;
     getDesignInfo?(asLayout: boolean): DesignInfo;
     getContainerDesignInfo?(forChild: Component): ContainerDesignInfo;
-    updateLayoutProperties?(forChild: Component, newValues: LayoutProperties): void | Suspension; // TODO: Should we allow an option to signal "I need the page refreshing anyway"?
+    updateLayoutProperties?(forChild: Component, newValues: LayoutProperties): PropertyValueUpdates | Suspension; // TODO: Should we allow an option to signal "I need the page refreshing anyway"?
     getSections?(): Section[] | null | undefined;
     getSectionDomElement?(id: string): HTMLElement | undefined | null; 
-    setSectionPropertyValues?(id: string, updates: { [propName: string]: any} | null): void;
+    setSectionPropertyValues?(id: string, updates: PropertyValueUpdates): PropertyValueUpdates | true; // 'true' means we don't have a useful update for you. Reload everything.
     cleanupLayoutProperties?(): PropertyUpdates;
 }
 
@@ -780,7 +782,7 @@ export interface CustomComponentSpec {
 
 export const EMPTY_DESIGN_INFO : DesignInfo = {
     propertyDescriptions: [],
-    events: {},
+    events: [],
     interactions: [],
 };
 

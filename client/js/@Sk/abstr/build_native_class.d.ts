@@ -30,6 +30,7 @@ type GetSetDef<I> = {
     $get(this: I): pyObject | Suspension;
     $set?: (this: I, val: pyObject) => void;
     $doc?: string | null;
+    $name?: string;
 };
 
 type SlotDefs<I> = numberSlots<I> & seqMapSlots & tpSlots<I>;

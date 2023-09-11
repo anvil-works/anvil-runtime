@@ -11,7 +11,6 @@
             [digest]
             [ring.util.response :as resp]
             [ring.util.mime-type :as mime-type]
-            [crawlers.detector :as crawlers]
             [clojure.data.json :as json]
             [anvil.core.sso.google :as google-sso]
             [anvil.core.sso.azure :as azure-sso]
@@ -197,12 +196,12 @@
             client-params (-> client-params
                               (assoc :runtimeVersion (max runnerVersion (if new-ui-runtime? 3 0)))
                               (assoc :isCrawler
-                                     (crawlers/crawler? (get-in req [:headers "user-agent"]))))
+                                     (util/crawler? (get-in req [:headers "user-agent"]))))
 
             head-html (str head-html
                            ;; make sure this is the final line - otherwise an import map defined in a native dep will break
                            (when (and new-ui-runtime? (< (get-in app-map [:runtime_options :version] 0) 3))
-                             "\n<script type='module'>window.anvil.enableLegacy({bootstrap3: true, classNames: true});</script>\n"))]
+                             "\n<script type='module'>window.anvil.enableLegacy({bootstrap3: true, classNames: true, __dict__: true});</script>\n"))]
         (if-let [error-message (app-data/should-app-be-blocked? app-id app-session environment)]
           (block-app req error-message)
           (do
@@ -232,6 +231,7 @@
                                        "{{social-image}}"       (image-from-metadata app-origin meta :logo_img "/img/logo-square-padded.png")
                                        "{{description}}"        (render-app-description (:description meta))
                                        "{{canonical-url}}"      (hiccup-util/escape-html app-origin)
+                                       "{{environment-origin}}" (hiccup.util/escape-html (app-data/get-app-origin environment))
                                        "{{anvil-version}}"      conf/anvil-version
                                        "{{google-api-key}}"     (or google-api-key "")
                                        "{{session-token}}"      (or (:session-url-token req)

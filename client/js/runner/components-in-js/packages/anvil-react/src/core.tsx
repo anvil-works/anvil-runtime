@@ -13,7 +13,7 @@ import type {
     EventDescription,
     Interaction,
     LayoutProperties,
-    PropertyDescription,
+    PropertyDescription, PropertyValueUpdates,
 } from "@runtime/components/Component";
 import type { JsComponentAPI } from "../../../public-api";
 import type { JsComponent, JsComponentConstructor, JsContainer } from "../../../public-api/component";
@@ -52,7 +52,7 @@ export interface SectionSpec {
     title: string;
     sectionProperties: PropertyDescription[];
     sectionPropertyValues: ComponentProperties;
-    setSectionPropertyValues: (updates: any) => void;
+    setSectionPropertyValues: (updates: PropertyValueUpdates) => PropertyValueUpdates;
     inlineEditProps?: string[];
     inlineEditRoot?: string;
 }
@@ -482,10 +482,7 @@ function mkComponentClass(spec: ReactComponentDefinition): JsComponentConstructo
         _anvilGetDesignInfo() {
             return {
                 propertyDescriptions: (properties || []).map((description) => ({ ...description })),
-                events: (events || []).reduce((es, e) => {
-                    es[e.name] = e;
-                    return es;
-                }, {} as { [propName: string]: EventDescription }),
+                events: events || [],
                 interactions: [...this._.interactions.values(), ...this._.inlineEditInteractions.values()],
             };
         }
@@ -575,17 +572,20 @@ function mkComponentClass(spec: ReactComponentDefinition): JsComponentConstructo
         _anvilGetSectionDomElement(id: string): HTMLElement {
             return this._.sections.get(id)!.element;
         }
-        _anvilSetSectionPropertyValues(id: string, values: { [propName: string]: any }): void | Promise<void> {
+        _anvilSetSectionPropertyValues(id: string, values: PropertyValueUpdates): PropertyValueUpdates | Promise<PropertyValueUpdates> {
             const section = this._.sections.get(id)!;
-            section.setSectionPropertyValues(values);
+            return section.setSectionPropertyValues(values); // TODO: Make sure react components return updates from setSectionPropertyValues
         }
         _anvilGetContainerDesignInfo(component: JsComponent): ContainerDesignInfo {
             return { layoutPropertyDescriptions: layoutProperties ?? [] };
         }
         _anvilUpdateLayoutProperties(
             component: JsComponent,
-            values: { [propName: string]: any }
-        ): void | Promise<void> {}
+            updates: PropertyValueUpdates
+        ): PropertyValueUpdates | Promise<PropertyValueUpdates> {
+            // I think returning updates is right - we're ignoring them in this implementation, so they have been accepted as-is.
+            return updates;
+        }
     }
 
     return ReactContainer;

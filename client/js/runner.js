@@ -10,7 +10,18 @@ v ??= 1;
 require("./messages");
 require("./extra-python-modules.js");
 
-import {chainOrSuspend, checkArgsLen, promiseToSuspension, pyCall, pyCallOrSuspend, pyFunc, pyNone, pyStr, pySuper} from "./@Sk";
+import {
+    chainOrSuspend,
+    checkArgsLen,
+    promiseToSuspension,
+    pyCall,
+    pyCallOrSuspend,
+    pyFunc,
+    pyNone,
+    pyStr,
+    pySuper,
+    pyDict,
+} from "./@Sk";
 import Modal from "./modules/modal";
 import { anvilMod, anvilServerMod } from "./utils";
 import {s_add_event_handler, s_raise_event} from "@runtime/runner/py-util";
@@ -614,6 +625,9 @@ function loadApp(app, appId, appOrigin, preloadModules) {
             /*!componentEvents(form)!1*/
             events,
 
+            // we don't want __slots__ here
+            slots: false,
+
             /*!componentProp(form)!1*/
             properties: [{
                 name: "item",
@@ -830,7 +844,8 @@ function loadApp(app, appId, appOrigin, preloadModules) {
                     // We serialise our components, our object dict, and the properties of our container
                     // type separately
 
-                    const d = Sk.abstr.lookupSpecial(self, Sk.builtin.str.$dict);
+                    // Our subclass should have a __dict__ i.e. class Form1(Form1Template): ...
+                    const d = Sk.abstr.lookupSpecial(self, Sk.builtin.str.$dict) ?? new pyDict();
                     try {
                         Sk.abstr.objectDelItem(d, new Sk.builtin.str("_serialization_key"));
                     } catch(e) {

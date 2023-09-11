@@ -63,7 +63,8 @@
 
 (defn- get-our-origin []
   (or util/*app-origin*
-      (app-data/get-default-app-origin util/*environment*)
+      (app-data/get-app-origin util/*environment*)
+      (app-data/get-public-app-origin util/*environment*)
       (throw+ {:anvil/server-error "This app does not have a URL, so we can't send a confirmation email."})))
 
 (defn- get-cookie-type [{:keys [share_login_status] :as _props}]

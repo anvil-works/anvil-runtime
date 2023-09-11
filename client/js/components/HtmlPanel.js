@@ -41,7 +41,7 @@ module.exports = (pyModule) => {
                         v = pyModule["HtmlTemplate"].$_anvilThemeAssets[m[1]] || "";
                     }
                     try {
-                        domNode.innerHTML = v;
+                        setInnerHTML(domNode, v);
                     } catch (exc) {
                         console.log("Probably irrelevant HTML/Javascript-parsing exception:", exc);
                     }
@@ -138,8 +138,7 @@ module.exports = (pyModule) => {
                     // Add all the non-slot components to the dom
                     components.forEach((c) => {
                         const component = c.component;
-                        const callbacks = addComponentToDom(s, component, c.layoutProperties["slot"]);
-                        component.anvilComponent$setParent(s, callbacks);
+                        addComponentToDomWithStableCleanup(s, component, c.layoutProperties["slot"]);
                     });
 
                     // 3. Rebuild pyLayoutSlots
@@ -193,7 +192,7 @@ module.exports = (pyModule) => {
         locals($loc) {
             $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicContainer"], (self) => {
                 // Store this on self so we can call it from DesignHtmlPanel
-                self._anvil.addComponentToDom = addComponentToDom;
+                self._anvil.addComponentToDom = addComponentToDomWithStableCleanup;
 
                 self._anvil.slots ||= {};
                 self._anvil.scripts ||= [];
@@ -286,9 +285,9 @@ module.exports = (pyModule) => {
                         if (isInvisibleComponent(component)) {
                             return pyModule["ClassicContainer"]._doAddComponent(self, component);
                         }
-                        const {onRemove, setVisibility} = addComponentToDom(self, component, kwargs["slot"], kwargs["index"]);
+                        const callbacks = addComponentToDomWithStableCleanup(self, component, kwargs["slot"], kwargs["index"]);
 
-                        return pyModule["ClassicContainer"]._doAddComponent(self, component, kwargs, { detachDom: onRemove, setVisibility });
+                        return pyModule["ClassicContainer"]._doAddComponent(self, component, kwargs, callbacks);
                     });
             });
 
@@ -316,8 +315,28 @@ module.exports = (pyModule) => {
     pyModule["HtmlTemplate"].$_anvilThemeAssets = {};
 
 
-    // Returns {onRemove, setVisibility}
-    function addComponentToDom(self, pyComponent, slotName, index) {
+
+    // keep a stable reference to the cleanup functions
+    function addComponentToDomWithStableCleanup(self, pyComponent, ...args) {
+        const cleanupMap = (self._anvil.childCleanupMap ??= new Map());
+        const { detachDom, setVisibility } = _addComponentToDom(self, pyComponent, ...args);
+        cleanupMap.set(pyComponent, { detachDom, setVisibility });
+        return {
+            detachDom() {
+                cleanupMap.get(pyComponent)?.detachDom();
+                cleanupMap.delete(pyComponent);
+            },
+            setVisibility(v) {
+                return cleanupMap.get(pyComponent)?.setVisibility?.(v);
+            },
+        };
+    }
+
+    /**
+     * @returns {{detachDom: () => void, setVisibility?: (v: boolean) => void}}
+     */
+    function _addComponentToDom(self, pyComponent, slotName, index) {
+
         const celt = pyComponent.anvil$hooks.domElement;
         const isDropzone = celt.hasAttribute("anvil-dropzone");
 
@@ -363,7 +382,7 @@ module.exports = (pyModule) => {
             const idxInSlot = slot.components.findIndex(({component}) => component === insertingBeforeComponentInSlot);
             const insertingBeforeElement = idxInSlot !== -1 && slot.components[idxInSlot].carrierElement;
 
-            let onRemove, setVisibility;
+            let detachDom, setVisibility;
 
             const slotRecord = {component: pyComponent, carrierElement: pyComponent.anvil$hooks.domElement};
             if (idxInSlot === -1) {
@@ -387,7 +406,7 @@ module.exports = (pyModule) => {
                     s_copy.appendChild(celt);
                 }
                 (insertingBeforeElement || slotElt).insertAdjacentElement("beforebegin", s_copy);
-                onRemove = () => {
+                detachDom = () => {
                     s_copy.remove();
                     slot.components = slot.components.filter((c) => c.component !== pyComponent);
                     if (!slot.components.length) {
@@ -405,7 +424,7 @@ module.exports = (pyModule) => {
                 } else {
                     slotElt.appendChild(celt);
                 }
-                onRemove = () => {
+                detachDom = () => {
                     celt.remove();
                     slot.components = slot.components.filter((c) => c.component !== pyComponent);
                     if (!slot.components.length) {
@@ -414,7 +433,7 @@ module.exports = (pyModule) => {
                     return Sk.builtin.none.none$;
                 };
             }
-            return {onRemove, setVisibility};
+            return { detachDom, setVisibility };
         }
 
         // We don't have an explicit slot of that name. Fall back to the default slot.
@@ -428,10 +447,50 @@ module.exports = (pyModule) => {
             } else {
                 self._anvil.elements.outer.appendChild(celt);
             }
-            return {onRemove: () => celt.remove()};
+            return { detachDom: () => celt.remove() };
         } else {
-            return addComponentToDom(self, pyComponent, "default", index);
+            return _addComponentToDom(self, pyComponent, "default", index);
         }
+    }
+
+    const wrapMap = {
+
+        // Table parts need to be wrapped with `<table>` or they're
+        // stripped to their contents when put in a div.
+        // XHTML parsers do not magically insert elements in the
+        // same way that tag soup parsers do, so we cannot shorten
+        // this by omitting <tbody> or other required elements.
+        thead: [ "table" ],
+        col: [ "colgroup", "table" ],
+        tr: [ "tbody", "table" ],
+        td: [ "tr", "tbody", "table" ]
+    };
+    
+    wrapMap.tbody = wrapMap.tfoot = wrapMap.colgroup = wrapMap.caption = wrapMap.thead;
+    wrapMap.th = wrapMap.td;
+
+    const rTagName = /<([a-z][^/\0>\x20\t\r\n\f]*)/i;
+
+    function setInnerHTML(domNode, htmlString) {
+        // Wrap map to handle special cases
+        domNode.innerHTML = "";
+
+        const tagName = rTagName.exec(htmlString)?.[1].toLowerCase();
+
+        if (!tagName) {
+            return (domNode.innerHTML = htmlString);
+        }
+        const wrap = wrapMap[tagName];
+        if (!wrap) {
+            return (domNode.innerHTML = htmlString);
+        }
+        let tmp = document.createElement("div");
+        let j = wrap.length;
+        while (--j > -1) {
+            tmp = tmp.appendChild(document.createElement(wrap[j]));
+        }
+        tmp.innerHTML = htmlString;
+        domNode.append(...tmp.childNodes);
     }
 
 

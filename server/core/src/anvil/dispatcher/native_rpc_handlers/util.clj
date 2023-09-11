@@ -9,7 +9,8 @@
             [anvil.runtime.quota :as quota]
             [anvil.dispatcher.core :as dispatcher]
             [anvil.core.worker-pool :as worker-pool]
-            [anvil.core.tracing :as tracing]))
+            [anvil.core.tracing :as tracing])
+  (:import (com.stripe.exception StripeException)))
 
 ;(clj-logging-config.log4j/set-logger! :level :trace)
 

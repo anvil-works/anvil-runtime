@@ -461,9 +461,9 @@ module.exports = function(pyModule) {
     // similar to the logic in Component __new__ but jsVal doesn't exist in component new so we set these props in GoogleMap.__new__
     function setMapProps(self) {
         const fns = [null];
-        const prop$map = self.prop$map;
-        Object.keys(prop$map).forEach((propName) => {
-            if (!prop$map[propName].mapProp) {
+        const _anvilClassic$propMap = self._anvilClassic$propMap;
+        Object.keys(_anvilClassic$propMap).forEach((propName) => {
+            if (!_anvilClassic$propMap[propName].mapProp) {
                 return;
             }
             const current_val = self._anvil.props[propName];
@@ -1275,21 +1275,6 @@ module.exports = function(pyModule) {
     function GoogleMapLocals($Map) {
 
         $Map["__new__"] = PyDefUtils.mkNew(pyModule["ClassicContainer"], (self) => {
-            const triggerResize = () => {
-                setTimeout(() => {
-                    const oldCenter = self._jsVal.getCenter();
-                    if (oldCenter) {
-                        google.maps.event.trigger(self._jsVal, "resize");
-                        self._jsVal.setCenter(oldCenter);
-                    }
-                });
-            };
-
-            self._anvil.pageEvents = {
-                add: triggerResize,
-                show: triggerResize,
-            };
-
             let mkJsVals;
 
             if (ANVIL_IN_DESIGNER) {

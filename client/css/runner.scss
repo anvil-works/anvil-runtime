@@ -131,12 +131,28 @@ ul.linear-panel {
     padding: 0;
 }
 
-@media (min-width : 768px) {
-    .anvil-panel-section-container:not(.full-width-row) { max-width: 750px; }
+@media (min-width: 768px) {
+    .anvil-panel-section-container {
+        max-width: 750px;
+    }
+}
+
+@media (min-width: 768px) {
+    .anvil-panel-section-container.full-width-row {
+        max-width: none;
+    }
 }
 
 @media (min-width: 992px) {
-    .anvil-panel-section-container:not(.full-width-row) { max-width: 970px; }
+    .anvil-panel-section-container {
+        max-width: 970px;
+    }
+}
+
+@media (min-width: 992px) {
+    .anvil-panel-section-container.full-width-row {
+        max-width: none;
+    }
 }
 
 .anvil-panel-section-gutter { margin: 0 -15px; }

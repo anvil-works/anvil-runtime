@@ -13,7 +13,8 @@ import {
     KnownLiveObjectMethods,
     LiveObjectSpec,
 } from "./types";
-import { connect } from "./websocket";
+import { connect, WebsocketFallback } from "./websocket";
+import { doHttpCall, executeCallHttp } from "./http";
 
 declare global {
     interface Window {
@@ -275,12 +276,44 @@ async function makeRequest(
     blobProfile?.end();
 }
 
+let executeCall = async (
+    request: OutstandingRequest,
+    serializedCallPromise: Promise<any>,
+    blobContent: BlobContent[],
+    suppressLoading: boolean
+) => {
+    const { id: requestId, deferred } = request;
+
+    let call: Awaited<typeof serializedCallPromise>;
+    try {
+        call = await serializedCallPromise;
+    } catch (e) {
+        console.error(e);
+        deleteOutstandingRequest(requestId);
+        if (!suppressLoading) window.setLoading?.(false);
+        deferred.reject(e);
+        return;
+    }
+    try {
+        await makeRequest(request, call, blobContent);
+    } catch (e) {
+        console.error(e);
+        if (e instanceof WebsocketFallback) {
+            console.log("Falling back to HTTP");
+            executeCall = executeCallHttp;
+            deleteOutstandingRequest(requestId);
+            return executeCallHttp(request, serializedCallPromise, blobContent, suppressLoading);
+        }
+    }
+};
+
 export function doRpcCall(
     kws: Kws,
     args: Args,
     cmd: string,
     liveObjectSpec?: LiveObjectSpec,
-    suppressLoading = globalSuppressLoading.value > 0
+    suppressLoading = globalSuppressLoading.value > 0,
+    callExecuter?: typeof executeCall
 ) {
     const [request, serializedCallPromise, blobContent] = createRequestTemplate(
         kws,
@@ -289,25 +322,8 @@ export function doRpcCall(
         liveObjectSpec,
         suppressLoading
     );
-    const { id: requestId, deferred } = request;
-
-    const doCall = async () => {
-        let call: Awaited<typeof serializedCallPromise>;
-        try {
-            call = await serializedCallPromise;
-        } catch (e) {
-            console.error(e);
-            deleteOutstandingRequest(requestId);
-            if (!suppressLoading) window.setLoading?.(false);
-            deferred.reject(e);
-            return;
-        }
-        try {
-            await makeRequest(request, call, blobContent);
-        } catch (e) {
-            console.error(e);
-        }
-    };
-    doCall();
+    const { deferred } = request;
+    callExecuter ??= executeCall;
+    callExecuter(request, serializedCallPromise, blobContent, suppressLoading);
     return promiseToSuspension(deferred.promise);
 }

@@ -58,14 +58,15 @@ def call(*args, **kwargs):
         raise error_from_server
 
 
-#!defFunction(anvil.server,string,[environment])!2: {anvil$args: {environment: "Pass 'published' to get the published URL"}, anvil$helpLink: "/docs/http-apis/creating-http-endpoints#getting-the-url-for-your-api", $doc: "Returns the root URL for the current app.\n\nBy default, this function returns the URL for the current environment, which might be private or temporary (for example, if you are running your app in the Anvil Editor). If you want the URL for the published branch, pass 'published' as an argument."} ["get_app_origin"]
-def get_app_origin(branch=None):
-    return call("anvil.private.get_app_origin", branch)
+# Once downlinks rebuilt and updated for all of legacy, dynamic and sandbox, update these to include [prefer_ephemeral_debug=] and update docs
+#!defFunction(anvil.server,string,[environment_type])!2: {anvil$args: {environment: "Pass 'published' to get the published URL"}, anvil$helpLink: "/docs/http-apis/creating-http-endpoints#getting-the-url-for-your-api", $doc: "Returns the root URL for the current app.\n\nBy default, this function returns the URL for the current environment, which might be private or temporary (for example, if you are running your app in the Anvil Editor). If you want the URL for the published branch, pass 'published' as an argument."} ["get_app_origin"]
+def get_app_origin(environment_type=None, **kwargs):
+    return call("anvil.private.get_app_origin", environment_type, **kwargs)
 
 
-#!defFunction(anvil.server,string,[environment])!2: {anvil$args: {environment: "Pass 'published' to get the published URL"}, anvil$helpLink: "/docs/http-apis/creating-http-endpoints#getting-the-url-for-your-api", $doc: "Returns the root URL of the API for the current app.\n\nBy default, this function returns the URL for the current environment, which might be private or temporary (for example, if you are running your app in the Anvil Editor). If you want the URL for the published branch, pass 'published' as an argument."} ["get_api_origin"]
-def get_api_origin(branch=None):
-    return call("anvil.private.get_api_origin", branch)
+#!defFunction(anvil.server,string,[environment_type])!2: {anvil$args: {environment: "Pass 'published' to get the published URL"}, anvil$helpLink: "/docs/http-apis/creating-http-endpoints#getting-the-url-for-your-api", $doc: "Returns the root URL of the API for the current app.\n\nBy default, this function returns the URL for the current environment, which might be private or temporary (for example, if you are running your app in the Anvil Editor). If you want the URL for the published branch, pass 'published' as an argument."} ["get_api_origin"]
+def get_api_origin(environment_type=None, **kwargs):
+    return call("anvil.private.get_api_origin", environment_type, **kwargs)
 
 
 def launch_background_task(fn_name, *args, **kwargs):

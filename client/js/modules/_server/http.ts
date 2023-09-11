@@ -1,10 +1,10 @@
-import { Args, Kws, promiseToSuspension } from "@Sk";
+import { Args, Kws } from "@Sk";
 import { globalSuppressLoading } from "@runtime/utils";
 import { handleMessage } from "./handlers";
 import {
     OutstandingRequest,
-    createRequestTemplate,
     deleteOutstandingRequest,
+    doRpcCall,
     outstandingRequests,
     waitForOutstandingRequests,
 } from "./rpc";
@@ -101,7 +101,11 @@ async function trySend(jsonData: any, blobData: BlobContent[] = []) {
     return rv;
 }
 
-async function makeRequest(request: OutstandingRequest, call: ReturnType<typeof serialize>, blobContent: BlobContent[]) {
+export async function makeRequest(
+    request: OutstandingRequest,
+    call: ReturnType<typeof serialize>,
+    blobContent: BlobContent[]
+) {
     const { profile, id: requestId } = request;
     const sendProfile = profile.append("Send call");
     await waitForOutstandingRequests(sendProfile);
@@ -111,6 +115,27 @@ async function makeRequest(request: OutstandingRequest, call: ReturnType<typeof 
     return rv;
 }
 
+export async function executeCallHttp(
+    request: OutstandingRequest,
+    serializedCallPromise: Promise<any>,
+    blobContent: BlobContent[],
+    suppressLoading: boolean
+) {
+    const { id: requestId, deferred } = request;
+    try {
+        const call = await serializedCallPromise;
+        const data = await makeRequest(request, call, blobContent);
+        for (const d of data) {
+            handleMessage(d);
+        }
+    } catch (e) {
+        console.error(e);
+        deleteOutstandingRequest(requestId);
+        if (!suppressLoading) window.setLoading(false);
+        deferred.reject(e);
+    }
+}
+
 export function doHttpCall(
     kws: Kws,
     args: Args,
@@ -118,30 +143,5 @@ export function doHttpCall(
     liveObjectSpec?: LiveObjectSpec,
     suppressLoading = globalSuppressLoading.value > 0
 ) {
-    const [request, serializedCallPromise, blobContent] = createRequestTemplate(
-        kws,
-        args,
-        cmd,
-        liveObjectSpec,
-        suppressLoading
-    );
-    const { id: requestId, deferred } = request;
-
-    const doCall = async () => {
-        try {
-            const call = await serializedCallPromise;
-            const data = await makeRequest(request, call, blobContent);
-            for (const d of data) {
-                handleMessage(d);
-            }
-        } catch (e) {
-            console.error(e);
-            deleteOutstandingRequest(requestId);
-            if (!suppressLoading) window.setLoading(false);
-            deferred.reject(e);
-        }
-    };
-    doCall();
-
-    return promiseToSuspension(deferred.promise);
+    return doRpcCall(kws, args, cmd, liveObjectSpec, suppressLoading, executeCallHttp);
 }

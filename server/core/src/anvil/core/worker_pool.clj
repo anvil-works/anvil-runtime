@@ -91,7 +91,8 @@
   (let [t (.newThread thread-factory
                       (fn []
                         (while (contains? @thread-pool (Thread/currentThread))
-                          (run-one-task! 60000))))]
+                          (run-one-task! 60000))
+                        (log/info (str "Worker thread no longer in pool. Exiting. " (.getName (Thread/currentThread)) @thread-pool))))]
     (swap! thread-pool conj t)
     (swap! largest-pool-size max (count @thread-pool))
     (.start t)))
@@ -102,6 +103,7 @@
   (count @thread-pool))
 
 (defn set-worker-pool-size [n]
+  (log/info (str "Setting worker pool size to " n))
   (swap! thread-pool #(set (take n %)))
   (let [n-to-add (- n (get-worker-pool-size))]
     (when (> n-to-add 0)
@@ -194,7 +196,7 @@
 (defn thread-dump-str []
   (->> (.dumpAllThreads (java.lang.management.ManagementFactory/getThreadMXBean) true true)
        (sort-by #(.toLowerCase (.getThreadName %)))
-       (filter #(re-find #"anvil" (.getThreadName %)))
+       #_(filter #(re-find #"anvil" (.getThreadName %)))
        (map ThreadInfo->str)
        (interpose "\n")
        (apply str)))
@@ -209,10 +211,14 @@
         (log/warn "Could not write thread dump to" filename ":" (str e))))))
 
 (defn- check-and-dump-stack-traces-when-overloaded []
-  (let [queue-length (hrr-queue/hrr-size (first @task-queue))]
-    (when (>= queue-length 250)
+  (let [queue-length (hrr-queue/hrr-size (first @task-queue))
+        last-thread-dump (atom 0)]
+    (when (or (>= queue-length 250)
+              (and runtime-conf/regular-thread-dumps?       ;; Dump every 10 mins at least
+                   (> (System/currentTimeMillis) (+ @last-thread-dump (* 10 60 1000)))))
       (log/warn "Worker pool queue contains" queue-length "tasks")
       (dump-threads!)
+      (reset! last-thread-dump (System/currentTimeMillis))
       (Thread/sleep 120000))
     (Thread/sleep 5000)))
 

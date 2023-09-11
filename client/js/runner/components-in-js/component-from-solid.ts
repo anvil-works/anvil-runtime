@@ -108,14 +108,14 @@ function mkComponentClass({
                 },
                 setPropertyValues(updates) {
                     setProps(updates);
-                    designerApi.updateComponentProperties(self, updates, {});
+                    return updates;
                 },
                 getDesignInfo() {
                     return {
                         propertyDescriptions: properties.map((description) => ({ ...description })),
-                        events: Object.fromEntries(
+                        events: Object.values(Object.fromEntries(
                             events.map((e) => (typeof e === "string" ? [e, { name: e }] : [e.name, e]))
-                        ),
+                        )),
                         propertyValues: { ...props },
                         interactions: self.getInteractions?.() || [],
                     };
@@ -130,9 +130,9 @@ function mkComponentClass({
                     const idx = components.findIndex(({ component }: any) => component === forChild);
                     setComponents(idx, (prev: any) => ({
                         ...prev,
-                        layoutProperties: { ...prev.layoutPropertis, ...newValues },
+                        layoutProperties: { ...prev.layoutProperties, ...newValues },
                     }));
-                    designerApi.updateComponentProperties(forChild, {}, newValues);
+                    return newValues;
                 },
                 enableDropMode(dropping) {
                     if (!container) return [];

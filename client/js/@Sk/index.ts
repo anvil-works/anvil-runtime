@@ -1,3 +1,4 @@
+import { GetSetDef } from "./abstr/build_native_class";
 import type { Args, Flags, Kws } from "./namespace";
 
 export const {
@@ -26,6 +27,8 @@ export const {
         tuple: pyTuple,
         type: pyType,
         super_: pySuper,
+
+        getset_descriptor: pyGetSetDescriptor,
 
         classmethod: pyClassMethod,
         staticmethod: pyStaticMethod,
@@ -226,6 +229,11 @@ export interface pySuper extends pyObject {
     readonly ob$type: pySuperConstructor;
 }
 
+export interface pyGetSetDescriptorConstructor<I extends pyObject = pyObject> extends pyType<pyGetSetDescriptor> {
+    new (t: pyType<I>, def: GetSetDef<I>): pyGetSetDescriptor;
+}
+
+export interface pyGetSetDescriptor extends pyObject {}
 
 export interface pyStrConstructor extends pyType<pyStr> {
     new (s?: string | pyObject): pyStr;

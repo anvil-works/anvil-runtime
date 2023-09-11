@@ -27,12 +27,12 @@ import {
     Suspension,
     toPy,
     tryCatchOrSuspend,
+    lookupSpecial,
 } from "../@Sk";
 import { AnvilHooks, Component } from "../components/Component";
 import * as PyDefUtils from "../PyDefUtils";
 import {
     addFormComponentsToLayout, getAndCheckNextCreationStack,
-    getAndClearNextCreationStack,
     setupFormComponents,
     SetupResult
 } from "./component-creation";
@@ -199,6 +199,7 @@ export const FORM_EVENTS: CustomComponentEvents[] = [
     {name: "refreshing_data_bindings", important: true, parameters: [],
         description: "When refresh_data_bindings is called"},
 ];
+const FORM_EVENT_NAMES = FORM_EVENTS.map(({name}) => name);
 const FORM_EVENTS_BY_NAME = Object.fromEntries(FORM_EVENTS.map(event => [event.name, event]));
 
 /*!componentProp(form)!1*/
@@ -221,7 +222,7 @@ export function setupCustomComponentHooks(yaml: FormYaml, c: Component, kws: Kws
         getDesignInfo: (asLayout: boolean) => ({
             propertyDescriptions: [ITEM_PROPERTY],
             propertyValues: {item: null},
-            events: FORM_EVENTS_BY_NAME,
+            events: FORM_EVENTS,
             interactions: [],
         })
     }
@@ -236,33 +237,52 @@ export function setupCustomComponentHooks(yaml: FormYaml, c: Component, kws: Kws
 
         Object.assign(newHooks, {
             getDesignInfo: () => ({
-                propertyDescriptions: properties.map(({name, type, default_value, description, important, group, options, allow_binding_writeback}) => ({
-                    name, type, defaultValue: default_value, description, important, options, group, supportsWriteback: allow_binding_writeback
-                })),
-                events: {
-                    ...FORM_EVENTS_BY_NAME,
-                    ...Object.fromEntries(events.map(({name, description, parameters, default_event: defaultEvent}) => [
+                propertyDescriptions: properties.map(
+                    ({
                         name,
-                        {
+                        type,
+                        default_value,
+                        description,
+                        important,
+                        group,
+                        options,
+                        allow_binding_writeback,
+                    }) => ({
+                        name,
+                        type,
+                        defaultValue: default_value,
+                        description,
+                        important,
+                        options,
+                        group,
+                        supportsWriteback: allow_binding_writeback,
+                    })
+                ),
+                events: [
+                    ...FORM_EVENTS,
+                    ...events
+                        .map(({ name, description, parameters, default_event: defaultEvent }) => ({
                             name,
                             description,
                             parameters,
                             defaultEvent,
-                        },
-                    ]))
-                },
+                        }))
+                        .filter(({ name }) => !FORM_EVENT_NAMES.includes(name)),
+                ],
+
                 propertyValues: Object.fromEntries(
-                    properties.map(({name, default_value}) => [name, name in kwsObj ? kwsObj[name] : default_value])
+                    properties.map(({ name, default_value }) => [name, name in kwsObj ? kwsObj[name] : default_value])
                 ),
                 interactions: [],
             }),
             setPropertyValues(updates) {
                 Object.assign(kwsObj, updates);
-                designerApi.updateComponentProperties(c, updates, {});
-                if (passive) return;
-                for (const [key, val] of Object.entries(updates)) {
-                    c.tp$setattr(new pyStr(key), toPy(val));
+                if (!passive) {
+                    for (const [key, val] of Object.entries(updates)) {
+                        c.tp$setattr(new pyStr(key), toPy(val));
+                    }
                 }
+                return updates;
             },
         } as Partial<AnvilHooks>);
 
@@ -312,7 +332,9 @@ export interface FormTemplate extends Component {
         slotDict: pyDict;
     };
     anvil$itemValue?: pyObject;
+    // used by CustomComponentProperty
     anvil$customProps?: { [name: string]: pyObject };
+    anvil$customPropsDefaults: { [name: string]: pyObject };
     _anvil?: any;
 }
 
@@ -322,7 +344,7 @@ const MetaCustomComponent: pyNewableType<FormTemplateConstructor> = buildNativeC
     base: pyType,
     slots: {
         tp$call(args, kws) {
-            const customProps = this.prototype.anvil$customProps;
+            const customProps = this.prototype.anvil$customPropsDefaults;
             if (customProps) {
                 const asMap = kwToObj(kws);
                 for (const propName in customProps) {
@@ -375,6 +397,9 @@ export const createFormTemplateClass = (
 
         /*!componentEvents(form)!1*/
         events,
+
+        // we don't want __slots__ here
+        slots: false,
 
         properties: [],
 
@@ -512,7 +537,8 @@ export const createFormTemplateClass = (
                 // We serialise our components, our object dict, and the properties of our container
                 // type separately
 
-                const d = self.$d;
+                // we don't have a __dict__ but our subclass should i.e. class Form1(Form1Template):
+                const d = lookupSpecial(self, pyStr.$dict) ?? new pyDict();
                 try {
                     Sk.abstr.objectDelItem(d, new Sk.builtin.str("_serialization_key"));
                 } catch (e) {
@@ -639,10 +665,17 @@ export const createFormTemplateClass = (
                 }
 
                 for (const [componentName, bindings] of Object.entries(dataBindings)) {
-                    const pyComponent = self.$d.quick$lookup(new pyStr(componentName));
+                    let pyComponent: Component;
+                    if (componentName) {
+                        pyComponent = self.$d.quick$lookup(new pyStr(componentName));
+                    } else {
+                        pyComponent = self;
+                    }
 
                     const tryCatchBinding = ({ property, code, pyUpdate, pyClear }: DataBinding) => {
-                        const doUpdate = () => pyUpdate && pyCallOrSuspend(pyUpdate, [self, pyComponent]);
+                        const doUpdate = () => {
+                            return pyUpdate && pyCallOrSuspend(pyUpdate, [self, pyComponent]);
+                        };
 
                         const handleErr = (e: any) => {
                             if (e instanceof pyKeyError) {
@@ -780,10 +813,10 @@ export const createFormTemplateClass = (
        }
     }) as FormTemplateConstructor;
 
-    FormTemplate.prototype.anvil$customProps = Object.fromEntries(
+    FormTemplate.prototype.anvil$customPropsDefaults = Object.fromEntries(
         (yaml.properties ?? [])
             .filter((pt) => pt.type !== "object")
-            .map((pt) => [pt.name, toPy(pt.default_value || null)])
+            .map((pt) => [pt.name, toPy(pt.default_value)])
     );
 
     return FormTemplate;

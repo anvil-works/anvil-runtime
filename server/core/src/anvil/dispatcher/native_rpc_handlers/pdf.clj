@@ -49,7 +49,8 @@
                                                      (dispatcher/report-exceptions-to-return-path new-return-path
                                                        ;; The downlink calls do_print(ref); the renderer gets do_print(url)
                                                        (let [origin (or (:app-origin req)
-                                                                        (app-data/get-default-app-origin (:environment req)))
+                                                                        (app-data/get-app-origin (:environment req))
+                                                                        (throw+ {:anvil/server-error "Cannot render a PDF in an environment with no URL"}))
                                                              url (str origin "/_/print/" print-id "/" print-key "?s=" tmp-url-token)
                                                              options (second (:args (:call req)))
                                                              load-timeout (get-pdf-render-timeout (:app-id req))

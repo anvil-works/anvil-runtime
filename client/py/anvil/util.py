@@ -21,7 +21,6 @@ class WrappedObject(dict):
     _module = None
 
     def __init__(self, d=None, **kwargs):
-
         if d and isinstance(d, dict):
             for k in d.keys():
                 self.__setitem__(k, d[k])
@@ -47,12 +46,23 @@ class WrappedObject(dict):
 
         return r
 
+    def update(*args, **new_items):
+        # avoid name conflicts with keys, could use (self, other=(), /, **kws)
+        # but position only args not available in py2/Skulpt
+        if not args:
+            raise TypeError("method 'update' needs an argument")
+        elif len(args) > 2:
+            raise TypeError("expected at most 1 argument, got %d" % (len(args) - 1))
+        elif len(args) == 2:
+            new_items = dict(args[1], **new_items)
+        self = args[0]
+        for k, v in new_items.items():
+            self[k] = v
+
     def __repr__(self):
         n = self._name or "WrappedObject"
         m = self._module + "." if self._module else ""
-        return "%s%s<%s>" % (
-            m, n, ", ".join(["%s=%s" % (k, repr(self[k])) for k in self.keys()])
-        )
+        return "%s%s<%s>" % (m, n, ", ".join(["%s=%s" % (k, repr(self[k])) for k in self.keys()]))
 
     def __serialize__(self, global_data):
         return dict(self)
@@ -64,9 +74,10 @@ class WrappedObject(dict):
         return self.__class__(dict.copy(self))
 
     def __deepcopy__(self, memo):
-        # lazy load this - its only need on the 
+        # lazy load this - its only need on the
         # server and we don't want to load copy on the client
         from copy import deepcopy
+
         return self.__class__(deepcopy(dict(self)))
 
 
@@ -97,4 +108,5 @@ class WrappedList(list):
 
     def __deepcopy__(self, memo):
         from copy import deepcopy
+
         return self.__class__(deepcopy(list(self)))

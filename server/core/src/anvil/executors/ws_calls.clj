@@ -129,7 +129,7 @@
                       :live-object liveObjectCall}
                :vt_global vt_global
                :app-origin (or (:app-origin (::request call-context))
-                               (app-data/get-default-app-origin environment))
+                               (app-data/get-app-origin environment))
                :session-state @(::current-session call-context)
                :anvil.dispatcher/change-session! (::change-session! call-context)
                :anvil.dispatcher/alternate-session (:anvil.dispatcher/alternate-session (::request call-context))

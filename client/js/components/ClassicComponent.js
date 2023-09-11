@@ -1,9 +1,16 @@
 "use strict";
 
-import {PyHooks, ComponentTag, Component, initComponentSubclass, EMPTY_DESIGN_INFO, raiseEventOrSuspend} from "./Component";
-import {designerApi} from "../runner/component-designer-api";
-import {chainOrSuspend, checkOneArg, pyFunc, pyStr, toPy} from "../@Sk";
-import {s_anvil_events, s_x_anvil_propagate_page_added, s_x_anvil_propagate_page_removed, s_x_anvil_propagate_page_shown} from "../runner/py-util";
+import { hasLegacyDict } from "@runtime/runner/legacy-features";
+import { chainOrSuspend, pyDict, pyStr, toPy } from "../@Sk";
+import { designerApi } from "../runner/component-designer-api";
+import {
+    kwToObj,
+    s_anvil_events,
+    s_x_anvil_propagate_page_added,
+    s_x_anvil_propagate_page_removed,
+    s_x_anvil_propagate_page_shown,
+} from "../runner/py-util";
+import { Component, EMPTY_DESIGN_INFO, initComponentSubclass, raiseEventOrSuspend } from "./Component";
 
 var PyDefUtils = require("PyDefUtils");
 
@@ -32,7 +39,7 @@ module.exports = (pyModule) => {
                     for (const [propName, value] of Object.entries(updates)) {
                         component._anvil.setPropJS(propName, value);
                     }
-                    designerApi.updateComponentProperties(component, Object.fromEntries(Object.entries(updates).map(([name, _]) => [name, component._anvil.getPropJS(name)]), {}));
+                    return Object.fromEntries(Object.entries(updates).map(([name, _]) => [name, component._anvil.getPropJS(name)]));
                 },
                 updateDesignName(name) {
                     component._anvil.designName = name;
@@ -75,7 +82,7 @@ module.exports = (pyModule) => {
                                 supportsWriteback: allowBindingWriteback,
                             })
                         ),
-                        events: {...component._anvil.eventTypes},
+                        events: Object.values(component._anvil.eventTypes),
                         interactions: component._anvil.designerInteractions || [],
                         propertyValues: Object.fromEntries(
                             Object.entries(component._anvil.props).map(([name, pyVal]) => [name, Sk.ffi.toJs(pyVal)])
@@ -188,6 +195,9 @@ module.exports = (pyModule) => {
         slots: {
             tp$new(args, kwargs) {
                 const self = Component.prototype.tp$new.call(this, []);
+                if (!self.$d && hasLegacyDict()) {
+                    self.$d = new pyDict();
+                }
                 const _anvil = (self._anvil = createAnvil(self));
                 self.anvil$hooks = createHookShim(self);
 
@@ -198,14 +208,14 @@ module.exports = (pyModule) => {
                 }
 
                 const {
-                    prop$defaults: propDefaults,
-                    create$element: createElement,
-                    prop$map: propMap,
-                    prop$types: propTypes,
-                    event$types: eventTypes,
-                    layout$props: layoutPropTypes,
-                    prop$dataBinding: dataBindingProp,
-                    props$toInitialize: propsToInitialize,
+                    _anvilClassic$propDefaults: propDefaults,
+                    _anvilClassic$createElement: createElement,
+                    _anvilClassic$propMap: propMap,
+                    _anvilClassic$propTypes: propTypes,
+                    _anvilClassic$eventTypes: eventTypes,
+                    _anvilClassic$layoutProps: layoutPropTypes,
+                    _anvilClassic$dataBindingProps: dataBindingProps,
+                    _anvilClassic$propsToInitialize: propsToInitialize,
                 } = self;
                 // use prototypical inheritance to get these
                 // this won't break since native classes demand prototypical inheritance
@@ -223,7 +233,7 @@ module.exports = (pyModule) => {
                 _anvil.propMap = propMap;
                 _anvil.propTypes = propTypes;
                 _anvil.layoutPropTypes = layoutPropTypes;
-                _anvil.dataBindingProp = dataBindingProp;
+                _anvil.dataBindingProp = dataBindingProps;
                 // backwards compatibility (anvil-extras uses this oops)
                 _anvil.eventHandlers = Object.assign(self._Component.eventHandlers, _anvil.eventHandlers);
                 _anvil.eventTypes = new Proxy(eventTypes ?? {}, {
@@ -326,23 +336,8 @@ module.exports = (pyModule) => {
         },
         classmethods: {
             __init_subclass__: {
-                $meth(args) {
-                    // The DesignXYZ components are built with buildClass() inheritance (ie they'll trigger this
-                    // method), and sometimes overwrite the propmap to do design-y things with _anvil.
-                    // Isolate them, so that we can have Design and non-Design versions on the same page
-                    const inheritedPropMap = this.prototype.prop$map;
-                    if (inheritedPropMap) {
-                        // We clone two levels deep because sometimes inheriting classes edit individual properties
-                        // (eg DesignTextBox alters the "set" hook for the "text" property)
-                        const clonedPropMap = Object.fromEntries(
-                            Object.entries(inheritedPropMap).map(([name, entry]) => [name, { ...entry }])
-                        );
-                        Object.defineProperty(this.prototype, "prop$map", {
-                            value: clonedPropMap,
-                            writable: true,
-                        });
-                    }
-
+                $meth(args, kws) {
+                    PyDefUtils.initClassicComponentClassPrototype(this, kwToObj(kws)._anvil_classic ?? {});
                     return initComponentSubclass(this);
                 },
                 $flags: { FastCall: true },
@@ -373,13 +368,12 @@ module.exports = (pyModule) => {
         },
     });
 
-    PyDefUtils.initComponentClassPrototype(
-        pyModule["ClassicComponent"],
-        PyDefUtils.assembleGroupProperties(["user data"]),
-        universalEvents, // events
-        () => <div />, // element
-        [] // layoutProps
-    );
+    PyDefUtils.initClassicComponentClassPrototype(pyModule["ClassicComponent"], {
+        properties: PyDefUtils.assembleGroupProperties(["user data"]),
+        events: universalEvents, // events
+        element: () => <div />, // element
+        layouts: [], // layoutProps
+    });
 
     // Because __init_subclass__ isn't a thing for native types
     initComponentSubclass(pyModule["ClassicComponent"]);

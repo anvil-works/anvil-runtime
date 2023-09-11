@@ -95,16 +95,29 @@ span.anvil-inline-container > .anvil-inlinable,
 }
 
 @media (min-width: 768px) {
-    .anvil-panel-section-container:not(.anvil-full-width-row) {
+    .anvil-panel-section-container {
         max-width: 750px;
     }
 }
 
+@media (min-width: 768px) {
+    .anvil-panel-section-container.anvil-full-width-row {
+        max-width: none;
+    }
+}
+
 @media (min-width: 992px) {
-    .anvil-panel-section-container:not(.anvil-full-width-row) {
+    .anvil-panel-section-container {
         max-width: 970px;
     }
 }
+
+@media (min-width: 992px) {
+    .anvil-panel-section-container.anvil-full-width-row {
+        max-width: none;
+    }
+}
+
 
 .anvil-panel-section-gutter {
     margin: 0 -15px;

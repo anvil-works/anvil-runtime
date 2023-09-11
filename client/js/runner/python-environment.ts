@@ -153,7 +153,11 @@ function makePerAppAnvilModule(globalAnvilModule: PyModMap, packageName: string)
     const anvilModule = $.extend({}, globalAnvilModule);
 
     // By default templates with _ prefixes won't get imported by "from anvil import *", so we set __all__
-    anvilModule["__all__"] = new pyList(Object.keys(anvilModule).map((s) => new pyStr(s)));
+    anvilModule["__all__"] = new pyList(
+        Object.keys(anvilModule)
+            .filter((s) => !s.startsWith("_"))
+            .map((s) => new pyStr(s))
+    );
 
     PyDefUtils.loadModule(packageName + ".anvil", anvilModule);
     const sysModulesCopy = pyCall(Sk.sysmodules.tp$getattr(new pyStr("copy"))) as typeof Sk.sysmodules;

@@ -28,7 +28,7 @@ import {
     Section,
     ToolboxSection,
     initComponentSubclass,
-    raiseEventOrSuspend,
+    raiseEventOrSuspend, PropertyValueUpdates,
 } from "@runtime/components/Component";
 import { Container, validateChild } from "@runtime/components/Container";
 import { kwargsToJsObject, s_add_event_handler, s_anvil_events, s_remove_event_handler } from "@runtime/runner/py-util";
@@ -55,9 +55,9 @@ export interface JsComponent {
     _anvilSetupDom(): HTMLElement | Promise<HTMLElement>;
     _anvilDomElement: null | undefined | HTMLElement;
     _anvilGetDesignInfo?(options: { asLayout?: boolean }): DesignInfo;
-    _anvilSetPropertyValues?(values: { [propname: string]: any }): void | Promise<void>;
+    _anvilSetPropertyValues?(values: PropertyValueUpdates): PropertyValueUpdates | Promise<PropertyValueUpdates>;
     _anvilUpdateDesignName?(name: string): void;
-    _anvilSetSectionPropertyValues?(id: string, values: { [propName: string]: any }): void | Promise<void>;
+    _anvilSetSectionPropertyValues?(id: string, values: PropertyValueUpdates): PropertyValueUpdates | Promise<PropertyValueUpdates>;
     _anvilGetSections?(): Section[];
     _anvilGetSectionDomElement?(id: string): HTMLElement;
 }
@@ -82,7 +82,7 @@ export interface JsContainer extends JsComponent {
     ): DropZone[];
     _anvilDisableDropMode?(): void;
     _anvilGetContainerDesignInfo?(component: JsComponent): ContainerDesignInfo;
-    _anvilUpdateLayoutProperties?(component: JsComponent, values: { [propName: string]: any }): void | Promise<void>;
+    _anvilUpdateLayoutProperties?(component: JsComponent, values: PropertyValueUpdates): PropertyValueUpdates | Promise<PropertyValueUpdates>;
 
 }
 
@@ -139,7 +139,7 @@ function setPropertyValuesOneByOne(this: JsComponent, updates: { [propName: stri
         (this as any)[key] = val;
         retrievedUpdates[key] = (this as any)[key];
     }
-    return designerApi.updateComponentProperties(this, retrievedUpdates, {});
+    return retrievedUpdates;
 }
 
 const createHooks = (jsSelf: JsComponent | JsContainer, spec: CustomComponentSpec): AnvilHooks => {
@@ -160,7 +160,7 @@ const createHooks = (jsSelf: JsComponent | JsContainer, spec: CustomComponentSpe
         },
         getDesignInfo(asLayout) {
             return (
-                jsSelf._anvilGetDesignInfo?.({ asLayout }) ?? { propertyDescriptions: [], events: {}, interactions: [] }
+                jsSelf._anvilGetDesignInfo?.({ asLayout }) ?? { propertyDescriptions: [], events: [], interactions: [] }
             );
         },
         getSections() {

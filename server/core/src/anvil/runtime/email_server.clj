@@ -51,7 +51,7 @@
 
         environment (assoc environment :commit-id (:version app))
 
-        app-session (sessions/new-session-with-state {:app-origin  (app-data/get-default-app-origin environment)
+        app-session (sessions/new-session-with-state {:app-origin  (app-data/get-app-origin environment)
                                                       :app-id      app-id
                                                       :client      {:type :email}
                                                       :environment environment}

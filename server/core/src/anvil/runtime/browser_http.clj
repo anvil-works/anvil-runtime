@@ -8,6 +8,7 @@
             [anvil.dispatcher.serialisation.core :as serialisation]
             [anvil.runtime.app-log :as app-log]
             [anvil.runtime.browser-ws :as browser-ws]
+            [anvil.runtime.browser-ws :refer [process-log-data]]
             [clojure.java.io :as io]
             [medley.core :refer [filter-keys]]
             [clojure.string :as str]))
@@ -95,9 +96,8 @@
                  true))))
 
 
-(defn- process-json-data [{:keys [app-id app-session environment app-origin] :as request} app-yaml deserialiser serial-responder]
-  (let [data (get-json-data request)
-        request-template {:app           app-yaml
+(defn- process-call-data [data {:keys [app-id app-session environment app-origin] :as request} app-yaml deserialiser serial-responder]
+  (let [request-template {:app           app-yaml
                           :app-id        app-id
                           :environment   environment
                           :app-origin    app-origin
@@ -129,6 +129,15 @@
                           return-path)))
 
 
+(defn- process-data [request app-yaml deserialiser serial-responder]
+  (let [data (get-json-data request)]
+    (case (:type data)
+      "CALL" (do
+               (process-call-data data request app-yaml deserialiser serial-responder)
+               (process-chunk-data request deserialiser))
+      "LOG" (process-log-data data request))))
+
+
 (defn http-handler [{:keys [app-id app-session environment app-origin] :as request} app-yaml]
   (with-channel request channel
     (let [session-liveobject-secret (get-session-liveobject-secret app-session)
@@ -136,7 +145,6 @@
           serial-responder (partial mk-serial-responder channel session-liveobject-secret)]
       (on-close channel (fn [reason]))
       (send-headers channel)
-      (process-json-data request app-yaml deserialiser serial-responder)
-      (process-chunk-data request deserialiser))))
+      (process-data request app-yaml deserialiser serial-responder))))
 
 

@@ -1,9 +1,0 @@
-{
-  "extends": "../../../tsconfig.json",
-  "compilerOptions": {
-    "jsx": "react",
-    "jsxFactory": "React.createElement"
-  },
-  "include": ["./**/*.ts", "./**/*.tsx"],
-  "exclude": ["@types/jsx.ts"]
-}

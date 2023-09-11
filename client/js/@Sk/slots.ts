@@ -19,7 +19,7 @@ export interface tpSlots<T> {
     readonly tp$base: pyType;
     // readonly tp$dict: { [keys: string]: pyObject };
 
-    tp$descr_get(this: T, obj: pyObject | null, type: pyType | null): pyObject | void;
+    tp$descr_get(this: T, obj: pyObject | null, type: pyType | null, canSuspend?: boolean): pyObject | void | Suspension;
     /** a value of undefined signals deleting */
     tp$descr_set(this: T, obj: pyObject, value: pyObject | undefined, canSuspend?: boolean): void;
 

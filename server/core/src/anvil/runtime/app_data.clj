@@ -1,5 +1,6 @@
 (ns anvil.runtime.app-data
-  (:require [digest]
+  (:require [clojure.tools.logging :as log]
+            [digest]
             [anvil.core.pg-json-handler]
             [anvil.util :as util]
             [crypto.random :as random]
@@ -22,11 +23,11 @@
 
 (defonce get-version-spec-for-environment (fn [req] nil))
 
-(defonce get-default-app-origin (fn [environment] (throw (UnsupportedOperationException.))))
+(defonce get-app-origin (fn [environment] (throw (UnsupportedOperationException.))))
 
-(defonce get-valid-origins (fn [environment] [(get-default-app-origin environment)]))
+(defonce get-public-app-origin (fn [environment] (get-app-origin environment)))
 
-(defonce get-default-api-origin (fn [environment] (str (get-default-app-origin environment) "/_/api")))
+(defonce get-valid-origins (fn [environment] [(get-public-app-origin environment)]))
 
 (defonce get-default-hostnames (fn [environment] []))
 
@@ -40,7 +41,7 @@
 
 (def set-app-storage-impl! (util/hook-setter #{get-app-info-insecure get-app-info-with-can-depend
                                                get-app-content get-app-environment-by-email-hostname get-version-spec-for-environment
-                                               get-valid-origins get-default-app-origin get-default-api-origin
+                                               get-valid-origins get-app-origin get-public-app-origin
                                                get-default-hostnames
                                                get-shared-cookie-key abuse-caution?
                                                should-app-be-blocked?
@@ -133,7 +134,10 @@
               git-version-spec (if-let [commit-id (get-in version-spec [:dependency-commit-ids app_id])]
                                  {:commit-id commit-id}
                                  (version-spec->git-map version))
-              dep-info (get-app-info-with-can-depend depending-app app_id (version-spec->git-map git-version-spec))]
+              git-map (version-spec->git-map git-version-spec)
+              dep-info (get-app-info-with-can-depend depending-app app_id git-map)]
+          (when-not (get dep-info :can_depend)
+            (log/warn (str "Cannot depend on dependency before other checks" depending-app app_id git-version-spec)))
           (cond
             ;; App doesn't exist?
             (not dep-info)
@@ -164,7 +168,9 @@
 
             ;; Not allowed to see this app?
             (not (:can_depend dep-info))
-            (recur (assoc loaded-deps app_id {:error "Permission denied when loading app dependency"}) dependency-versions dep-order all-dep-ids seen-dep-ids seen-assets more-deps-to-process)
+            (do
+              (log/warn (str "Permission denied loading dependency: " depending-app app_id git-version-spec))
+              (recur (assoc loaded-deps app_id {:error "Permission denied when loading app dependency"}) dependency-versions dep-order all-dep-ids seen-dep-ids seen-assets more-deps-to-process))
 
             ;; All good - load the app!
             :else

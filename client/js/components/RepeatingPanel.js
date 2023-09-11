@@ -114,7 +114,7 @@ module.exports = (pyModule, componentsModule) => {
         events: PyDefUtils.assembleGroupEvents("RepeatingPanel", /*!componentEvents(RepeatingPanel)!1*/ ["universal"]),
 
         element: (props) => { 
-            const prefix = getCssPrefix()
+            const prefix = getCssPrefix();
             return (
                 <PyDefUtils.OuterElement className={`anvil-designer-component-namespace ${prefix}repeating-panel` }{...props}>
                     <div refName="items" className={`${prefix}hide-while-paginating`}></div>

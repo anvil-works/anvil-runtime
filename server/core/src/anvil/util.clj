@@ -2,6 +2,7 @@
   (:use [clojure.pprint]
         [slingshot.slingshot])
   (:require [digest]
+            [crawlers.detector :as crawlers]
             [anvil.runtime.conf :as conf]
             [clojure.data.json :as json]
             [clojure.java.jdbc :as jdbc]
@@ -477,3 +478,14 @@
       (Integer/parseInt x)
       (catch NumberFormatException _
         nil))))
+
+
+;; overrides for crawlers missing from the register
+(def crawler-overrides ["Google-InspectionTool"])
+
+(def crawler-pattern-overrides (map re-pattern crawler-overrides))
+
+(defn crawler? [s]
+  (when (string? s)
+    (or (crawlers/crawler? s)
+        (some #(re-find % s) crawler-pattern-overrides))))

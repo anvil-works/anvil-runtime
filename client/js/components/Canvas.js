@@ -274,9 +274,6 @@ module.exports = function(pyModule) {
                         resizeObserver.observe(self._anvil.domNode);
                         resetContext(self);
                     },
-                    show() {
-                        resetContext(self);
-                    },
                     remove() {
                         resizeObserver.disconnect();
                     },

@@ -1,35 +1,56 @@
 (ns anvil.dispatcher.native-rpc-handlers.stripe
-  (:use [anvil.dispatcher.native-rpc-handlers.util]
-        [slingshot.slingshot])
+  (:use [slingshot.slingshot])
   (:require [anvil.runtime.conf :as conf]
             [clojure.tools.logging :as log]
             [anvil.dispatcher.types :as types]
             [anvil.util :as util]
             [anvil.dispatcher.core :as dispatcher]
-            [anvil.core.worker-pool :as worker-pool])
+            [anvil.core.worker-pool :as worker-pool]
+            [anvil.dispatcher.native-rpc-handlers.util :as rpc-util])
   (:import (com.stripe.model Charge Customer Subscription Card HasId)
            (com.stripe.net RequestOptions)
            (java.util Map HashMap)
            (com.stripe.exception StripeException)
            (com.google.gson Gson)))
 
+(defmacro with-transform-stripe-err [& body]
+  `(try
+     (do ~@body)
+     (catch StripeException e#
+       (throw+ {:anvil/server-error (.getMessage e#) :type (str (type e#))}))))
+
+(defn- wrap-native-fn [f]
+  (rpc-util/wrap-native-fn #(with-transform-stripe-err
+                              (apply f %&))))
+
+(defn- add-stripe-error-transformation-to-live-object-backend [method-map]
+  (into {}
+        (for [[name f] method-map]
+          [name #(with-transform-stripe-err (apply f %&))])))
+
+(defn- wrap-live-object-backend [method-map]
+  (rpc-util/wrap-live-object-backend (add-stripe-error-transformation-to-live-object-backend method-map)))
+
 (defn get-stripe-service-props []
-  (first (filter #(= (:source %) "/runtime/services/stripe.yml") (:services *app*))))
+  (first (filter #(= (:source %) "/runtime/services/stripe.yml") (:services rpc-util/*app*))))
 
 (defn- get-request-options []
   (let [service-config (get-stripe-service-props)
 
         live-mode? (get-in service-config [:client_config :live_mode])
 
-        stripe-user-id (get-in service-config [:server_config :stripe_user_id])
-
-        request-options (-> (RequestOptions/builder)
-                            (.setStripeAccount stripe-user-id)
-                            (.setApiKey (if live-mode?
-                                          (:live-secret-key conf/stripe-client-config)
-                                          (:test-secret-key conf/stripe-client-config)))
-                            (.build))]
-    [request-options live-mode? stripe-user-id]))
+        stripe-user-id (get-in service-config [:server_config :stripe_user_id])]
+    (if (nil? stripe-user-id)
+      (throw+ {:anvil/server-error "To use the Stripe API, you need to connect your own stripe account"
+               :docId              "stripe"
+               :docLinkTitle       "Learn more about Stripe Integration"})
+      (let [request-options (-> (RequestOptions/builder)
+                                (.setStripeAccount stripe-user-id)
+                                (.setApiKey (if live-mode?
+                                              (:live-secret-key conf/stripe-client-config)
+                                              (:test-secret-key conf/stripe-client-config)))
+                                (.build))]
+        [request-options live-mode? stripe-user-id]))))
 
 (defn charge [_kwargs token amount currency]
 
@@ -148,18 +169,18 @@
 
 (def CustomerLO {"__getitem__"          (getitem-for Customer)
 
-                 "get_subscriptions"    (py-method get_subscriptions [[id] ^{:default true} live_only]
+                 "get_subscriptions"    (rpc-util/py-method get_subscriptions [[id] ^{:default true} live_only]
                                           (map mk-Subscription
                                                (get-subs-for-customer id live_only)))
 
-                 "get_subscription_ids" (py-method get_subscription_ids [[id] ^{:default true} live_only]
+                 "get_subscription_ids" (rpc-util/py-method get_subscription_ids [[id] ^{:default true} live_only]
                                           (let [subs (get-subs-for-customer id live_only)
                                                 sub-items (apply concat (for [sub subs] (.getData (.getItems sub))))]
                                             (for [item sub-items]
                                               (-> item .getPlan .getId))))
 
-                 "new_subscription"     (py-method new_subscription [[id] plan_id ^{:default 1} quantity]
-                                          (require-server!)
+                 "new_subscription"     (rpc-util/py-method new_subscription [[id] plan_id ^{:default 1} quantity]
+                                          (rpc-util/require-server!)
                                           (let [[request-options _live-mode? _stripe-user-id] (get-request-options)
                                                 sub (Subscription/create ^Map (merge {"items"    [{"plan"     plan_id
                                                                                                    "quantity" quantity}]
@@ -167,15 +188,15 @@
                                                                          ^RequestOptions request-options)]
                                             (mk-Subscription sub)))
 
-                 "add_token"            (py-method add_token [[id] token]
-                                          (require-server!)
+                 "add_token"            (rpc-util/py-method add_token [[id] token]
+                                          (rpc-util/require-server!)
                                           (let [[^RequestOptions request-options] (get-request-options)
                                                 customer (Customer/retrieve ^String id {"expand" ["sources"]} request-options)]
                                             (.create (.getSources customer) {"source" token} request-options)
                                             nil))
 
-                 "charge"               (py-method charge [[id] ^double amount currency]
-                                          (require-server!)
+                 "charge"               (rpc-util/py-method charge [[id] ^double amount currency]
+                                          (rpc-util/require-server!)
                                           (let [[^RequestOptions request-options _ stripe-user-id] (get-request-options)
                                                 amount (Math/round amount)]
                                             (try (-> (Charge/create ^Map (merge {"amount"   amount
@@ -189,17 +210,17 @@
 (def mk-Customer (partial liveobject-for "anvil.stripe.Customer" CustomerLO [:id :email :delinquent :livemode]))
 
 (def SubscriptionLO {"__getitem__" (getitem-for Subscription)
-                     "is_live"     (py-method is_live [[id]]
+                     "is_live"     (rpc-util/py-method is_live [[id]]
                                      (sub-is-live? (retrieve Subscription id)))
-                     "cancel"      (py-method cancel [[id] ^{:default true} at_period_end]
-                                     (require-server!)
+                     "cancel"      (rpc-util/py-method cancel [[id] ^{:default true} at_period_end]
+                                     (rpc-util/require-server!)
                                      (let [[^RequestOptions request-options] (get-request-options)]
                                        (if at_period_end
                                          (.update (Subscription/retrieve ^String id request-options) {"cancel_at_period_end" true} request-options)
                                          (.cancel (Subscription/retrieve ^String id request-options) ^Map {} ^RequestOptions request-options))
                                        nil))
-                     "set_plan"    (py-method set_plan [[id] plan_id]
-                                     (require-server!)
+                     "set_plan"    (rpc-util/py-method set_plan [[id] plan_id]
+                                     (rpc-util/require-server!)
                                      (let [[^RequestOptions request-options] (get-request-options)
                                            s ^Subscription (Subscription/retrieve ^String id request-options)]
                                        (.update s {"items" (cons {"plan" plan_id}
@@ -212,12 +233,12 @@
 (def mk-Subscription (partial liveobject-for "anvil.stripe.Subscription" SubscriptionLO [:id :status]))
 
 (defn get-customer [_kwargs id]
-  (require-server!)
+  (rpc-util/require-server!)
   (let [[request-options] (get-request-options)]
     (mk-Customer (Customer/retrieve ^String id, {"expand" ["subscriptions"]} ^RequestOptions request-options))))
 
 (defn new-customer [_kwargs email token]
-  (require-server!)
+  (rpc-util/require-server!)
   (worker-pool/with-expanding-threadpool-when-slow
     (let [[^RequestOptions request-options] (get-request-options)
           customer (Customer/create ^Map (merge {"email" email}

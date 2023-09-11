@@ -184,12 +184,12 @@
                                                            :app-id      (:id app-info)
                                                            :environment env}
                                                           (app-log/log-data-from-ring-request request))]
-                                    (reset! connection {:app-info          app-info,
-                                                        :protocol-version  protocol-version,
-                                                        :environment       env,
-                                                        :app-origin        (app-data/get-default-app-origin env),
-                                                        :uplink-type       uplink-type
-                                                        :default-session   default-session}) ;; The session for all calls in a call stack that started on the Uplink.
+                                    (reset! connection {:app-info         app-info,
+                                                        :protocol-version protocol-version,
+                                                        :environment      env,
+                                                        :app-origin       (app-data/get-app-origin env),
+                                                        :uplink-type      uplink-type
+                                                        :default-session  default-session}) ;; The session for all calls in a call stack that started on the Uplink.
                                     (ws-util/tag-channel! channel {:app-info app-info, :environment env, :app-session default-session})
                                     (send! channel (util/write-json-str {:auth        "OK"
                                                                          :priv        (:origin (STACK-FRAME-INFO uplink-type))

@@ -37,6 +37,24 @@ const getWebSocketEndpoint = () => {
     return `${base}/_/ws/${window.anvilParams.accessKey || ""}?s=${window.anvilSessionToken}`;
 };
 
+let firstSendFail = true;
+
+export class WebsocketFallback extends Error {}
+
+class AnvilWebSocket extends WebSocket {
+    send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
+        try {
+            super.send(data);
+        } catch (e) {
+            if (firstSendFail) {
+                throw new WebsocketFallback("use HTTP");
+            }
+            throw e;
+        }
+        firstSendFail = false;
+    }
+}
+
 export function connect(profile?: Profile) {
     // return promise of a WebSocket
     if (websocket != null) return websocket;
@@ -46,7 +64,7 @@ export function connect(profile?: Profile) {
 
     websocket = deferred.promise;
 
-    const ws = new WebSocket(getWebSocketEndpoint());
+    const ws = new AnvilWebSocket(getWebSocketEndpoint());
     window.anvilWebsocket = ws;
     let heartbeatIntervalDispose = () => {};
 

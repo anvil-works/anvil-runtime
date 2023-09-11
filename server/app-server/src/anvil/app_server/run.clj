@@ -163,7 +163,7 @@
   {:get-app-info-insecure                 (fn [app-id] (:info (load-app (or app-id (conf/get-main-app-id)))))
    :get-app-content                       (fn [app-info _version] (load-app (:id app-info)))
    :get-app-environment-by-email-hostname (fn [_] (dispatch/get-default-environment))
-   :get-default-app-origin                (fn [_env] (conf/get-app-origin))
+   :get-app-origin                        (fn [_env] (conf/get-app-origin))
    :get-default-hostnames                 (fn [_env] [(conf/get-hostname)])
    :get-valid-origins                     (fn [_env] [(conf/get-app-origin)])})
 

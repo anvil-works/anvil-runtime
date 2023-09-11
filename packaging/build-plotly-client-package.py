@@ -175,6 +175,10 @@ def load_trace(trace_schema):
 
 
 def load_layout(layout_schema):
+    # because python and javascript differ in terms of how they do layout.template
+    layout_schema["layoutAttributes"]["template"]["role"] = "object"
+    del layout_schema["layoutAttributes"]["template"]["valType"]
+
     walk_attrs(f"plotly.graph_objs.layout", layout_schema["layoutAttributes"], required_classes)
     top_level_classes.append("Layout")
     add_type("plotly.graph_objs", "Layout", layout_schema["layoutAttributes"])
@@ -238,30 +242,25 @@ def write_templates():
     os.chdir(TEMPLATE_DIR)
 
     # specify the URL of the GitHub directory
-    url = f"https://github.com/plotly/plotly.py/tree/v{PYVERSION}/packages/python/plotly/plotly/package_data/templates"
+    url = f"https://api.github.com/repos/plotly/plotly.py/contents/packages/python/plotly/plotly/package_data/templates?ref=v{PYVERSION}"
 
     # send a GET request to the URL
     response = requests.get(url)
     if response.status_code != 200:
         print("Failed to load templates")
 
-    for line in response.text.splitlines():
-        if "href=" not in line and ".json" not in line:
-            continue
+    files = response.json()
 
-        file_path = line.split('href="', 1)[1].split('"', 1)[0]
+    for file in files:
+        download_url = file["download_url"]
 
-        if not (file_path.startswith("/plotly") and file_path.endswith(".json")):
-            continue
-
-        file_url = "https://raw.githubusercontent.com" + file_path.replace("/blob/", "/")
-        file_response = requests.get(file_url)
+        file_response = requests.get(download_url)
 
         if file_response.status_code != 200:
-            print("Failed to fetch " + file_path)
+            print("Failed to fetch " + download_url)
             continue
 
-        file_name = file_path.rsplit("/", 1)[1]
+        file_name = download_url.rsplit("/", 1)[1]
 
         with open(file_name, "w") as file:
             file.write(file_response.text)

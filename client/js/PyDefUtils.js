@@ -1,8 +1,8 @@
 "use strict";
 
-const { pyTypeError, pyObject, toPy, Suspension, pyFunc, pyStr, pyCallOrSuspend } = require("./@Sk");
-const { getCssPrefix } = require("./runner/legacy-features");
-const { s_anvil_events, objectToKwargs, s_raise_event } = require("./runner/py-util");
+const { pyTypeError, pyObject, toPy, Suspension, pyFunc, pyList, pyDict, pyStr, pyCallOrSuspend } = require("./@Sk");
+const { getCssPrefix, hasLegacyDict } = require("./runner/legacy-features");
+const { s_anvil_events, objectToKwargs, s_raise_event, pyTryFinally } = require("./runner/py-util");
 const { defer } = require("./utils");
 
 var PyDefUtils = {};
@@ -189,25 +189,32 @@ const getInheritedEventsTypes = (events, baseEvents) => {
 };
 
 PyDefUtils.mkComponentCls = function mkComponentCls(anvilModule, name, params) {
-    let { base, properties, events, layouts, element, locals, kwargs } = params;
+    let { base, properties, events, layouts, element, locals, kwargs, slots=true } = params;
+
+    // used by ClassicComponent __init_subclass__
+    kwargs ??= [];
+    kwargs.push("_anvil_classic", { properties, events, element, layouts });
+
     let bases;
-    base = base || anvilModule["ClassicComponent"];
+    base ??= anvilModule["ClassicComponent"];
     if (Array.isArray(base)) {
         bases = base;
     } else {
         bases = [base];
     }
 
-    events = events || [];
-    properties = properties || [];
+    events ??= [];
+    properties ??= [];
+    locals ??= () => {};
 
-    locals = locals || (() => {});
-
-    const eventTypes = getInheritedEventsTypes(events, bases[0]?.prototype?.event$types ?? {});
+    const eventTypes = getInheritedEventsTypes(events, bases[0]?.prototype?._anvilClassic$eventTypes ?? {});
 
     const ComponentCls = Sk.misceval.buildClass(
         anvilModule,
         ($gbl, $loc) => {
+            if (slots && !hasLegacyDict()) {
+                $loc.__slots__ = new pyList();
+            }
             locals($loc);
             PyDefUtils.mkGettersSetters($loc, properties, anvilModule);
             if (eventTypes) {
@@ -219,8 +226,6 @@ PyDefUtils.mkComponentCls = function mkComponentCls(anvilModule, name, params) {
         undefined,
         kwargs
     );
-
-    PyDefUtils.initComponentClassPrototype(ComponentCls, properties, events, element, layouts);
 
     return ComponentCls;
 };
@@ -249,17 +254,25 @@ PyDefUtils.mkGettersSetters = function mkGettersSetters($loc, properties, anvilM
     });
 }
 
-PyDefUtils.initComponentClassPrototype = function (ComponentClass, properties, events, Element, layoutProperties) {
-    const inheritedDefaults = ComponentClass.prototype.prop$defaults || {};
-    const inheritedPropMap = ComponentClass.prototype.prop$map || {};
-    const inheritedPropTypes = ComponentClass.prototype.prop$types || [];
-    const inheritedEvents = ComponentClass.prototype.event$types || {};
-    const inheritedLayouts = ComponentClass.prototype.layout$props || [];
-    let propToBind = ComponentClass.prototype.prop$dataBinding;
+/** Called by ClassicComponent.__init_subclass__ */
+PyDefUtils.initClassicComponentClassPrototype = function (cls, options = {}) {
+    const { properties = [], events, element: Element, layouts: layoutProperties } = options;
+
+    const clsProto = cls.prototype;
+
+    const inheritedDefaults = clsProto._anvilClassic$propDefaults || {};
+    const inheritedPropMap = clsProto._anvilClassic$propMap || {};
+    const inheritedPropTypes = clsProto._anvilClassic$propTypes || [];
+    const inheritedEvents = clsProto._anvilClassic$eventTypes || {};
+    const inheritedLayouts = clsProto._anvilClassic$layoutProps || [];
+    let propToBind = clsProto._anvilClassic$dataBindingProps;
 
     const propMap = {};
+    // create a copy
+    // some design elements directly manipulate the prototype propMap
+    // and we use the properties to override the prop map.
     Object.entries(inheritedPropMap).forEach(([name, entry]) => {
-        propMap[name] = {...entry};
+        propMap[name] = { ...entry };
     });
     const propTypes = [...inheritedPropTypes];
 
@@ -302,55 +315,56 @@ PyDefUtils.initComponentClassPrototype = function (ComponentClass, properties, e
     const propsToInit = Object.keys(propMap).filter((key) => propMap[key].initialize);
 
     const eventTypes = getInheritedEventsTypes(events, inheritedEvents);
-    let layoutPropTypes ;
+    let layoutPropTypes;
     if (layoutProperties) {
         layoutPropTypes = [...inheritedLayouts];
         layoutPropTypes.push(...layoutProperties);
     }
 
-    const propDefaults = Object.assign({},
+    const propDefaults = Object.assign(
+        {},
         inheritedDefaults,
         Object.fromEntries(properties.filter((prop) => !prop.readOnly).map((prop) => [prop.name, prop.defaultValue]))
     );
 
-    Object.defineProperties(ComponentClass.prototype, {
-        prop$defaults: {
+    Object.defineProperties(clsProto, {
+        _anvilClassic$propDefaults: {
             value: propDefaults,
             writable: true,
         },
-        prop$map: {
+        _anvilClassic$propMap: {
             value: propMap,
             writable: true,
         },
-        prop$types: {
+        _anvilClassic$propTypes: {
             value: propTypes,
             writable: true,
         },
-        props$toInitialize: {
+        _anvilClassic$propsToInitialize: {
             value: propsToInit,
             writable: true,
-        }
+        },
     });
     if (eventTypes) {
-        Object.defineProperty(ComponentClass.prototype, "event$types", {
+        Object.defineProperty(clsProto, "_anvilClassic$eventTypes", {
             value: eventTypes,
             writable: true,
         });
     }
     if (Element) {
-        Object.defineProperty(ComponentClass.prototype, "create$element", {
+        Object.defineProperty(clsProto, "_anvilClassic$createElement", {
             value: (props) => <Element {...props} />,
             writable: true,
         });
     }
     if (layoutProperties) {
-        Object.defineProperty(ComponentClass.prototype, "layout$props", {
+        Object.defineProperty(clsProto, "_anvilClassic$layoutProps", {
             value: layoutPropTypes,
             writable: true,
         });
     }
     if (propToBind) {
-        Object.defineProperty(ComponentClass.prototype, "prop$dataBinding", {
+        Object.defineProperty(clsProto, "_anvilClassic$dataBindingProps", {
             value: propToBind,
             writable: true,
         });
@@ -623,7 +637,7 @@ PyDefUtils.mkSerializePreservingIdentityInner = (serialize) => (self, pyGlobals)
 
     self._anvil.$lastSerialKey = {pyId: pyMyId, pyGlobals: pyGlobals};
 
-    let val = serialize ? serialize(self) : Sk.abstr.lookupSpecial(self, Sk.builtin.str.$dict);
+    let val = serialize ? serialize(self) : (Sk.abstr.lookupSpecial(self, Sk.builtin.str.$dict) ?? new pyDict());
     return Sk.misceval.chain(val, (val) =>  new Sk.builtin.list([pyMyId, val]));
 };
 
@@ -831,9 +845,10 @@ PyDefUtils.IconComponent = ({side, icon, icon_align}) => {
     const refName = "icon" + side[0].toUpperCase() + side.slice(1);
     const prefix = getCssPrefix();
     icon_align = isTrue(icon_align) ? prefix + icon_align.toString() + "-icon" : "";
+    side = prefix + side;
     if (img) {
         return (
-            <i refName={refName} className={`anvil-component-icon ${prefix}${side} ${icon_align}`}>
+            <i refName={refName} className={`anvil-component-icon ${side} ${icon_align}`}>
                 <img src={icon} style="height: 1em; vertical-align: text-bottom;" />
             </i>
         );
@@ -1011,7 +1026,7 @@ var propertyGroups = {
             defaultValue: new Sk.builtin.str("left"),
             pyVal: true,
             options: ["left_edge", "left", "top", "right", "right_edge"],
-            set(s, _e, v) {
+            set(s, e, v) {
                 const prefix = getCssPrefix();
                 const remove = ["right_edge", "left_edge", "top", "right", "left"]
                     .map((x) => prefix + x + "-icon");
@@ -2061,12 +2076,7 @@ PyDefUtils.resumePrint = key => {
     }
 };
 
-PyDefUtils.pyTryFinally = (f, doFinally) => {
-    let completed = false, result;
-    return Sk.misceval.tryCatch(
-        () => Sk.misceval.chain(f(), r => { completed = true; result = r; return doFinally(); }, () => result),
-        e => Sk.misceval.chain(!completed && doFinally(), () => { throw e; }));
-}
+PyDefUtils.pyTryFinally = pyTryFinally;
 
 module.exports = PyDefUtils;
 

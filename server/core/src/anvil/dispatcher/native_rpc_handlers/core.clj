@@ -35,6 +35,12 @@
             [medley.core :refer [find-first]]
             [clojure.data.json :as json]))
 
+(defn- get-app-origin [{:keys [prefer_ephemeral_debug branch]} env-spec]
+  (if (or (= env-spec "published") (= branch "published"))  ;; latter is vv legacy
+    (app-data/get-public-app-origin rpc-util/*environment*)
+    (if prefer_ephemeral_debug
+      (or rpc-util/*app-origin* (app-data/get-app-origin rpc-util/*environment*))
+      (or (app-data/get-app-origin rpc-util/*environment*) rpc-util/*app-origin*))))
 
 (def debug-rpc-handlers
   {"anvil.private.dummy_echo"           (native-util/wrap-native-fn (fn [& _]
@@ -85,17 +91,13 @@
    ;; You might expect "anvil.private.reset_session" to be here. It isn't. It's in anvil.runtime.ws because it uses low-level request stuff.
 
    "anvil.private.get_app_origin"       (native-util/wrap-native-fn
-                                          (fn [_kwargs & [env-spec]]
-                                            (if (= env-spec "published")
-                                              (app-data/get-default-app-origin native-util/*environment*)
-                                              native-util/*app-origin*)))
+                                          (fn [kwargs & [env-spec]]
+                                            (get-app-origin kwargs env-spec)))
 
    "anvil.private.get_api_origin"       (native-util/wrap-native-fn
-                                          (fn [_kwargs & [env-spec]]
-                                            (if (= env-spec "published")
-                                              (app-data/get-default-api-origin native-util/*environment*)
-                                              (when-let [origin rpc-util/*app-origin*]
-                                                (str origin "/_/api")))))
+                                          (fn [kwargs & [env-spec]]
+                                            (when-let [origin (get-app-origin kwargs env-spec)]
+                                              (str origin "/_/api"))))
 
    "anvil.private.get_lazy_media_url"   (native-util/wrap-native-fn
                                           (fn [_kwargs lm is-download?]

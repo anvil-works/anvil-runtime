@@ -25,6 +25,23 @@
 
 (defonce connected-client-count (atom 0))
 
+(defn process-log-data [data {:keys [app-session] :as request}]
+  (try
+    (sessions/resolve-ambiguous-client-type! app-session "browser") ;; Just in case this is a replacement session that hasn't been logged yet.
+    (cond
+      (:error data)
+      (do (metrics/inc! :api/runtime-errors-total)
+          (app-log/record-event! app-session nil "client_err" (str (:type (:error data)) ": " (:message (:error data))) (:error data)))
+
+      (:warning data)
+      (app-log/record-event! app-session nil "client_warning" nil (:warning data))
+
+      :else
+      (app-log/record-event! app-session nil "client_print" (:print data) nil))
+    (catch Exception e
+      (log/error e))))
+
+
 (defn ws-handler [{:keys [app-id app-session environment app-origin] :as request} app-yaml]
 
   (ws-util/with-opening-channel request channel on-open
@@ -160,20 +177,8 @@
                                                true)))))
 
                             (= type "LOG")
-                            (try
-                              (sessions/resolve-ambiguous-client-type! app-session "browser") ;; Just in case this is a replacement session that hasn't been logged yet.
-                              (cond
-                                (:error data)
-                                (do (metrics/inc! :api/runtime-errors-total)
-                                    (app-log/record-event! app-session nil "client_err" (str (:type (:error data)) ": " (:message (:error data))) (:error data)))
+                            (process-log-data data request)
 
-                                (:warning data)
-                                (app-log/record-event! app-session nil "client_warning" nil (:warning data))
-
-                                :else
-                                (app-log/record-event! app-session nil "client_print" (:print data) nil))
-                              (catch Exception e
-                                (log/error e)))
 
                             :else
                             (do

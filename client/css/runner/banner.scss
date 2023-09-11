@@ -42,6 +42,26 @@
 
 }
 
+$screen-sm:                  768px;
+$screen-sm-min:              $screen-sm;
+$screen-xs-max:              ($screen-sm-min - 1);
+
+.anvil-banner-hidden-xs {
+    @media (max-width: $screen-xs-max) {
+        display: none !important;
+    }
+}
+
+.anvil-banner-xs {
+    display: none !important;
+}
+
+.anvil-banner-xs {
+    @media (max-width: $screen-xs-max) {
+        display: inline !important;
+    }
+}
+
 @media print {
     #anvil-header {
         position: static;
