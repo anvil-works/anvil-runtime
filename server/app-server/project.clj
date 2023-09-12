@@ -25,6 +25,7 @@
                  [io.zonky.test/embedded-postgres "1.3.1" :exclusions [[io.zonky.test.postgres/embedded-postgres-binaries-linux-amd64-alpine]]]
                  [io.zonky.test.postgres/embedded-postgres-binaries-linux-arm32v7] ;; Versions are specified by BOM below.
                  [io.zonky.test.postgres/embedded-postgres-binaries-linux-arm64v8]
+                 [io.zonky.test.postgres/embedded-postgres-binaries-darwin-arm64v8] ;; To support apple silicon.
 
                  [anvil/embedded-traefik "0.3.0"]
 
@@ -33,7 +34,7 @@
                  ;; Hacks for Java 11 (#2334) - we shouldn't need this
                  [javax.xml.bind/jaxb-api "2.3.1"]
                  [org.glassfish.jaxb/jaxb-runtime "2.3.1"]]
-  :bom {:import [[io.zonky.test.postgres/embedded-postgres-binaries-bom "10.18.0"]]}
+  :bom {:import [[io.zonky.test.postgres/embedded-postgres-binaries-bom "11.15.0"]]}
   :main anvil.app-server.run
   :repl-options {:init (do (use 'anvil.app-server.run) (-main "--config-file" "test-files/anvil.conf.yaml"))}
   :plugins [[lein-bom "0.2.0-SNAPSHOT"]]
