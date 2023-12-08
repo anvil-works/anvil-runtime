@@ -84,13 +84,13 @@ class WrappedObject(dict):
 @serializable_type
 class WrappedList(list):
     def __init__(self, lst=[]):
-        super().__init__(map(_wrap, lst))
+        list.__init__(self, map(_wrap, lst))
 
     def append(self, item):
         list.append(self, _wrap(item))
 
     def extend(self, items):
-        super().extend(map(_wrap, items))
+        list.extend(self, map(_wrap, items))
 
     def insert(self, offset, item):
         list.insert(self, offset, _wrap(item))
