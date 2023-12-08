@@ -81,6 +81,127 @@ class Test_append(unittest.TestCase):
         # Expect that the last element is equal to the wrapped item
         self.assertEqual(actual[-1], util._wrap(item))
 
+class Test_extend(unittest.TestCase):
+    """Tests for .extend() method.
+    """
+    def test_0(self):
+        """When I extend a WrappedList with 0 items, this is a no-op
+
+        Given that I have a list with <A> elements
+        And that I construct a WrappedList from the list
+        When I extend the WrappedList with 0 items
+        Then the WrappedList contains <A> elements
+        And each element is the same as before the operation
+
+        Examples:
+          | A     |
+          | 10000 |
+        """
+        # -- Given
+        A = 10000
+        L = list(range(A))
+        if len(L) != A:
+            raise RuntimeError("Test problem: length must be equal to A")
+        actual = util.WrappedList(L)
+
+        # Store a copy
+        expected = util.WrappedList(deepcopy(L))
+
+        # -- When
+        actual.extend([])
+
+        # -- Then
+        self.assertEqual(len(actual), A)
+        for j in range(A):
+            self.assertEqual(actual[j], expected[j])
+            assert actual[j] is expected[j]
+    def test_1(self):
+        """When I extend a WrappedList with 1 item, it is added to the end
+
+        Given that I have a list with <A> elements
+        And that I construct a WrappedList from the list
+        When I extend the WrappedList with 1 item
+        Then the WrappedList contains <A>+1 elements
+        And each of the first <A> elements is the same as before the operation
+        And the last element is equal to the wrapped item
+
+        Examples:
+          | A     |
+          | 10000 |
+
+        Notes
+        -----
+        A wrapped item is equal to util._wrap(item).
+        """
+        # -- Given
+        A = 10000
+        L = list(range(A))
+        if len(L) != A:
+            raise RuntimeError("Test problem: length must be equal to A")
+        actual = util.WrappedList(L)
+
+        # Store a copy
+        expected = util.WrappedList(deepcopy(L))
+
+        # -- When
+        items = [A]
+        actual.extend(items)
+
+        # -- Then
+        self.assertEqual(len(actual), A+1)
+        # Expect that each of the first <A> elements is the same as before the operation
+        for j in range(A):
+            self.assertEqual(actual[j], expected[j])
+            assert actual[j] is expected[j]
+
+        # Expect that the last element is equal to the wrapped item
+        self.assertEqual(actual[-1], util._wrap(items[-1]))
+    def test_N(self):
+        """When I extend a WrappedList with 1 item, it is added to the end
+
+        Given that I have a list with <A> elements
+        And that I construct a WrappedList from the list
+        When I extend the WrappedList with <N> items
+        Then the WrappedList contains <A>+<N> elements
+        And each of the first <A> elements is the same as before the operation
+        And the mth from the last <N> elements is equal to the mth wrapped item
+
+        Examples:
+          | A     | N     |
+          | 10000 | 500   |
+
+        Notes
+        -----
+        A wrapped item is equal to util._wrap(item).
+        """
+        # -- Given
+        A = 10000
+        L = list(range(A))
+        if len(L) != A:
+            raise RuntimeError("Test problem: length must be equal to A")
+        actual = util.WrappedList(L)
+
+        # Store a copy
+        expected = util.WrappedList(deepcopy(L))
+
+        # -- When
+        N = 500
+        items = [item for item in range(A, A+N)]
+        if len(items) != N:
+            raise RuntimeError("Test problem: length of new items must be equal to N")
+        actual.extend(items)
+
+        # -- Then
+        self.assertEqual(len(actual), A+N)
+        # Expect that each of the first <N> elements is the same as before the operation
+        for j in range(A):
+            self.assertEqual(actual[j], expected[j])
+            assert actual[j] is expected[j]
+
+        # Expect that the mth from the last <N> elements is equal to the mth wrapped item
+        for m in range(N):
+            self.assertEqual(actual[A+m], util._wrap(items[m]))
+
 
 if __name__ == '__main__':
     unittest.main()
