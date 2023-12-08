@@ -2,6 +2,7 @@
 """
 import unittest
 from copy import deepcopy
+from copy import copy as shallow
 
 from anvil import util
 
@@ -339,7 +340,7 @@ class Test___copy__(unittest.TestCase):
         Given that I have a list with <A> elements
         And that I construct a WrappedList from the list
         When I copy the WrappedList
-        Then I get back a shallow copy of the list
+        Then I get back a shallow copy of the WrappedList
 
         Examples:
           | A     |
@@ -353,13 +354,50 @@ class Test___copy__(unittest.TestCase):
         WL = util.WrappedList(L)
 
         # -- When
-        result = WL.__copy__()
+        result = shallow(WL)
 
         # -- Then
         assert result is not WL
         for j in range(A):
-            self.assertEqual(result[j], WL[j])
+            self.assertEqual(result[j], shallow(WL[j]))
             assert result[j] is WL[j]
+
+class Test___deepcopy__(unittest.TestCase):
+    """Tests for .__deepcopy__() method.
+    """
+    def test_shallow(self):
+        """When I copy a WrappedList, I get a deep copy.
+
+        Given that I have a list with <A> elements
+        And that I construct a WrappedList from the list
+        When I deep copy the WrappedList
+        Then I get back a deep copy of the WrappedList
+
+        Examples:
+          | A     |
+          | 10000 |
+        """
+        # -- Given
+        A = 10000
+        L = list(range(A))
+        if len(L) != A:
+            raise RuntimeError("Test problem: length must be equal to A")
+        WL = util.WrappedList(L)
+
+        # -- When
+        result = deepcopy(WL)
+
+        # -- Then
+        assert result is not WL
+        for j in range(A):
+            self.assertEqual(result[j], deepcopy(WL[j]))
+
+            # NOTE: deepcopy is not guaranteed to return non-identical for some instances,
+            #       such as int with value <=255 (each of which are singletons
+            #       in some Python implementations).
+            #       
+            #       Therefore, instead, do not perform identity check
+            pass
 
 if __name__ == '__main__':
     unittest.main()
