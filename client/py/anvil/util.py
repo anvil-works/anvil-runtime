@@ -91,8 +91,7 @@ class WrappedList(list):
         list.append(self, _wrap(item))
 
     def extend(self, items):
-        for i in items:
-            self.append(i)
+        super().extend(map(_wrap, items))
 
     def insert(self, offset, item):
         list.insert(self, offset, _wrap(item))
