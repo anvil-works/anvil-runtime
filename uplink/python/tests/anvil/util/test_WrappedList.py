@@ -297,5 +297,38 @@ class Test___serialize__(unittest.TestCase):
         for j in range(A):
             self.assertEqual(result[j], WL[j])
 
+class Test___deserialize__(unittest.TestCase):
+    """Tests for .__deserialize__() method.
+    """
+    def test_1(self):
+        """When I deserialize a WrappedList, I get the data back in list form.
+
+        Given that I have a list with <A> elements
+        And I instantiate a WrappedList
+        When I deserialize the list into the WrappedList
+        And I provide some global data
+        Then each of the elements in the WrappedList is equal to the value in the list
+
+        Examples:
+          | A     |
+          | 10000 |
+        """
+        # -- Given
+        A = 10000
+        L = list(range(A))
+        if len(L) != A:
+            raise RuntimeError("Test problem: length must be equal to A")
+        # Instantiate without initialization
+        WL = util.WrappedList.__new__(util.WrappedList)
+
+        # -- When
+        global_data = None
+        WL.__deserialize__(L, global_data)
+
+        # -- Then
+        # Expect that each of the elements in the WrappedList is equal to the value in the list
+        for j in range(A):
+            self.assertEqual(WL[j], L[j])
+
 if __name__ == '__main__':
     unittest.main()
