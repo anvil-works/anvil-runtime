@@ -5,6 +5,13 @@ from copy import deepcopy
 
 from anvil import util
 
+_SHALLOW_SERIALIZABLE_CLASSES: tuple = (list, )
+"""These classes are deemed shallow serializable.
+
+That means that each of these classes, is itself natively serializable,
+provided that each of the elements are natively serializable.
+"""
+
 class Test___init__(unittest.TestCase):
     """Tests for .__init__() method.
     """
@@ -253,6 +260,42 @@ class Test_insert(unittest.TestCase):
         for j in range(A-P):
             self.assertEqual(actual[-j], expected[-j])
             assert actual[-j] is expected[-j]
+
+class Test___serialize__(unittest.TestCase):
+    """Tests for .__serialize__() method.
+    """
+    def test_1(self):
+        """When I serialize a WrappedList, I get the data back in list form.
+
+        Given that I have a list with <A> elements
+        And that I construct a WrappedList from the list
+        When I serialize the WrappedList
+        And I provide some global data
+        Then I get a shallow serializable result back
+        And each of the elements is equal to the value in the WrappedList
+
+        Examples:
+          | A     |
+          | 10000 |
+        """
+        # -- Given
+        A = 10000
+        L = list(range(A))
+        if len(L) != A:
+            raise RuntimeError("Test problem: length must be equal to A")
+        WL = util.WrappedList(L)
+
+        # -- When
+        global_data = None
+        result = WL.__serialize__(global_data)
+
+        # -- Then
+        # Expect that I get a shallow serializable result back
+        assert isinstance(result, _SHALLOW_SERIALIZABLE_CLASSES)
+
+        # Expect that each of the elements is equal to the value in the WrappedList
+        for j in range(A):
+            self.assertEqual(result[j], WL[j])
 
 if __name__ == '__main__':
     unittest.main()
