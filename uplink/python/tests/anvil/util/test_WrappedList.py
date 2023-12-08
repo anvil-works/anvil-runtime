@@ -69,7 +69,7 @@ class Test_append(unittest.TestCase):
 
         # -- When
         item = A+1
-        actual.append(A+1)
+        actual.append(item)
 
         # -- Then
         self.assertEqual(len(actual), A+1)
@@ -202,6 +202,57 @@ class Test_extend(unittest.TestCase):
         for m in range(N):
             self.assertEqual(actual[A+m], util._wrap(items[m]))
 
+class Test_insert(unittest.TestCase):
+    """Tests for .insert() method.
+    """
+    def test_1(self):
+        """When I insert 1 item into a WrappedList, it is added at the specified position
+
+        Given that I have a list with <A> elements
+        And that I construct a WrappedList from the list
+        When I insert 1 item into the WrappedList at position <P>
+        Then the WrappedList contains <A>+1 elements
+        And each of the first <P> elements is the same as before the operation
+        And the <P>th element is equal to the wrapped item
+        And the last <A>-<P> elements are the same as after the operation
+
+        Examples:
+          | A     |
+          | 10000 |
+
+        Notes
+        -----
+        A wrapped item is equal to util._wrap(item).
+        """
+        # -- Given
+        A = 10000
+        L = list(range(A))
+        if len(L) != A:
+            raise RuntimeError("Test problem: length must be equal to A")
+        actual = util.WrappedList(L)
+
+        # Store a copy
+        expected = util.WrappedList(deepcopy(L))
+
+        # -- When
+        item = A+1
+        P = 3
+        actual.insert(P, item)
+
+        # -- Then
+        self.assertEqual(len(actual), A+1)
+        # Expect that each of the first <P> elements is the same as before the operation
+        for j in range(P):
+            self.assertEqual(actual[j], expected[j])
+            assert actual[j] is expected[j]
+
+        # Expect that the <P>th element is equal to the wrapped item
+        self.assertEqual(actual[P], util._wrap(item))
+        
+        # Expect that each of the last <P> elements is the same as before the operation
+        for j in range(A-P):
+            self.assertEqual(actual[-j], expected[-j])
+            assert actual[-j] is expected[-j]
 
 if __name__ == '__main__':
     unittest.main()
