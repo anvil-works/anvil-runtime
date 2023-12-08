@@ -264,7 +264,7 @@ class Test_insert(unittest.TestCase):
 class Test___serialize__(unittest.TestCase):
     """Tests for .__serialize__() method.
     """
-    def test_1(self):
+    def test_list(self):
         """When I serialize a WrappedList, I get the data back in list form.
 
         Given that I have a list with <A> elements
@@ -300,8 +300,8 @@ class Test___serialize__(unittest.TestCase):
 class Test___deserialize__(unittest.TestCase):
     """Tests for .__deserialize__() method.
     """
-    def test_1(self):
-        """When I deserialize a WrappedList, I get the data back in list form.
+    def test_shallowInsert_list(self):
+        """When I deserialize a list into a WrappedList, I shallow insert into the WrappedList
 
         Given that I have a list with <A> elements
         And I instantiate a WrappedList
