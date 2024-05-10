@@ -1,0 +1,31 @@
+{
+    "name": "@anvil-works/anvil-lit",
+    "version": "0.0.0",
+    "description": "A library for building Anvil Components in Lit",
+    "main": "./index.js",
+    "exports": {
+        ".": "./index.js"
+    },
+    "type": "module",
+    "scripts": {
+        "clean": "find ./ -maxdepth 1 -type f \\( -name '*.js' -o -name '*.d.ts' \\) -delete",
+        "build": "npm run clean && tsup src/index.ts --format esm --dts --out-dir ./"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/daviesian/anvil.git"
+    },
+    "author": "The Anvil Team",
+    "license": "MIT",
+    "bugs": {
+        "url": "https://github.com/anvil-works/anvil-lit/issues"
+    },
+    "homepage": "https://github.com/anvil-works/anvil-lit#readme",
+    "peerDependencies": {
+        "react": "^18.0.0",
+        "react-dom": "^18.0.0"
+    },
+    "devDependencies": {
+        "tsup": "^7.1.0"
+    }
+}

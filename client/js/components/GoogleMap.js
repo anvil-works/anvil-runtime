@@ -2,6 +2,8 @@
 /* global google */
 
 var PyDefUtils = require("PyDefUtils");
+const { s_get_components } = require("@runtime/runner/py-util");
+const { pyFunc } = require("@Sk");
 
 /*#
 id: googlemap
@@ -3060,6 +3062,7 @@ module.exports = function(pyModule) {
             (self) => {
                 self._jsVal = new google.maps.InfoWindow();
                 self._anvil.pyHiddenContainer = PyDefUtils.pyCall(pyModule["ClassicContainer"]);
+                self._anvil.pyHiddenContainer._anvil.overrideParentObj = self;
 
                 self._anvil.pageEvents = {
                     add() {
@@ -3067,11 +3070,9 @@ module.exports = function(pyModule) {
                             throw new Sk.builtin.TypeError("Map components can only be added to maps.");
                         }
                         self._jsVal.setMap(self._anvil.parent.pyObj._jsVal);
-                        return self._anvil.pyHiddenContainer._anvil.addedToPage();
                     },
                     remove() {
                         self._jsVal.setMap(null);
-                        return self._anvil.pyHiddenContainer._anvil.removedFromPage();
                     },
                 };
 
@@ -3109,6 +3110,9 @@ module.exports = function(pyModule) {
                             return pyCallOrSuspend(self.tp$getattr(S_REMOVE_FROM_PARENT, []));
                         },
                     },
+                });
+                $loc["get_components"] = new pyFunc((self) => {
+                    return pyCall(self._anvil.pyHiddenContainer.tp$getattr(s_get_components));
                 });
             }
         );

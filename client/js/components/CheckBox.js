@@ -51,6 +51,7 @@ module.exports = (pyModule) => {
                 name: "checked",
                 type: "boolean",
                 description: "The status of the checkbox",
+                designerHint: "toggle",
                 suggested: true,
                 pyVal: true,
 				important: true,
@@ -90,7 +91,10 @@ module.exports = (pyModule) => {
                     }
                 },
             },
-
+            text: {
+                group: undefined,
+                inlineEditElement: "text",
+            }
         }),
 
         events: PyDefUtils.assembleGroupEvents(/*!componentEvents()!2*/ "CheckBox", ["universal"], {
@@ -147,6 +151,17 @@ module.exports = (pyModule) => {
                 $(self._anvil.elements.label).on("click", (e) => {
                     setHandled(e);
                 });
+                if (ANVIL_IN_DESIGNER) {
+                    Object.defineProperty(self._anvil, "inlineEditing", {
+                        set(v) {
+                            // the programmatic link between label and input does not exist for [type=hidden]
+                            // https://developer.mozilla.org/en-US/docs/Web/HTML/Element/label
+                            // The label would normally swallow mouse events (and fire change events)
+                            // But we need mouse events to behave when inline editing (e.g. cursor changing position)
+                            self._anvil.elements.input.type = v ? "hidden" : "checkbox";
+                        }
+                    });
+                }
             });
 
             /*!defMethod(_)!2*/ ("Set the keyboard focus to this component");

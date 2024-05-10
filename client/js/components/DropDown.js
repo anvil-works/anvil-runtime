@@ -59,6 +59,7 @@ module.exports = (pyModule) => {
                         s._anvil.elements.select.style.width = "";
                         s._anvil.elements.outer.style.textAlign = v;
                     }
+                    s._anvil.domNode.classList.toggle("anvil-inlinable", v !== "full");
                 },
                 description: "The position of this dropdown in the available space.",
                 important: true,
@@ -199,18 +200,20 @@ module.exports = (pyModule) => {
 
         element({ font, bold, italic, underline, background, foreground, ...props }) {
             const selectStyle = PyDefUtils.getOuterStyle({ font, bold, italic, underline, background, foreground });
+            let inlineable = "anvil-inlinable";
 
             let width = "";
             if (props.align.toString() === "full") {
                 width = "width: 100%;";
                 delete props.align;
+                inlineable = "";
             }
 
             const selectAttrs = !isTrue(props.enabled) ? {disabled: ""} : {};
             const prefix = getCssPrefix();
 
             return (
-                <PyDefUtils.OuterElement className="anvil-inlinable anvil-dropdown" {...props}>
+                <PyDefUtils.OuterElement className={inlineable + " anvil-dropdown"} {...props}>
                     <form refName="form" className={`${prefix}form-inline`} {...(width ? { style: width } : {})}>
                         <select refName="select" className={`${prefix}form-control ${prefix}to-disable`} style={selectStyle + width} {...selectAttrs}></select>
                     </form>

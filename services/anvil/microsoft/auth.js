@@ -67,6 +67,7 @@ var $builtinmodule = window.memoise('anvil.microsoft.auth', function() {
                 ],
             });
             modal.show();
+            return modal;
         }
     }
 
@@ -103,7 +104,7 @@ var $builtinmodule = window.memoise('anvil.microsoft.auth', function() {
 
         loginCallbackResolve = PyDefUtils.defer();
 
-        displayLogInModal(Sk.ffi.remapToJs(pyAdditionalScopes || []));
+        const modal = displayLogInModal(Sk.ffi.remapToJs(pyAdditionalScopes || []));
 
         // TODO: Should probably have a timeout on this promise.
 
@@ -116,7 +117,7 @@ var $builtinmodule = window.memoise('anvil.microsoft.auth', function() {
                 } else {
                     reject(e);
                 }
-            });
+            }).then(function() { modal && modal.hide(); });
         });
     });
 

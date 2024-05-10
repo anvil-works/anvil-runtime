@@ -16,7 +16,9 @@
 
 (defonce decrypt-str-with-global-key (fn [key-specialisation ciphertext] (throw (UnsupportedOperationException.))))
 
-(def set-secret-hooks! (util/hook-setter [get-global-app-secret-value encrypt-str-with-global-key decrypt-str-with-global-key]))
+(defonce decrypt-str-with-app-key (fn [app-info key-specialisation ciphertext] (throw (UnsupportedOperationException.))))
+
+(def set-secret-hooks! (util/hook-setter [get-global-app-secret-value encrypt-str-with-global-key decrypt-str-with-app-key decrypt-str-with-global-key]))
 
 
 ;; Constants and utility functions for AES-GCM crypto

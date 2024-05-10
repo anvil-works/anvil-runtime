@@ -1,31 +1,36 @@
 "use strict";
 
-const { pyTypeError, pyObject, toPy, Suspension, pyFunc, pyList, pyDict, pyStr, pyCallOrSuspend } = require("./@Sk");
+const { pyTypeError, pyObject, toPy, Suspension, pyFunc, pyList, pyDict, pyStr, pyCallOrSuspend, pyFalse } = require("./@Sk");
+const { notifyVisibilityChange } = require("./components/Component");
 const { getCssPrefix, hasLegacyDict } = require("./runner/legacy-features");
-const { s_anvil_events, objectToKwargs, s_raise_event, pyTryFinally } = require("./runner/py-util");
+const { objectToKwargs, s_raise_event, pyTryFinally } = require("./runner/py-util");
 const { defer } = require("./utils");
 
 var PyDefUtils = {};
 
-// A little hack to make a Javascript-implemented Python module
-// available in Skulpt without doing string concatenation and then eval() on it (ew!).
-// This meddles with Skulpt internals and is liable to break.
-// It doesn't handle dotted names
+/**
+ * A little hack to make a Javascript-implemented Python module
+ * This meddles with Skulpt internals and is liable to break.
+ * It doesn't handle dotted names
+ * 
+ * @param {string} name 
+ * @param {{[attr: string]: pyObject}} modvars 
+ */
 PyDefUtils.loadModule = function(name, modvars) {
 
-    var pyModule = new Sk.builtin.module();
+    const pyModule = new Sk.builtin.module();
     Sk.sysmodules.mp$ass_subscript(new Sk.builtin.str(name), pyModule);
     pyModule.$js = "/* source code not available */";
     pyModule.$d = modvars;
 
     // If it's a submodule, we assume the parent has already
     // been loaded, and add it as an attribute to the parent
-    var dottedSplit = /^(.*)\.([^.]+)$/.exec(name);
+    const dottedSplit = /^(.*)\.([^.]+)$/.exec(name);
     if (dottedSplit) {
-        var parent = PyDefUtils.getModule(dottedSplit[1]);
+        const parent = PyDefUtils.getModule(dottedSplit[1]);
         parent.$d[dottedSplit[2]] = pyModule;
     }
-}
+};
 
 // Get a previously-loaded module. Throws exception if not already loaded.
 PyDefUtils.getModule = function(name) {
@@ -188,6 +193,7 @@ const getInheritedEventsTypes = (events, baseEvents) => {
     return eventTypes;
 };
 
+/** Should only be used for classic components */
 PyDefUtils.mkComponentCls = function mkComponentCls(anvilModule, name, params) {
     let { base, properties, events, layouts, element, locals, kwargs, slots=true } = params;
 
@@ -207,7 +213,6 @@ PyDefUtils.mkComponentCls = function mkComponentCls(anvilModule, name, params) {
     properties ??= [];
     locals ??= () => {};
 
-    const eventTypes = getInheritedEventsTypes(events, bases[0]?.prototype?._anvilClassic$eventTypes ?? {});
 
     const ComponentCls = Sk.misceval.buildClass(
         anvilModule,
@@ -217,9 +222,6 @@ PyDefUtils.mkComponentCls = function mkComponentCls(anvilModule, name, params) {
             }
             locals($loc);
             PyDefUtils.mkGettersSetters($loc, properties, anvilModule);
-            if (eventTypes) {
-                $loc[s_anvil_events] = toPy(Object.values(eventTypes));
-            }
         },
         name,
         bases,
@@ -296,6 +298,7 @@ PyDefUtils.initClassicComponentClassPrototype = function (cls, options = {}) {
             "designerHint",
             "iconset",
             "allowCustomValue",
+            "accept",
         ].forEach((prop) => {
             if (entry[prop]) {
                 propType[prop] = entry[prop];
@@ -754,11 +757,20 @@ PyDefUtils.getColor = (v) => {
     }
 };
 
-PyDefUtils.loadScript = (url) => {
+/**
+ * 
+ * @param {string} url 
+ * @param {() => void} [onload] 
+ * @returns {Promise}
+ */
+PyDefUtils.loadScript = (url, onload) => {
     const script = document.createElement("script");
     script.src = url;
     const p = new Promise((resolve, reject) => {
-        script.onload = resolve;
+        script.onload = () => {
+            resolve(null);
+            onload?.();
+        };
         script.onerror = reject;
     });
     document.body.appendChild(script);
@@ -1004,7 +1016,7 @@ var propertyGroups = {
                         e.addClass("anvil-component-icon-present");
                     }
                 } else {
-                    console.log(v);
+                    // console.log(v);
                 }
 
                 const iconKeys = Object.keys(elements).filter((key) => key.startsWith("icon"));
@@ -1111,13 +1123,7 @@ var propertyGroups = {
                 // designer and runner.
                 const visible = isTrue(v);
                 e.toggleClass(getCssPrefix() + "visible-false", !visible);
-                s._anvil.parent?.setVisibility?.(visible);
-                s._Component.lastVisibility = visible;
-                if (visible) {
-                    // Trigger events for components that need to update themselves when visible
-                    // (eg Maps, Canvas)
-                    return s._anvil.shownOnPage();
-                }
+                return notifyVisibilityChange(s, visible);
             },
         },
         role: {
@@ -1149,13 +1155,7 @@ var propertyGroups = {
                 // designer and runner.
                 const visible = isTrue(v);
                 e.toggleClass(getCssPrefix() + "visible-false", !visible);
-                s._anvil.parent?.setVisibility?.(visible);
-                s._Component.lastVisibility = visible;
-                if (visible) {
-                    // Trigger events for components that need to update themselves when visible
-                    // (eg Maps, Canvas)
-                    return s._anvil.shownOnPage();
-                }
+                return notifyVisibilityChange(s, visible);
             },
         },
     },
@@ -1326,6 +1326,8 @@ var propertyGroups = {
             defaultValue: Sk.builtin.bool.true$,
             pyVal: true,
             mapProp: true,
+            // NB: we don't need to worry about notifying parent of visibility
+            // a map overlay can only be a child of a Google Map and it doesn't care
             set: PyDefUtils.mapSetter("visible", isTrue),
             get: PyDefUtils.mapGetter("visible", Sk.builtin.bool),
         },
@@ -1504,6 +1506,7 @@ var eventGroups = {
                     "A dictionary of keys including 'shift', 'alt', 'ctrl', 'meta'. " +
                     "Each key's value is a boolean indicating if it was pressed during the click event. " +
                     "The meta key on a mac is the Command key",
+                important: false,
             }],
             important: true,
         }
@@ -1797,19 +1800,23 @@ PyDefUtils.addHeightHandle = function(_anvil) {
 };
 
 // Problem: We can only pop up windows (eg Google auth) in response to synchronous events.
-// Track whether we are currently executing a synchronous event.
-var popupOK = false;
-PyDefUtils.funcWithPopupOK = function(f) {
-    return function() {
+// Track whether we are currently executing a synchronous click event.
+let popupOK = false;
+document.addEventListener(
+    "click",
+    () => {
         popupOK = true;
-        try {
-            return f.apply(this, arguments);
-        } finally {
-            popupOK = false;
-        }
-    };
-}
-PyDefUtils.isPopupOK = function() { return popupOK; }
+        setTimeout(() => {
+            popupOK = false; // fail safe incase the bubble phase stopped propagation
+        });
+    },
+    true
+);
+document.addEventListener("click", () => {
+    popupOK = false;
+});
+
+PyDefUtils.isPopupOK = () => popupOK;
 
 
 // A common pattern is turning Media objects into a URL we can feed to
@@ -1995,35 +2002,9 @@ PyDefUtils.repaginateChildren = (self, skip, startAfter, remainingRowQuota) => {
     
 };
 
-class WrappedPyObj {
-    constructor(obj) {
-        this.v = obj;
-        this.$isPyWrapped = true;
-        this.unwrap = () => obj;
-    }
-}
-
-function WrappedPyCallable(obj) {
-    const wrapped =(...args) => {
-        let ret = Sk.misceval.chain(obj.tp$call(args.map((x) => Sk.ffi.toPy(x))), (res) => PyDefUtils.remapToJsOrWrap(res));
-        while (ret instanceof Sk.misceval.Suspension) {
-            // ignore all optinal suspensions for a python wrapped callable sent to javascript
-            if (!ret.optional) {
-                return Sk.misceval.asyncToPromise(() => ret);
-            }
-            ret = ret.resume();
-        }
-        return ret;
-    };
-    wrapped.v = obj;
-    wrapped.unwrap = () => obj;
-    wrapped.$isPyWrapped = true;
-    return wrapped;
-}
-
-PyDefUtils.remapToJsOrWrap = function remapToJsOrWrap(pyObj) {
-    return Sk.ffi.toJs(pyObj, { unhandledHook: (obj) => (obj.tp$call ? WrappedPyCallable(obj) : new WrappedPyObj(obj)) });
-}
+/** @deprecated */
+PyDefUtils.remapToJsOrWrap = Sk.ffi.remapToJsOrWrap;
+/** @deprecated */
 PyDefUtils.unwrapOrRemapToPy = Sk.ffi.toPy; // keep this around even though it is just an alias
 
 PyDefUtils.callJs = (pyComponent, pyFnName, ...pyArgs) => {
@@ -2062,6 +2043,18 @@ PyDefUtils.callJs = (pyComponent, pyFnName, ...pyArgs) => {
         rv = Sk.ffi.toPy(rv);
     }
     return rv;
+};
+
+/**
+ * @param {Promise} p
+ * @returns {Promise}
+ */
+PyDefUtils.withDelayPrint = (p) => {
+    if (!window.outstandingPrintDelayPromises) return p;
+    const key = Math.random().toString(36).substring(6);
+    const d = defer();
+    window.outstandingPrintDelayPromises[key] = d;
+    return p.then(d.resolve);
 };
 
 PyDefUtils.delayPrint = key => {

@@ -72,7 +72,12 @@
   (if (= "40001" (.getSQLState e))
     (general-tables-error "Another transaction has changed this data; aborting"
                           "anvil.tables.TransactionConflict")
-    (general-tables-error (str "Internal database error: " (.getMessage e)))))
+    (if (re-matches #"(?s).*ResultSet is closed.*" (str (.getMessage e)))
+      (let [error-id (random/hex 6)]
+        (log/error e "An \"impossible\" SQLException occurred, Error code: " error-id)
+        (general-tables-error (str "Internal database error: " (.getMessage e) " (" error-id ")")))
+
+      (general-tables-error (str "Internal database error: " (.getMessage e))))))
 
 (defmacro with-transform-err [& body]
   `(try
@@ -193,7 +198,7 @@
            (= json-value []))
 
       (and (= (:type type-map) "simpleObject")
-           (or (string? json-value) (number? json-value) (contains? #{true false} json-value)))
+           (is-jsonable? json-value))
 
       (let [jv-type (get-type-from-value json-value)]
         (every? (fn [[k v]] (= v (get type-map k))) jv-type))))
@@ -524,13 +529,13 @@
      (when (not= rows-added 0)
        (if allow-throw?
          (when-not (decrement-if-possible! db-txn :db-rows rows-added)
-           (throw+ (general-tables-error "Row count quota exceeded" "anvil.tables.QuotaExceededError")))
+           (throw+ (general-tables-error "Datatables row count quota exceeded" "anvil.tables.QuotaExceededError")))
          (decrement! db-txn :db-rows rows-added)))
 
      (when (not= bytes-added 0)
        (if allow-throw?
          (when-not (decrement-if-possible! db-txn :db-bytes bytes-added)
-           (throw+ (general-tables-error "Database size limit exceeded" "anvil.tables.QuotaExceededError")))
+           (throw+ (general-tables-error "Datatable database size limit exceeded" "anvil.tables.QuotaExceededError")))
          (decrement! db-txn :db-bytes bytes-added))))))
 
 (defmacro -with-use-quota [[decrement! decrement-if-possible! relaxed-isolation-level] [use-quota!] & body]

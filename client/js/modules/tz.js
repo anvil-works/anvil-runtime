@@ -12,8 +12,7 @@ const {
     checkOneArg,
     buildPyClass,
 } = require("../@Sk");
-const { kwToObj } = require("../runner/py-util");
-const { datetimeMod } = require("../utils");
+const { datetimeMod, kwToObj } = require("../runner/py-util");
 
 /*#
 id: tz_module

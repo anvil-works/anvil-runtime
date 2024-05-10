@@ -214,7 +214,7 @@ export namespace Sk {
         function hasattr(obj: pyObject, attr: pyStr): pyBool | Suspension;
         function getattr(obj: pyObject, attr: pyStr, default_?: pyObject): pyObject | Suspension;
         function hash(obj: pyObject): pyInt;
-        function print(args: Args | string[]): void;
+        function print(args: Args | string[] | (string | pyObject)[]): void;
         function __import__(
             name: string,
             globals?: object,
@@ -411,6 +411,8 @@ export namespace Sk {
         const remapToPy: typeof toPy;
         /** @deprecated use Sk.ffi.toJs */
         const remapToJs: typeof toJs;
+
+        const remapToJsOrWrap: <T = any>(obj: T) => ReturnType<typeof toJs<T>>;
     }
 
     export namespace generic {
@@ -552,7 +554,7 @@ type ChainedFns<T, R> =
 | [(prevRet: T) => R]
 | [];
 
-export type Args = pyObject[];
+export type Args<T extends pyObject[] = pyObject[]> = T;
 export type Kws = (string | pyObject)[]; // Can't declare alternating array in TS
 
 export type CompareOp = "Gt" | "GtE" | "Lt" | "LtE" | "Eq" | "NotEq";

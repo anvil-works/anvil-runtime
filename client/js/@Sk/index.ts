@@ -29,6 +29,7 @@ export const {
         super_: pySuper,
 
         getset_descriptor: pyGetSetDescriptor,
+        wrapper_descriptor: pyWrapperDescriptor,
 
         classmethod: pyClassMethod,
         staticmethod: pyStaticMethod,
@@ -106,6 +107,7 @@ export const {
         arrayFromIterable,
         asyncToPromise: suspensionToPromise,
         promiseToSuspension,
+        iterFor: pyIterFor,
     },
     abstr: {
         buildNativeClass,
@@ -123,7 +125,7 @@ export const {
         setUpModuleMethods,
         objectHash: pyObjectHash,
     },
-    ffi: { toPy, toJs, proxy },
+    ffi: { toPy, toJs, proxy, remapToJsOrWrap },
     importModule,
 } = Sk;
 
@@ -222,6 +224,7 @@ export interface pyIterator<T = pyObject> extends pyIterable<T> {
 
 export interface pySuperConstructor extends pyType<pySuper> {
     new <I extends pyObject>(a: pyType<I>, b: I): pySuper;
+    new (a: pyType, b: pyType): pySuper;
 }
 
 export interface pySuper extends pyObject {
@@ -234,6 +237,20 @@ export interface pyGetSetDescriptorConstructor<I extends pyObject = pyObject> ex
 }
 
 export interface pyGetSetDescriptor extends pyObject {}
+
+
+export interface WrapperDescriptorDef<I> {
+    $wrapper: (this: (...args: any[]) => any, self: I, args: Args, kws: Kws) => pyObject | Suspension;
+    $flags: Flags;
+    $name?: string;
+    $textsig?: string;
+    $doc?: string;
+}
+export interface pyWrapperDescriptorConstructor<I extends pyObject = pyObject> extends pyType<pyWrapperDescriptor> {
+    new (t: pyType<I>, def: WrapperDescriptorDef<I>, wrapper: (...args: Args) => any): pyGetSetDescriptor;
+}
+
+export interface pyWrapperDescriptor extends pyObject {}
 
 export interface pyStrConstructor extends pyType<pyStr> {
     new (s?: string | pyObject): pyStr;

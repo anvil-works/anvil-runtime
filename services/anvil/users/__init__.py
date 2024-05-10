@@ -18,9 +18,9 @@ def _to_row_ref(user):
 
 #!suggestAttr(anvil.users,login_with_form)!0:
 
-#!defFunction(anvil.users,_)!2: "Forget the current logged-in user" ["logout"]
-def logout():
-    anvil.server.call("anvil.private.users.logout")
+#!defFunction(anvil.users,_,[invalidate_client_objects=False])!2: "Forget the current logged-in user.\n\nIf invalidate_client_objects is true, all live objects (table rows, Capabilities, unfetched Media, etc) will be invalidated" ["logout"]
+def logout(invalidate_client_objects=False):
+    anvil.server.call("anvil.private.users.logout", invalidate_client_objects=invalidate_client_objects)
 
 
 anvil.server._register_exception_type("anvil.users.UserExists", UserExists)
@@ -276,15 +276,18 @@ else:
             lp.add_component(passwd_box[1])
 
         if get_client_config().get("use_google", False):
+            from .google_button import GoogleSignInButton
             some_method_available = True
             def google_login(**evt):
                 import anvil.google.auth
                 if anvil.google.auth.login():
                     lp.raise_event('x-close-alert', value='google')
-            lnk = Link(spacing_above="large", spacing_below="none")
-            lnk.add_component(Image(source=anvil._get_anvil_cdn_origin() + "/runtime/img/google-signin-buttons/btn_google_signin_light_normal_web.png", display_mode="original_size"))
+            fp = FlowPanel(align="center", spacing_above="large", spacing_below="none")
+            lnk = Link(spacing_above="none", spacing_below="none")
+            fp.add_component(lnk)
+            lnk.add_component(GoogleSignInButton("Sign up with Google"))
             lnk.set_event_handler("click", google_login)
-            lp.add_component(lnk)
+            lp.add_component(fp)
 
         if get_client_config().get("use_facebook"):
             some_method_available = True
@@ -468,16 +471,19 @@ else:
             lp.add_component(reset_link)
 
         if get_client_config().get("use_google", False):
+            from .google_button import GoogleSignInButton
             some_method_available = True
             def google_login(**evt):
                 import anvil.google.auth
                 if anvil.google.auth.login():
                     lp.raise_event('x-close-alert', value='google')
-                
-            lnk = Link(spacing_above="large", spacing_below="none")
-            lnk.add_component(Image(source=anvil._get_anvil_cdn_origin() + "/runtime/img/google-signin-buttons/btn_google_signin_light_normal_web.png", display_mode="original_size"))
+
+            fp = FlowPanel(align="center", spacing_above="large", spacing_below="none")
+            lnk = Link(spacing_above="none", spacing_below="none")
+            fp.add_component(lnk)
+            lnk.add_component(GoogleSignInButton())
             lnk.set_event_handler("click", google_login)
-            lp.add_component(lnk)
+            lp.add_component(fp)
 
         if get_client_config().get("use_facebook"):
             some_method_available = True

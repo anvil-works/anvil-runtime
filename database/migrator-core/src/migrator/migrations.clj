@@ -38,7 +38,7 @@
 
 (defn load-resource-migrations! []
   (doseq [[filename slurpable migration-db-type] (apply concat
-                                                    (for [type [:base :dedicated :runtime :central :app-logs :accounting]]
+                                                    (for [type [:base :dedicated :runtime :central :app-logs :accounting :data-tables :data-tables-central]]
                                                       (map #(conj % type) (list-resource-directory-files
                                                                             (str "migrations/" (name type))))))
           :let [[_ migration-name] (re-matches #"(?:.*/)?([^/\\]+).sql" filename)

@@ -109,6 +109,9 @@ def _clear_cache():
     _set_class(app_tables, _LazyAppTables)
 
 
+anvil.server._on_invalidate_client_objects(_clear_cache)
+
+
 #!defModuleAttr(anvil.tables)!1:
 # {
 # 	name: "app_tables",

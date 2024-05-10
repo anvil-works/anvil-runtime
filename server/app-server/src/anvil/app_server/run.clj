@@ -1,46 +1,33 @@
 (ns anvil.app-server.run
-  (:use [org.httpkit.server :only [run-server]]
-        [slingshot.slingshot]
-        [ring.middleware.defaults :refer [wrap-defaults site-defaults]]
-        [clojure.pprint])
-  (:require [anvil.app-server.conf :as conf]
-            [anvil.app-server.tables :as tables]
+  (:require [slingshot.slingshot :refer [try+ throw+]]
+            [ring.middleware.defaults :refer [wrap-defaults site-defaults]]
+            [clojure.pprint :refer :all]
+            [anvil.app-server.conf :as conf]
+            [anvil.app-server.core :as core]
             [anvil.app-server.dispatch :as dispatch]
             [anvil.app-server.postgres :as postgres]
             [anvil.util :refer :all]
             [anvil.logging]
             [compojure.core :refer :all]
-            [compojure.route :as route]
             [anvil.runtime.email-server :as email-server]
             [anvil.runtime.cron :as cron]
             [clojure.tools.logging :as log]
             [anvil.runtime.tables.util :as tables-util]
             [anvil.runtime.sessions :as runtime-sessions]
             [anvil.util :as util]
-            [ring.util.response :as resp]
             [anvil.core.server :as anvil-server]
-            [anvil.runtime.server :as runtime]
-            [anvil.runtime.app-data :as app-data]
-            [anvil.runtime.read-app-storage :as read-app-storage]
-            [anvil.executors.downlink :as downlink]
-            [anvil.executors.uplink :as uplink]
             [anvil.app-server.secrets]
             [clojure.tools.cli :as cli]
-            [clojure.java.io :as io]
             [clj-yaml.core :as yaml]
             [migrator.core :as migrator-core]
             [anvil.runtime.conf :as runtime-conf]
             (anvil.dispatcher.native-rpc-handlers core bcrypt cookies email facebook http microsoft stripe time util)
             [crypto.random :as random]
-            [anvil.runtime.util :as runtime-util]
             [anvil.logging :as logging]
             [embedded-traefik.core :as traefik]
             [ring.middleware.json :as ring-json]
-            [anvil.runtime.app-log :as app-log]
-            [clojure.java.jdbc :as jdbc]
-            [anvil.dispatcher.background-tasks :as background-tasks]
-            [anvil.dispatcher.native-rpc-handlers.google.util :as google-util]
-            [anvil.dispatcher.native-rpc-handlers.email :as email])
+            [anvil.core.worker-pool :as worker-pool]
+            [anvil.core.ring.middleware.absolute-redirects :as absolute-redirects])
   (:gen-class)
   (:import (org.subethamail.smtp.server SMTPServer)
            (java.io File)
@@ -48,56 +35,6 @@
            (java.net ServerSocket URI)))
 
 (clj-logging-config.log4j/set-logger! :level :trace)
-
-;; Balance performance with live-editing (we'll want to tweak this):
-;; Cache apps, reloading every 10s or when idle for >500ms
-(def app-cache (atom {}))
-;; Change this revision every time we load an app and discover it's changed.
-;; This will invalidate persistent downlinks.
-(def next-app-revision (atom 0))
-
-(defn- load-app [package-name]
-  (let [now (delay (System/currentTimeMillis))]
-    (if (re-matches #"[a-zA-Z0-9_]+" package-name)
-      (let [{:keys [app loaded last-touched] :as cache} (get @app-cache package-name)]
-        (if (and app (> last-touched (- @now 500)) (> loaded (- @now 10000)))
-          (do
-            (swap! app-cache assoc-in [package-name :last-touched] @now)
-            app)
-
-          (let [f (File. ^String (conf/get-app-path) package-name)]
-            (when (.isDirectory f)
-              (let [yaml (read-app-storage/get-app-yaml-from-resource-directory (.toURL f) true false)
-
-                    ;; Cope with older apps that specify the user table by ID
-                    yaml (update-in yaml [:services]
-                                    (fn [services]
-                                      (for [{:keys [source server_config] :as service} services]
-                                        (if-let [table-name (and (= source "/runtime/services/anvil/users.yml")
-                                                                 (number? (:user_table server_config))
-                                                                 (some #(when (= (:id %) (:user_table server_config))
-                                                                          (get-in % [:access :python_name]))
-                                                                       (:db_schema yaml)))]
-                                          (assoc-in service [:server_config :user_table] table-name)
-                                          service))))
-
-                    prev-app (get-in @app-cache [package-name :app])
-
-                    app {:id      package-name
-                         :content yaml
-                         :info    {:id      package-name
-                                   :dep_ids (conf/get-dep-ids)
-                                   :name    (or (:name yaml) package-name)
-                                   :alias   "UNUSED"}}
-                    app (if (= app (dissoc prev-app :version))
-                          prev-app
-                          (let [v (swap! next-app-revision inc)]
-                            (log/trace "Invalidating; new version" v)
-                            (assoc app :version v)))]
-                (swap! app-cache assoc package-name {:app app, :loaded @now :last-touched @now})
-
-                app)))))
-      (log/error (str "Cannot load app '" package-name "' - this is not a valid Python package name. Valid names may include only letters, numbers and underscores (_).")))))
 
 (defn launch-shell! [uplink-key server-host server-port]
   (doto (Thread. ^Runnable
@@ -115,132 +52,6 @@
     (.setDaemon true)
     (.start)))
 
-(defn update-cron-jobs! [app-yaml]
-  (util/with-db-transaction [db util/db]
-    (let [q (jdbc/query db ["SELECT job_id, next_run, time_spec FROM scheduled_tasks"])
-          scheduled-jobs (cron/get-scheduled-jobs (:scheduled_tasks app-yaml) q nil)]
-
-      (jdbc/execute! db ["DELETE FROM scheduled_tasks"])
-
-      (doseq [spec scheduled-jobs]
-        (jdbc/insert! db "scheduled_tasks" spec)))))
-
-
-(defn get-environment-for-job [_job]
-  (dispatch/get-default-environment))
-
-(cron/set-cron-hooks! (util/hooks #{get-environment-for-job}))
-
-
-(defn load-main-app [auto-migrate-tables? ignore-invalid-schema?]
-  (let [main-app-id (conf/get-main-app-id)
-        app (try
-              (load-app main-app-id)
-              (catch Exception e
-                (log/error e "Failed to load app %s: %s" main-app-id)
-                (System/exit 1)))]
-    (update-cron-jobs! (:content app))
-    (tables/validate-app-tables-schema (-> app :content :db_schema) (-> app :content :table_id_hints) main-app-id auto-migrate-tables? ignore-invalid-schema?)
-    (tables/update-indexes-and-views!)
-    app))
-
-(defn wrap-cors [f origin]
-  (fn [x]
-    (when-let [r (f x)]
-      (resp/header  r "Access-Control-Allow-Origin" (or origin "*")))))
-
-;; Don't give runtime a choice of app
-(defn wrap-constant-app [handler]
-  (fn [{:keys [uri server-name origin-scheme origin-port] :as req}]
-    (let [app-origin (str origin-scheme "://" server-name ":" origin-port)]
-      (handler (assoc req :app-id (conf/get-main-app-id)
-                          :app-info (:info (load-app (conf/get-main-app-id)))
-                          :app-origin app-origin
-                          :path-info uri
-                          :environment (dispatch/get-default-environment))))))
-
-(app-data/set-app-storage-impl!
-  {:get-app-info-insecure                 (fn [app-id] (:info (load-app (or app-id (conf/get-main-app-id)))))
-   :get-app-content                       (fn [app-info _version] (load-app (:id app-info)))
-   :get-app-environment-by-email-hostname (fn [_] (dispatch/get-default-environment))
-   :get-app-origin                        (fn [_env] (conf/get-app-origin))
-   :get-default-hostnames                 (fn [_env] [(conf/get-hostname)])
-   :get-valid-origins                     (fn [_env] [(conf/get-app-origin)])})
-
-
-(app-log/set-log-impl! {:record-session! (fn record-session! [session log-data]
-                                           (log/info "[SESSION]" (-> @session :client :type) (runtime-sessions/get-id session) log-data))
-                        :record-event!   (fn [_session _trace-id type log-text data]
-                                           (condp contains? type
-                                             #{"client_err" "err"}
-                                             (log/error (apply str
-                                                               "Error report from "
-                                                               (if (= "client_err" type) "client" "server") " code:\n"
-                                                               (:type data) ": " (:message data)
-                                                               (when (:trace data) "\nTraceback:")
-                                                               (for [[path line] (:trace data)]
-                                                                 (str "\n  " path ":" line "\n"))))
-
-                                             #{"print" "client_print"}
-                                             (log/debug (if (= "client_print" type)
-                                                          "[CLIENT]" "[SERVER]") (.replaceAll ^String log-text "\n$" ""))
-
-                                             ;; :else
-                                             (if data (log/info (str "[LOG " type "]") log-text data)
-                                                      (log/info (str "[LOG " type "]") log-text))))})
-
-(background-tasks/set-background-task-hooks! {:get-environment-for-background-task (constantly {})})
-
-(email/set-email-hooks! {:get-smtp-connection (fn [_email-service-config _environment]
-                                                (let [{:keys [host] :as smtp-config} (:default runtime-conf/app-smtp-config)]
-
-                                                  (when-not host
-                                                    (throw+ {:anvil/server-error "No SMTP server has been configured"}))
-
-                                                  (email/open-smtp-connection smtp-config)))})
-
-(google-util/set-google-token-hooks! {:get-delegation-refresh-token (fn [app-info service-config]
-                                                                      (or (conf/get-google-refresh-token)
-                                                                          (:delegation_refresh_token service-config)))})
-
-;; AGPL compliance: Serve up our source code (or, if we are an official release package, a GitHub link)
-(def source-link (delay
-                   (if (io/resource "anvil-runtime-source.tgz")
-                     (str (conf/get-app-origin) "/_/static/anvil-runtime-source.tgz")
-                     "https://github.com/anvil-works/anvil-runtime")))
-
-(defn wrap-provide-source [f]
-  (fn [request]
-    (assoc-in (f request) [:headers "X-Source-Available"] @source-link)))
-
-(defroutes app
-  (wrap-cors
-    (routes
-      (route/resources "/_/static/runtime" {:root "runtime-client-core" :mime-types util/additional-mime-types})
-      (route/resources "/_/static/services" {:root "services-core" :mime-types util/additional-mime-types})
-      (GET "/_/static/icon-512x512.png" []
-        (resp/resource-response "runtime-client-core/icon-512x512.png"))
-      (GET "/_/static/anvil-runtime-source.tgz" []
-        ;; AGPL compliance: Provide source download
-        (resp/resource-response "anvil-runtime-source.tgz"))
-      (context "/_/downlink" [] downlink/handle-incoming-ws)
-      (context "/_/uplink" [] uplink/handle-incoming-ws))
-    "*")
-  #'runtime/runtime-common-routes
-  (wrap-constant-app
-    (runtime-sessions/with-app-session
-      (routes
-        (GET "/" request
-          (runtime/serve-app request
-                             {:consoleMessage (format "***********\nThis application is served with the Anvil App Server, which is open-source software.\nYou can find the source code at:\n%s\n**********"
-                                                      @source-link)}
-                             {:action :run-app}))
-        runtime/app-routes)
-      (constantly "anvil-session")))
-  runtime/app-404)
-
-
-
 (defn get-available-port []
   ;; Try 1000 random ports between 10000 and 60000 until we find an open one
   (loop [remaining-attempts 1000]
@@ -256,94 +67,83 @@
     (when (> port -1)
       port)))
 
-;; This is seriously gross. The http-kit server just trusts X-Forwarded-For headers,
-;; and doesn't provide any way to turn that off. This is fine when running behind an
-;; HTTPS proxy, but this app server might well be run unencrypted on localhost or a
-;; LAN, where we might want to be able to trust anvil.server.client.ip. So, we use the
-;; only way that http-kit actually exposes the remote address - AsyncChannel.toString()
-;; - and use that to overwrite :remote-addr.
-;;
-;; I warned you it would be gross.
-;;
-(defn wrap-retrieve-original-remote-address [f]
-  (fn [request]
-    (let [[_ real-remote-address] (re-matches #".*<->.*/(.*):\d+$" (str (:async-channel request)))]
-      (f (assoc request :remote-addr real-remote-address)))))
-
-(defn wrap-with-origin-scheme-and-port [f scheme port]
-  (fn [req]
-    (f (assoc req :origin-scheme scheme :origin-port port))))
-
 (Thread/setDefaultUncaughtExceptionHandler
   (reify Thread$UncaughtExceptionHandler
     (uncaughtException [_ thread ex]
       (log/error ex))))
 
-(defn -main [& args]
-  (let [require-equals [#(re-matches #"(.*?)=(.*)" %) "Expected NAME=VALUE"]
-        update-map-with-equals #(let [[_ k v] (re-matches #"(.*?)=(.*)" %3)]
-                                  (update-in %1 [%2] assoc (keyword k) v))
-        {:keys [options errors arguments summary]}
-        (cli/parse-opts args [[nil "--config-file FILENAME" "Load config from the specified YAML file"]
-                              [nil "--data-dir DIRECTORY" "Store data in the specified directory (default: .anvil-data)"]
-                              [nil "--auto-migrate" "Migrate data tables schema automatically"]
-                              [nil "--ignore-invalid-schema" "Ignore invalid data tables schema and run anyway"]
-                              [nil "--database DB-URL" "Database URL"]
-                              [nil "--data-table-txn-timeout SECONDS" "Data Table Transactions left idle for this long will time out. Default: 10"]
-                              [nil "--db-connection-pool-size SIZE" "The maximum size of the DB connection pool. Default: 2*CPU cores (size of thread pool)"]
-                              [nil "--app DIRECTORY" "Load and run the specified app"]
-                              [nil "--dep-id ID=PACKAGE" "Associate a dependency app ID with its package name"
-                               :validate require-equals :assoc-fn update-map-with-equals]
-                              [nil "--secret NAME=VALUE" "Provide an app secret"
-                               :validate require-equals :assoc-fn update-map-with-equals]
-                              [nil "--encryption-key NAME=VALUE" "Pass an app encryption key"
-                               :validate require-equals :assoc-fn update-map-with-equals]
-                              [nil "--downlink-key KEY" "Authentication key for a separately launched downlink"]
-                              [nil "--downlink-worker-timeout SECONDS" "Timeout for server code running in embedded downlink. Default: 30"]
-                              [nil "--uplink-key KEY" "Key to connect server (privileged) uplinks to this app"]
-                              [nil "--client-uplink-key KEY" "Key to connect client (unprivileged) uplinks to this app"]
-                              [nil "--shell" "Launch an interactive Python shell (connected via the Uplink)"]
-                              [nil "--ip IP" "Listen on the specified IP address"]
-                              [nil "--port PORT" "Serve HTTP requests on the specified port"
-                               :validate [#(re-matches #"[0-9]+" %) "Expected a port number"]]
-                              [nil "--http-redirect-port PORT" "Redirect HTTP requests on the specified port to HTTPS"
-                               :validate [#(re-matches #"[0-9]+" %) "Expected a port number"]]
-                              [nil "--smtp-server-port PORT" "Accept SMTP email on the specified port"
-                               :validate [#(re-matches #"[0-9]+" %) "Expected a port number"]]
-                              [nil "--origin URL" "Set the home URL of this app (eg https://my-app.com)"]
-                              [nil "--disable-tls" "Don't terminate TLS connections, regardless of the origin scheme"]
-                              [nil "--forward-headers-insecure" "When running embedded TLS termination, pass through the X-Forwarded-* headers. Default: false"]
-                              [nil "--add-hsts-headers" "Enable HSTS headers when origin URL uses https. Default: false"]
-                              [nil "--letsencrypt-storage PATH" "Path to a JSON file to store LetsEncrypt certificates (default: <data-dir>/letsencrypt-certs.json)"]
-                              [nil "--letsencrypt-staging" "Use the LetsEncrypt staging server"]
-                              [nil "--manual-cert-file PATH" "Path to an external TLS certificate in PEM format"]
-                              [nil "--manual-cert-key-file PATH" "Path to an external TLS certficate private key file in PEM format"]
-                              [nil "--smtp-host HOST" "Hostname of SMTP server to use for sending email"]
-                              [nil "--smtp-port PORT" "Port to connect to on SMTP server"
-                               :validate [#(re-matches #"[0-9]+" %) "Expected a port number"]]
-                              [nil "--smtp-encryption TYPE" "Use TLS to connect to SMTP server"
-                               :validate [#(contains? #{"ssl" "starttls"} %) "Expected 'ssl' or 'starttls'"]]
-                              [nil "--smtp-username USER" "Username to authenticate with on SMTP server"]
-                              [nil "--smtp-password PASSWORD" "Password to authenticate with on SMTP server"]
-                              [nil "--google-client-id CLIENT_ID" "Client ID to use for Google authentication"]
-                              [nil "--google-client-secret CLIENT_SECRET" "Client secret to use for Google authentication"]
-                              [nil "--google-api-key KEY" "API key to use for Google integration"]
-                              [nil "--google-refresh-token TOKEN" "Refresh token to use for delegated Google access (eg App Files)"]
-                              [nil "--facebook-app-id APP_ID" "App ID to use for Facebook authentication"]
-                              [nil "--facebook-app-secret APP_SECRET" "App secret to use for Facebook authentication"]
-                              [nil "--microsoft-app-id APP_ID" "App ID to use for Microsoft authentication"]
-                              [nil "--microsoft-app-secret APP_SECRET" "App secret to use for Microsoft authentication"]
-                              [nil "--microsoft-tenant-id TENANT_ID" "Tenant ID to use for Microsoft authentication"]])
+(def arg-require-equals [#(re-matches #"(.*?)=(.*)" %) "Expected NAME=VALUE"])
+(def arg-update-map-with-equals #(let [[_ k v] (re-matches #"(.*?)=(.*)" %3)]
+                               (update-in %1 [%2] assoc (keyword k) v)))
 
-        options (if-let [config (:config-file options)]
+(def COMMAND-LINE-OPTIONS [[nil "--config-file FILENAME" "Load config from the specified YAML file"]
+                           [nil "--data-dir DIRECTORY" "Store data in the specified directory (default: .anvil-data)"]
+                           [nil "--auto-migrate" "Migrate data tables schema automatically"]
+                           [nil "--ignore-invalid-schema" "Ignore invalid data tables schema and run anyway"]
+                           [nil "--database DB-URL" "Database URL"]
+                           [nil "--data-table-txn-timeout SECONDS" "Data Table Transactions left idle for this long will time out. Default: 10"]
+                           [nil "--db-connection-pool-size SIZE" "The maximum size of the DB connection pool. Default: 2*CPU cores (size of thread pool)"]
+                           [nil "--app DIRECTORY" "Load and run the specified app"]
+                           [nil "--dep-id ID=PACKAGE" "Associate a dependency app ID with its package name"
+                            :validate arg-require-equals :assoc-fn arg-update-map-with-equals]
+                           [nil "--secret NAME=VALUE" "Provide an app secret"
+                            :validate arg-require-equals :assoc-fn arg-update-map-with-equals]
+                           [nil "--encryption-key NAME=VALUE" "Pass an app encryption key"
+                            :validate arg-require-equals :assoc-fn arg-update-map-with-equals]
+                           [nil "--downlink-key KEY" "Authentication key for a separately launched downlink"]
+                           [nil "--downlink-worker-timeout SECONDS" "Timeout for server code running in embedded downlink. Default: 30"]
+                           [nil "--uplink-key KEY" "Key to connect server (privileged) uplinks to this app"]
+                           [nil "--client-uplink-key KEY" "Key to connect client (unprivileged) uplinks to this app"]
+                           [nil "--shell" "Launch an interactive Python shell (connected via the Uplink)"]
+                           [nil "--ip IP" "Listen on the specified IP address"]
+                           [nil "--port PORT" "Serve HTTP requests on the specified port"
+                            :validate [#(re-matches #"[0-9]+" %) "Expected a port number"]]
+                           [nil "--http-redirect-port PORT" "Redirect HTTP requests on the specified port to HTTPS"
+                            :validate [#(re-matches #"[0-9]+" %) "Expected a port number"]]
+                           [nil "--smtp-server-port PORT" "Accept SMTP email on the specified port"
+                            :validate [#(re-matches #"[0-9]+" %) "Expected a port number"]]
+                           [nil "--origin URL" "Set the home URL of this app (eg https://my-app.com)"]
+                           [nil "--disable-tls" "Don't terminate TLS connections, regardless of the origin scheme"]
+                           [nil "--forward-headers-insecure" "When running embedded TLS termination, pass through the X-Forwarded-* headers. Default: false"]
+                           [nil "--add-hsts-headers" "Enable HSTS headers when origin URL uses https. Default: false"]
+                           [nil "--letsencrypt-storage PATH" "Path to a JSON file to store LetsEncrypt certificates (default: <data-dir>/letsencrypt-certs.json)"]
+                           [nil "--letsencrypt-staging" "Use the LetsEncrypt staging server"]
+                           [nil "--manual-cert-file PATH" "Path to an external TLS certificate in PEM format"]
+                           [nil "--manual-cert-key-file PATH" "Path to an external TLS certficate private key file in PEM format"]
+                           [nil "--smtp-host HOST" "Hostname of SMTP server to use for sending email"]
+                           [nil "--smtp-port PORT" "Port to connect to on SMTP server"
+                            :validate [#(re-matches #"[0-9]+" %) "Expected a port number"]]
+                           [nil "--smtp-encryption TYPE" "Use TLS to connect to SMTP server"
+                            :validate [#(contains? #{"ssl" "starttls"} %) "Expected 'ssl' or 'starttls'"]]
+                           [nil "--smtp-username USER" "Username to authenticate with on SMTP server"]
+                           [nil "--smtp-password PASSWORD" "Password to authenticate with on SMTP server"]
+                           [nil "--google-client-id CLIENT_ID" "Client ID to use for Google authentication"]
+                           [nil "--google-client-secret CLIENT_SECRET" "Client secret to use for Google authentication"]
+                           [nil "--google-api-key KEY" "API key to use for Google integration"]
+                           [nil "--google-refresh-token TOKEN" "Refresh token to use for delegated Google access (eg App Files)"]
+                           [nil "--facebook-app-id APP_ID" "App ID to use for Facebook authentication"]
+                           [nil "--facebook-app-secret APP_SECRET" "App secret to use for Facebook authentication"]
+                           [nil "--microsoft-app-id APP_ID" "App ID to use for Microsoft authentication"]
+                           [nil "--microsoft-app-secret APP_SECRET" "App secret to use for Microsoft authentication"]
+                           [nil "--microsoft-tenant-id TENANT_ID" "Tenant ID to use for Microsoft authentication"]])
+
+(defn error-out! [{:keys [summary] :as parsed-opts} error-msg]
+  (println error-msg)
+  (println "Available options:")
+  (println summary)
+  (System/exit 1))
+
+(defn coerce-number [n]
+  (cond (number? n) n
+        (string? n) (Integer/parseInt n)))
+
+
+(defn handle-basic-config [{:keys [options config errors arguments summary] :as parsed-opts}]
+  (logging/setup-logging!)
+
+  (let [options (if-let [config (:config-file options)]
                   (merge (yaml/parse-string (slurp config)) options)
                   options)
-
-        error-out! (fn [error-msg]
-                     (println error-msg)
-                     (println "Available options:")
-                     (println summary)
-                     (System/exit 1))
 
         _ (when (or errors (seq arguments))
             (doseq [e errors] (println e))
@@ -354,69 +154,95 @@
             (println summary)
             (System/exit 1))
 
-        specified-data-dir? (:data-dir options)
-        options (update-in options [:data-dir] #(or % ".anvil-data"))
-
-        options (update-in options [:app] #(or % "."))
-
-        options (update-in options [:uplink-key] #(or % (when (:shell options) (random/base64 32))))
-
-        app-dir (-> (File. ^String (:app options))
+        app-dir (-> (File. ^String (or (:app options) "."))
                     (.getAbsoluteFile) (.toPath) (.normalize) (.toFile))
 
         _ (when-not (.exists (File. app-dir "anvil.yaml"))
-            (error-out! (str (if (= "." (:app options))
+            (error-out! parsed-opts
+                        (str (if (= "." (or (:app options) "."))
                                "The current directory"
                                (format "'%s'" (:app options)))
                              " does not contain an Anvil app.\nSpecify the app to serve with the --app option.")))
 
-        options (assoc options :app (.getName app-dir)
-                               :app-path (.getPath (.getParentFile app-dir)))
-
-        specified-downlink-key? (:downlink-key options)
-        options (update-in options [:downlink-key] #(or % (random/base32 32)))
-
-        options (update-in options [:downlink-worker-timeout] #(or % "30"))
-
-        options (update-in options [:ip] #(or % "0.0.0.0"))
-
-        coerce-number #(cond (number? %) %
-                             (string? %) (Integer/parseInt %))
-
-        options (update-in options [:port] coerce-number)
-
-        options (update-in options [:smtp-port] coerce-number)
-
-        options (update-in options [:smtp-server-port] #(or (coerce-number %) 25))
-
-        options (update-in options [:data-table-txn-timeout] coerce-number)
-
-        options (update-in options [:db-connection-pool-size] coerce-number)
-
-        options (update-in options [:origin] #(or (when %
-                                                    (.replaceAll (str %) "/$" ""))
-                                                  (format "http://localhost:%d" (or (:port options) 3030))))
+        options-or-default (fn [config defaults]
+                             (into config (for [[k v] defaults]
+                                            [k (or (get options k) v)])))
 
 
-        options (update-in options [:letsencrypt-storage] #(or % (str (:data-dir options) "/letsencrypt-certs.json")))
+        number-options-or-default (fn [config defaults]
+                                    (into config (for [[k v] defaults]
+                                                   [k (or (coerce-number (get options k)) v)])))
 
-        options (assoc options :app-smtp-config (when (:smtp-host options)
-                                                  {:default (merge {:host       (:smtp-host options)
-                                                                    :port       (or (:smtp-port options) (if (:smtp-encryption options) 587 25))
-                                                                    :encryption (:smtp-encryption options)}
-                                                                   (when-let [pass (:smtp-password options)]
-                                                                     {:user (or (:smtp-username options) "apikey")
-                                                                      :pass pass}))}))
+        config (-> (or config {})
+                   (options-or-default {:data-dir                ".anvil-data"
+                                        :uplink-key              (when (:shell options) (random/base64 32))
+                                        :client-uplink-key       nil
+                                        :downlink-key            (random/base32 32)
+                                        :downlink-worker-timeout "30"
+                                        :shell                   false
+                                        :ip                      "0.0.0.0"
+                                        :dep-id                  nil
+                                        :secret                  nil
+                                        :encryption-key          nil
 
-        origin-uri (URI. (:origin options))
+                                        :google-client-id        nil
+                                        :google-client-secret    nil
+                                        :google-api-key          nil
+                                        :google-refresh-token    nil
 
-        https-origin? (= (.getScheme origin-uri) "https")
+                                        :facebook-app-id         nil
+                                        :facebook-app-secret     nil
+                                        :microsoft-app-id        nil
+                                        :microsoft-app-secret    nil
+                                        :microsoft-tenant-id     nil})
 
-        options (assoc options :origin-uri origin-uri
-                               :https-origin? https-origin?)
+                   (number-options-or-default {:port                    nil
+                                               :smtp-server-port        25
+                                               :data-table-txn-timeout  nil
+                                               :db-connection-pool-size nil
+                                               :http-redirect-port nil})
+                   (assoc
+                     :app-dir app-dir
+                     :app-path (.getPath (.getParentFile app-dir))
+                     :origin (or (when (:origin options)
+                                   (.replaceAll (str (:origin options)) "/$" ""))
+                                 (format "http://localhost:%s" (or (:port options) 3030)))
+                     :managed-downlink? (not (:downlink-key options))
+                     :https-origin? (.startsWith (str (:origin options)) "https://")))
+
+        config (-> config
+                   (options-or-default {:letsencrypt-storage (str (:data-dir config) "/letsencrypt-certs.json")})
+                   (assoc :app-smtp-config (when (:smtp-host options)
+                                             {:default (merge {:host       (:smtp-host options)
+                                                               :port       (or (coerce-number (:smtp-port options))
+                                                                               (if (:smtp-encryption options) 587 25))
+                                                               :encryption (:smtp-encryption options)}
+                                                              (when-let [pass (:smtp-password options)]
+                                                                {:user (or (:smtp-username options) "apikey")
+                                                                 :pass pass}))})
+                          :origin-uri (URI. (:origin config))))
+
+        data-dir-file (File. ^String (:data-dir config))]
+
+    (when-not (.isDirectory data-dir-file)
+      (cond
+        ;; If it was specified directly, don't try to create it
+        (:data-dir options)
+        (error-out! parsed-opts (format "data-dir '%s' is not a directory" (:data-dir config)))
+
+        (.exists data-dir-file)
+        (error-out! parsed-opts (format "data-dir '%s' already exists but is not a directory" (:data-dir config)))
+
+        :else
+        (.mkdir data-dir-file)))
+
+    (assoc parsed-opts :options options :config config)))
+
+(defn with-reverse-proxy-if-configured [{:keys [options config] :as parsed-opts}]
+  (let [origin-uri (URI. (:origin config))
 
         use-reverse-proxy? (and (not (:disable-tls options))
-                                https-origin?)
+                                (:https-origin? config))
 
         manual-tls? (and use-reverse-proxy?
                          (:manual-cert-file options)
@@ -427,12 +253,13 @@
 
         http-port (if use-reverse-proxy?
                     (get-available-port)
-                    (or (:port options)
-                        (get-port (:origin options))
+                    (or (:port config)
+                        (get-port (:origin config))
                         80))
 
         https-port (when use-reverse-proxy?
-                     (let [origin-port (get-port (:origin options))]
+                     (let [origin-port (.getPort origin-uri)
+                           origin-port (when (not= -1 origin-port) origin-port)]
                        (cond manual-tls?
                              (or (:port options) origin-port)
 
@@ -441,27 +268,11 @@
                              (or (:port options) origin-port 443)
 
                              letsencrypt?
-                             (throw (Exception. "App origin must use port 443 when using automatic certificate generation")))))
+                             (error-out! parsed-opts "App origin must use port 443 when using automatic certificate generation"))))
 
-        options (update-in options [:database] #(or % (postgres/launch-bundled-db! (File. ^String (:data-dir options)) http-port)))
+        config (assoc config :http-port http-port :use-reverse-proxy? use-reverse-proxy?)
 
         traefik-dashboard-port (when use-reverse-proxy? (get-available-port))]
-
-
-    (when-not specified-data-dir?
-      (let [f (File. ".anvil-data")]
-        (when-not (.exists f)
-          (.mkdir f))))
-
-    (try+
-      (conf/set-config! options)
-      (catch ::conf/config-error err
-        (println (format "Incomplete configuration:\n%s" (::conf/config-error err)))
-        (println "Available options:")
-        (println summary)
-        (System/exit 1)))
-
-    (logging/setup-logging!)
 
     (when use-reverse-proxy?
       (println (str "Launching HTTPS Server on port " https-port))
@@ -471,8 +282,8 @@
                                                   ;; Common config
                                                   {:traefik-dir       (str (.getAbsolutePath (File. ^String (:data-dir options))) "/traefik")
                                                    :forward-to        (str "http://localhost:" http-port)
-                                                   :listen-ip         (:ip options)
-                                                   :http-listen-port  (:http-redirect-port options)
+                                                   :listen-ip         (:ip config)
+                                                   :http-listen-port  (:http-redirect-port config)
                                                    :https-listen-port https-port
                                                    :forward-headers-insecure  (:forward-headers-insecure options)
 
@@ -490,88 +301,123 @@
                                                      :manual-cert-key-file (:manual-cert-key-file options)})))]
 
         #_(println traefik-exited)
-        (future (let [exit-code @traefik-exited]
-                  (println "Reverse proxy exited with code" exit-code)
-                  (System/exit exit-code)))))
+        (worker-pool/spawn-thread! "reverse-proxy-waiter"
+          (let [exit-code @traefik-exited]
+            (println "Reverse proxy exited with code" exit-code)
+            (System/exit exit-code)))))
 
-    ;; Do we need to set up or migrate the DB?
-    (try+
-      (migrator-core/migrate! runtime-conf/db [:base :runtime] nil)
-      (catch ::migrator-core/migration-failure e
-        (println "Database migration failed:" (name (::migrator-core/migration-failure e)))
-        (System/exit 1)))
+    (assoc parsed-opts :config config)))
 
+(defn with-bundled-postgres-if-configured
+  ([parsed-opts] (with-bundled-postgres-if-configured parsed-opts (fn [pg-config parsed-opts] pg-config)))
+  ([{:keys [config options] :as parsed-opts} init-config]
+   ;; Use *after* (with-reverse-proxy-if-configured), because we use the :http-port for exclusivity
+   (assoc-in parsed-opts [:config :db-info]
+             (if-let [conn-str (:database options)]
+               {:managed? false :connection-string conn-str}
+               (postgres/launch-bundled-db! (File. ^String (:data-dir config))
+                                            (:http-port config)
+                                            #(init-config % parsed-opts))))))
 
+(defn launch-runtime-server! [{:keys [config options] :as parsed-opts}]
+  (try+
+    (conf/set-config! config)
+    (catch ::conf/config-error err
+      (error-out! parsed-opts (format "Incomplete configuration:\n%s" (::conf/config-error err)))))
 
-    ;; TODO: Check Same-Site cookie defaults. May need to be set to :none rather than :strict.
-    (let [app (load-main-app (:auto-migrate options) (:ignore-invalid-schema options))
+  ; Now that we've configured the data directory, we can initialise logging errors to file.
+  (logging/setup-file-logging!)
 
-          ring-config (-> site-defaults
-                          (assoc-in [:security :anti-forgery] false)
-                          (assoc-in [:session :cookie-attrs :secure] https-origin?)
-                          (assoc-in [:security :hsts] (and https-origin? (get options :add-hsts-headers false)))
-                          (assoc-in [:security :frame-options] (if (get-in app [:content :allow_embedding])
-                                                                 false ;; Don't set the X-Frame-Options header - allow embedding
-                                                                 :deny)))
+  ;; Do we need to set up or migrate the DB?
+  (try+
+    (migrator-core/migrate! runtime-conf/db [:base :data-tables :runtime] nil)
+    (catch ::migrator-core/migration-failure e
+      (println "Database migration failed:" (name (::migrator-core/migration-failure e)))
+      (System/exit 1)))
 
-          handler (wrap-defaults
+  (let [app (core/load-main-app (:auto-migrate options) (:ignore-invalid-schema options))
+
+        {:keys [origin-uri https-origin?]} config
+
+        ring-config (-> site-defaults
+                        (assoc-in [:security :anti-forgery] false)
+                        (assoc-in [:session :cookie-attrs :secure] https-origin?)
+                        (assoc-in [:security :hsts] (and https-origin? (get options :add-hsts-headers false)))
+                        (assoc-in [:security :frame-options] (if (get-in app [:content :allow_embedding])
+                                                               false ;; Don't set the X-Frame-Options header - allow embedding
+                                                               :deny))
+                        (assoc-in [:responses :absolute-redirects] false))
+
+        handler (wrap-defaults
+                  (absolute-redirects/wrap-absolute-redirects
                     (ring-json/wrap-json-response
-                      (wrap-provide-source
-                        (wrap-with-origin-scheme-and-port
-                          #'app
+                      (core/wrap-provide-source
+                        (core/wrap-with-origin-scheme-and-port
+                          #'core/http-routes
                           (.getScheme origin-uri)
-                          (or (get-port (:origin options)) (if https-origin? 443 80)))))
-                    ring-config)]
-      (anvil-server/run-server (:ip options) http-port
-                               (wrap-retrieve-original-remote-address ;; We'll deal with X-Forwarded-For headers ourselves.
-                                 (if (or use-reverse-proxy? (:disable-tls options) (:forward-headers-insecure options))
-                                   ;; Only trust X-Forwarded-For headers if behind a proxy
-                                   (util/wrap-correct-forwarded-remote-addr handler)
-                                   handler))))
+                          (or (get-port (:origin config)) (if https-origin? 443 80))))))
+                  ring-config)]
+    (anvil-server/run-server (:ip config) (:http-port config)
+                             (core/wrap-retrieve-original-remote-address ;; We'll deal with X-Forwarded-For headers ourselves.
+                               (if (or (:use-reverse-proxy? config)
+                                       (:disable-tls options) (:forward-headers-insecure options))
+                                 ;; Only trust X-Forwarded-For headers if behind a proxy
+                                 (util/wrap-correct-forwarded-remote-addr handler)
+                                 handler))))
 
-    (log/info "App URL: " (:origin options))
+  (email-server/setup-failsafe-timer!)
+  (try
+    (doto
+      (SMTPServer. email-server/smtp-listener-factory)
+      (.setPort (:smtp-server-port config))
+      (.start))
+    (log/info "SMTP Server running on port" (:smtp-server-port config))
+    (catch Exception e
+      (log/error "Failed to start mail server on port" (:smtp-server-port config)
+                 "- this application will not be able to receive email: " (str (.getMessage e)))))
 
-    ;; If they didn't specify a downlink key, we start our own!
-    (when-not specified-downlink-key?
-      (dispatch/launch-downlink! (:downlink-key options) "localhost" http-port (:downlink-worker-timeout options)))
+  (clj-logging-config.log4j/set-logger! "org.subethamail.smtp" :level :off)
 
-    (when (:shell options)
-      (Thread/sleep 1000)
-      (launch-shell! (:uplink-key options) "localhost" http-port))
+  (tables-util/start-transaction-tidy-timer)
 
-    (email-server/setup-failsafe-timer!)
-    (try
-      (doto
-        (SMTPServer. email-server/smtp-listener-factory)
-        (.setPort (:smtp-server-port options))
-        (.start))
-      (log/info "SMTP Server running on port" (:smtp-server-port options))
-      (catch Exception e
-        (log/error "Failed to start mail server on port" (:smtp-server-port options)
-                   "- this application will not be able to receive email: " (str (.getMessage e)))))
-    
-    (clj-logging-config.log4j/set-logger! "org.subethamail.smtp" :level :off)
+  (future
+    (while true
+      (try
+        (runtime-sessions/cleanup-sessions!)
+        (catch Exception e
+          (util/report-uncaught-exception "runtime-util/cleanup-sessions!" e)))
+      (Thread/sleep (* 5 60 1000))))
 
-
-
-    (tables-util/start-transaction-tidy-timer)
-
-    (future
-      (while true
+  (future
+    (Thread/sleep 5000)
+    (while true
+      (if (dispatch/downlink-connected?)
         (try
-          (runtime-sessions/cleanup-sessions!)
+          (while (cron/launch-cron-jobs!))
           (catch Exception e
-            (util/report-uncaught-exception "runtime-util/cleanup-sessions!" e)))
-        (Thread/sleep (* 5 60 1000))))
+            (util/report-uncaught-exception "launching scheduled tasks" e)))
+        (log/info "No downlink connected; postponing check for scheduled tasks"))
+      (Thread/sleep 60000)))
+  parsed-opts)
 
-    (future
-      (Thread/sleep 5000)
-      (while true
-        (if (dispatch/downlink-connected?)
-          (try
-            (while (cron/launch-cron-jobs!))
-            (catch Exception e
-              (util/report-uncaught-exception "launching scheduled tasks" e)))
-          (log/info "No downlink connected; postponing check for scheduled tasks"))
-        (Thread/sleep 60000)))
+(defn launch-bundled-downlink-if-configured! [{:keys [config] :as parsed-opts}]
+  (when (:managed-downlink? config)
+    (dispatch/launch-downlink! (:downlink-key config) "localhost" (:http-port config) (:downlink-worker-timeout config))))
+
+(defn -main [& args]
+  (let [parsed-opts (-> (cli/parse-opts args COMMAND-LINE-OPTIONS)
+                        (handle-basic-config)
+                        (with-reverse-proxy-if-configured))
+        {:keys [config] :as parsed-opts} (with-bundled-postgres-if-configured parsed-opts)]
+
+    (launch-runtime-server! parsed-opts)
+
+    (launch-bundled-downlink-if-configured! parsed-opts)
+
+    (log/info "App URL: " (:origin config))
+
+    (when (:shell config)
+      (Thread/sleep 1000)
+      (launch-shell! (:uplink-key config) "localhost" (:http-port config)))
+
     nil))

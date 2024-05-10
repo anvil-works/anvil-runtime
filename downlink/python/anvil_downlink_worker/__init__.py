@@ -1,5 +1,5 @@
 from __future__ import absolute_import
-import ast, sys, imp, importlib
+import ast, sys, imp, importlib, time
 
 # The downlink may need to coexist with the Uplink (for example in the standalone App Server).
 # In these deployments, the downlink's version of the 'anvil' module is shipped as
@@ -79,6 +79,19 @@ class SimpleLoader(object):
         return mod
 
 
+def mk_script_fn(script_name, script_code):
+    def run_script(*args):
+        if not all(type(arg) is str for arg in args):
+            raise ValueError("Only string arguments can be passed to scripts")
+        old_argv = sys.argv
+        sys.argv = args
+        try:
+            do_exec(compile(script_code, script_name + ".py", 'exec'), {"__name__": "__main__"})
+        finally:
+            sys.argv = old_argv
+    return run_script
+
+
 class AppModuleFinder(object):
 
     def __init__(self):
@@ -149,11 +162,15 @@ class AppModuleFinder(object):
     def app_is_loaded(self):
         return self._app is not None
 
+    def get_scripts(self):
+        return [(s['name'], s['code']) for s in self._app.get("scripts", [])]
+
 
 module_finder = AppModuleFinder()
 sys.meta_path.append(module_finder)
 
 modules_to_import = []
+
 
 def load_app(app):
     global modules_to_import
@@ -179,15 +196,24 @@ def load_app_modules():
     """Call from _threaded_server when the environment is ready to import all server modules in this app"""
     global _initial_import_done
     if _initial_import_done: return
+
+    start_import = time.time()
     try:
         for n in modules_to_import:
             importlib.import_module(n)
     except ErrorLoadingUserCode as e:
         raise e.exc
+
+    for name, code in module_finder.get_scripts():
+        anvil.server.background_task("script:"+name)(mk_script_fn(name, code))
+
     _initial_import_done = True
+    end_import = time.time()
+    return int((end_import - start_import) * 1000)
 
 
 repl_scopes = {}
+
 
 def run_repl(code, scope):
     module_ast = ast.parse(code, "<input>", "exec")

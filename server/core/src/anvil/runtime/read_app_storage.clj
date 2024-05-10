@@ -235,10 +235,11 @@ If you want to get to the basics as quickly as possible, each section of this do
       yaml tree)))
 
 
-(defn- add-extra-files-to-yaml [yaml tm path top-level? ignore-py-and-yaml?]
-  (reduce (fn [yaml [name subtree]]
+(defn- add-extra-files-to-yaml [yaml tm path top-level? ignore-py? ignore-yaml? ignore-one-level-only?]
+  (reduce (fn [yaml [^String name subtree]]
             (cond
-              (or (and ignore-py-and-yaml? (re-matches #".*\.(py|yaml)" name))
+              (or (and ignore-yaml? (.endsWith name ".yaml"))
+                  (and ignore-py? (.endsWith name ".py"))
                   (and top-level? (#{"anvil.yaml" ".anvil_editor.yaml" "theme" "CONFLICTS.yaml" "anvil-server-requirements.txt"} name))
                   (and (= path [:extra_files "server_code"]) (= name "requirements.txt"))
                   (and top-level? (bytes? subtree)
@@ -248,9 +249,13 @@ If you want to get to the basics as quickly as possible, each section of this do
 
               (map? subtree)
               (add-extra-files-to-yaml yaml subtree (concat path [name]) false
-                                       (or ignore-py-and-yaml?
+                                       (or (and ignore-py? (not ignore-one-level-only?))
                                            (and top-level?
-                                                (#{"server_code" "client_code" "server_modules" "modules" "forms"} name))))
+                                                (#{"server_code" "client_code" "server_modules" "modules" "forms" "scripts"} name)))
+                                       (or (and ignore-yaml? (not ignore-one-level-only?))
+                                           (and top-level?
+                                                (#{"client_code" "forms"} name)))
+                                       (and top-level? (#{"scripts"} name)))
 
               (bytes? subtree)
               (assoc-in yaml (concat path [name]) (Base64/encodeBase64String ^bytes subtree))
@@ -282,7 +287,7 @@ If you want to get to the basics as quickly as possible, each section of this do
                                     :let [[_ form-name] (re-matches #"(.+)\.py" src-name)
                                           ^bytes yaml (when form-name (get-in tm ["forms" (str form-name ".yaml")]))]
                                     :when yaml]
-                                (assoc (yaml/parse-string (String. yaml)) :class_name form-name :code (String. ^bytes @src)
+                                (assoc (yaml/parse-string (String. yaml)) :class_name form-name :code (String. ^bytes (deref src))
                                                                           :id (get-id :forms form-name)))
                               (sort-by :class_name))
 
@@ -291,16 +296,24 @@ If you want to get to the basics as quickly as possible, each section of this do
                               (for [[src-name, src] (get tm "modules")
                                     :let [[_ mod-name] (re-matches #"(.+)\.py" src-name)]
                                     :when mod-name]
-                                {:name mod-name, :code (String. ^bytes @src)
-                                 :id (get-id :modules mod-name)})
+                                {:name mod-name, :code (String. ^bytes (deref src))
+                                 :id   (get-id :modules mod-name)})
                               (sort-by :name))
 
                             :server_modules
                             (->> (for [[src-name, src] (get tm "server_modules")
                                        :let [[_ mod-name] (re-matches #"(.+)\.py" src-name)]
                                        :when mod-name]
-                                   {:name mod-name, :code (String. ^bytes @src)
-                                    :id (get-id :server_modules mod-name)})
+                                   {:name mod-name, :code (String. ^bytes (deref src))
+                                    :id   (get-id :server_modules mod-name)})
+                                 (sort-by :name))
+
+                            :scripts
+                            (->> (for [[src-name, src] (get tm "scripts")
+                                       :let [[_ mod-name] (re-matches #"(.+)\.py" src-name)]
+                                       :when mod-name]
+                                   {:name mod-name, :code (String. ^bytes (deref src))
+                                    :id   (get-id :scripts mod-name)})
                                  (sort-by :name))}
 
                            (if (get tm "theme")
@@ -326,13 +339,13 @@ If you want to get to the basics as quickly as possible, each section of this do
                          (update-in [:runtime_options] (fn [opts]
                                                          (if-let [reqs (or (get-in tm ["server_code" "requirements.txt"])
                                                                            (get-in tm ["anvil-server-requirements.txt"]))]
-                                                           (assoc-in opts [:server_spec :requirements] (String. reqs))
+                                                           (assoc-in opts [:server_spec :requirements] (String. ^bytes reqs))
                                                            opts)))
                          (add-subtree-to-yaml [] (get tm "client_code") true get-id)
                          (add-subtree-to-yaml [] (get tm "server_code") false get-id))]
     (if ignore-extra-files?
       core-app-files
-      (add-extra-files-to-yaml core-app-files tm [:extra_files] true false))))
+      (add-extra-files-to-yaml core-app-files tm [:extra_files] true false false false))))
 
 ; Directory can be a file URL or a JAR URL
 (defn get-app-yaml-from-resource-directory

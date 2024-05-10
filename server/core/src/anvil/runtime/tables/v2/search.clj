@@ -190,15 +190,6 @@
 
     built-expr))
 
-(defn parse-query-for-view [tables table-cap args kwargs]
-  (let [[_ _ {:keys [id cols restrict]}] (types/unwrap-capability table-cap ["_" "t" :ANY])
-        allowed-cols (set (or cols (keys (get-in tables [id :columns]))))
-        query (parse-query tables id allowed-cols args kwargs)]
-    (if restrict
-      {:op "AND"
-       :terms [query restrict]}
-      query)))
-
 (defn both-queries [q1 q2]
   {:op "AND"
    :terms [q1 q2]})

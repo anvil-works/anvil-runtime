@@ -5,9 +5,6 @@ import * as PyDefUtils from "../PyDefUtils";
 import {
     s_raise_event,
     s_remove_from_parent,
-    s_x_anvil_propagate_page_added,
-    s_x_anvil_propagate_page_removed,
-    s_x_anvil_propagate_page_shown,
 } from "../runner/py-util";
 import { raiseEventOrSuspend } from "./Component";
 import { Container, validateChild } from "./Container";
@@ -18,31 +15,6 @@ module.exports = function(pyModule) {
         base: [pyModule["ClassicComponent"], Container],
         events: PyDefUtils.assembleGroupEvents("ClassicContainer", ["universal"]),
         locals($loc) {
-            $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicComponent"], (self) => {
-                // we override the addedToPage here our children don't know about us yet
-                const superAddedToPage = self._anvil.addedToPage;
-                const superRemoveFromPage = self._anvil.removedFromPage;
-                const superShownOnPage = self._anvil.shownOnPage;
-
-                Object.assign(self._anvil, {
-                    addedToPage() {
-                        const beforeAdd = self._anvil.pageEvents.beforeAdd || (() => {});
-                        const fns = self._anvil.components.map(({component}) => () => raiseEventOrSuspend(component, s_x_anvil_propagate_page_added));
-                        return Sk.misceval.chain(null, beforeAdd, ...fns, superAddedToPage);
-                    },
-                    removedFromPage() {
-                        const fns = self._anvil.components.map(({component}) => () => raiseEventOrSuspend(component, s_x_anvil_propagate_page_removed));
-                        return Sk.misceval.chain(superRemoveFromPage(), ...fns);
-                    },
-                    shownOnPage() {
-                        if (self._anvil.onPage) {
-                            const fns = self._anvil.components.map(({component}) => () => raiseEventOrSuspend(component, s_x_anvil_propagate_page_shown));
-                            return Sk.misceval.chain(superShownOnPage(), ...fns);
-                        }
-                    }
-                })
-            });
-    
             /*!defMethod(_,component)!2*/ "Add a component to this container."
             $loc["add_component"] = new Sk.builtin.func(function(self, pyComponent, jsLayoutProperties/* hack because Skulpt doesn't like **args params*/) {
                 return doAddComponent(self, pyComponent, jsLayoutProperties);
@@ -107,7 +79,7 @@ module.exports = function(pyModule) {
     // private methods since they're directly on the class - python can't introspect this.
     pyModule["ClassicContainer"]._doAddComponent = doAddComponent;
     
-    function doAddComponent(self, pyComponent, jsLayoutProperties = {}, { detachDom, afterRemoval, setVisibility } = {}) {
+    function doAddComponent(self, pyComponent, jsLayoutProperties = {}, { detachDom, afterRemoval, setVisibility, isMounted=true } = {}) {
         const prefix = getCssPrefix();
         /**
          * subclasses should:
@@ -134,7 +106,12 @@ module.exports = function(pyModule) {
             components.push(c);
         }
 
-        pyComponent.anvilComponent$setParent(self._anvil.overrideParentObj || self, {
+        if (pyComponent._anvil?.componentSpec && !pyComponent._anvil.metadata.invisible) {
+            // We're in the designer, and things will break if we don't have this set
+            self._anvil.childLayoutProps[pyComponent._anvil.componentSpec.name] = jsLayoutProperties;
+        }
+
+        return pyComponent.anvilComponent$setParent(self._anvil.overrideParentObj || self, {
             onRemove: () => {
                 if (detachDom) {
                     detachDom();
@@ -152,42 +129,11 @@ module.exports = function(pyModule) {
                 if (self._anvil.components.length === 0) {
                     self._anvil.domNode.classList.remove(prefix + "has-components");
                 }
-                if (self._anvil.onPage) {
-                    return Sk.misceval.chain(raiseEventOrSuspend(pyComponent, s_x_anvil_propagate_page_removed), () => afterRemoval?.());
-                } else {
-                    return afterRemoval?.();
-                }
+                return afterRemoval?.();
             },
-            setVisibility: (visible) => {
-                if (setVisibility) {
-                    setVisibility(visible);
-                } else {
-                    let elt = pyComponent.anvil$hooks.domElement?.parentElement;
-                    const domNode = (self._anvil.overrideParentObj ?? self)._anvil.domNode;
-                    const prefix = getCssPrefix();
-                    while (elt && elt !== domNode) {
-                        if (elt.classList.contains(prefix + "hide-with-component")) {
-                            elt.classList.toggle(prefix + "visible-false", !visible);
-                            break;
-                        }
-                        elt = elt.parentElement;
-                    }
-                }
-            }
+            setVisibility,
+            isMounted,
         });
-
-        if (pyComponent._anvil?.componentSpec && !pyComponent._anvil.metadata.invisible) {
-            // We're in the designer, and things will break if we don't have this set
-            self._anvil.childLayoutProps[pyComponent._anvil.componentSpec.name] = jsLayoutProperties;
-        }
-
-        if (self._anvil.onPage && !self._anvil.delayAddingChildrenToPage) {
-            // a subclass might set this flag so that the show event fires correctly
-            // if a subclass does set this flag then the subclass is responsible for calling pyComponent._anvil.addedToPage();
-            return Sk.misceval.chain(raiseEventOrSuspend(pyComponent, s_x_anvil_propagate_page_added), () => Sk.builtin.none.none$);
-        } else {
-            return Sk.builtin.none.none$;
-        }
     }
 };
 /*!defClass(anvil,Container,Component)!*/ 

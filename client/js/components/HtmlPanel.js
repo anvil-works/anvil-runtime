@@ -1,11 +1,12 @@
 "use strict";
 
-import {pyCall, pyDict, pyFunc, pyMappingProxy, pyNone, pyProperty, pyStr, toPy} from "@Sk";
+import {pyCall, pyDict, pyFunc, pyMappingProxy, pyNone, pyProperty, pyStr, remapToJsOrWrap, toPy} from "@Sk";
 import { s_add_component, s_clear } from "../runner/py-util";
 import { Slot } from "../runner/python-objects";
 import { isInvisibleComponent } from "./helpers";
 import { validateChild } from "./Container";
 import { getCssPrefix } from "@runtime/runner/legacy-features";
+import { warn } from "@runtime/runner/warnings";
 
 var PyDefUtils = require("PyDefUtils");
 
@@ -233,7 +234,7 @@ module.exports = (pyModule) => {
                         .then((r) => {
                             let jsR = undefined;
                             try {
-                                jsR = PyDefUtils.remapToJsOrWrap(r);
+                                jsR = remapToJsOrWrap(r);
                             } catch (e) {
                                 // ignore - throw below
                             }
@@ -252,9 +253,8 @@ module.exports = (pyModule) => {
 
 
                 self._anvil.pageEvents = {
-                    beforeAdd() {
+                    add() {
                         return loadScripts(self);
-
                     }
                 };
 
@@ -395,7 +395,7 @@ module.exports = (pyModule) => {
                 const s_copy = slotRecord.carrierElement = slotElt.cloneNode(true);
                 s_copy.removeAttribute("anvil-slot-repeat");
                 s_copy.setAttribute("anvil-slot-repeated", slotName);
-                const dropZone = s_copy.querySelector("[anvil-slot]");
+                const dropZone = s_copy.querySelector("[anvil-slot],[anvil-component-here]");
                 if (dropZone) {
                     dropZone.appendChild(celt);
                     if (ANVIL_IN_DESIGNER) {
@@ -416,7 +416,11 @@ module.exports = (pyModule) => {
                 };
                 let visibleDisplayState = s_copy.style.display;
                 setVisibility = (v) => {
-                    s_copy.style.display = v ? visibleDisplayState : "none";
+                    if (ANVIL_IN_DESIGNER) {
+                        s_copy.classList.toggle(getCssPrefix() + "visible-false", !v);
+                    } else {
+                        s_copy.style.display = v ? visibleDisplayState : "none";
+                    }
                 };
             } else {
                 if (insertingBeforeElement) {
@@ -526,7 +530,7 @@ module.exports = (pyModule) => {
                 const p = new Promise((resolve) => {
                     newScript.onload = resolve;
                     newScript.onerror = () => {
-                        Sk.builtin.print([new Sk.builtin.str(`Warning: failed to load script with src: ${oldScript.src}`)])
+                        warn(`Warning: failed to load script with src: ${oldScript.src}`);
                         console.error(`error loading ${oldScript.src}`);
                         resolve();
                     };

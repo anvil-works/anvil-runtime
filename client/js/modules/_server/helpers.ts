@@ -1,5 +1,5 @@
 import { isTrue, pyCall, pyIsInstance, pyStr, pyTypeError } from "@Sk";
-import { anvilServerMod, datetimeMod, tzMod } from "@runtime/utils";
+import { anvilServerMod, datetimeMod, tzMod } from "@runtime/runner/py-util";
 import type { NonJson, Path } from "./types";
 
 export interface DTHelper {

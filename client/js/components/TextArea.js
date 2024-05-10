@@ -46,6 +46,7 @@ module.exports = (pyModule) => {
                 multiline: true,
                 suggested: true,
                 inlineEditElement: 'outer',
+                group: undefined,
             },
             height: {
                 set(s, e, v) {
@@ -69,6 +70,7 @@ module.exports = (pyModule) => {
                 set(self, e, v) {
                     e.attr("placeholder", Sk.builtin.checkNone(v) ? "" : v.toString());
                 },
+                group: undefined,
             },
             auto_expand: /*!componentProp(TextArea)!1*/ {
                 name: "auto_expand",

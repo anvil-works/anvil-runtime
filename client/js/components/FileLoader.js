@@ -53,12 +53,15 @@ module.exports = (pyModule) => {
             text: {
                 dataBindingProp: true,
                 defaultValue: new Sk.builtin.str("Upload"),
+                group: undefined,
+                inlineEditElement: "text",
             },
             align: {
                 defaultValue: new Sk.builtin.str("center"),
             },
             icon: {
                 defaultValue: new Sk.builtin.str("fa:upload"),
+                group: undefined,
             },
             bold: {
                 set(s, e, v) {
@@ -239,7 +242,23 @@ module.exports = (pyModule) => {
                     // todo this doesn't work
                     .on("focus", (e) => PyDefUtils.raiseEventAsync({}, self, "focus"))
                     .on("blur", (e) => PyDefUtils.raiseEventAsync({}, self, "lost_focus"));
+
+                if (ANVIL_IN_DESIGNER) {
+                    Object.defineProperty(self._anvil, "inlineEditing", {
+                        set(v) {
+                            // see CheckBox.js
+                            self._anvil.elements.input.type = v ? "hidden" : "checkbox";
+                        }
+                    });
+                }
             });
+
+            /*!defMethod(_)!2*/ "Open the file selector from code, this should be called within a click event handler for another component";
+            $loc["open_file_selector"] = new Sk.builtin.func((self) => {
+                self._anvil.elements.input.click();
+                return Sk.builtin.none.none$;
+            });
+
 
             /*!defMethod(_)!2*/ "Set the keyboard focus to this FileLoader"
             $loc["focus"] = new Sk.builtin.func(function focus(self) {

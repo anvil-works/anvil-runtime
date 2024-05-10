@@ -17,7 +17,7 @@
            (java.io ByteArrayOutputStream InputStream)
            (java.sql Blob ResultSet Array Connection)))
 
-(clj-logging-config.log4j/set-logger! :level :info)
+;;(clj-logging-config.log4j/set-logger! :level :trace)
 
 ;; Table updates are a finicky process. Before hitting the database, we need to:
 ;; * Type-check and reduce all the provided values to something that can go in the DB
@@ -252,22 +252,28 @@
 
         (if-not RESTRICT-SQL
           ;; Updating normally: Create virtual table, update from it
-          (let [{:keys [updated]}
+          (let [{:keys [updated old_bytes new_bytes]}
                 (-> (jdbc/query db-c ["WITH new_data AS (SELECT * FROM jsonb_to_recordset(?::jsonb) AS x(id bigint, data jsonb)),
-                                            updated_rows AS (UPDATE app_storage_data SET data=app_storage_data.data||nd.data
-                                                                  FROM new_data AS nd
-                                                                  WHERE table_id=? AND app_storage_data.id=nd.id
-                                                                  RETURNING TRUE)
-                                               SELECT (SELECT COUNT(*) FROM updated_rows) AS updated"
-                                      data-json table-id])
+                                            updates AS (SELECT table_id, nd.id, nd.data AS new_data, od.data AS old_data FROM app_storage_data AS od, new_data AS nd
+                                                          WHERE table_id=? AND od.id = nd.id FOR UPDATE),
+                                            updated_rows AS (UPDATE app_storage_data SET data=app_storage_data.data||nd.new_data
+                                                                  FROM updates AS nd
+                                                                  WHERE app_storage_data.table_id=? AND app_storage_data.id=nd.id
+                                                                  RETURNING octet_length(app_storage_data.data::text) AS new_bytes, (SELECT octet_length(old_data::text) FROM updates AS old WHERE table_id=? AND old.id=app_storage_data.id) AS old_bytes)
+                                               SELECT COUNT(*) AS updated, SUM(new_bytes) AS new_bytes, SUM(old_bytes) AS old_bytes FROM updated_rows"
+                                      data-json table-id table-id table-id])
                     (first))]
+            (log/trace "Updated" updated old_bytes new_bytes)
             (when (< updated (count rows))
-              (rollback! (util-v2/general-tables-error "This row has been deleted" "anvil.tables.RowDeleted"))))
+              (rollback! (util-v2/general-tables-error "This row has been deleted" "anvil.tables.RowDeleted")))
+            (quota/decrement-c! quota-ctx db-c :db-bytes (- old_bytes))
+            (quota/decrement-if-possible-c! quota-ctx db-c :db-bytes new_bytes)
+            (log/debug "v2 Updated " (- old_bytes) new_bytes "bytes in table" table-id))
 
           ;; Updating a view with restrictions: it's a little bit complicated. We need to join the virtual table
           ;; of new results back against the input data to get the final new data, then compute the view, then update that
-          (let [{:keys [found matched updated]}
-                (-> (jdbc/query db-c (concat [(str "WITH joined_data AS (SELECT o.data||x.data as data, x.id
+          (let [{:keys [found matched updated old_bytes new_bytes]}
+                (-> (jdbc/query db-c (concat [(str "WITH joined_data AS (SELECT o.data as old_data, o.data||x.data as data, x.id
                                                                       FROM jsonb_to_recordset(?::jsonb) AS x(id bigint, data jsonb)
                                                                            JOIN app_storage_data AS o ON (o.id = x.id)
                                                                       WHERE o.table_id = ?),
@@ -278,7 +284,9 @@
                                                                             RETURNING TRUE)
                                                 SELECT (SELECT COUNT(*) FROM joined_data) AS found,
                                                        (SELECT COUNT(*) FROM checked_data) AS matched,
-                                                       (SELECT COUNT(*) FROM updated_rows) AS updated")
+                                                       (SELECT COUNT(*) FROM updated_rows) AS updated,
+                                                       (SELECT SUM(octet_length(old_data::text)) FROM joined_data) AS old_bytes,
+                                                       (SELECT SUM(octet_length(data::text)) FROM joined_data) AS new_bytes")
                                               data-json table-id] restrict-args [table-id]))
                     (first))]
             (when (< found (count rows))
@@ -287,7 +295,10 @@
             (when (< matched (count rows))
               (rollback! (util-v2/general-tables-error "Data does not match view constraints")))
             (when (not= updated matched)
-              (rollback! (util-v2/general-tables-error "Unexpected conflict: Row was deleted mid-update")))))
+              (rollback! (util-v2/general-tables-error "Unexpected conflict: Row was deleted mid-update")))
+            (quota/decrement-c! quota-ctx db-c :db-bytes (- old_bytes))
+            (quota/decrement-if-possible-c! quota-ctx db-c :db-bytes new_bytes)
+            (log/debug "v2 Updated " (- old_bytes) new_bytes "bytes in table" table-id)))
 
         nil))))
 
@@ -329,10 +340,12 @@
             new-rows (jdbc/query db-c (concat [(str "WITH new_data AS (SELECT value AS data, ordinality FROM jsonb_array_elements(?::jsonb) WITH ORDINALITY)
                                                      INSERT INTO app_storage_data (table_id,data)
                                                      (SELECT ? as table_id, data FROM new_data " (when RESTRICT-SQL (str "WHERE " RESTRICT-SQL)) " ORDER BY ordinality)
-                                                     RETURNING id")
+                                                     RETURNING id, octet_length(app_storage_data.data::text) AS n_bytes")
                                                (util/write-json-str (map :reduced-values rows)) table-id] restrict-args))
             _ (when-not (= (count new-rows) (count rows))
                 (throw+ (util-v2/general-tables-error "Data does not match view constraints")))
+            _ (log/debug "v2 Insert rows to table" table-id (map :n_bytes new-rows) "bytes")
+            _ (quota/decrement-if-possible-c! quota-ctx db-c :db-bytes (reduce + 0 (map :n_bytes new-rows)))
 
             ;; Now match up the new media records, using the fact that the ids were returned in the same order as the input rows
             rows (map (fn [row {:keys [id]}]
@@ -360,19 +373,21 @@
         ;; TODO only go transactional when (not-empty media-column-ids)
         (util/with-db-transaction [db-c db-c :repeatable-read]
           (let [result (jdbc/query db-c (concat [(str "DELETE FROM app_storage_data WHERE table_id=? AND id = ANY(?) RETURNING "
-                                                      GET-MEDIA-SQL)
+                                                      GET-MEDIA-SQL ", octet_length(data::text) AS n_bytes")
                                                  table-id (long-array row-ids)]
                                                 get-media-args))
 
                 deleted-media-ids (mapcat #(filter identity (.getArray ^Array (:media %))) result)
                 n-rows-deleted (count result)
-                n-bytes-deleted (delete-media! db-c deleted-media-ids)]
+                n-bytes-deleted (+ (or (delete-media! db-c deleted-media-ids) 0)
+                                   (reduce + 0 (map :n_bytes result)))]
+            (log/debug "v2 Deleted" n-bytes-deleted "bytes from table" table-id)
             (quota/decrement-c! quota-ctx db-c :db-rows (- n-rows-deleted))
-            (when n-bytes-deleted
+            (when-not (zero? n-bytes-deleted)
               (quota/decrement-c! quota-ctx db-c :db-bytes (- n-bytes-deleted)))
             nil))))
 
-(defn delete-from-query! [db-c tables {table-id :id :keys [perm cols restrict] :as view-spec} search]
+(defn delete-from-query! [db-c quota-ctx tables {table-id :id :keys [perm cols restrict] :as view-spec} search]
   (when cols
     (throw+ (util-v2/general-tables-error "Cannot call delete_all_rows() on a view")))
   (let [query (if restrict (search-v2/both-queries restrict search) search)
@@ -381,13 +396,18 @@
     ;; TODO only go transactional when (not-empty media-column-ids)
     (util/with-db-transaction [db-c db-c :repeatable-read]
       (let [result (jdbc/query db-c (concat [(str "DELETE FROM app_storage_data WHERE table_id=? AND " QUERY-SQL
-                                                  " RETURNING " GET-MEDIA-SQL)
+                                                  " RETURNING " GET-MEDIA-SQL ", octet_length(data::text) AS n_bytes")
                                              table-id]
                                             query-args
                                             get-media-args))
             deleted-media-ids (mapcat #(filter identity (.getArray ^Array (:media %))) result)
             n-rows-deleted (count result)
-            n-bytes-deleted (delete-media! db-c deleted-media-ids)]
+            n-bytes-deleted (+ (or (delete-media! db-c deleted-media-ids) 0)
+                               (reduce + 0 (map :n_bytes result)))]
+        (quota/decrement-c! quota-ctx db-c :db-rows (- n-rows-deleted))
+        (when-not (zero? n-bytes-deleted)
+          (quota/decrement-c! quota-ctx db-c :db-bytes (- n-bytes-deleted)))
+        (log/debug "v2 Deleted" n-bytes-deleted "bytes from table" table-id)
         nil))))
 
 ;; TODO: Quotas

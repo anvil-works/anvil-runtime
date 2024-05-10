@@ -84,7 +84,7 @@ class Row(BaseRow):
         table_data, local_data = info.shared_data(SHARED_DATA_KEY)
         view_key, table_id, row_id, cap = data
         if not info.remote_is_trusted:
-            validate_cap(cap, view_key, table_id, row_id)
+            validate_cap(cap, table_id, row_id)
             table_data = None  # just incase
         if not table_data:
             # table_data None is not enough because we may be sending rows back and forward
@@ -325,7 +325,7 @@ class Row(BaseRow):
             raise TypeError("Row columns are always strings, not {}".format(type(key).__name__))
         if _batcher.batch_update.active:
             rv = _batcher.batch_update.read(self._cap, key)
-            if key is not NOT_FOUND:
+            if rv is not NOT_FOUND:
                 return _copy(rv)
         if self._spec is None:
             self._fill_cache()

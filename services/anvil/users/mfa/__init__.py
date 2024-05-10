@@ -5,7 +5,7 @@ from ..config import get_client_config
 from anvil.js import window
 
 def replace(s, pattern, replacement):
-    return window.String.prototype.replaceAll.call(s, window.RegExp(pattern, "g"), replacement)
+    return window.String.prototype.replace.call(s, window.RegExp(pattern, "g"), replacement)
 
 class PhoneBox(TextBox):
 

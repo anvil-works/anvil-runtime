@@ -1,13 +1,14 @@
 "use strict";
 
-import { anvilServerMod, defer, getRandomStr } from "../utils";
-import {Component, getPyParent, raiseEventOrSuspend} from "../components/Component";
-import Modal, { BOOTSTRAP_MODAL_BG } from "./modal";
-import {s_clear, s_slots, s_x_anvil_propagate_page_added, s_x_anvil_propagate_page_removed} from "../runner/py-util";
-import {chainOrSuspend, pyCallOrSuspend, pyCheckType, pyFunc, pyInt, pyNone, pyStr, toJs} from "../@Sk";
-import { getCssPrefix } from "@runtime/runner/legacy-features";
-import { topLevelForms } from "@runtime/runner/data";
 import { validateChild } from "@runtime/components/Container";
+import {getClientConfig, topLevelForms} from "@runtime/runner/data";
+import { getCssPrefix } from "@runtime/runner/legacy-features";
+import { warn } from "@runtime/runner/warnings";
+import { chainOrSuspend, promiseToSuspension, pyCallOrSuspend, pyFunc, pyInt, pyNone, pyStr, pyValueError, toJs, toPy } from "@Sk";
+import { notifyComponentMounted, notifyComponentUnmounted } from "../components/Component";
+import {anvilServerMod, kwToObj, s_clear, s_slots} from "../runner/py-util";
+import { defer, getRandomStr } from "../utils";
+import Modal, { BOOTSTRAP_MODAL_BG } from "./modal";
 
 module.exports = function(appOrigin, uncaughtExceptions) {
 
@@ -237,6 +238,14 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         $loc["environment"] = new Sk.builtin.property(new Sk.builtin.func(function(self) {
             return self._environment || (self._environment = new _environmentClass());
         }));
+        $loc["get_client_config"] = new Sk.builtin.func(function(self, pyPackageName) {
+            const packageName = toJs(pyPackageName);
+            try {
+                return toPy(getClientConfig(packageName));
+            } catch (e) {
+                throw new pyValueError(e.message);
+            }
+        });
 
         [/*!defAttr()!1*/ {
             name: "id",
@@ -293,28 +302,45 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         const fns = [];
         const oldForm = topLevelForms.openForm;
         if (oldForm) {
-            fns.push(() => raiseEventOrSuspend(oldForm, s_x_anvil_propagate_page_removed));
+            fns.push(() => notifyComponentUnmounted(oldForm, true));
             topLevelForms.openForm = null;
             fns.push(() => {
                 if (topLevelForms.openForm !== null) {
-                    Sk.builtin.print(["WARNING: You are likely calling 'open_form()' from inside the hide event of the outgoing form (or from one of its components). This may not be what you want."]);
+                    warn("Warning: You are likely calling 'open_form()' from inside the hide event of the outgoing form (or from one of its components). This may not be what you want.");
                 }
                 // Re-use layout instances
-                if (pyForm._withLayout && oldForm?._withLayout && layoutsAreCompatible(pyForm, oldForm)) {
-                    // We can re-use this instance! Remove from the old form, clear its slots, and give it to the new one
+                if (pyForm._withLayout && !pyForm._withLayout.pyLayout && oldForm?._withLayout && layoutsAreCompatible(pyForm, oldForm)) {
+                    // We can re-use this instance! Remove from the old form, clear its slots, reset its properties, clear its event bindings, and give it to the new form
                     const pyLayout = oldForm._withLayout.pyLayout;
                     oldForm._withLayout.pyLayout = undefined;
 
                     return chainOrSuspend(null,
+                        // Clear the layout's slots
                         ...pyLayout.tp$getattr(s_slots).$items().map(([k, v]) => () => pyCallOrSuspend(v.tp$getattr(s_clear), [])),
+
+                        // Set properties of the layout from the new form's kwargs, clearing any that were set by the old form.
                         ...(function* () {
                             const {kwargs} = pyForm._withLayout;
+                            const oldFormKwargs = kwToObj(oldForm._withLayout.kwargs);
                             for (let i=0; i < kwargs.length; i += 2) {
                                 const k = kwargs[i], v = kwargs[i+1];
                                 yield () => Sk.abstr.sattr(pyLayout, new pyStr(k), v, true);
+                                delete oldFormKwargs[k];
+                            }
+                            // Any remaining oldFormKwargs indicate properties that should be reset to their default value
+                            for (const k of Object.keys(oldFormKwargs)) {
+                                yield () => Sk.abstr.sattr(pyLayout, new pyStr(k), pyLayout.anvil$customPropsDefaults[k], true);
                             }
                         })(),
-                        () => { pyForm._withLayout.pyLayout = pyLayout; return pyForm._withLayout.onCreate?.(pyLayout, pyForm); });
+
+                        // Dissociate from the old form
+                        () => oldForm._withLayout.onDissociate?.(pyLayout, oldForm),
+
+                        // Associate with the new form
+                        () => {
+                            pyForm._withLayout.pyLayout = pyLayout;
+                            return pyForm._withLayout.onAssociate?.(pyLayout, pyForm);
+                        });
                 }
             });
         }
@@ -324,9 +350,8 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         fns.push(() => {
             appPlaceHolder.appendChild(pyForm.anvil$hooks.domElement);
             topLevelForms.openForm = pyForm;
+            return notifyComponentMounted(pyForm, true);
         });
-
-        fns.push(() => raiseEventOrSuspend(pyForm, s_x_anvil_propagate_page_added));
 
         return Sk.misceval.chain(null, ...fns);
     }
@@ -1006,13 +1031,15 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         const { promise: deferredReturnPromise, resolve: resolveReturn } = defer();
 
 
+        let hideFired = false;
         a.once("hide", () => {
+            hideFired = true;
             setTimeout(() => {
                 if (pyForm) {
                     $(pyForm.anvil$hooks.domElement).detach();
                     topLevelForms.alertForms.delete(pyForm);
-                    PyDefUtils.asyncToPromise(() => raiseEventOrSuspend(pyForm, s_x_anvil_propagate_page_removed)).then(
-                        () => resolveReturn(returnValue)
+                    PyDefUtils.asyncToPromise(() => notifyComponentUnmounted(pyForm, true)).then(() =>
+                        resolveReturn(returnValue)
                     );
                 } else {
                     resolveReturn(returnValue);
@@ -1022,9 +1049,6 @@ module.exports = function(appOrigin, uncaughtExceptions) {
 
         a.once("hidden", () => {
             activeModalLength--;
-            // fixes not being able to scroll after stack alert closed
-            // https://stackoverflow.com/questions/19305821/multiple-modals-overlay
-            if (activeModalLength) document.body.classList.add(getCssPrefix() + "modal-open");
         });
 
         const {promise: loadPromise, resolve: loadResolve} = defer();
@@ -1049,7 +1073,11 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                         topLevelForms.alertForms.add(pyForm);
                     });
                     a.once("shown", () => {
-                        loadResolve(PyDefUtils.asyncToPromise(() => raiseEventOrSuspend(pyForm, s_x_anvil_propagate_page_added)));
+                        if (hideFired) {
+                            loadResolve();
+                        } else {
+                            loadResolve(PyDefUtils.asyncToPromise(() => notifyComponentMounted(pyForm, true)));
+                        }
                     });
                 } else {
                     a.once("shown", () => {
@@ -1058,8 +1086,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                 }
 
                 a.show();
-                if (document.activeElement) document.activeElement.blur();
-                $(a).trigger("focus");
+
                 return PyDefUtils.suspensionFromPromise(loadPromise.then(() => deferredReturnPromise));
             });
     }
@@ -1258,7 +1285,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                 {
                     type,
                     delay: timeout || 2000,
-                    timer: timeout == 0 ? 0 : 10,
+                    timer: timeout === 0 ? 0 : 10,
                     placement: { from: "top", align: "center" },
                     mouse_over: "pause",
                     template,
@@ -1270,7 +1297,8 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                 }
             );
 
-            return self;
+            // ensure we give the javascript event loop an opportunity to render the notification.
+            return chainOrSuspend(promiseToSuspension(new Promise((resolve) => setTimeout(resolve))), () => self);
         }
 
         /*!defMethod(,message,[title=""],[style="info"], [timeout=2])!2*/ "Create a popup notification. Call the show() method to display it.";

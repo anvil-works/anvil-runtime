@@ -1,5 +1,3 @@
-import { pyModule, pyObject, pyStr, retryOptionalSuspensionOrThrow } from "./@Sk";
-
 export type Deferred<T> = {
     promise: Promise<T>;
     resolve: (value: T | PromiseLike<T>) => void;
@@ -49,38 +47,6 @@ export const globalSuppressLoading = {
     },
 };
 
-/** gets the module from sys modules - imports the module if it's not there */
-export function getModule(name: string) {
-    const pyName = new pyStr(name);
-    const rv = Sk.sysmodules.quick$lookup(pyName);
-    if (rv !== undefined) return rv;
-    retryOptionalSuspensionOrThrow(Sk.importModule(name, false, true));
-    // retrieve the module sys.modules to account for a nested module e.g. anvil.util
-    return Sk.sysmodules.quick$lookup(pyName) as pyModule;
-}
-
-/** On first attribute access, gets the module from sys module, or imports it. Treats a python module as a simple javascript object */
-export function pyLazyMod(modName: string) {
-    let mod: pyModule;
-    return new Proxy({} as { [attr: string]: pyObject }, {
-        get(target, attr: string): any {
-            mod ??= getModule(modName);
-            return (target[attr] ??= mod.tp$getattr(new pyStr(attr)));
-        },
-        set(target, attr: string, v: pyObject) {
-            mod ??= getModule(modName);
-            target[attr] = v;
-            mod.tp$setattr(new pyStr(attr), v);
-            return true;
-        },
-    });
-}
-
-// some common lazy modules
-export const anvilMod = pyLazyMod("anvil");
-export const anvilServerMod = pyLazyMod("anvil.server");
-export const datetimeMod = pyLazyMod("datetime");
-export const tzMod = pyLazyMod("anvil.tz");
 
 /** Polyfill for IOS < 13 (13.1 released March 2020) */
 class _ResizeObserverPolyfill {

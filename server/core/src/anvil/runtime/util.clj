@@ -114,10 +114,15 @@
 (defn is-server-origin? [origin]
   (boolean (#{:downlink, :uplink, :pypy} origin)))
 
-(defn populate-template [resource substitutions]
+(defn apply-substitutions [content substitutions]
+  (reduce (fn [^String content [^String k ^String v]]
+            (.replace content k ^String (or v "")))
+          content
+          substitutions))
+
+(defn populate-template [resource & substitution-maps]
   (let [content (slurp resource)]
-    (reduce (fn [^String content [^String k ^String v]] (.replace content k ^String (or v "")))
-            content substitutions)))
+    (reduce apply-substitutions content substitution-maps)))
 
 (defn with-assert-app-id [handler]
   (fn [req]
@@ -131,13 +136,15 @@
 
 (defonce get-static-origin (fn [req] conf/static-root-url))
 
-(defn serve-templated-html [req resource substitutions]
-  (-> (populate-template resource (assoc substitutions
-                                    "{{canonical-url}}" (hiccup-util/escape-html (:app-origin req))
-                                    "{{cdn-origin}}" (get-static-origin req)
-                                    "{{app-origin}}" (hiccup-util/escape-html (:app-origin req))))
-      (resp/response)
-      (resp/content-type "text/html")))
+;; Don't merge the substitutions here since order matters
+;; an earlier substitution (e.g. legacy-bootstrap-css) might include {{app-origin}}
+(defn serve-templated-html [req resource & substitutions]
+  (let [base-substitutions {"{{canonical-url}}" (hiccup-util/escape-html (:app-origin req))
+                            "{{cdn-origin}}"    (get-static-origin req)
+                            "{{app-origin}}"    (hiccup-util/escape-html (:app-origin req))}]
+    (-> (apply populate-template resource (conj (vec substitutions) base-substitutions))
+        (resp/response)
+        (resp/content-type "text/html"))))
 
 (defonce get-runtime-app-info (fn [environment] {:id "" :branch nil :environment (select-keys environment [:description :tags])}))
 

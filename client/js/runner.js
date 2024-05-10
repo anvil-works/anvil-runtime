@@ -23,8 +23,7 @@ import {
     pyDict,
 } from "./@Sk";
 import Modal from "./modules/modal";
-import { anvilMod, anvilServerMod } from "./utils";
-import {s_add_event_handler, s_raise_event} from "@runtime/runner/py-util";
+import { anvilMod, anvilServerMod, s_add_event_handler, s_raise_event} from "@runtime/runner/py-util";
 
 if (navigator.userAgent.indexOf("Trident/") > -1) {
     window.isIE = true;
@@ -1093,7 +1092,7 @@ function loadApp(app, appId, appOrigin, preloadModules) {
 
     window.anvilServiceClientConfig = {}; // {path => config}
     for (let appService of app.services) {
-        var serviceSource = appService.source.replace(/^\/runtime/, window.anvilCDNOrigin + "/runtime");
+        var serviceSource = appService.source.replace(/^\/runtime/, window.anvilAppOrigin + "/_/static/runtime");
         var m = /((.*\/)([^/]*))\.yml/g.exec(serviceSource);
         var serviceName = m[3];
         var serviceUrl = m[1];
@@ -1355,9 +1354,6 @@ window.anvil = {
                 $(jsThis).trigger("_anvil-call", [resolve, reject].concat(args));
             });
         }
-    },
-    enableLegacy() {
-        // noop
     },
 };
 

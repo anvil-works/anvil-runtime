@@ -1,11 +1,14 @@
 (ns anvil.runtime.tables.v2.util
-  (:require [slingshot.slingshot :refer :all]
+  (:require [clojure.tools.logging :as log]
+            [slingshot.slingshot :refer :all]
             [anvil.runtime.tables.util :as tables-util]
             [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]
             [anvil.dispatcher.types :as types]
             [anvil.runtime.tables.v2.table-types :as table-types]
             [crypto.random :as random]
             [anvil.util :as util]))
+
+;(clj-logging-config.log4j/set-logger! :level :debug)
 
 ;; Access levels
 (def NONE 0)
@@ -40,6 +43,7 @@
   ;; TODO cache this in the session, and invalidate on table change
   ([] (get-tables (tables-util/table-mapping-for-environment rpc-util/*environment*)))
   ([table-mapping]
+   (log/debug "Get tables for " table-mapping)
    (into {::table-mapping table-mapping}
          (for [{:keys [table_id columns client server] :as tbl} (tables-util/get-all-table-access-records table-mapping)]
            (let [columns (for [[id column] columns]
@@ -108,3 +112,31 @@
   (let [[{:keys [id perm]} :as unwrapped] (unwrap-cap cap type)]
     (ensure-access! tables id perm required-level (= type :row))
     unwrapped))
+
+(defn encode-view-spec [view-spec]
+  (if (contains? view-spec :restrict)
+    (update view-spec :restrict #(some-> % util/write-json-str))
+    view-spec))
+
+(defn decode-view-spec [{:keys [restrict] :as encoded-view-spec}]
+  (if (string? restrict)
+    (update encoded-view-spec :restrict util/read-json-str)
+    encoded-view-spec))
+
+(defn encode-search-spec [search-spec]
+  (if (contains? search-spec :search)
+    (update search-spec :search #(some-> % util/write-json-str))
+    search-spec))
+
+(defn decode-search-spec [{:keys [search] :as encoded-search-spec}]
+  (if (string? search)
+    (update encoded-search-spec :search util/read-json-str)
+    encoded-search-spec))
+
+(defn encode-cursor [cursor]
+  (some-> cursor util/write-json-str))
+
+(defn decode-cursor [encoded-cursor]
+  (if (string? encoded-cursor)
+    (util/read-json-str encoded-cursor)
+    encoded-cursor))

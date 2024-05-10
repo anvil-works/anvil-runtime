@@ -33,8 +33,7 @@ import {
     setDefaultDepIdForNextComponent,
 } from "../components/Component";
 import type { Component, ComponentConstructor } from "../components/Component";
-import * as py from "./py-util";
-import { PyModMap, objectToKwargs } from "./py-util";
+import { PyModMap, anvilMod } from "./py-util";
 import {YamlCreationStack} from "@runtime/runner/component-creation";
 import { PyInstantiatorFunction } from "./component-property-utils-api";
 
@@ -75,10 +74,11 @@ export interface ResolvedForm {
     formName: string;
     qualifiedClassName: string;
     depId: string | null;
+    logicalDepId: string | null;
 }
 
 export const resolveFormSpec = (name: string, defaultDepId: string |null): ResolvedForm => {
-    const [, logicalDepId, formName] = ComponentMatcher(name) ?? [];
+    const [, logicalDepId=null, formName] = ComponentMatcher(name) ?? [];
     if (!formName) {
         throw new Error(`Invalid YAML spec for form: ${name}`);
     }
@@ -95,7 +95,7 @@ export const resolveFormSpec = (name: string, defaultDepId: string |null): Resol
     if (!appPackage) {
         throw new pyValueError("Dependency not found for: " + name);
     }
-    return {qualifiedClassName: `${appPackage}.${formName}`, depId, formName};
+    return {qualifiedClassName: `${appPackage}.${formName}`, depId, formName, logicalDepId};
 };
 
 export const getFormClassObject = ({qualifiedClassName}: ResolvedForm) => {
@@ -126,12 +126,13 @@ export const setInstantiationHooks = (hooks: InstantiationHooks) => {
 };
 
 export const getDefaultAnvilComponentInstantiator = (context: InstantiationContext, componentType: string) => {
-    const pyComponent = py.getValue("anvil", componentType);
-    return (kwargs?: Kws, pathStep?: string | number) => pyCallOrSuspend(pyComponent, [], kwargs);
+    const pyComponentConstructor = anvilMod[componentType] as ComponentConstructor;
+    return (kwargs?: Kws, pathStep?: string | number) => pyCallOrSuspend(pyComponentConstructor, [], kwargs);
 };
 
 export interface FormInstantiationFlags {
     asLayout?: true;
+    preferLiveDesign?: boolean;
 }
 
 // Form instantiators carry the identity of the underlying form
@@ -156,10 +157,10 @@ export let getAnvilComponentInstantiator = getDefaultAnvilComponentInstantiator;
 
 export let getNamedFormInstantiator = getDefaultNamedFormInstantiator;
 
-export const getFormInstantiator = (context: InstantiationContext, formSpec: pyStr | ComponentConstructor | PyInstantiatorFunction) => {
+export const getFormInstantiator = (context: InstantiationContext, formSpec: pyStr | ComponentConstructor | PyInstantiatorFunction, flags?: FormInstantiationFlags) => {
     if (checkString(formSpec)) {
         const resolvedForm = resolveFormSpec(formSpec.toString(), getDefaultDepIdForInstantiation(context));
-        const ifn = getNamedFormInstantiator(resolvedForm, context.requestingComponent) as InstantiatorFunction;
+        const ifn = getNamedFormInstantiator(resolvedForm, context.requestingComponent, flags) as InstantiatorFunction;
         ifn.anvil$instantiatorForForm = resolvedForm;
         return ifn;
     } else {

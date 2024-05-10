@@ -79,7 +79,7 @@ class SearchIterator(BaseSearchIterator):
         view_key, table_id, row_ids, cap, cap_next = data
         table_data, _ = info.shared_data(SHARED_DATA_KEY)
         if not info.remote_is_trusted:
-            validate_cap(cap, view_key, table_id)
+            validate_cap(cap, table_id)
             table_data = None
         if not table_data:
             row_ids = cap_next = None

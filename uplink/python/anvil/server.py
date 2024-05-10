@@ -40,7 +40,8 @@ from ._server import (register,
                       http_endpoint, 
                       wellknown_endpoint,
                       api_request as request, 
-                      HttpResponse, 
+                      HttpResponse,
+                      FormResponse,
                       Capability,
                       unwrap_capability,
                       cookies,
@@ -51,7 +52,9 @@ from ._server import (register,
                       get_session_id,
                       subscribe,
                       unsubscribe,
-                      get_subscriptions)
+                      get_subscriptions,
+                      invalidate_client_objects,
+                      _on_invalidate_client_objects)
 
 _threaded_server.send_reqresp = lambda r, collect_capabilities=None, remote_is_trusted=False: _get_connection().send_reqresp(r, collect_capabilities=collect_capabilities, remote_is_trusted=remote_is_trusted)
 

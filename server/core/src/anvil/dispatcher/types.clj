@@ -181,12 +181,41 @@
     #_(log/trace "Generating mac for" backend id permissions extra-liveobject-key "-->" mac)
     mac))
 
-(defn gen-cap-mac [{:keys [scope] :as _capability} extra-liveobject-key]
+(defn- sort-maps [element]
+  (cond
+    (map? element)
+    (into (sorted-map) (for [[k v] element] [k (sort-maps v)]))
+
+    (sequential? element)
+    (map sort-maps element)
+
+    :else
+    element))
+
+(defn new-gen-cap-mac [{:keys [scope] :as _capability} extra-liveobject-key]
+  (let [scope (map sort-maps scope)]
+    (util/sha-256 (str @secret (util/write-json-str scope) (util/write-json-str extra-liveobject-key) @secret))))
+
+(defn old-gen-cap-mac [{:keys [scope] :as _capability} extra-liveobject-key]
   (let [scope (for [element scope]
                 (if (map? element)
                   (into (sorted-map) element)
                   element))]
     (util/sha-256 (str @secret (util/write-json-str scope) (util/write-json-str extra-liveobject-key) @secret))))
+
+(defn logging-gen-cap-mac [{:keys [scope] :as _capability} extra-liveobject-key]
+  (let [scope (for [element scope]
+                (if (map? element)
+                  (into (sorted-map) element)
+                  element))
+        new-scope (map sort-maps scope)]
+    (when (not= (util/write-json-str scope) (util/write-json-str new-scope))
+      (log/info "MAC algorithms differ:" (util/write-json-str scope) "vs" (util/write-json-str new-scope)))
+    (util/sha-256 (str @secret (util/write-json-str scope) (util/write-json-str extra-liveobject-key) @secret))))
+
+(defn gen-cap-mac [capability extra-liveobject-key]
+  (new-gen-cap-mac capability extra-liveobject-key))
+
 
 (defn mk-LiveObjectProxy [backend id permissions methods & [itemCache iterItems]]
   (LiveObjectProxy. backend id permissions nil methods itemCache iterItems))

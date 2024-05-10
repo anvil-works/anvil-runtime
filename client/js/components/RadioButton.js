@@ -61,6 +61,8 @@ module.exports = (pyModule) => {
                         s._anvil.elements.text.innerHTML = "&nbsp;";
                     }
                 },
+                group: undefined,
+                inlineEditElement: "text",
             },
             bold: {
                 set(s, e, v) {
@@ -76,6 +78,7 @@ module.exports = (pyModule) => {
                 name: "selected",
                 type: "boolean",
                 suggested: true,
+                designerHint: "toggle",
                 pyVal: true,
                 defaultValue: Sk.builtin.bool.false$,
                 description: "The status of the radio button",
@@ -168,6 +171,14 @@ module.exports = (pyModule) => {
                 $(self._anvil.elements.label).on("click", (e) => {
                     setHandled(e);
                 });
+                if (ANVIL_IN_DESIGNER) {
+                    Object.defineProperty(self._anvil, "inlineEditing", {
+                        set(v) {
+                            // see checkbox.js
+                            self._anvil.elements.input.type = v ? "hidden" : "radio";
+                        }
+                    });
+                }
             });
 
             /*!defMethod(str)!2*/ "returns the value of the button in the group which is pressed."

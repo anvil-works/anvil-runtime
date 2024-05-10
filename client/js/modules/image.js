@@ -33,7 +33,7 @@ description: |
   To rotate an image clockwise by some number of degrees, use the `rotate` method.
 */
 
-const { anvilMod } = require("../utils");
+const { anvilMod } = require("@runtime/runner/py-util");
 
 
 // TODO: Make use of media._anvilCachedImage, as used in Canvas drawImage

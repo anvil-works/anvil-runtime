@@ -26,7 +26,7 @@ interface ClassMethDef<T extends pyType> extends AbstractMethodDef {
     $meth(this: T, ...args: any): pyObject | Suspension;
 }
 
-type GetSetDef<I> = {
+export type GetSetDef<I> = {
     $get(this: I): pyObject | Suspension;
     $set?: (this: I, val: pyObject) => void;
     $doc?: string | null;

@@ -1,6 +1,7 @@
 "use strict";
 
-import { anvilMod, anvilServerMod, globalSuppressLoading } from "../utils";
+import { globalSuppressLoading } from "../utils";
+import { anvilMod, anvilServerMod } from "@runtime/runner/py-util";
 
 /*#
 id: http_module

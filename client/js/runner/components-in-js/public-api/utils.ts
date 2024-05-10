@@ -1,4 +1,4 @@
-import { chainOrSuspend, promiseToSuspension, suspensionToPromise, toPy } from "@Sk";
+import { chainOrSuspend, promiseToSuspension, proxy, suspensionToPromise, toPy } from "@Sk";
 import type { Component } from "@runtime/components/Component";
 import type { JsComponent, RawJsComponent, WrappedJsComponent } from "./component";
 import { PY_COMPONENT, JS_COMPONENT } from "./constants";
@@ -51,7 +51,7 @@ export const returnToPy = (rv: any) => {
     if (rv instanceof Promise) {
         return chainOrSuspend(promiseToSuspension(rv), toPy);
     }
-    return toPy(rv);
+    return proxy(rv);
 };
 
 export const maybeSuspend = (rv: any) => {

@@ -35,7 +35,8 @@ CREATE TABLE runtime_sessions (
   session_id text primary key, -- Yes this is not the same thing as the "session_id" in the app_sessions table which should really be called app_log_sessions, I apologise to all of you
   state text,
   user_id text,
-  last_seen timestamp without time zone
+  last_seen timestamp without time zone,
+  expires timestamp without time zone
 );
 -- TODO the user_id column is a special-case for the Users service, and when we move beyond Postgres 10
 -- we will be able to expand this into a general purpose JSONB column with a GIN index
@@ -50,13 +51,7 @@ CREATE TABLE anvil_config (
 
 CREATE SEQUENCE app_storage_tables_id_seq;
 
--- Schema in which SQL-friendly views will be created
-
-CREATE SCHEMA IF NOT EXISTS data_tables;
-
 --[GRANTS]--
-ALTER SCHEMA data_tables OWNER TO $ANVIL_USER;
-GRANT CREATE ON DATABASE $ANVIL_DATABASE TO $ANVIL_USER;
 ALTER USER $ANVIL_USER WITH CREATEROLE;
 
 GRANT ALL ON background_tasks, scheduled_tasks, runtime_sessions, anvil_config TO $ANVIL_USER;

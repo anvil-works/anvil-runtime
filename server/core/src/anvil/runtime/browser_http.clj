@@ -93,7 +93,8 @@
       (responder {:error {:type    "anvil.server.InvalidObjectError"
                           :message "Error processing object from expired session"
                           :trace   [["<rpc>", 0]]}}
-                 true))))
+                 true)
+      nil)))
 
 
 (defn- process-call-data [data {:keys [app-id app-session environment app-origin] :as request} app-yaml deserialiser serial-responder]
@@ -117,16 +118,16 @@
                        (if (string? output)
                          (do
                            (app-log/record-event! app-session nil "print" output nil)
-                           (when (browser-ws/share-server-logs-with-client? environment)
+                           (when (browser-ws/share-server-logs-with-client? environment app-session)
                              (responder r false)))
-                         (responder r false)))}
-        [deserialised-data live-object] (do-deserialization deserialiser responder data)]
-    (dispatcher/dispatch! (assoc request-template
-                            :vt_global (:vt_global deserialised-data)
-                            :call (assoc (select-keys deserialised-data [:args :kwargs])
-                                    :func func
-                                    :live-object live-object))
-                          return-path)))
+                         (responder r false)))}]
+    (when-let [[deserialised-data live-object] (do-deserialization deserialiser responder data)]
+      (dispatcher/dispatch! (assoc request-template
+                              :vt_global (:vt_global deserialised-data)
+                              :call (assoc (select-keys deserialised-data [:args :kwargs])
+                                      :func func
+                                      :live-object live-object))
+                            return-path))))
 
 
 (defn- process-data [request app-yaml deserialiser serial-responder]
@@ -141,7 +142,7 @@
 (defn http-handler [{:keys [app-id app-session environment app-origin] :as request} app-yaml]
   (with-channel request channel
     (let [session-liveobject-secret (get-session-liveobject-secret app-session)
-          deserialiser (serialisation/mk-Deserialiser {:origin :client, :session-liveobject-key session-liveobject-secret})
+          deserialiser (serialisation/mk-Deserialiser {:origin :client, :get-session-liveobject-key (constantly session-liveobject-secret)})
           serial-responder (partial mk-serial-responder channel session-liveobject-secret)]
       (on-close channel (fn [reason]))
       (send-headers channel)

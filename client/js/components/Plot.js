@@ -74,7 +74,10 @@ description: |
 
 
 var PyDefUtils = require("PyDefUtils");
-const { pyLazyMod, datetimeMod, PostponedResizeObserver } = require("../utils");
+const { PostponedResizeObserver } = require("../utils");
+const { pyLazyMod, datetimeMod } = require("@runtime/runner/py-util");
+const { appendSvgSpinner, SpinnerLoader } = require("@runtime/runner/loading-spinner");
+const { pyCall, toPy } = require("@Sk");
 
 module.exports = (pyModule) => {
 
@@ -100,7 +103,7 @@ module.exports = (pyModule) => {
     const ANVIL_FETCHABLE_TEMPLATES = ["rally", "material_light", "material_dark"];
 
     async function templateGetter(templateName) {
-        const resp = await fetch(`${window.anvilCDNOrigin}/runtime/js/lib/templates/${templateName}.json`);
+        const resp = await fetch(`${window.anvilAppOrigin}/_/static/runtime/js/lib/templates/${templateName}.json`);
         return await resp.json();
     }
 
@@ -122,8 +125,8 @@ module.exports = (pyModule) => {
             configurable: true,
         });
     }
-    PLOTLY_FETCHABLE_TEMPLATES.forEach(defineLazyTemplate)
-    ANVIL_FETCHABLE_TEMPLATES.forEach(defineLazyTemplate)
+    PLOTLY_FETCHABLE_TEMPLATES.forEach(defineLazyTemplate);
+    ANVIL_FETCHABLE_TEMPLATES.forEach(defineLazyTemplate);
 
     // There are several places in the component model where we directly access the props
     // Plot.js does this a lot
@@ -148,10 +151,10 @@ module.exports = (pyModule) => {
                     // Must be set to a list. Wrap it in anvil.util.WrappedList
                     if (v instanceof Sk.builtin.dict) {
                         // If the user supplies a dict instead of a list, wrap it in a list and just Do The Right Thing.
-                        s._anvil.props.data = PyDefUtils.pyCall(util.WrappedList, [new Sk.builtin.list([v])]);
+                        s._anvil.props.data = pyCall(util.WrappedList, [new Sk.builtin.list([v])]);
                     } else if (!(v instanceof util.WrappedList)) {
                         // Assume they passed in something iterable.
-                        s._anvil.props.data = PyDefUtils.pyCall(util.WrappedList, [v]);
+                        s._anvil.props.data = pyCall(util.WrappedList, [v]);
                     } else {
                         // Assume they passed in a WrappedList
                         s._anvil.props.data = v;
@@ -159,7 +162,7 @@ module.exports = (pyModule) => {
                     return update(s);
                 },
                 get(s, e) {
-                    s._anvil.props.data = s._anvil.props.data || PyDefUtils.pyCall(util.WrappedList);
+                    s._anvil.props.data = s._anvil.props.data || pyCall(util.WrappedList);
                     return s._anvil.props.data;
                 },
             },
@@ -177,12 +180,13 @@ module.exports = (pyModule) => {
                     if (v instanceof util.WrappedObject) {
                         s._anvil.props.layout = v;
                     } else {
-                        s._anvil.props.layout = PyDefUtils.pyCall(util.WrappedObject, [v]);
+                        // use go.Layout to clean up any plotly properties
+                        s._anvil.props.layout = pyCall(go.Layout, [v]);
                     }
                     return update(s);
                 },
                 get(s, e) {
-                    s._anvil.props.layout = s._anvil.props.layout || PyDefUtils.pyCall(util.WrappedObject, [Sk.ffi.remapToPy({ template: {} })]);
+                    s._anvil.props.layout = s._anvil.props.layout || pyCall(go.Layout, [toPy({ template: {} })]);
                     return s._anvil.props.layout;
                 },
             },
@@ -199,7 +203,7 @@ module.exports = (pyModule) => {
                     return update(s);
                 },
                 get(s, e) {
-                    s._anvil.props.config = s._anvil.props.config || Sk.ffi.remapToPy({});
+                    s._anvil.props.config = s._anvil.props.config || toPy({});
                     return s._anvil.props.config;
                 },
             },
@@ -214,18 +218,18 @@ module.exports = (pyModule) => {
                 set(s, e, pyFigure) {
                     if (!(pyFigure instanceof util.WrappedObject)) {
                         // they may have supplied a dict so turn it into a wrapped object
-                        pyFigure = PyDefUtils.pyCall(util.WrappedObject, [pyFigure]);
+                        pyFigure = pyCall(go.Figure, [pyFigure]);
                     }
 
                     // Replace the plot layout with layout from the figure - this wil be a wrapped object
-                    s._anvil.props.layout = PyDefUtils.pyCall(util.WrappedObject, [pyFigure.tp$getattr(new Sk.builtin.str("layout"))]);
+                    s._anvil.props.layout = pyCall(go.Layout, [pyFigure.tp$getattr(new Sk.builtin.str("layout"))]);
 
                     // Replace the plot data with data from the figure and let data call update
                     return s._anvil.setProp("data", pyFigure.tp$getattr(new Sk.builtin.str("data")));
                 },
                 get(self, e) {
-                    return PyDefUtils.pyCall(go.Figure, [
-                        Sk.ffi.remapToPy({
+                    return pyCall(go.Figure, [
+                        toPy({
                             layout: self._anvil.getProp("layout"),
                             data: self._anvil.getProp("data"),
                         }),
@@ -320,7 +324,7 @@ module.exports = (pyModule) => {
 
         element: (props) => (
             <PyDefUtils.OuterElement className="anvil-plot" {...props}>
-                <div refName="spinner" className="plotly-loading-spinner" />
+                <div refName="spinner" className="plotly-loading-spinner anvil-spinner" style="opacity:0" />
             </PyDefUtils.OuterElement>
         ),
 
@@ -328,6 +332,8 @@ module.exports = (pyModule) => {
             $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicComponent"], (self) => {
                 self._anvil.plotlyUpdated = false;
                 self._anvil.initialized = false;
+                appendSvgSpinner(self._anvil.elements.spinner);
+                self._anvil.spinnerLoader = SpinnerLoader.getOrCreate(self._anvil.elements.spinner);
 
                 const resizeObserver = new PostponedResizeObserver(() => {
                     if (self._anvil.onPage) {
@@ -396,7 +402,7 @@ module.exports = (pyModule) => {
                 return PyDefUtils.suspensionFromPromise(
                     loadPlotly(self)
                         .then(() => Plotly.toImage(self._anvil.domNode, pyOptions ? remapToJs(pyOptions) : { format: "png" }))
-                        .then((i) => PyDefUtils.pyCall(pyModule["URLMedia"], [Sk.ffi.remapToPy(i)]))
+                        .then((i) => pyCall(pyModule["URLMedia"], [toPy(i)]))
                 );
             });
         },
@@ -404,42 +410,25 @@ module.exports = (pyModule) => {
 
     
 
+    let plotlyPromise;
+
     function loadPlotly(self) {
-        const oldPromise = window.Promise;
-        if (!window.plotlyPromise) {
-            window.plotlyPromise = new Promise(function (resolve, reject) {
-                var script = document.createElement("script");
-                script.src = window.anvilCDNOrigin + "/runtime/js/lib/plotly-latest.min.js";
-                script.onload = function () {
-                    // Plotly clobbers window.Promise. Ew.
-                    // https://github.com/plotly/plotly.js/issues/1032
-                    window.Promise = oldPromise;
-                    resolve();
-                };
-                document.body.appendChild(script);
-            });
-        }
-
-        let printKey = `Plotly ${Math.random()}`;
-        PyDefUtils.delayPrint(printKey);
-
-        self._anvil.elements.spinner.style.display = "block";
-        return window.plotlyPromise.then(() => {
-            self._anvil.elements.spinner.style.display = "none";
-            PyDefUtils.resumePrint(printKey);
-        });
+        const plotlySrc = window.anvilAppOrigin + "/_/static/runtime/js/lib/plotly-latest.min.js?buildTime=" + BUILD_TIME;
+        plotlyPromise ??= PyDefUtils.loadScript(plotlySrc);
+        const spinnerLoader = self._anvil.spinnerLoader;
+        return PyDefUtils.withDelayPrint(spinnerLoader.withIndicator(plotlyPromise));
     }
 
-    let selectKeysIfPresent = (map, keys) => {
-        let r = {};
-        for (let k of keys || []) {
+    const selectKeysIfPresent = (map, keys) => {
+        const r = {};
+        for (const k of keys || []) {
             if (typeof k == "string") {
                 if (k in map) {
                     r[k] = map[k];
                 }
             } else {
                 // map of old name -> new name
-                for (let j in k) {
+                for (const j in k) {
                     if (j in map) {
                         r[k[j]] = map[j];
                     }
@@ -450,10 +439,10 @@ module.exports = (pyModule) => {
         return r;
     };
 
-    let onPlotlyClick = (self, data) => {
+    const onPlotlyClick = (self, data) => {
         PyDefUtils.raiseEventAsync(
             {
-                points: Sk.ffi.remapToPy(
+                points: toPy(
                     data.points.map((p) =>
                         selectKeysIfPresent(p, [
                             { curveNumber: "curve_number" },
@@ -474,15 +463,15 @@ module.exports = (pyModule) => {
         return false;
     };
 
-    let onPlotlyDoubleClick = (self) => {
+    const onPlotlyDoubleClick = (self) => {
         PyDefUtils.raiseEventAsync({}, self, "double_click");
         return false;
     };
 
-    let onPlotlySelect = (self, data) => {
+    const onPlotlySelect = (self, data) => {
         PyDefUtils.raiseEventAsync(
             {
-                points: Sk.ffi.remapToPy(
+                points: toPy(
                     data
                         ? data.points.map((p) =>
                               selectKeysIfPresent(p, [
@@ -505,10 +494,10 @@ module.exports = (pyModule) => {
         return false;
     };
 
-    let onPlotlyHover = (self, data) => {
+    const onPlotlyHover = (self, data) => {
         PyDefUtils.raiseEventAsync(
             {
-                points: Sk.ffi.remapToPy(
+                points: toPy(
                     data.points.map((p) =>
                         selectKeysIfPresent(p, [
                             { curveNumber: "curve_number" },
@@ -529,13 +518,13 @@ module.exports = (pyModule) => {
         return false;
     };
 
-    let onPlotlyUnhover = (self, data) => {
+    const onPlotlyUnhover = (self, data) => {
         // Probable bug in plotly: When using scattergl, data is undefined. Weird.
         PyDefUtils.raiseEventAsync(
             {
                 points:
                     data &&
-                    Sk.ffi.remapToPy(
+                    toPy(
                         data.points.map((p) =>
                             selectKeysIfPresent(p, [
                                 { curveNumber: "curve_number" },
@@ -556,7 +545,7 @@ module.exports = (pyModule) => {
         return false;
     };
 
-    let onPlotlyAfterplot = (self) => {
+    const onPlotlyAfterplot = (self) => {
         PyDefUtils.raiseEventAsync({}, self, "afterplot");
         return false;
     };
@@ -600,22 +589,26 @@ module.exports = (pyModule) => {
 
         // Do not block here. There's no need, no code depends on the result.
         // If we decide we need to block, just return a suspension here.
-        loadPlotly(self)
-            .then(getTemplate)
-            .finally(() => {
-                const outerEl = self._anvil.domNode;
-                Plotly.newPlot(outerEl, jsData, jsLayout, jsConfig);
-                outerEl.on("plotly_click", onPlotlyClick.bind(null, self));
-                outerEl.on("plotly_doubleclick", onPlotlyDoubleClick.bind(null, self));
-                outerEl.on("plotly_selected", onPlotlySelect.bind(null, self));
-                outerEl.on("plotly_hover", onPlotlyHover.bind(null, self));
-                outerEl.on("plotly_unhover", onPlotlyUnhover.bind(null, self));
-                outerEl.on("plotly_afterplot", onPlotlyAfterplot.bind(null, self));
-                self._anvil.plotlyUpdated = true;
-
-                // For some reason, this doesn't ever get called. Possibly we're on an old version of Plotly. Work it out if anyone needs it.
-                //self._anvil.element[0].on("plotly_legendclick", onPlotlyLegendClick.bind(null, self));
-            });
+        PyDefUtils.withDelayPrint(
+            loadPlotly(self)
+                .then(getTemplate)
+                .finally(() => {
+                    const outerEl = self._anvil.domNode;
+                    // react is faster than newPlot on the same div element
+                    Plotly.react(outerEl, jsData, jsLayout, jsConfig);
+                    if (!self._anvil.plotlyUpdated) {
+                        outerEl.on("plotly_click", onPlotlyClick.bind(null, self));
+                        outerEl.on("plotly_doubleclick", onPlotlyDoubleClick.bind(null, self));
+                        outerEl.on("plotly_selected", onPlotlySelect.bind(null, self));
+                        outerEl.on("plotly_hover", onPlotlyHover.bind(null, self));
+                        outerEl.on("plotly_unhover", onPlotlyUnhover.bind(null, self));
+                        outerEl.on("plotly_afterplot", onPlotlyAfterplot.bind(null, self));
+                    }
+                    self._anvil.plotlyUpdated = true;
+                    // For some reason, this doesn't ever get called. Possibly we're on an old version of Plotly. Work it out if anyone needs it.
+                    //self._anvil.element[0].on("plotly_legendclick", onPlotlyLegendClick.bind(null, self));
+                })
+        );
         return Sk.builtin.none.none$;
     }
 

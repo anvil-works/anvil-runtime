@@ -36,7 +36,7 @@ but our css minifier doesn't support this syntax - if we upgrade to webpack 5 th
     cursor: not-allowed;
 }
 
-.anvil-runner .anvil-visible-false {
+.anvil-runner .anvil-visible-false, .anvil-runner [anvil-visible-false] {
     display: none !important;
 }
 
@@ -53,10 +53,10 @@ span.anvil-inline-container > .anvil-inlinable,
 
 .anvil-invalid-component {
     text-align: center;
-    font-size: 30;
     padding: 9px;
     border: 1px dashed black;
     word-wrap: break-word;
+    white-space: pre-wrap;
 }
 
 .anvil-invalid-component i {

@@ -1,7 +1,7 @@
 # Helpers for implementing anvil.server on an (optionally threaded) Real Python process.
 # Used in uplink and downlink, and now even in the PyPy sandbox.
 
-import random, string, json, re, sys, time, importlib, anvil
+import os, random, string, json, re, sys, time, importlib, anvil
 
 
 # For single-threaded implementations, re-entrant calls occupy the same thread,
@@ -187,8 +187,9 @@ class IncomingRequest(_serialise.IncomingReqResp):
                 self.setup_task_state(call_info.call_id, True)
             import_complete = False
             try:
+                import_duration = None
                 if self.import_modules:
-                    self.import_modules()
+                    import_duration = self.import_modules()
                 import_complete = True
 
                 # Now we've imported enough to deserialise custom types
@@ -245,7 +246,7 @@ class IncomingRequest(_serialise.IncomingReqResp):
                 except _server.SerializationError as e:
                     raise _server.SerializationError("Tried to store illegal value in a anvil.server.session. " + e.args[0])
 
-                resp = {"id": self.json["id"], "response": response, "sessionData": sjson, "cacheUpdates": call_info.cache_update}
+                resp = {"id": self.json["id"], "response": response, "sessionData": sjson, "cacheUpdates": call_info.cache_update, "importDuration": import_duration}
 
                 if call_info.enable_profiling:
                     call_info.profile["end-time"] = time.time()*1000

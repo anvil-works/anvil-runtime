@@ -24,9 +24,10 @@ class Table(BaseTable):
 
     @classmethod
     def __new_deserialized__(cls, data, info):
+        cap, view_key, table_id = data
         if not info.remote_is_trusted:
-            validate_cap(*data)
-        return cls._create(*data)
+            validate_cap(cap, table_id)
+        return cls._create(cap, view_key, table_id)
 
     def __serialize__(self, _info):
         return [self._cap, self._view_key, self._id]

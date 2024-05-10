@@ -17,13 +17,12 @@ import {
     Component,
     ComponentConstructor, CustomComponentSpec,
     EventDescription,
-    initComponentSubclass,
     PropertyDescription,
 } from "../../components/Component";
 import { Container } from "../../components/Container";
 import { suspensionFromPromise } from "../../PyDefUtils";
 import { designerApi } from "../component-designer-api";
-import { kwargsToJsObject, s_anvil_events, s_raise_event } from "../py-util";
+import { initNativeSubclass, kwargsToJsObject, s_raise_event } from "../py-util";
 import { registerModule } from "./common";
 
 const solid: any = {};
@@ -78,16 +77,15 @@ function mkComponentClass({
     const SolidComponent: SolidComponentConstructor = buildNativeClass(name + "." + leafName, {
         base: container ? Container : Component,
         constructor: function SolidComponent() {
-            const self = this;
 
-            let dropZones: { [id: string | number]: any } = {};
+            const dropZones: { [id: string | number]: any } = {};
             // let getInteractions = null;
 
             const actions = { raiseEvent: raiseEvent.bind(this) };
             const [props, setProps] = solid.store.createStore({ ...initPropertyState });
             const [dropState, setDropState] = solid.createSignal(null);
             const [components, setComponents] = solid.store.createStore([]);
-            Object.assign(this, { components, setComponents, props, setProps });
+            Object.assign(this, { components, setComponents, props, setProps, dropZones, dropState, setDropState });
 
             Object.defineProperty(this, "rootElement", {
                 get() {
@@ -99,59 +97,6 @@ function mkComponentClass({
                 configurable: true,
             });
 
-            this.anvil$hooks = {
-                setupDom() {
-                    return self.rootElement;
-                },
-                get domElement() {
-                    return self.rootElement;
-                },
-                setPropertyValues(updates) {
-                    setProps(updates);
-                    return updates;
-                },
-                getDesignInfo() {
-                    return {
-                        propertyDescriptions: properties.map((description) => ({ ...description })),
-                        events: Object.values(Object.fromEntries(
-                            events.map((e) => (typeof e === "string" ? [e, { name: e }] : [e.name, e]))
-                        )),
-                        propertyValues: { ...props },
-                        interactions: self.getInteractions?.() || [],
-                    };
-                },
-                getContainerDesignInfo(child) {
-                    // TODO just for proof of concept app - needs to have an api
-                    return {
-                        layoutPropertyDescriptions: [{ name: "classes", type: "string", isLayoutProperty: true }],
-                    };
-                },
-                updateLayoutProperties(forChild: Component, newValues) {
-                    const idx = components.findIndex(({ component }: any) => component === forChild);
-                    setComponents(idx, (prev: any) => ({
-                        ...prev,
-                        layoutProperties: { ...prev.layoutProperties, ...newValues },
-                    }));
-                    return newValues;
-                },
-                enableDropMode(dropping) {
-                    if (!container) return [];
-                    setDropState({
-                        registerDropElement(id: string | number, dropElement: any) {
-                            dropZones[id] = dropElement;
-                        },
-                    });
-                    return Object.values(dropZones).map(({ element, expandable, dropInfo }) => ({
-                        element,
-                        expandable,
-                        dropInfo,
-                    }));
-                },
-                disableDropMode() {
-                    setDropState(null);
-                    dropZones = {};
-                },
-            };
         },
         slots: {
             tp$new(args, kws = []) {
@@ -204,10 +149,60 @@ function mkComponentClass({
             ])
         ),
         flags: { sk$klass: true },
+        proto: {
+            anvil$events: pyEvents,
+            anvil$hookSpec: {
+                setupDom(this: SolidComponent) {
+                    return this.rootElement;
+                },
+                getDomElement() {
+                    return (this as unknown as SolidComponent).rootElement;
+                },
+                getProperties() {
+                    return properties;
+                },
+                getEvents() {
+                    return events;
+                },
+                getInteractions(this: SolidComponent) {
+                    return this.getInteractions?.() || [];
+                },
+                getContainerDesignInfo(this: SolidComponent) {
+                    // TODO just for proof of concept app - needs to have an api
+                    return {
+                        layoutPropertyDescriptions: [{ name: "classes", type: "string", isLayoutProperty: true }],
+                    };
+                },
+                updateLayoutProperties(this: SolidComponent, forChild: Component, newValues) {
+                    const idx = this.components.findIndex(({ component }: any) => component === forChild);
+                    this.setComponents(idx, (prev: any) => ({
+                        ...prev,
+                        layoutProperties: { ...prev.layoutProperties, ...newValues },
+                    }));
+                    return newValues;
+                },
+                enableDropMode(this: SolidComponent, dropping) {
+                    if (!container) return [];
+                    this.setDropState({
+                        registerDropElement(id: string | number, dropElement: any) {
+                            this.dropZones[id] = dropElement;
+                        },
+                    });
+                    return Object.values(this.dropZones).map(({ element, expandable, dropInfo }) => ({
+                        element,
+                        expandable,
+                        dropInfo,
+                    }));
+                },
+                disableDropMode(this: SolidComponent) {
+                    this.setDropState(null);
+                    this.dropZones = {};
+                },
+            },
+        }
     });
 
-    SolidComponent.tp$setattr(s_anvil_events, pyEvents);
-    initComponentSubclass(SolidComponent);
+    initNativeSubclass(SolidComponent);
     return SolidComponent;
 }
 

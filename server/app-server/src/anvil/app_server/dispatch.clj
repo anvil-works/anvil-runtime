@@ -7,8 +7,10 @@
             [anvil.dispatcher.core :as dispatcher]
             [anvil.executors.uplink :as uplink]
             [anvil.runtime.app-data :as app-data]
-            [anvil.executors.ws-calls :as ws-calls])
-  (:import (java.lang ProcessBuilder$Redirect)))
+            [anvil.executors.ws-calls :as ws-calls]
+            [anvil.runtime.cron :as cron])
+  (:import (java.io File)
+           (java.lang ProcessBuilder$Redirect)))
 
 (def shutting-down? (atom false))
 
@@ -24,6 +26,8 @@
                      (log/info "Launching built-in downlink...")
                      (let [pb (ProcessBuilder. #^"[Ljava.lang.String;" (into-array String [(or (System/getenv "PYTHON_INTERPRETER") "python") "-m" "anvil_downlink_host.run"]))
                            env (.environment pb)]
+                       (.directory pb (when-let [dir (System/getenv "DOWNLINK_WORKDIR")]
+                                        (File. dir)))
                        (.put env "DOWNLINK_SERVER" (str "ws://" server-host ":" server-port "/_/downlink"))
                        (.put env "DOWNLINK_KEY" downlink-key)
                        (.put env "ENABLE_PDF_RENDER" "1")

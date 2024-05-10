@@ -251,6 +251,6 @@
               signature-records (.verify verifier body-hasher)]
           (vec signature-records))
         nil))
-    (catch FailException e
-      (log/info e "DKIM verification for incoming message failed")
+    (catch FailException _
+      (log/info "DKIM verification for incoming message failed")
       nil)))

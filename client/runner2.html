@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" class="no-js anvil-runner">
+<html lang="en" class="no-js anvil-runner {{legacy-head-class}}">
 <head>
   <base href="{{canonical-url}}/">
   <meta charset="utf-8">
@@ -22,26 +22,21 @@
 
   <title>{{app-title}}</title>
 
-<!--  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/bootstrap.css?buildTime=0" crossorigin/>-->
-<!--  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/bootstrap-theme.min.css?buildTime=0" crossorigin/>-->
-  <link rel="stylesheet" href="{{cdn-origin}}/runtime/dist/runner-v3.min.css?buildTime=0" crossorigin/>
-  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/daterangepicker.min.css?buildTime=0" crossorigin/>
-  <!-- <link rel="stylesheet" href="{{cdn-origin}}/runtime/node_modules/animate.css/animate.min.css?buildTime=0" crossorigin/> -->
-
-  <link rel="stylesheet" href="{{cdn-origin}}/runtime/css/font-awesome.min.css?buildTime=0" crossorigin/>
-
+  <!-- <link rel="stylesheet" href="{{app-origin}}/_/static/runtime/css/bootstrap.css?buildTime=0" crossorigin/> -->
+  <!-- <link rel="stylesheet" href="{{app-origin}}/_/static/runtime/css/bootstrap-theme.min.css?buildTime=0" crossorigin/> -->
   <style>
-    #loadingSpinner {
-      background-image: url({{cdn-origin}}/runtime/img/loading.gif);
-    }
-
-    .plotly-loading-spinner {
-      background-image: url({{cdn-origin}}/runtime/img/loading.gif);
-    }
+  .anvil-spinner{width:70px;height:70px}
+  .anvil-spinner{color:{{theme-color}}}
   </style>
+  {{legacy-bootstrap-css}}
+  {{legacy-classnames}}
+  <link rel="stylesheet" href="{{app-origin}}/_/static/runtime/dist/runner-v3.min.css?buildTime=0" crossorigin/>
+  <link rel="stylesheet" href="{{app-origin}}/_/static/runtime/css/daterangepicker.min.css?buildTime=0" crossorigin/>
+  <!-- <link rel="stylesheet" href="{{app-origin}}/_/static/runtime/node_modules/animate.css/animate.min.css?buildTime=0" crossorigin/> -->
+
+  <link rel="stylesheet" href="{{app-origin}}/_/static/runtime/css/font-awesome.min.css?buildTime=0" crossorigin/>
 
   <!-- Favicon things -->
-
   <link rel="icon" href="{{favicon}}">
   <link rel="manifest" href="{{manifest-url}}?buildTime=0">
   <link rel="apple-touch-icon" href="{{social-image}}">
@@ -55,28 +50,28 @@
 
   <style>{{shim-css}}</style>
   <style>{{root-vars}}</style>
-  <style title="theme.css">{{theme-css}}</style>
+  {{theme-css}}
 
-  <script src="{{cdn-origin}}/runtime/node_modules/jquery/dist/jquery.min.js?buildTime=0" crossorigin></script>
-  <script src="{{cdn-origin}}/runtime/node_modules/jquery-migrate/dist/jquery-migrate.min.js?buildTime=0" crossorigin></script>
+  <script src="{{app-origin}}/_/static/runtime/node_modules/jquery/dist/jquery.min.js?buildTime=0" crossorigin></script>
+  <script src="{{app-origin}}/_/static/runtime/node_modules/jquery-migrate/dist/jquery-migrate.min.js?buildTime=0" crossorigin></script>
 
   {{head-html}}
 </head>
 <body class="{{body-class}}">
 <div id="anvil-header">
   <a href="https://anvil.works/?utm_source=app_banner" target="_blank" class="cta"><span class="anvil-banner-hidden-xs">Build web apps for free with</span><span class="anvil-banner-xs">Built with</span> Anvil</a>
-  <a href="https://anvil.works/?utm_source=app_banner" target="_blank"><span class="anvil-banner-hidden-xs">Built with </span><img src="{{cdn-origin}}/runtime/img/logo-35.png?buildTime=0" crossorigin></a>
+  <a href="https://anvil.works/?utm_source=app_banner" target="_blank"><span class="anvil-banner-hidden-xs">Built with </span><img src="{{app-origin}}/_/static/runtime/img/logo-35.png?buildTime=0" crossorigin></a>
 </div>
 
 <a id="anvil-badge" href="https://anvil.works/?utm_source=app_banner" target="_blank">
-  <img src="{{cdn-origin}}/runtime/img/made-with-anvil.png?buildTime=0" crossorigin>
+  <img src="{{app-origin}}/_/static/runtime/img/made-with-anvil.png?buildTime=0" crossorigin>
 </a>
 
-<div class="anvil-root-container">
-  <div id="appGoesHere"></div>
-</div>
+<div id="appGoesHere"></div>
 
-<div id="loadingSpinner"></div>
+<div id="loadingSpinner" class="anvil-spinner">
+    <svg class="anvil-spinner-svg" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><style>@keyframes anvil-chase{to{transform: rotate(360deg)}}@keyframes anvil-chase-dot{80%,to{transform: rotate(360deg)}}@keyframes anvil-scale-dot{0%,100%{transform: scale(1)}50%{transform: scale(.4)}}.anvil-spinner-g circle{transform-origin: 12px 2.5px;animation: anvil-scale-dot 2s ease-in-out infinite}.anvil-spinner-g > g{transform-origin: center;animation: anvil-chase-dot 2s ease-in-out infinite}.anvil-spinner-svg{fill:currentColor;stroke:currentColor}</style><g class="anvil-spinner-g" style="transform-origin:center;animation:anvil-chase 2.5s infinite linear both"><g style="animation-delay:-1.1s"><circle cx="12" cy="2.5" r="1.5" style="animation-delay:-1.1s"/></g><g style="animation-delay:-1s"><circle cx="12" cy="2.5" r="1.5" style="animation-delay:-1s"/></g><g style="animation-delay:-.9s"><circle cx="12" cy="2.5" r="1.5" style="animation-delay:-.9s"/></g><g style="animation-delay:-.8s"><circle cx="12" cy="2.5" r="1.5" style="animation-delay:-.8s"/></g><g style="animation-delay:-.7s"><circle cx="12" cy="2.5" r="1.5" style="animation-delay:-.7s"/></g><g style="animation-delay:-.6s"><circle cx="12" cy="2.5" r="1.5" style="animation-delay:-.6s"/></g></g></svg>
+</div>
 
 
 <div id="error-indicator">
@@ -91,25 +86,39 @@
   <pre class="output"></pre>
   <div style="clear:both"></div>
 </div>
+<script>
+  (function () {
+    const spinner = document.getElementById("loadingSpinner");
+    const getBgImage = (pseudo) => getComputedStyle(spinner, pseudo).backgroundImage;
+    for (const pseudo of [undefined, "::after", "::before"]) {
+        if (getBgImage(pseudo) !== "none") {
+            const svg = spinner.querySelector("svg")
+            svg && svg.style.setProperty("display", "none");
+            return;
+        }
+    }
+  }());
+</script>
 
-<script src="{{cdn-origin}}/runtime/node_modules/html5-boilerplate/dist/js/vendor/modernizr-3.8.0.min.js?buildTime=0" crossorigin></script>
+<script src="{{app-origin}}/_/static/runtime/node_modules/html5-boilerplate/dist/js/vendor/modernizr-3.8.0.min.js?buildTime=0" crossorigin></script>
 
-<!--<script src="{{cdn-origin}}/runtime/node_modules/bootstrap/dist/js/bootstrap.min.js?buildTime=0" crossorigin></script>-->
-<script src="{{cdn-origin}}/runtime/node_modules/moment/min/moment.min.js?buildTime=0" crossorigin></script>
-<script src="{{cdn-origin}}/runtime/node_modules/moment-timezone/builds/moment-timezone-with-data-2012-2022.min.js?buildTime=0" crossorigin></script>
-<script src="{{cdn-origin}}/runtime/js/lib/daterangepicker.min.js?buildTime=0" crossorigin></script>
-<script src="{{cdn-origin}}/runtime/js/lib/b64.js?buildTime=0" crossorigin></script>
-<script src="{{cdn-origin}}/runtime/js/lib/bootstrap-notify.min.js?buildTime=0" crossorigin></script>
+<!--<script src="{{app-origin}}/_/static/runtime/node_modules/bootstrap/dist/js/bootstrap.min.js?buildTime=0" crossorigin></script>-->
+{{legacy-bootstrap-js}}
+<script src="{{app-origin}}/_/static/runtime/node_modules/moment/min/moment.min.js?buildTime=0" crossorigin></script>
+<script src="{{app-origin}}/_/static/runtime/node_modules/moment-timezone/builds/moment-timezone-with-data-2012-2022.min.js?buildTime=0" crossorigin></script>
+<script src="{{app-origin}}/_/static/runtime/js/lib/daterangepicker.min.js?buildTime=0" crossorigin></script>
+<script src="{{app-origin}}/_/static/runtime/js/lib/b64.js?buildTime=0" crossorigin></script>
+<script src="{{app-origin}}/_/static/runtime/js/lib/bootstrap-notify.min.js?buildTime=0" crossorigin></script>
 
-<script src="{{cdn-origin}}/runtime/node_modules/js-yaml/dist/js-yaml.min.js?buildTime=0" crossorigin></script>
+<script src="{{app-origin}}/_/static/runtime/node_modules/js-yaml/dist/js-yaml.min.js?buildTime=0" crossorigin></script>
 
-<!--   <script src="{{cdn-origin}}/runtime/node_modules/core-js-bundle/minified.js?buildTime=0" crossorigin></script>
+<!--   <script src="{{app-origin}}/_/static/runtime/node_modules/core-js-bundle/minified.js?buildTime=0" crossorigin></script>
  -->
 
-<script src="{{cdn-origin}}/runtime/js/lib/skulpt.min.js?buildTime=0" crossorigin></script>
-<script src="{{cdn-origin}}/runtime/js/lib/skulpt-stdlib.js?buildTime=0" crossorigin></script>
+<script src="{{app-origin}}/_/static/runtime/js/lib/skulpt.min.js?buildTime=0" crossorigin></script>
+<script src="{{app-origin}}/_/static/runtime/js/lib/skulpt-stdlib.js?buildTime=0" crossorigin></script>
 
-<script src="{{cdn-origin}}/runtime/dist/runner2.bundle.js?buildTime=0" crossorigin></script>
+<script src="{{app-origin}}/_/static/runtime/dist/runner2.bundle.js?buildTime=0" crossorigin></script>
 
 {{extra-snippets}}
 <script>
@@ -123,9 +132,9 @@
   // docker-platform-server-base script adds sha's in html files - we put this variable here so that we can aggrissively cache the std-lib files
   // the std-lib is loaded dynamically in runner.js
   window.anvilSkulptLib = {
-    1: "{{cdn-origin}}/runtime/js/lib/skulpt-stdlib-1.json?buildTime=0",
-    2: "{{cdn-origin}}/runtime/js/lib/skulpt-stdlib-2.json?buildTime=0",
-    3: "{{cdn-origin}}/runtime/js/lib/skulpt-stdlib-3.json?buildTime=0"
+    1: "{{app-origin}}/_/static/runtime/js/lib/skulpt-stdlib-1.json?buildTime=0",
+    2: "{{app-origin}}/_/static/runtime/js/lib/skulpt-stdlib-2.json?buildTime=0",
+    3: "{{app-origin}}/_/static/runtime/js/lib/skulpt-stdlib-3.json?buildTime=0"
   };
 
   // NB: We will need to preserve things other than ?s= at some point.

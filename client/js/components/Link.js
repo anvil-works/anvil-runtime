@@ -58,6 +58,7 @@ module.exports = (pyModule) => {
                     holder.style.display = v ? "inline-block" : "none";
                 },
                 inlineEditElement: 'holder',
+                group: undefined,
             },
             url: /*!componentProp(Link)!1*/ {
                 name: "url",
@@ -102,6 +103,7 @@ module.exports = (pyModule) => {
                             "A dictionary of keys including 'shift', 'alt', 'ctrl', 'meta'. " +
                             "Each key's value is a boolean indicating if it was pressed during the click event. " +
                             "The meta key on a mac is the Command key",
+                        important: false,
                     },
                 ],
                 important: true,
@@ -140,18 +142,15 @@ module.exports = (pyModule) => {
 
         locals($loc) {
             $loc["__new__"] = PyDefUtils.mkNew(pyModule["ColumnPanel"], (self) => {
-                self._anvil.element.on(
-                    "click",
-                    PyDefUtils.funcWithPopupOK((e) => {
-                        if (isHandled(e)) return;
-                        setHandled(e);
-                        PyDefUtils.raiseEventAsync(
-                            { keys: { meta: e.metaKey, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey } },
-                            self,
-                            "click"
-                        );
-                    })
-                );
+                self._anvil.element.on("click", (e) => {
+                    if (isHandled(e)) return;
+                    setHandled(e);
+                    PyDefUtils.raiseEventAsync(
+                        { keys: { meta: e.metaKey, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey } },
+                        self,
+                        "click"
+                    );
+                });
                 self._anvil.pageEvents = {
                     remove() {
                         if (self._anvil.urlHandle) {

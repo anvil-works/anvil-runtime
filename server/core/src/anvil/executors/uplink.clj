@@ -120,6 +120,7 @@
           connection-cookie (atom nil)]
 
       (metrics/set! :api/runtime-connected-uplinks-total (swap! connected-uplink-count inc))
+      (ws-util/tag-channel! channel {:org-id -2}) ;; Use this to mean "connecting uplink" for now.
 
       (on-close channel
                 (fn [why]
@@ -145,7 +146,6 @@
       (on-receive channel
                   (fn [json-or-binary]
                     (worker-pool/set-task-info! :websocket ::receive)
-                    (ws-util/tag-channel! channel {:org-info -2}) ;; Use this to mean "connecting uplink" for now.
                     (when-not (is-closed?)
                       (log/trace "Uplink got data: " json-or-binary)
                       (try+

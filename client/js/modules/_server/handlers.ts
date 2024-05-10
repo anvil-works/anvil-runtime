@@ -1,7 +1,7 @@
 import {
     chainOrSuspend,
     pyCall,
-    pyCallOrSuspend,
+    pyCallOrSuspend, pyIterFor,
     pyNone,
     pyNoneType,
     pyRuntimeError,
@@ -9,14 +9,16 @@ import {
     suspensionToPromise,
     toPy,
 } from "@Sk";
-import { anvilServerMod } from "@runtime/utils";
+import { anvilServerMod } from "@runtime/runner/py-util";
 import PyDefUtils from "PyDefUtils";
 import { pyNamedExceptions, pyServerEventHandlers } from "./constants";
-import { reconstructObjects } from "./deserialize";
+import {getOutstandingMedia, reconstructObjects} from "./deserialize";
 import { diagnosticRequest } from "./diagnostics";
 import { ServerProfile } from "./profile";
 import { OutstandingRequest, deleteOutstandingRequest, outstandingRequests } from "./rpc";
 import { VtGlobals } from "./types";
+import { updateReplState } from "../../runner/logging";
+
 
 interface ChunkData {
     type: "CHUNK_HEADER";
@@ -36,6 +38,7 @@ export interface ResponseData {
     profile?: ServerProfile;
     response: any;
     cacheUpdates?: any;
+    importDuration?: number;    
     capUpdates?: any;
 }
 
@@ -48,12 +51,19 @@ export interface ErrorData {
 }
 
 export function handleOutput(d: any) {
-    // The "true" is a Anvil-proprietary thing to mark this as from the server
+    // The "true" is an Anvil-proprietary thing to mark this as from the server
     Sk.output(d.output, true);
 }
 
 export function handleCookie() {
     $.post(window.anvilAppOrigin + "/_/request_cookies?s=" + window.anvilSessionToken);
+}
+
+export function handleInvalidateMacs() {
+    const handleInvalidate = PyDefUtils.getModule("anvil.server")?.tp$getattr(new pyStr("__anvil$doInvalidatedMacs")) as any as function | undefined;
+    if (handleInvalidate) {
+        PyDefUtils.asyncToPromise(handleInvalidate);
+    }
 }
 
 let nextBlobLocation: null | { content: Blob[] } = null;
@@ -157,7 +167,12 @@ export async function maybeHandleResponse(id: string) {
     if (!req.suppressLoading) window.setLoading?.(false);
     deleteOutstandingRequest(id);
 
+
     if ("response" in req.response!) {
+        if (req.response?.importDuration) {
+            updateReplState({"importTime": req.response?.importDuration})
+        }
+
         try {
             const reconstructProfile = req.profile.append("Reconstruct objects");
             await reconstructObjects(req.response, req.media);
@@ -185,25 +200,24 @@ export async function maybeHandleResponse(id: string) {
 
 export function handleResponse(d: ResponseData) {
     // response
+    
     const { id, objects = {}, profile } = d;
 
     if (id.startsWith("client-keepalive")) return;
+
     const req = outstandingRequests[id];
     if (!req) {
         console.error("Got response for unknown request ID " + id);
         return;
     }
     req.response = d;
-    req.media = {};
-    for (const m of Object.values<any>(objects)) {
-        if (m.type?.[0] !== "DataMedia") continue;
-        const { id, ["mime-type"]: mime_type, path, name } = m;
-        req.media[id] = { mime_type, path, content: [], name };
-    }
+    req.media = getOutstandingMedia(objects);
 
     if (profile) {
         req.profile.mergeServerProfile(profile);
     }
+
+    
     maybeHandleResponse(id);
 }
 
@@ -222,6 +236,8 @@ export function handleMessage(data: any) {
             return handleEvent(d);
         case !!d.output:
             return handleOutput(d);
+        case !!d["invalidate-macs"]:
+            return handleInvalidateMacs(d);
         case !!d["set-cookie"]:
             return handleCookie();
         case !!d.error:

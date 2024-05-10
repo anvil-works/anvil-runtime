@@ -1,6 +1,6 @@
 "use strict";
 
-const { anvilMod } = require("./utils");
+const { anvilMod } = require("@runtime/runner/py-util");
 
 /* This file defines the system components available to apps, as Python classes.
    These are the runtime (non-designer) versions. */
@@ -316,7 +316,13 @@ module.exports.newPythonComponent = function newPythonComponent(component, compo
 
 
     } else { // Not a custom component (therefore a built-in one)
-        var cls = anvilMod["Design"+component.type] || anvilMod[component.type];
+        let cls;
+        const designName = "Design"+component.type;
+        if (designName in anvilMod) {
+            cls = anvilMod[designName];
+        } else if (component.type in anvilMod) {
+            cls = anvilMod[component.type];
+        }
 
         if (!cls) {
             pyComponent = mkInvalidComponent(anvilMod, "No such component: \"" + component.type + "\"");

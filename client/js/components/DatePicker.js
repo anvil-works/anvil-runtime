@@ -1,7 +1,7 @@
 "use strict";
 
 var PyDefUtils = require("PyDefUtils");
-const { datetimeMod, tzMod } = require("../utils");
+const { datetimeMod, tzMod } = require("@runtime/runner/py-util");
 const { getCssPrefix } = require("@runtime/runner/legacy-features");
 
 /*#
@@ -282,6 +282,7 @@ module.exports = (pyModule) => {
                 set(s, e, v) {
                     updatePicker(s);
                 },
+                important: true,
             },
 
             /*!componentProp(DatePicker)!1*/
@@ -319,6 +320,7 @@ module.exports = (pyModule) => {
                 set(s, e, v) {
                     s._anvil.elements.input.setAttribute("placeholder", isTrue(v) ? v.toString() : "");
                 },
+                important: true,
             },
         }),
 

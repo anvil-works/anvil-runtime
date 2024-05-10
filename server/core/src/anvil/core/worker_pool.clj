@@ -53,7 +53,7 @@
         (swap! n-threads-running inc)
         (swap! thread-stats update (.getName (Thread/currentThread)) assoc :last-run (System/currentTimeMillis))
         (.run ^Runnable task)
-        (catch Exception e
+        (catch Throwable e
           (.printStackTrace e))
         (finally
           (swap! n-threads-running dec)
@@ -144,7 +144,8 @@
 (defonce get-task-tags-for-http-request (fn [r] [:http]))
 (defonce get-task-tags-for-dispatch-request (fn [r] [:dispatch]))
 (defonce get-task-tags-for-app (fn [app-info] [:app-task]))
-(def set-tag-hooks! (util/hook-setter #{get-task-tags-for-http-request get-task-tags-for-dispatch-request get-task-tags-for-app}))
+(defonce get-delay-for-dispatch-request (fn [r] 0))
+(def set-tag-hooks! (util/hook-setter #{get-task-tags-for-http-request get-task-tags-for-dispatch-request get-task-tags-for-app get-delay-for-dispatch-request}))
 
 (defmacro run-task! [& code]
   (let [info (first code)

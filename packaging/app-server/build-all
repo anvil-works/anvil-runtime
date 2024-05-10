@@ -5,7 +5,7 @@ set -e
 cd "$(dirname "$0")/../.."
 DIR="$(pwd)"
 
-echo "*** Building core runtime *********************************"
+echo "*** Building core runtime ****************************************"
 cd $DIR/server/core
 lein install
 
@@ -16,6 +16,10 @@ lein install
 echo ; echo "*** Building app server ***********************************"
 cd $DIR/server/app-server
 lein uberjar
+
+echo ; echo "*** Building front-end JS *********************************"
+cd $DIR/client
+npm install && npm run build
 
 echo ; echo "*** Building Python package *******************************"
 cd $DIR/packaging/app-server

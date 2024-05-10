@@ -3,7 +3,9 @@
             [digest]
             [anvil.core.pg-json-handler]
             [anvil.util :as util]
+            [clojure.data.json :as json]
             [crypto.random :as random]
+            [medley.core :refer [deep-merge map-kv-vals]]
             [clojure.string :as str])
   (:use slingshot.slingshot)
   (:import (org.apache.commons.codec.binary Base64)))
@@ -104,23 +106,45 @@
            (->> (get-in app-content [:dependency_code id :assets])
                 (map #(assoc % :dep-app-id id))))))
 
+;; Takes an app YAML config_schema and a list of config override maps, and returns a final config
+(defn- calculate-config [schema config-overrides]
+  (into {} (for [which [:client :server]
+                 :let [configs (map #(get % which {}) config-overrides)
+                       config (apply merge configs)
+                       schema (get schema which {})]]
+             [which (->> schema
+                         (map-kv-vals (fn [k v]
+                                        (if (contains? config k)
+                                          (:value (get config k))
+                                          (:default_value v)))))])))
+
+(defn- apply-dep-config [loaded-deps overrides]
+  (->> loaded-deps
+       (map-kv-vals (fn [app-id {:keys [config_schema] :as dep}]
+                      (-> dep
+                          (assoc :config (calculate-config config_schema (get overrides app-id))))))))
+
+;; Right now, this merges app config with config schema as it goes. It doesn't cope with multiple dependencies on the same
+;; app, and has no way to override config via environments.
 (defn get-app-content-with-dependencies [app-info version-spec]
   ;; Do a recursive dependency lookup on the app
   (let [app (get-app-content app-info version-spec)]
     (loop [loaded-deps {}
            dependency-versions {}
+           config-overrides {}
            dep-order '()
            all-dep-ids (util/string-keys (:dep_ids app-info))
            seen-dep-ids {}
            seen-assets (into #{} (map :name (get-in app [:content :theme :assets])))
-           [{:keys [depending-app dep_id version] :as dep-spec} & more-deps-to-process :as deps-to-process]
+           [{:keys [depending-app dep_id version config] :as dep-spec} & more-deps-to-process :as deps-to-process]
            (->> (:dependencies (:content app))
                 (map #(assoc % :depending-app (:id app-info))))]
       (cond
         ;; Done?
         (empty? deps-to-process)
         (-> app
-            (update :content assoc :dependency_code loaded-deps :dependency_order dep-order :dependency_ids all-dep-ids :correct_dependency_ids seen-dep-ids)
+            (update :content assoc :dependency_code (apply-dep-config loaded-deps config-overrides) :dependency_order dep-order :dependency_ids all-dep-ids :correct_dependency_ids seen-dep-ids)
+            (update :content #(assoc % :config (calculate-config (:config_schema %) [])))
             (assoc :dependency-versions dependency-versions))
 
         :else
@@ -130,59 +154,63 @@
                                            (if-let [dep-app-id (get all-dep-ids dep_id)]
                                              [(assoc seen-dep-ids dep_id dep-app-id) all-dep-ids]
                                              [(assoc seen-dep-ids dep_id dep_id) (assoc all-dep-ids dep_id dep_id)]))
-              app_id (get seen-dep-ids dep_id)
-              git-version-spec (if-let [commit-id (get-in version-spec [:dependency-commit-ids app_id])]
+              app-id (get seen-dep-ids dep_id)
+              git-version-spec (if-let [commit-id (get-in version-spec [:dependency-commit-ids app-id])]
                                  {:commit-id commit-id}
                                  (version-spec->git-map version))
               git-map (version-spec->git-map git-version-spec)
-              dep-info (get-app-info-with-can-depend depending-app app_id git-map)]
+              dep-info (get-app-info-with-can-depend depending-app app-id git-map)
+              already-loaded-dep (get loaded-deps app-id)]
           (when-not (get dep-info :can_depend)
-            (log/warn (str "Cannot depend on dependency before other checks" depending-app app_id git-version-spec)))
+            (log/warn (str "Cannot depend on dependency before other checks " depending-app " " app-id " " git-version-spec ": " dep-info)))
           (cond
             ;; App doesn't exist?
             (not dep-info)
-            ;; TODO ICK ICK we're putting a dep_id into a place that expects an app_id, and it will probably work but EW
-            (recur (assoc loaded-deps dep_id {:error "App dependency not found"}) dependency-versions dep-order all-dep-ids seen-dep-ids seen-assets more-deps-to-process)
+            ;; TODO ICK ICK we're putting a dep_id into a place that expects an app-id, and it will probably work but EW
+            (recur (assoc loaded-deps dep_id {:error "App dependency not found"}) dependency-versions config-overrides dep-order all-dep-ids seen-dep-ids seen-assets more-deps-to-process)
 
             ;; Already loaded a different version of this app?
-            (when-let [prev (get loaded-deps app_id)]
-              (not= (clean-version-spec version) (:version-spec prev)))
-            (let [prev (get loaded-deps app_id)
-                  depending (if (= depending-app (:id app-info))
+            (and already-loaded-dep
+                 (not= (clean-version-spec version) (:version-spec already-loaded-dep)))
+            (let [depending (if (= depending-app (:id app-info))
                               app-info
                               (get loaded-deps depending-app))
-                  prev-depending (if (= (:depending_app prev) (:id app-info))
+                  prev-depending (if (= (:depending_app already-loaded-dep) (:id app-info))
                                    app-info
-                                   (get loaded-deps (:depending_app prev)))]
-              (recur (assoc loaded-deps app_id
+                                   (get loaded-deps (:depending_app already-loaded-dep)))]
+              (recur (assoc loaded-deps app-id
                                         {:error (str "Dependency version mismatch: This app depends on more than one version of the same dependency."
                                                      " (\"" (:name depending) "\" (" depending-app ") depends on the "
-                                                     (report-version version) " version of \"" (:name dep-info) "\" (" (when (not= dep_id app_id) (str dep_id "->")) app_id "), but"
-                                                     " \"" (:name prev-depending) "\" (" (:depending_app prev) ") depends on the "
-                                                     (report-version (:version-spec prev)) " version)")})
-                     dependency-versions dep-order all-dep-ids seen-dep-ids seen-assets more-deps-to-process))
+                                                     (report-version version) " version of \"" (:name dep-info) "\" (" (when (not= dep_id app-id) (str dep_id "->")) app-id "), but"
+                                                     " \"" (:name prev-depending) "\" (" (:depending_app already-loaded-dep) ") depends on the "
+                                                     (report-version (:version-spec already-loaded-dep)) " version)")})
+                     dependency-versions config-overrides dep-order all-dep-ids seen-dep-ids seen-assets more-deps-to-process))
 
             ;; Already loaded the same version of this app?
-            (or (get loaded-deps app_id) (= app_id (:id app-info)))
-            (recur loaded-deps dependency-versions dep-order all-dep-ids seen-dep-ids seen-assets more-deps-to-process)
+            already-loaded-dep
+            (recur loaded-deps dependency-versions (update config-overrides app-id #(cons config %)) dep-order all-dep-ids seen-dep-ids seen-assets more-deps-to-process)
+
+            ;; Circular dependency on this main app. Don't allow config overrides in this case.
+            (= app-id (:id app-info))
+            (recur loaded-deps dependency-versions config-overrides dep-order all-dep-ids seen-dep-ids seen-assets more-deps-to-process)
 
             ;; Not allowed to see this app?
             (not (:can_depend dep-info))
             (do
-              (log/warn (str "Permission denied loading dependency: " depending-app app_id git-version-spec))
-              (recur (assoc loaded-deps app_id {:error "Permission denied when loading app dependency"}) dependency-versions dep-order all-dep-ids seen-dep-ids seen-assets more-deps-to-process))
+              (log/warn (str "Permission denied loading dependency: " depending-app " " app-id " " git-version-spec))
+              (recur (assoc loaded-deps app-id {:error "Permission denied when loading app dependency"}) dependency-versions config-overrides dep-order all-dep-ids seen-dep-ids seen-assets more-deps-to-process))
 
             ;; All good - load the app!
             :else
-            (let [full-app (get-app-content dep-info git-version-spec)
-                  dep-content (:content full-app)
+            (let [full-dep (get-app-content dep-info git-version-spec)
+                  {:keys [config_schema] :as dep-content} (:content full-dep)
                   {dep-assets false, overridden-dep-assets true} (->> (get-in dep-content [:theme :assets])
                                                                       (group-by #(and (contains? seen-assets (:name %)) (not= (:name %) "theme.css"))))]
-              ;;(println depending-app "(" (:name dep-info) ") -> " (:id dep-info) " (" (:name dep-info) ") version " version " / " version-sha "/" (:version full-app))
-              (recur (assoc loaded-deps app_id
-                                        (-> (select-keys dep-content [:forms :modules :server_modules :package_name :secrets :native_deps :runtime_options :toolbox_sections])
+              ;;(println depending-app "(" (:name dep-info) ") -> " (:id dep-info) " (" (:name dep-info) ") version " version " / " version-sha "/" (:version full-dep))
+              (recur (assoc loaded-deps app-id
+                                        (-> (select-keys dep-content [:forms :modules :server_modules :package_name :secrets :native_deps :runtime_options :toolbox_sections :layouts :config_schema])
                                             (assoc :version-spec (clean-version-spec version)
-                                                   :commit-id (:version full-app)
+                                                   :commit-id (:version full-dep)
                                                    :depending_app depending-app
                                                    :name (:name dep-info)
                                                    :assets dep-assets
@@ -190,12 +218,13 @@
                                                    :form_templates (get-in dep-content [:theme :templates])
                                                    :color_scheme (get-in dep-content [:theme :parameters :color_scheme])
                                                    :roles (get-in dep-content [:theme :parameters :roles]))))
-                     (assoc dependency-versions app_id (:version full-app))
-                     (cons app_id dep-order)
+                     (assoc dependency-versions app-id (:version full-dep))
+                     (assoc config-overrides app-id (list config))
+                     (cons app-id dep-order)
                      (merge (util/string-keys (:dep_ids dep-info)) all-dep-ids)
                      seen-dep-ids
                      (into seen-assets (map :name dep-assets))
-                     (concat more-deps-to-process (map #(assoc % :depending-app app_id) (:dependencies dep-content)))))))))))
+                     (concat more-deps-to-process (map #(assoc % :depending-app app-id) (:dependencies dep-content)))))))))))
 
 
 (defn get-app
@@ -257,7 +286,7 @@
           primary-color (get theme-colors (get-primary-color-name-from-deps all-colors) "#2ab1eb")
           theme-var-map (into {} (for [theme-col (keys theme-colors)]
                                    [theme-col (make-var theme-col)]))
-          css (apply str (map #(String. (Base64/decodeBase64 ^String (:content %))) css-assets))
+          css (apply str (map #(str "\n<style>\n" (String. (Base64/decodeBase64 ^String (:content %))) "\n</style>\n") css-assets))
           css (reduce (fn [css [name _]]
                         (.replace css (str "%color:" name "%") (str "var(" (theme-var-map name) ")")))
                       css theme-colors)
@@ -280,6 +309,37 @@
        :theme-vars    theme-var-map
        :primary-color primary-color})))
 
+
+(defn get-from-native-deps [key yaml]
+  (concat
+    (for [dep-id (:dependency_order yaml)]
+      (get-in yaml [:dependency_code dep-id :native_deps key] ""))
+    [(get-in yaml [:native_deps key]) ""]))
+
+(def get-all-head-html (partial get-from-native-deps :head_html))
+(def get-all-import-maps (partial get-from-native-deps :import_map))
+
+(defn read-json-safe-str [s]
+  (try (json/read-str s :eof-error? false)
+       ;; We could do something better here
+       (catch Exception e nil)))
+
+(defn sanitize-import-maps [import-map]
+  (when (not-empty import-map)
+    (str
+      "<!-- Anvil merged import maps -->\n"
+      "<script type=\"importmap\">\n"
+      (json/write-str import-map)
+      "\n</script>\n")))
+
+(defn merge-import-maps [yaml]
+  (->> yaml
+       get-all-import-maps
+       (map read-json-safe-str)
+       (apply deep-merge)
+       sanitize-import-maps))
+
+
 (defn sanitised-app-and-style-for-client
   ([id version-spec] (sanitised-app-and-style-for-client id version-spec nil {:allow-errors? true}))
   ([id version-spec app-session-state {:keys [allow-errors?] :as flags}]
@@ -287,11 +347,11 @@
          app (get-app app-info version-spec allow-errors?)
          yaml (:content app)
          only-version (fn [runtime-options] (merge {:version 0}
-                                                   (select-keys runtime-options [:version :client_version :no_jquery :preview_v3])))
+                                                   (select-keys runtime-options [:version :client_version :no_jquery :preview_v3 :legacy_features])))
          style (app->style yaml id app-session-state flags)]
 
      [app-info
-      (-> (select-keys yaml [:name :package_name :forms :modules :startup :startup_form :services :theme :dependency_code :dependency_order :dependency_ids :allow_embedding :metadata :runtime_options])
+      (-> (select-keys yaml [:name :package_name :forms :modules :startup :startup_form :services :theme :dependency_code :dependency_order :dependency_ids :allow_embedding :metadata :runtime_options :config])
           (update-in [:runtime_options] only-version)
           (update-in [:theme] (fn [theme]
                                 {:html
@@ -302,17 +362,15 @@
                                  :color_scheme
                                  (:theme-colors style)}))
           (update-in [:dependency_code] (fn [deps] (into {} (for [[app-id dep] deps]
-                                                              [app-id (-> (select-keys dep [:modules :forms :package_name :runtime_options])
-                                                                          (update-in [:runtime_options] only-version))]))))
+                                                              [app-id (-> (select-keys dep [:modules :forms :package_name :runtime_options :config])
+                                                                          (update-in [:runtime_options] only-version)
+                                                                          (update-in [:config] select-keys [:client]))]))))
           (update-in [:services] (fn [svcs]
-                                   (map #(select-keys % [:source :client_config]) svcs))))
+                                   (map #(select-keys % [:source :client_config]) svcs)))
+          (update-in [:config] select-keys [:client]))
 
       style
-      (apply str
-             (concat
-               (for [dep-id (:dependency_order yaml)]
-                 (get-in yaml [:dependency_code dep-id :native_deps :head_html]))
-               [(get-in yaml [:native_deps :head_html])]))
+      (apply str (merge-import-maps yaml) (get-all-head-html yaml))
       (:version app)])))
 
 

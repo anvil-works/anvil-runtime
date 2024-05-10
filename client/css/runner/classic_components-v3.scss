@@ -210,7 +210,6 @@ div.#{$prefix}checkbox {
 .#{$prefix}flow-panel > .#{$prefix}flow-panel-gutter {
     display: flex;
     flex-wrap: wrap;
-    align-items: top;
     align-content: flex-start;
 }
 .#{$prefix}flow-panel > .#{$prefix}flow-panel-gutter > .#{$prefix}flow-panel-item {
@@ -266,6 +265,15 @@ div.#{$prefix}checkbox {
     margin-left: 30px;
     margin-right: 30px;
 }
+
+/* Only a single class name here (not .flow-panel.foo) so that a simple role can override it. */
+.#{$prefix}flow-panel.#{$prefix}vertical-align-top > .#{$prefix}flow-panel-gutter { align-items: flex-start; }
+.#{$prefix}flow-panel.#{$prefix}vertical-align-middle > .#{$prefix}flow-panel-gutter { align-items: center; }
+.#{$prefix}flow-panel.#{$prefix}vertical-align-bottom > .#{$prefix}flow-panel-gutter { align-items: flex-end; }
+/* Choosing "full" is like not setting vertical_align at all. Don't add the style at all in this case,
+   so anyone who has overridden this manually is not affected. */
+/*.#{$prefix}flow-panel.#{$prefix}vertical-align-full > .#{$prefix}flow-panel-gutter { align-items: stretch; }*/
+
 
 /* Anvil Goolge Map */
 

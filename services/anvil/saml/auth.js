@@ -64,6 +64,7 @@ var $builtinmodule = window.memoise('anvil.saml.auth', function() {
                 ],
             });
             modal.show();
+            return modal;
         }
     }
 
@@ -100,7 +101,7 @@ var $builtinmodule = window.memoise('anvil.saml.auth', function() {
 
         loginCallbackResolve = PyDefUtils.defer();
 
-        displayLogInModal();
+        const modal = displayLogInModal();
 
         // TODO: Should probably have a timeout on this promise.
 
@@ -113,7 +114,7 @@ var $builtinmodule = window.memoise('anvil.saml.auth', function() {
                 } else {
                     reject(e);
                 }
-            });
+            }).then(function() { modal && modal.hide(); });;
         });
     });
 

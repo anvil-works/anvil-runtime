@@ -1,4 +1,4 @@
-const { anvilMod } = require("../utils");
+const { anvilMod } = require("@runtime/runner/py-util");
 
 module.exports = function () {
     const PyDefUtils = require("PyDefUtils");

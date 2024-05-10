@@ -13,13 +13,14 @@
             [anvil.core.worker-pool :as worker-pool]
             [anvil.runtime.ws-util :as ws-util]
             [anvil.runtime.sessions :as sessions]
-            [anvil.core.tracing :as tracing]))
+            [anvil.core.tracing :as tracing]
+            [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]))
 
 ;; Hookable functions
 
 (defonce on-client-connect (fn [connection] nil))
 (defonce on-client-disconnect (fn [connection] nil))
-(defonce share-server-logs-with-client? (fn [environment] false))
+(defonce share-server-logs-with-client? (fn [environment app-session] false))
 
 (def set-browser-ws-hooks! (util/hook-setter [on-client-connect on-client-disconnect share-server-logs-with-client?]))
 
@@ -41,18 +42,20 @@
     (catch Exception e
       (log/error e))))
 
+(defn get-session-liveobject-secret [app-session]
+  (-> (swap! app-session
+             (fn [x] (if-not (:liveobject-secret x)
+                       (assoc x :liveobject-secret (random/base64 128))
+                       x)))
+      (:liveobject-secret)))
 
 (defn ws-handler [{:keys [app-id app-session environment app-origin] :as request} app-yaml]
 
   (ws-util/with-opening-channel request channel on-open
 
-    (let [session-liveobject-secret (-> (swap! app-session
-                                               (fn [x] (if-not (:liveobject-secret x)
-                                                         (assoc x :liveobject-secret (random/base64 128))
-                                                         x)))
-                                        (:liveobject-secret))
+    (let [get-session-liveobject-secret #(get-session-liveobject-secret app-session)
 
-          ds (serialisation/mk-Deserialiser {:origin :client, :session-liveobject-key session-liveobject-secret})
+          ds (serialisation/mk-Deserialiser {:origin :client, :get-session-liveobject-key get-session-liveobject-secret})
 
           outstanding-incoming-request-ids (atom {})
 
@@ -71,12 +74,12 @@
 
           serial-responder (fn [request-id]
                              (fn [resp call-finished?]
-                               (serialisation/serialise-to-websocket! (assoc resp :id request-id) channel true session-liveobject-secret)
+                               (serialisation/serialise-to-websocket! (assoc resp :id request-id) channel true (get-session-liveobject-secret))
                                (when call-finished?
                                  (swap! outstanding-incoming-request-ids dissoc request-id)
                                  (maybe-disconnect-if-idle!))))
 
-          session-listener-registration (sessions/register-session-listener! app-session {:on-event! #(serialisation/serialise-to-websocket! {:id (str "evt" (random/base32 10)) :event %} channel true session-liveobject-secret)})]
+          session-listener-registration (sessions/register-session-listener! app-session {:on-event! #(serialisation/serialise-to-websocket! {:id (str "evt" (random/base32 10)) :event %} channel true (get-session-liveobject-secret))})]
 
       (log/debug "Client websocket connected for session" (:id @app-session))
       (on-client-connect connection)
@@ -119,14 +122,18 @@
                                   responder (serial-responder request-id)
                                   ;; respond causes the dispatcher to return update doesn't (e.g. print output)
                                   return-path {:respond!
-                                               #(responder % true)
+                                               (fn [{:keys [importDuration] :as r}]
+                                                 (when (and (some? importDuration) (nil? (get @app-session :import-duration)))
+                                                   (app-log/record-event! app-session nil "import_time" nil {:importDuration importDuration})
+                                                   (swap! app-session assoc :import-duration importDuration))
+                                                 (responder r true))
                                                :update!
                                                (fn [{:keys [output] :as r}]
                                                  (if (string? output)
                                                    ;; TODO NEW TRACE API
                                                    (do
                                                      (app-log/record-event! app-session nil "print" output nil)
-                                                     (when (share-server-logs-with-client? environment)
+                                                     (when (share-server-logs-with-client? environment app-session)
                                                        (responder r false)))
                                                    (responder r false)))}]
                               (swap! outstanding-incoming-request-ids assoc request-id {:context    {:func (or (:command data) (:method (:liveObjectCall data)))}
@@ -140,6 +147,7 @@
                                     (sessions/resolve-ambiguous-client-type! app-session "browser")
                                     (sessions/ensure-logged! app-session)
                                     (sessions/persist! app-session)
+                                    (rpc-util/invalidate-client-objects-without-notify! app-session)
                                     (responder {:response (sessions/url-token app-session)}
                                                true))
                                   (if (and (:anvil.runtime/replacement-session @app-session)

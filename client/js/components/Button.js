@@ -54,6 +54,7 @@ module.exports = (pyModule) => {
                     multiline: true,
                     suggested: true,
                     inlineEditElement: 'text',
+                    group: undefined,
                 },
                 font_size: {
                     set(s, e, v) {
@@ -110,6 +111,7 @@ module.exports = (pyModule) => {
                             "A dictionary of keys including 'shift', 'alt', 'ctrl', 'meta'. " +
                             "Each key's value is a boolean indicating if it was pressed during the click event. " +
                             "The meta key on a mac is the Command key",
+                        important: false,
                     },
                 ],
                 important: true,
@@ -144,20 +146,17 @@ module.exports = (pyModule) => {
 
         locals($loc) {
             $loc["__new__"] = PyDefUtils.mkNew(pyModule["ClassicComponent"], (self) => {
-                $(self._anvil.elements.button).on(
-                    "click",
-                    PyDefUtils.funcWithPopupOK((e) => {
-                        setHandled(e);
-                        // Search me why this is needed, but it is.
-                        if (!isTrue(self._anvil.props["enabled"])) return;
+                $(self._anvil.elements.button).on("click", (e) => {
+                    setHandled(e);
+                    // Search me why this is needed, but it is.
+                    if (!isTrue(self._anvil.props["enabled"])) return;
 
-                        PyDefUtils.raiseEventAsync(
-                            { keys: { meta: e.metaKey, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey } },
-                            self,
-                            "click"
-                        );
-                    })
-                );
+                    PyDefUtils.raiseEventAsync(
+                        { keys: { meta: e.metaKey, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey } },
+                        self,
+                        "click"
+                    );
+                });
             });
         },
     });

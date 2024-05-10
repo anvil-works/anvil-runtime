@@ -83,12 +83,15 @@
 
                  [io.opentelemetry/opentelemetry-sdk]]
   :bom {:import [[io.opentelemetry/opentelemetry-bom "1.7.0"]]}
-
+  :jvm-opts ["-Dfile.encoding=UTF-8"]
   :plugins [[lein-aot-order "0.1.0"]
             [lein-bom "0.2.0-SNAPSHOT"]]
   :aot :order
   :auto-clean false
   :omit-source true
   :profiles {:provided {:dependencies [[org.bouncycastle/bcprov-jdk15on "1.65"]]}
-             :uberjar {:exclusions [org.bouncycastle/bcprov-jdk15on]}}
+             :uberjar {:exclusions [org.bouncycastle/bcprov-jdk15on]}
+             :dev {:jvm-opts ["-Dclojure.compiler.disable-locals-clearing=true"
+                              ;"-Djavax.net.debug=all" ; Useful for debugging SSL issues
+                              ]}}
   )

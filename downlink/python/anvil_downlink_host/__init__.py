@@ -5,6 +5,7 @@ from ws4py.client.threadedclient import WebSocketClient
 # Configuration
 
 TIMEOUT = int(os.environ.get("DOWNLINK_WORKER_TIMEOUT", "30"))
+BACKGROUND_TIMEOUT = int(os.environ.get("DOWNLINK_BACKGROUND_TIMEOUT", "0"))
 KEEPALIVE_TIMEOUT = int(os.environ.get("DOWNLINK_KEEPALIVE_TIMEOUT", "30"))
 DROP_PRIVILEGES = os.environ.get("DROP_PRIVILEGES")
 RUNTIME_ID = os.environ.get("RUNTIME_ID", None) or ('python2-full' if sys.version_info[0] < 3 else 'python3-full')
@@ -39,6 +40,7 @@ def send_with_header(json_data, blob=None):
 
 launch_worker = None
 launch_pdf_worker = None
+retire_cached_worker = lambda w: None
 
 connection = None
 
@@ -128,8 +130,8 @@ class Connection(WebSocketClient):
             self.reset_idle_timer()
 
     def check_keepalives(self):
-        if time.time() - self._last_keepalive_reply > KEEPALIVE_TIMEOUT:
-            print("No keepalive reply in %s seconds. Exiting." % KEEPALIVE_TIMEOUT)
+        if time.time() - max(self._last_keepalive_reply, self._last_activity) > KEEPALIVE_TIMEOUT:
+            print("No keepalive reply or activity in %s seconds. Exiting." % KEEPALIVE_TIMEOUT)
             os._exit(1)
         else:
             threading.Timer(30, self.check_keepalives).start()
@@ -203,17 +205,16 @@ class Connection(WebSocketClient):
                     print("Bogus output, probably for an old request (worker: %s): %s" %
                           ("FOUND" if calling_worker else "MISSING", repr(data)[:100]))
 
-            elif type in ["CALL_WITH_APP", "LAUNCH_BACKGROUND_WITH_APP", "CALL", "LAUNCH_BACKGROUND", "LAUNCH_REPL"]:
+            elif type in ["CALL", "LAUNCH_BACKGROUND", "LAUNCH_REPL"]:
 
                 if "app" not in data:
                     cached_app = app_cache.get((data["app-id"], data["app-version"]))
                     if cached_app is not None:
                         #print("Filling out app from cache for %s" % ((data["app-id"], data["app-version"]),))
-                        data["type"] += "_WITH_APP"
                         data["app"] = cached_app
 
                 #print "Launching new worker for ID " + id
-                if draining_start_time:
+                if draining_start_time and data.get("command", None) != "anvil.private.pdf.get_component":
                     self.send_with_header({"id": id, "error": {"type": "anvil.server.DownlinkDrainingError", "message": "New call routed to draining downlink"}})
                 else:
                     if data.get("command", None) == "anvil.private.pdf.do_print":
@@ -337,7 +338,6 @@ class BaseWorker(object):
         self.req_ids = set()
         self.outbound_ids = {} # Outbound ID -> inbound ID it came from
         self._media_tracking = {} # reqID -> (set([mediaId, mediaId, ]), finishedCallback)
-        self.lock = threading.RLock() # TODO do we need this?
         self.start_times = {}
         self.proc_info = None
         self.task_info = task_info
@@ -356,6 +356,7 @@ class BaseWorker(object):
     def record_outbound_call_complete(self, outbound_id):
         self.outbound_ids.pop(outbound_id, None)
         workers_by_id.pop(outbound_id, None)
+        maybe_quit_if_draining_and_done()
 
     def record_inbound_call_started(self, inbound_msg):
         inbound_id = inbound_msg['id']
@@ -493,8 +494,8 @@ def report_stats():
         stats = worker.report_stats()
         mem_usage = stats.get("mem", {}).get("uss", 0)
         if PER_WORKER_SOFT_MEMORY_LIMIT is not None and mem_usage > PER_WORKER_SOFT_MEMORY_LIMIT:
-            print("Worker is using %.0fMB: %s " % (mem_usage/(1024*1024.0), stats.get('info')))
-            worker.drain()
+            print("Worker is using %.0fMB, retiring: %s" % (mem_usage/(1024*1024.0), stats.get('info')))
+            retire_cached_worker(worker)
         worker_stats.append(stats)
     connection.send_with_header({
         "type": "STATS",

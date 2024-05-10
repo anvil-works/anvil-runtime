@@ -6,6 +6,20 @@ declare global {
     }
 }
 
+const OFFLINE_TIMEOUT = 7500;
+
+async function fetchWithTimeout(request: string) {
+    const abortController = new AbortController();
+    const { signal } = abortController;
+    let fetchCompleted = false;
+    const fetchPromise = fetch(request, { signal });
+    setTimeout(() => {
+        if (!fetchCompleted) abortController.abort();
+    }, OFFLINE_TIMEOUT);
+    const resp = await fetchPromise;
+    fetchCompleted = true;
+    return resp;
+}
 
 class AnvilAppOnline {
     onLine = navigator.onLine;
@@ -26,7 +40,7 @@ class AnvilAppOnline {
         let rv: boolean;
         const deferred = (this.deferredStatus = defer());
         try {
-            await fetch("_/check-app-online?t=" + Date.now());
+            await fetchWithTimeout("_/check-app-online?t=" + Date.now());
             rv = true;
         } catch (e) {
             rv = false;

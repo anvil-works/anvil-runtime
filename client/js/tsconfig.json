@@ -12,5 +12,5 @@
         "jsxFactory": "PyDefUtils.h"
     },
     "include": ["./"],
-    "exclude": ["node_modules"]
+    "exclude": ["node_modules", "runner/components-in-js/packages"]
 }

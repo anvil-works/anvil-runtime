@@ -155,6 +155,22 @@ class LiveObjectProxy(anvil.LiveObject):
                 l += 1
             return l
 
+_n_invalidations = 0
+_invalidation_callbacks = []
+
+def _on_invalidate_client_objects(f):
+    _invalidation_callbacks.append(f)
+
+def _run_invalidated_client_objects_callbacks():
+    global _n_invalidations
+    _n_invalidations += 1
+    for f in _invalidation_callbacks:
+        f()
+
+def invalidate_client_objects():
+    _do_call([], None, fn_name="anvil.private.invalidate_client_objects")
+    _run_invalidated_client_objects_callbacks()
+
 
 # Wildcard for unwrap_capability
 class _CapAny(object):
@@ -187,10 +203,15 @@ class Capability(object):
         self._do_get_update = None
         self._queued_update = {}
         self._hash = None
+        self._n_invalidations = _n_invalidations
 
     @property
     def scope(self):
         return self._scope + self._narrow
+    
+    @property
+    def is_valid(self):
+        return self._n_invalidations == _n_invalidations
 
     def narrow(self, narrowing_suffix):
         narrowing_suffix = _check_valid_scope(narrowing_suffix, "narrow argument")
@@ -440,14 +461,13 @@ serializable_type = portable_class
 
 class LazyMedia(anvil.Media):
     def __init__(self, spec):
-        if isinstance(spec,LazyMedia):
+        if isinstance(spec, LazyMedia):
             spec = spec._spec
         self._spec = spec
-        self._details = None
         self._fetched = None
 
     def _fetch(self):
-        if self._details is None:
+        if self._fetched is None:
             import anvil.server
             self._fetched = anvil.server.call("anvil.private.fetch_lazy_media", self._spec)
         return self._fetched
@@ -464,6 +484,7 @@ class LazyMedia(anvil.Media):
             raise _deserialise_exception(e.error_obj)
 
     def get_url(self, download=True):
+        import anvil.server
         return anvil.server.call("anvil.private.get_lazy_media_url", self, download)
 
     def get_content_type(self):
@@ -474,7 +495,10 @@ class LazyMedia(anvil.Media):
 
     def get_length(self):
         try:
-            return self._get("length")
+            rv = self._get("length")
+            if rv is not None:
+                return rv
+            return self._fetch().get_length()
         except AnvilWrappedError as e:
             raise _deserialise_exception(e.error_obj)
 
@@ -1171,6 +1195,16 @@ def _reconstruct_objects(json, reconstruct_data_media, hold_back_value_types=Fal
 on_register = None # optional
 registrations = {}
 
+registrations = {}
+
+_registration_warning = "Warning: a callable with the name {!r} has already been registered. This is probably not what you want"
+
+def _add_to_register(name, fn):
+    if name in registrations:
+        print(_registration_warning.format(name))
+    registrations[name] = fn
+
+
 class HttpRequest(object):
 
     def __init__(self):
@@ -1186,7 +1220,7 @@ class HttpRequest(object):
     def body_json(self):
         if hasattr(self, "_body_json"):
             return self._body_json
-        elif self.body is not None and self.headers.get("content-type", None) == "application/json":
+        elif self.body is not None and self.headers.get("content-type", "").split(";")[0] == "application/json":
             self._body_json = json.loads(self.body.get_bytes())
         else:
             self._body_json = None
@@ -1253,6 +1287,19 @@ class HttpResponse(object):
             self._headers = value.copy()
         else:
             raise TypeError("headers should be set to a dictionary")
+
+
+#!defFunction(anvil.server,%,[form],*args,**kws)!2:
+# {
+#   $doc: "Open the specified form as a new page from a route.\n\n'form' is a string, and when received by the client the new form will be created (extra arguments will be passed to its constructor).",
+#   anvil$helpLink: "/docs/"
+# } ["FormResponse"]
+@portable_class("anvil.server.FormResponse")
+class FormResponse(object):
+    def __init__(self, form_name, *args, **kwargs):
+        self.form_name = form_name
+        self.args = args
+        self.kwargs = kwargs
 
 
 class CallContext(object):
@@ -1364,13 +1411,13 @@ def register(fn, name=None, name_prefix=None, require_user=None):
         def require_wrap(f):
             return fn
 
-    registrations[name] = require_wrap(fn)
+    _add_to_register(name, require_wrap(fn))
 
     if on_register is not None:
         on_register(name, False)
 
     def reregister(new_f):
-        registrations[name] = require_wrap(new_f)
+        _add_to_register(name, require_wrap(new_f))
         new_f._anvil_reregister = reregister
 
     fn._anvil_reregister = reregister
@@ -1498,7 +1545,9 @@ def http_endpoint(path, require_credentials=False, authenticate_users=False, aut
     return decorator
 
 
-wellknown_endpoint = functools.partial(http_endpoint, _task_prefix = "http-wellknown")
+wellknown_endpoint = functools.partial(http_endpoint, _task_prefix="http-wellknown")
+
+route = functools.partial(http_endpoint, _task_prefix="route")
 
 
 class AnvilCookie(object):

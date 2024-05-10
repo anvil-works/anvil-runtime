@@ -1,7 +1,8 @@
 (ns anvil.app-server.conf
   (:require [slingshot.slingshot :refer :all]
             [anvil.runtime.conf :as runtime-conf])
-  (:import (java.io File)))
+  (:import (java.io File)
+           (java.net URI)))
 
 (defonce ^:private config (atom {}))
 
@@ -14,7 +15,7 @@
 
 (def-config-var get-app-origin :origin)
 
-(def-config-var get-main-app-id :app)
+(defn get-main-app-id [] (.getName ^File (:app-dir @config)))
 
 (defn get-app-package [app-id] (or (get (:dep-id @config) (keyword app-id)) app-id))
 
@@ -38,23 +39,20 @@
 
 (defn set-config! [conf]
   (reset! config (-> (merge DEFAULTS conf)
-                     (update-in [:hostname] #(or % (second (re-matches #".*://([^/:]+).*" (str (:origin conf)))) "localhost"))
-                     (update-in [:app-path] #(or % "."))))
+                     (assoc :hostname (.getHost ^URI (:origin-uri conf)))))
 
-  (assert (:database conf))
+  (assert (:db-info conf))
+  (assert (:app-dir conf))
 
   (when-not (.isDirectory (File. ^String (:data-dir @config)))
     (throw+ {::config-error (format "data-dir '%s' is not a directory" (:data-dir @config))}))
-
-  (when-not (:app conf)
-    (throw+ {::config-error "No app specified to run (use the --app command line option)"}))
 
   (let [data-path #(.getPath (File. ^String (:data-dir @config) ^String %))]
     (runtime-conf/set-config!
       {:static-root-url                     "/_/static"
        :runtime-common-url                  (:origin conf)
        :db                                  {:classname      "org.postgresql.Driver"
-                                             :connection-uri (:database conf)}
+                                             :connection-uri (:connection-string (:db-info conf))}
        :db-transaction-timeout              (* (or (:data-table-txn-timeout conf) 10) 1000)
        :db-pool-params                      (update runtime-conf/db-pool-params :maxPoolSize #(or (:db-connection-pool-size conf) %))
        :force-data-table-views-for-everyone true

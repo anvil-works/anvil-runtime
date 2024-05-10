@@ -1,20 +1,21 @@
 //import * as $ from "jquery";
-import {provideLoggingImpl, stdout} from "./logging";
-import {AppYaml, data, DependencyYaml} from "./data";
-import {uncaughtExceptions} from "./error-handling";
-import * as componentModule from "../components";
-import * as PyDefUtils from "../PyDefUtils";
-import {createFormTemplateClass} from "./forms";
-import {PyModMap} from "./py-util";
-import {pyCall, pyList, pyObject, pyStr} from "../@Sk";
-import {Component} from "../components/Component";
-import {runPostSetupHooks} from "./components-in-js/common";
-import {pyDesignerApi} from "./component-designer-api";
 import { Container } from "@runtime/components/Container";
-import {pyPropertyUtilsApi} from "@runtime/runner/component-property-utils-api";
+import { pyPropertyUtilsApi } from "@runtime/runner/component-property-utils-api";
+import { pyCall, pyList, pyStr } from "../@Sk";
+import * as PyDefUtils from "../PyDefUtils";
+import * as componentModule from "../components";
+import { Component } from "../components/Component";
+import { pyDesignerApi } from "./component-designer-api";
+import { registerJsPythonModules } from "./components-in-js/common";
+import { AppYaml, DependencyYaml, data } from "./data";
+import { uncaughtExceptions } from "./error-handling";
+import { createFormTemplateClass } from "./forms";
+import { provideLoggingImpl, stdout } from "./logging";
+import { PyModMap } from "./py-util";
+import { Slot, WithLayout } from "./python-objects";
+import { warn } from "./warnings";
 
-export const skulptFiles: {[filename:string]: string} = {};
-
+export const skulptFiles: { [filename: string]: string } = {};
 
 function builtinRead(path: string) {
     if (path in skulptFiles) {
@@ -32,9 +33,9 @@ function builtinRead(path: string) {
                 const xhr = new XMLHttpRequest();
                 // this variable is created in runner.html - we create it there so that a sha can be added
                 // when this file includes a sha value it can be aggressively cached by the browser
-                
+
                 // this is undefined when this module first loads since the runner is loaded before we set window.anvilSkulptLib
-                
+
                 const fetchUrl = window.anvilSkulptLib[file];
                 xhr.open("GET", fetchUrl, true);
                 xhr.onload = function () {
@@ -50,7 +51,6 @@ function builtinRead(path: string) {
         return file;
     }
 }
-
 
 function loadOrdinaryModulesReturningAnvilModule() {
     const anvilModule = require("../modules/anvil")(data.appOrigin, uncaughtExceptions);
@@ -106,10 +106,21 @@ function loadOrdinaryModulesReturningAnvilModule() {
         console.log("Failed to preload anvil.tables", e);
     }
 
+    anvilModule["Slot"] = Slot;
+    anvilModule["WithLayout"] = WithLayout;
+
     return anvilModule;
 }
 
 function setupAppSourceCode() {
+    const createModule = (pkgName: string) => {
+        PyDefUtils.loadModule(pkgName, {
+            __name__: new Sk.builtin.str(pkgName),
+            __path__: new Sk.builtin.tuple([new Sk.builtin.str("app/" + pkgName)]),
+            __package__: new Sk.builtin.str(pkgName),
+        });
+    };
+
     const getFilePath = (name: string, isPackage: boolean | undefined, topLevelPackage: string) =>
         "app/" + topLevelPackage + "/" + name.replace(/\./g, "/") + (isPackage ? "/__init__.py" : ".py");
 
@@ -127,14 +138,32 @@ function setupAppSourceCode() {
     const dependencyPackageNames = [];
     const dataBindingCompilations = {};
 
+    createModule(data.appPackage);
+
     for (const [depAppId, depApp] of Object.entries(data.app.dependency_code)) {
-        if (!depApp.package_name) { continue; }
+        if (!depApp.package_name) {
+            continue;
+        }
+
+        createModule(depApp.package_name);
 
         if (dependencyPackageNames.indexOf(depApp.package_name) == -1) {
             fillOutModules(depApp, depApp.package_name);
             dependencyPackageNames.push(depApp.package_name);
         } else {
-            dependencyErrors.push(`Cannot have two dependencies with the same package name: ${depApp.package_name}`);
+            const conflictingAppIds = Object.entries(data.app.dependency_code)
+                .filter(([id, { package_name }]) => package_name === depApp.package_name)
+                .map(([id, app]) => id);
+            const errorMsg = `This app has ${
+                conflictingAppIds.length
+            } conflicting dependencies with the package name "${depApp.package_name}" (${conflictingAppIds.join(
+                ", "
+            )}).`;
+            if ((data.app.runtime_options?.version ?? 0) < 3 && !data.app.runtime_options?.preview_v3) {
+                warn("Warning: " + errorMsg + "This may cause errors in your app, and will be an error in future.\n");
+            } else {
+                dependencyErrors.push(errorMsg);
+            }
         }
     }
 
@@ -149,7 +178,6 @@ function setupAppSourceCode() {
 }
 
 function makePerAppAnvilModule(globalAnvilModule: PyModMap, packageName: string) {
-
     const anvilModule = $.extend({}, globalAnvilModule);
 
     // By default templates with _ prefixes won't get imported by "from anvil import *", so we set __all__
@@ -187,12 +215,6 @@ function setupAppTemplates(
     appPackage: string,
     anvilModule: PyModMap
 ) {
-    PyDefUtils.loadModule(appPackage, {
-        __name__: new Sk.builtin.str(appPackage),
-        __path__: new Sk.builtin.tuple([new Sk.builtin.str("app/" + appPackage)]),
-        __package__: new Sk.builtin.str(appPackage),
-    });
-
     // Runtime v1 and below uses a really grotty mechanism for getting form templates.
     // We use prototypical inheritance to give each app a slightly different
     // view of the 'anvil' module, with its own form templates in.
@@ -234,14 +256,12 @@ function setupAppTemplates(
     }
 }
 
-
 export function setupPythonEnvironment(preloadModules: string[]) {
-
     Sk.configure({
         output: stdout,
         read: builtinRead,
         syspath: ["app", "anvil-services"],
-        __future__: (data.app.runtime_options?.client_version == "3") ? Sk.python3 : Sk.python2,
+        __future__: data.app.runtime_options?.client_version == "3" ? Sk.python3 : Sk.python2,
     });
     Sk.importSetUpPath(); // This is hack - normally happens automatically on first import
 
@@ -254,23 +274,19 @@ export function setupPythonEnvironment(preloadModules: string[]) {
     // Inject the theme HTML assets into the HtmlTemplate component
     anvilModule["HtmlTemplate"].$_anvilThemeAssets = data.app.theme?.html || {};
 
-    for (const pm of (preloadModules || [])) {
+    for (const pm of preloadModules || []) {
         Sk.misceval.retryOptionalSuspensionOrThrow(Sk.importModule(pm, false, true));
     }
 
-
     setupAppSourceCode();
 
-    runPostSetupHooks();
+    registerJsPythonModules();
 
     for (const [depAppId, depApp] of Object.entries(data.app.dependency_code)) {
-
-        if (!depApp.package_name)
-            continue;
+        if (!depApp.package_name) continue;
 
         setupAppTemplates(depApp, depAppId, depApp.package_name, anvilModule);
     }
 
     setupAppTemplates(data.app, null, data.appPackage, anvilModule);
-
 }

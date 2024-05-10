@@ -2,13 +2,15 @@
 
 let sendLogImpl = console.log;
 let onStdout: (text: string, fromServer?: boolean) => void = () => {};
+let onUpdateReplState: (replStateUpdate: { importTime: number}) => void = (replStateUpdate) => {};
 
 export function provideLoggingImpl(send: (msg: object) => void) {
     sendLogImpl = send;
 }
 
-export function setHooks(hooks: { onStdout: typeof onStdout }) {
+export function setHooks(hooks: { onStdout: typeof onStdout, onUpdateReplState: typeof onUpdateReplState }) {
     onStdout = hooks.onStdout;
+    onUpdateReplState = hooks.onUpdateReplState;
 }
 
 let accumulatingPrints: null | string = null,
@@ -43,4 +45,8 @@ export function stdout(text: string, fromServer?: boolean) {
         }
         accumulatingPrints += text;
     }
+}
+
+export function updateReplState(replStateUpdate:{ importTime: number}) {
+    onUpdateReplState(replStateUpdate);
 }

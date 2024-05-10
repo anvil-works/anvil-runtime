@@ -12,6 +12,8 @@
             [anvil.runtime.sessions :as sessions]
             [anvil.runtime.app-log :as app-log]))
 
+(clj-logging-config.log4j/set-logger! :level :info)
+
 (defn get-cal-utc []
   (doto (Calendar/getInstance (TimeZone/getTimeZone "UTC"))
     (.setFirstDayOfWeek Calendar/SUNDAY)))
@@ -77,7 +79,10 @@
           :let [{:keys [next_run last_bg_task_id] :as cached-task} (get known-jobs job_id)
                 next-run (if (= time_spec (:time_spec cached-task))
                            next_run                           ; Time-spec for this task hasn't changed, don't modify next-run.
-                           (get-next-execution-time nil time_spec))]
+                           (get-next-execution-time nil time_spec))
+                last_bg_task_id (if (= task_name (:task_name cached-task))
+                                  last_bg_task_id             ; Task name for this task hasn't changed, don't lose track of last run
+                                  nil)]
           :when (and task_name next-run)]
       (merge (select-keys task [:job_id :task_name :time_spec])
              {:next_run next-run, :last_bg_task_id last_bg_task_id}
@@ -121,48 +126,47 @@
 
     (doseq [{:keys [job_id task_name last_bg_task_id] :as job} jobs-we-have-committed-to-launching]
       (let [{:keys [app_id] :as environment} (get-environment-for-job job)]
-       (when-not (app-data/abuse-caution? nil app_id)
-         (let [launch! (fn []
-                         (try+
-                           ;; This session is created with no log data, so will not be logged unless there's an error launching - see below.
-                           (let [session (sessions/new-unlogged-session-from-environment environment "background_task" {:scheduled_task job_id :func (str "task:" task_name)})]
-                             (dispatcher/dispatch!
-                               {:call              {:func   "anvil.private.background_tasks.launch"
-                                                    :args   [task_name]
-                                                    :kwargs {}}
-                                :scheduled-task-id job_id
-                                :app-id            app_id
-                                :environment       environment
-                                :session-state     session
-                                :call-stack        (list {:type :scheduled_task})
-                                :origin            :server}
-                               ;; Return path
-                               {:update!  (constantly nil)
-                                :respond! (fn [{:keys [error response]}]
-                                            (if error
-                                              (do
-                                                ;; There was an error launching the scheduled task, so *now* the session is worth logging.
-                                                ;; We'll pretend it's a "background_task" session, event though the task never launched.
-                                                (app-log/record-event! session nil "err" (str (:type error) ": " (:message error)) error)
-                                                (log/error (str "Failed to launch Scheduled Task " job_id " for app " app_id ": " error)))
-                                              (update-job! util/db job {:last_bg_task_id (json/read-str (:id response))})))}))
-                           (catch :anvil/app-loading-error e
-                             (log/warn (str "Failed to load app when launching scheduled task " job_id " for app " app_id ": " (:anvil/app-loading-error e))))
-                           (catch Exception e
-                             (log/error e (str "Failed to launch scheduled task " job_id " for app " app_id)))))]
-           (if (nil? last_bg_task_id)
-             (launch!)
-             (background-tasks/get-state (background-tasks/load-background-task-by-id util/db last_bg_task_id)
-                                         {:update!  (constantly nil)
-                                          :respond! (fn [{:keys [error response] :as r}]
-                                                      (cond
-                                                        error
-                                                        (log/error (str "Failed to retrieve last BG task " last_bg_task_id " for job " job_id " in app " app_id ":") error)
+        (let [launch! (fn []
+                        (try+
+                          ;; This session is created with no log data, so will not be logged unless there's an error launching - see below.
+                          (let [session (sessions/new-unlogged-session-from-environment environment "background_task" {:scheduled_task job_id :func (str "task:" task_name)})]
+                            (dispatcher/dispatch!
+                              {:call              {:func   "anvil.private.background_tasks.launch"
+                                                   :args   [task_name]
+                                                   :kwargs {}}
+                               :scheduled-task-id job_id
+                               :app-id            app_id
+                               :environment       environment
+                               :session-state     session
+                               :call-stack        (list {:type :scheduled_task})
+                               :origin            :server}
+                              ;; Return path
+                              {:update!  (constantly nil)
+                               :respond! (fn [{:keys [error response]}]
+                                           (if error
+                                             (do
+                                               ;; There was an error launching the scheduled task, so *now* the session is worth logging.
+                                               ;; We'll pretend it's a "background_task" session, event though the task never launched.
+                                               (app-log/record-event! session nil "err" (str (:type error) ": " (:message error)) error)
+                                               (log/error (str "Failed to launch Scheduled Task " job_id " for app " app_id ": " error)))
+                                             (update-job! util/db job {:last_bg_task_id (json/read-str (:id response))})))}))
+                          (catch :anvil/app-loading-error e
+                            (log/warn e (str "Failed to load app when launching scheduled task " job_id " for app " app_id ": " (:anvil/app-loading-error e) "-" (:message e))))
+                          (catch Exception e
+                            (log/error e (str "Failed to launch scheduled task " job_id " for app " app_id)))))]
+          (if (nil? last_bg_task_id)
+            (launch!)
+            (background-tasks/get-state (background-tasks/load-background-task-by-id util/db last_bg_task_id)
+                                        {:update!  (constantly nil)
+                                         :respond! (fn [{:keys [error response] :as r}]
+                                                     (cond
+                                                       error
+                                                       (log/error (str "Failed to retrieve last BG task " last_bg_task_id " for job " job_id " in app " app_id ":") error)
 
-                                                        response
-                                                        (log/info "Not running scheduled task" job_id "for app" app_id "because background task" last_bg_task_id "is still running")
+                                                       response
+                                                       (log/trace "Not running scheduled task" job_id "for app" app_id "because background task" last_bg_task_id "is still running")
 
-                                                        :else
-                                                        (launch!)))}
-                                         background-tasks/is-running?))))))
+                                                       :else
+                                                       (launch!)))}
+                                        background-tasks/is-running?)))))
     (not-empty jobs-we-have-committed-to-launching)))

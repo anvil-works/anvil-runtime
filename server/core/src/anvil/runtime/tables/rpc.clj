@@ -26,7 +26,7 @@
            (org.apache.commons.io IOUtils)
            (org.postgresql.util PSQLException)))
 
-(clj-logging-config.log4j/set-logger! :level :warn)
+(clj-logging-config.log4j/set-logger! "anvil.runtime.tables.rpc" :level :info)
 
 (def TRow)
 
@@ -261,7 +261,7 @@
                          (doseq [line (jdbc/query (db) (cons (str "EXPLAIN ANALYSE " row-query) args))]
                            (println ((keyword "query plan") line)))))
 
-          all-rows (util/log-time :info "Loading table rows"
+          all-rows (util/log-time :trace "Loading table rows"
                                   (try
                                     (util/with-metric-query "row-query"
                                       (jdbc/query (db) (cons row-query args)))
@@ -733,6 +733,114 @@
                     [c (blocking-hacks/ChunkedStream->Media v)]
                     [c v])) kwargs)))
 
+(defn- do-update! [[table-id row-id view-cols] kwargs]
+  (let [kwargs (realise-media-in-kwargs kwargs)]
+    (with-use-quota [use-quota! :repeatable-read]
+      (try
+        (let [auto-create-cols? (:auto_create_missing_columns (get-service-config))
+
+              {current-value :data old-size-bytes :n_bytes}
+              (or
+                (first (jdbc/query (db) ["SELECT data, octet_length(data::text) as n_bytes from app_storage_data WHERE table_id = ? AND id = ? FOR UPDATE"
+                                         table-id row-id]))
+                (throw+ (general-tables-error "This row has been deleted")))
+
+              [new-data cols media-updates] (prepare-update! (db) table-id current-value kwargs view-cols auto-create-cols?)
+              new-data (merge new-data (do-media-updates! row-id table-id media-updates use-quota!))
+
+              {new-size-bytes :n_bytes}
+              (first (jdbc/query (db) ["UPDATE app_storage_data SET data = ?::jsonb WHERE table_id = ? AND id = ? RETURNING octet_length(data::text) as n_bytes"
+                                       new-data table-id row-id]))]
+
+          (log/debug (str "Tables v1 update of table " table-id " ADD " new-size-bytes " bytes, REMOVE " old-size-bytes " bytes"))
+          (use-quota! 0 (- old-size-bytes))
+          (use-quota! 0 new-size-bytes)
+
+          (rpc-util/update-live-object-cache! "anvil.tables.Row" rpc-util/*live-object-id*
+                                              (make-item-cache cols new-data nil nil))
+
+          nil)
+        (catch Exception e
+          (log/debug (str "Row update failed on table " table-id " row " row-id))
+          (throw e))))))
+
+(defn- do-delete! [[table-id row-id view-cols] _kwargs]
+  (ensure-table-access-ok-returning-cols (db) table-id :delete view-cols)
+  (with-use-quota [use-quota! :serializable]
+    (delete-media-in-row table-id row-id use-quota!)
+    (let [[{bytes-deleted :n_bytes}] (jdbc/query (db) ["DELETE FROM app_storage_data WHERE table_id = ? AND id = ? RETURNING octet_length(data::text) as n_bytes" table-id row-id])]
+      (log/debug (str "Tables v1 delete row from table " table-id " REMOVE " bytes-deleted " bytes"))
+      (use-quota! -1 (- bytes-deleted))))
+  (rpc-util/invalidate-live-object-cache! "anvil.tables.Row" rpc-util/*live-object-id*)
+  nil)
+
+(defn- do-delete-all! [[table-id view-query] _kwargs]
+  (with-use-quota [use-quota! :serializable]
+    (when-not (empty? view-query)
+      (throw+ (general-tables-error "Cannot call delete_all_rows() on a view")))
+
+    (ensure-table-access-ok-returning-cols-and-name table-id :delete-all (get-cols-from-view-query view-query))
+    (delete-media-in-table table-id use-quota!)
+    (let [deleted-rows (jdbc/query (db) ["DELETE FROM app_storage_data WHERE table_id = ? RETURNING octet_length(data::text) as n_bytes" table-id])
+          bytes-deleted (reduce (fn [acc {row-bytes :n_bytes}] (+ acc row-bytes)) 0 deleted-rows)]
+      (log/debug (str "Tables v1 truncate table " table-id " REMOVE " bytes-deleted " bytes"))
+      (use-quota! (- (count deleted-rows)) (- bytes-deleted)))))
+
+(defn- do-insert! [[table-id view-query] kwargs]
+  ; Realise all media here, in case we have to repeat the transaction below.
+  (util/timeit "Add row" [cp!]
+    (let [kwargs (realise-media-in-kwargs kwargs)]
+      (with-use-quota [use-quota! :serializable]
+        (cp! "Using quota")
+        (let [auto-create-cols? (:auto_create_missing_columns (get-service-config))
+
+              [row-data cols media-updates] (prepare-update! (db) table-id {} kwargs (get-cols-from-view-query view-query) auto-create-cols?)
+              media-object-ids (do-media-updates! nil table-id media-updates use-quota!)
+
+              fixup-view-value (fn fixup-view-value [col-type value]
+                                 (condp = col-type
+                                   "liveObject"
+                                   (if (= (:backend value) "anvil.tables.Row")
+                                     ; We have to reinflate and then reduce Rows, or permissions etc will be lost.
+                                     (reduced-val col-type
+                                                  (types/mk-LiveObjectProxy "anvil.tables.Row" (:id value) [] (keys TRow)))
+
+                                     (throw+ (general-tables-error "Can't add_row() on a view restricted by an arbitrary LiveObject"))) ;; Because we can't actually get the original object back from the view-query like we can with Rows.
+
+                                   "liveObjectArray"
+                                   (map (partial fixup-view-value "liveObject")
+                                        value)
+
+                                   value))
+
+              ;; Finally, write the view-restricted values in on top
+              get-view-data (fn get-view-data [view-query]
+                              (when (not-empty view-query)
+                                (condp = (:op view-query)
+                                  "AND" (apply merge (map get-view-data (:terms view-query)))
+                                  "EQ" (let [col (:col view-query)
+                                             value (:value view-query)
+                                             col-type (:type view-query)]
+                                         {(keyword col) (fixup-view-value col-type value)})
+                                  (throw+ (general-tables-error "Invalid view query object.")))))
+
+              row-data (merge row-data media-object-ids (get-view-data view-query))
+              _ (use-quota! 1 0)
+              db-row (first (try (jdbc/query (db) ["INSERT INTO app_storage_data (table_id,data) VALUES (?,?::jsonb) RETURNING id, data, octet_length(data::text) as n_bytes"
+                                                   table-id row-data])
+                                 (catch Exception e
+                                   (log/warn (str "Row insert failed on table " table-id " with new data of size " (try (count (json/write-str row-data)) (catch Exception _ :error))))
+                                   (throw e))))
+              new-row (mk-Row table-id cols (get-cols-from-view-query view-query) nil nil db-row)]
+
+          (log/debug (str "Tables v1 insert into table " table-id " ADD " (:n_bytes db-row) " bytes"))
+          (use-quota! 0 (:n_bytes db-row)) ;; TODO: If this fails, we won't revert the insert.
+
+          ;; We didn't know the new row ID when we updated the media, so write that in now.
+          (doseq [[col-id _] media-updates]
+            (jdbc/execute! (db) ["UPDATE app_storage_media SET row_id = ? WHERE object_id = ?"
+                                 (:id db-row) (get row-data col-id)]))
+          new-row)))))
 
 (def TRow* {"__anvil_iter_page__" (fn [[table-id row-id view-cols] _kwargs _page-id]
                                     (let [cols (ensure-table-access-ok-returning-cols (db) table-id :read-row
@@ -756,28 +864,7 @@
 
 
             ;; "set" maps to the same function
-            "update"              (fn [[table-id row-id view-cols] kwargs]
-                                    (let [kwargs (realise-media-in-kwargs kwargs)]
-                                      (with-use-quota [use-quota! :repeatable-read]
-                                        (try
-                                          (let [auto-create-cols? (:auto_create_missing_columns (get-service-config))
-                                                current-value (or
-                                                                (:data (first (jdbc/query (db) ["SELECT data from app_storage_data WHERE table_id = ? AND id = ? FOR UPDATE"
-                                                                                                table-id row-id])))
-                                                                (throw+ (general-tables-error "This row has been deleted")))
-                                                [new-data cols media-updates] (prepare-update! (db) table-id current-value kwargs view-cols auto-create-cols?)
-                                                new-data (merge new-data (do-media-updates! row-id table-id media-updates use-quota!))]
-
-                                            (jdbc/execute! (db) ["UPDATE app_storage_data SET data = ?::jsonb WHERE table_id = ? AND id = ?"
-                                                                 new-data table-id row-id])
-
-                                            (rpc-util/update-live-object-cache! "anvil.tables.Row" rpc-util/*live-object-id*
-                                                                                (make-item-cache cols new-data nil nil))
-
-                                            nil)
-                                          (catch Exception e
-                                            (log/warn (str "Row update failed on table " table-id " row " row-id))
-                                            (throw e))))))
+            "update"              #'do-update!
 
             "get_id"              (fn [[table-id row-id _view-cols] _kwargs]
                                     (util/write-json-str [table-id row-id]))
@@ -786,71 +873,13 @@
             "__setitem__"         (fn [ids _kwargs name value]
                                     ((TRow* "update") ids {name value}))
 
-            "delete"              (fn [[table-id row-id view-cols] _kwargs]
-                                    (ensure-table-access-ok-returning-cols (db) table-id :delete view-cols)
-                                    (with-use-quota [use-quota!]
-                                      (delete-media-in-row table-id row-id use-quota!)
-                                      (jdbc/execute! (db) ["DELETE FROM app_storage_data WHERE table_id = ? AND id = ?" table-id row-id])
-                                      (use-quota! -1 0))
-                                    (rpc-util/invalidate-live-object-cache! "anvil.tables.Row" rpc-util/*live-object-id*)
-                                    nil)})
+            "delete"              #'do-delete!})
 
 ;; Compatibility
 (def TRow (assoc TRow* "set" (TRow* "update")))
 
 
-(def Table {"add_row"                 (fn [[table-id view-query] kwargs]
-                                        ; Realise all media here, in case we have to repeat the transaction below.
-                                        (util/timeit "Add row" [cp!]
-                                          (let [kwargs (realise-media-in-kwargs kwargs)]
-                                            (with-use-quota [use-quota!]
-                                              (cp! "Using quota")
-                                              (let [auto-create-cols? (:auto_create_missing_columns (get-service-config))
-
-                                                    [row-data cols media-updates] (prepare-update! (db) table-id {} kwargs (get-cols-from-view-query view-query) auto-create-cols?)
-                                                    media-object-ids (do-media-updates! nil table-id media-updates use-quota!)
-
-                                                    fixup-view-value (fn fixup-view-value [col-type value]
-                                                                       (condp = col-type
-                                                                         "liveObject"
-                                                                         (if (= (:backend value) "anvil.tables.Row")
-                                                                           ; We have to reinflate and then reduce Rows, or permissions etc will be lost.
-                                                                           (reduced-val col-type
-                                                                                        (types/mk-LiveObjectProxy "anvil.tables.Row" (:id value) [] (keys TRow)))
-
-                                                                           (throw+ (general-tables-error "Can't add_row() on a view restricted by an arbitrary LiveObject"))) ;; Because we can't actually get the original object back from the view-query like we can with Rows.
-
-                                                                         "liveObjectArray"
-                                                                         (map (partial fixup-view-value "liveObject")
-                                                                              value)
-
-                                                                         value))
-
-                                                    ;; Finally, write the view-restricted values in on top
-                                                    get-view-data (fn get-view-data [view-query]
-                                                                    (when (not-empty view-query)
-                                                                      (condp = (:op view-query)
-                                                                        "AND" (apply merge (map get-view-data (:terms view-query)))
-                                                                        "EQ" (let [col (:col view-query)
-                                                                                   value (:value view-query)
-                                                                                   col-type (:type view-query)]
-                                                                               {(keyword col) (fixup-view-value col-type value)})
-                                                                        (throw+ (general-tables-error "Invalid view query object.")))))
-
-                                                    row-data (merge row-data media-object-ids (get-view-data view-query))
-                                                    _ (use-quota! 1 0)
-                                                    db-row (first (try (jdbc/query (db) ["INSERT INTO app_storage_data (table_id,data) VALUES (?,?::jsonb) RETURNING id, data"
-                                                                                         table-id row-data])
-                                                                       (catch Exception e
-                                                                         (log/warn (str "Row insert failed on table " table-id " with new data of size " (try (count (json/write-str row-data)) (catch Exception _ :error))))
-                                                                         (throw e))))
-                                                    new-row (mk-Row table-id cols (get-cols-from-view-query view-query) nil nil db-row)]
-
-                                                ;; We didn't know the new row ID when we updated the media, so write that in now.
-                                                (doseq [[col-id _] media-updates]
-                                                  (jdbc/execute! (db) ["UPDATE app_storage_media SET row_id = ? WHERE object_id = ?"
-                                                                       (:id db-row) (get row-data col-id)]))
-                                                new-row)))))
+(def Table {"add_row"                 #'do-insert!
 
             "__anvil_iter_page__"     (fn [_id _kwargs _page-id]
                                         (throw+ (general-tables-error "You can't iterate on a table. Call search() on this table to get an iterator of rows instead.")))
@@ -881,15 +910,7 @@
                                             "anvil.tables.Table" (util/write-json-str [table-id view-query-obj]) ["cwrite" "cascade"] (keys Table))))
 
 
-            "delete_all_rows"         (fn [[table-id view-query] _kwargs]
-                                        (with-use-quota [use-quota!]
-                                          (when-not (empty? view-query)
-                                            (throw+ (general-tables-error "Cannot call delete_all_rows() on a view")))
-
-                                          (ensure-table-access-ok-returning-cols-and-name table-id :delete-all (get-cols-from-view-query view-query))
-                                          (delete-media-in-table table-id use-quota!)
-                                          (let [deleted-rows (first (jdbc/execute! (db) ["DELETE FROM app_storage_data WHERE table_id = ?" table-id]))]
-                                            (use-quota! (- deleted-rows) 0))))
+            "delete_all_rows"         #'do-delete-all!
 
             "get"                     (fn [[table-id view-query] kwargs & args]
                                         (let [[cols query-obj] (get-query-obj-and-modifiers table-id view-query false kwargs args)

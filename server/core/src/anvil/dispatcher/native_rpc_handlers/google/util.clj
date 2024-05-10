@@ -28,6 +28,8 @@
                           (:value (secrets/get-global-app-secret-value app-info "google-service/delegation-refresh-token" enc_delegation_refresh_token)))]
     refresh-token))
 
+(defonce apps-with-drive-scope (atom {}))
+
 (defn add-credentials [httpkit-map creds]
   (condp = creds
     "google-user" (assoc-in httpkit-map [:headers "Authorization"]
@@ -36,12 +38,17 @@
                          (when (or (not (-> @*session-state* :google :delegation-access-token))
                                    ;; Refresh access token if it's about to expire.
                                    (> (.getTime (Date.)) (+ 60000 (.getTime (-> @*session-state* :google :delegation-access-token :expires_at)))))
-                           (let [refresh-token (get-delegation-refresh-token rpc-util/*app-info* (:server_config (get-google-service-props)))]
-                             (swap! *session-state* #(assoc-in % [:google :delegation-access-token]
-                                                               (google-sso/refresh-access-token refresh-token
-                                                                                           (:client-id conf/google-client-config)
-                                                                                           (:client-secret conf/google-client-config)))))
-                           (log/debug "Access token updated:" (-> @*session-state* :google :delegation-access-token)))
+                           (let [refresh-token (get-delegation-refresh-token rpc-util/*app-info* (:server_config (get-google-service-props)))
+                                 {:keys [scope] :as access-token} (google-sso/refresh-access-token refresh-token
+                                                                               (:client-id conf/google-client-config)
+                                                                               (:client-secret conf/google-client-config))
+                                 scopes (set (.split scope " "))
+                                 has-drive? (contains? scopes "https://www.googleapis.com/auth/drive")
+                                 app-info (:app-info @*session-state*)]
+                             (swap! *session-state* #(assoc-in % [:google :delegation-access-token] access-token))
+                             (when has-drive?
+                               (swap! apps-with-drive-scope assoc (:id app-info) (select-keys app-info [:name :user_id :user_organisation])))
+                             (log/debug "Access token updated:" (-> @*session-state* :google :delegation-access-token))))
 
                          (assoc-in httpkit-map [:headers "Authorization"]
                                    (str "Bearer " (-> @*session-state* :google :delegation-access-token :access_token))))))

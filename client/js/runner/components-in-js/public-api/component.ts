@@ -10,32 +10,42 @@ import {
     pyNone,
     pyObject,
     pyStr,
-    toJs,
+    remapToJsOrWrap,
     toPy,
     tryCatchOrSuspend,
 } from "@Sk";
 import type { GetSetDef } from "@Sk/abstr/build_native_class";
 import {
-    AnvilHooks,
+    AnvilHookSpec,
     Component,
     ComponentConstructor,
     ContainerDesignInfo,
     CustomComponentSpec,
-    DesignInfo,
     DropZone,
     DroppingSpecification,
     EventDescription,
+    Interaction,
+    PropertyDescriptionBase,
+    PropertyValueUpdates,
     Section,
     ToolboxSection,
-    initComponentSubclass,
-    raiseEventOrSuspend, PropertyValueUpdates,
+    getPyParent,
+    notifyComponentMounted,
+    notifyComponentUnmounted,
+    notifyVisibilityChange as notifyComponentVisibilityChange,
+    raiseEventOrSuspend,
+    raiseWritebackEventOrSuspend,
 } from "@runtime/components/Component";
 import { Container, validateChild } from "@runtime/components/Container";
-import { kwargsToJsObject, s_add_event_handler, s_anvil_events, s_remove_event_handler } from "@runtime/runner/py-util";
+import {
+    initNativeSubclass,
+    kwargsToJsObject,
+    s_add_event_handler,
+    s_remove_event_handler,
+} from "@runtime/runner/py-util";
 import { DropModeFlags } from "@runtime/runner/python-objects";
 import PyDefUtils, { asyncToPromise, pyCall } from "PyDefUtils";
-import { designerApi } from ".";
-import { customToolboxSections, jsCustomComponents, whenEnvironmentReady } from "../common";
+import { addJsModuleHook, customToolboxSections, jsCustomComponents } from "../common";
 import { JS_COMPONENT, PY_COMPONENT } from "./constants";
 import { asJsComponent, maybeSuspend, returnToPy, toPyComponent } from "./utils";
 
@@ -49,15 +59,19 @@ export interface RawJsComponent extends JsComponent {
 
 export interface JsComponentConstructor {
     new (): JsComponent | JsContainer;
-    _anvilEvents?: string[] | EventDescription[];
+    _anvilEvents?: EventDescription[];
+    _anvilProperties?: PropertyDescriptionBase[];
 }
 export interface JsComponent {
+    _anvilNew?: () => void;
     _anvilSetupDom(): HTMLElement | Promise<HTMLElement>;
     _anvilDomElement: null | undefined | HTMLElement;
-    _anvilGetDesignInfo?(options: { asLayout?: boolean }): DesignInfo;
-    _anvilSetPropertyValues?(values: PropertyValueUpdates): PropertyValueUpdates | Promise<PropertyValueUpdates>;
+    _anvilGetInteractions?(): Interaction[];
     _anvilUpdateDesignName?(name: string): void;
-    _anvilSetSectionPropertyValues?(id: string, values: PropertyValueUpdates): PropertyValueUpdates | Promise<PropertyValueUpdates>;
+    _anvilSetSectionPropertyValues?(
+        id: string,
+        values: PropertyValueUpdates
+    ): PropertyValueUpdates | void | Promise<PropertyValueUpdates | void>;
     _anvilGetSections?(): Section[];
     _anvilGetSectionDomElement?(id: string): HTMLElement;
 }
@@ -68,6 +82,7 @@ type SetVisibilityFn = (v: boolean) => void;
 interface ComponentCleanup {
     onRemove: RemoveFn;
     setVisibility?: SetVisibilityFn;
+    isMounted?: boolean;
 }
 
 export interface JsContainer extends JsComponent {
@@ -82,8 +97,32 @@ export interface JsContainer extends JsComponent {
     ): DropZone[];
     _anvilDisableDropMode?(): void;
     _anvilGetContainerDesignInfo?(component: JsComponent): ContainerDesignInfo;
-    _anvilUpdateLayoutProperties?(component: JsComponent, values: PropertyValueUpdates): PropertyValueUpdates | Promise<PropertyValueUpdates>;
+    _anvilUpdateLayoutProperties?(
+        component: JsComponent,
+        values: PropertyValueUpdates
+    ): PropertyValueUpdates | Promise<PropertyValueUpdates> | undefined | Promise<undefined>;
+}
 
+export function getParent(self: JsComponent) {
+    const pyComponent = toPyComponent(self);
+    const pyParent = getPyParent(pyComponent);
+    if (!pyParent) return null;
+    return asJsComponent(pyParent);
+}
+
+export function notifyMounted(self: JsComponent, isRoot = false) {
+    const pyComponent = toPyComponent(self);
+    return asyncToPromise(() => notifyComponentMounted(pyComponent, isRoot));
+}
+
+export function notifyUnmounted(self: JsComponent, isRoot = false) {
+    const pyComponent = toPyComponent(self);
+    return asyncToPromise(() => notifyComponentUnmounted(pyComponent, isRoot));
+}
+
+export function notifyVisibilityChange(self: JsComponent, visible: boolean) {
+    const pyComponent = toPyComponent(self);
+    return asyncToPromise(() => notifyComponentVisibilityChange(pyComponent, visible));
 }
 
 export function raiseAnvilEvent(self: JsComponent, eventName: string, eventArgs: { [arg: string]: any } = {}) {
@@ -92,6 +131,12 @@ export function raiseAnvilEvent(self: JsComponent, eventName: string, eventArgs:
         pyKw.push(k, toPy(v));
     }
     return asyncToPromise(() => raiseEventOrSuspend(toPyComponent(self), new pyStr(eventName), pyKw));
+}
+
+export function triggerWriteBack(component: JsComponent, property: string, value: any) {
+    return asyncToPromise(() =>
+        raiseWritebackEventOrSuspend(toPyComponent(component), new pyStr(property), toPy(value))
+    );
 }
 
 export interface EventArgs {
@@ -127,6 +172,10 @@ export interface WrappedJsComponent extends Component {
     [JS_COMPONENT]: JsComponent;
 }
 
+export interface WrappedJsContainer extends Component {
+    [JS_COMPONENT]: JsContainer;
+}
+
 const isContainer = (obj: any, container?: boolean): obj is JsContainer => !!container;
 
 function setPropertyValuesOneByOne(this: JsComponent, updates: { [propName: string]: any }) {
@@ -142,59 +191,66 @@ function setPropertyValuesOneByOne(this: JsComponent, updates: { [propName: stri
     return retrievedUpdates;
 }
 
-const createHooks = (jsSelf: JsComponent | JsContainer, spec: CustomComponentSpec): AnvilHooks => {
-    const setPropertyValues = jsSelf._anvilSetPropertyValues ?? setPropertyValuesOneByOne;
-
-    const hooks: AnvilHooks = {
-        setupDom: () => {
-            return maybeSuspend(jsSelf._anvilSetupDom());
+const createHookSpec = (spec: CustomComponentSpec): AnvilHookSpec<WrappedJsComponent> => {
+    const hooks: AnvilHookSpec<WrappedJsComponent> = {
+        setupDom() {
+            return maybeSuspend(this[JS_COMPONENT]._anvilSetupDom());
         },
-        get domElement() {
-            return jsSelf._anvilDomElement;
+        getDomElement() {
+            return this[JS_COMPONENT]._anvilDomElement;
+        },
+        getProperties() {
+            return spec.properties ?? [];
+        },
+        getEvents() {
+            return spec.events ?? [];
         },
         updateDesignName(name) {
-            return jsSelf._anvilUpdateDesignName?.(name);
+            return this[JS_COMPONENT]._anvilUpdateDesignName?.(name);
         },
-        setPropertyValues(updates) {
-            return setPropertyValues.call(jsSelf, updates);
-        },
-        getDesignInfo(asLayout) {
-            return (
-                jsSelf._anvilGetDesignInfo?.({ asLayout }) ?? { propertyDescriptions: [], events: [], interactions: [] }
-            );
+        getInteractions() {
+            // backwards compatability
+            if ("_anvilGetDesignInfo" in this[JS_COMPONENT]) {
+                console.warn("DEPRECATED _anvilGetDesignInfo - instead use _anvilGetInteractions");
+                // @ts-ignore
+                return this[JS_COMPONENT]._anvilGetDesignInfo?.()?.interactions ?? [];
+            }
+            return this[JS_COMPONENT]._anvilGetInteractions?.() ?? [];
         },
         getSections() {
-            return jsSelf._anvilGetSections?.();
+            return this[JS_COMPONENT]._anvilGetSections?.();
         },
         getSectionDomElement(id) {
-            return jsSelf._anvilGetSectionDomElement?.(id);
+            return this[JS_COMPONENT]._anvilGetSectionDomElement?.(id);
         },
         setSectionPropertyValues(id, updates) {
-            return maybeSuspend(jsSelf._anvilSetSectionPropertyValues?.(id, updates ?? {}));
+            return maybeSuspend(this[JS_COMPONENT]._anvilSetSectionPropertyValues?.(id, updates ?? {}));
         },
     };
 
-    if (isContainer(jsSelf, spec.container)) {
-        const containerHooks: Partial<AnvilHooks> = {
+    if (spec.container) {
+        const containerHooks: Partial<AnvilHookSpec<WrappedJsContainer>> = {
             getContainerDesignInfo(forChild) {
                 return (
-                    jsSelf._anvilGetContainerDesignInfo?.(asJsComponent(forChild)) ?? {
+                    this[JS_COMPONENT]._anvilGetContainerDesignInfo?.(asJsComponent(forChild)) ?? {
                         layoutPropertyDescriptions: [],
                     }
                 );
             },
             updateLayoutProperties(forChild, newValues) {
-                return maybeSuspend(jsSelf._anvilUpdateLayoutProperties?.(asJsComponent(forChild), newValues));
+                return maybeSuspend(
+                    this[JS_COMPONENT]._anvilUpdateLayoutProperties?.(asJsComponent(forChild), newValues)
+                );
             },
             enableDropMode(dropping, flags) {
                 if (dropping.pyLayoutProperties) {
                     // @ts-ignore
-                    dropping.layoutProperties = toJs(dropping.pyLayoutProperties);
+                    dropping.layoutProperties = remapToJsOrWrap(dropping.pyLayoutProperties);
                 }
-                return jsSelf._anvilEnableDropMode?.(dropping, flags) ?? [];
+                return this[JS_COMPONENT]._anvilEnableDropMode?.(dropping, flags) ?? [];
             },
             disableDropMode() {
-                return jsSelf._anvilDisableDropMode?.();
+                return this[JS_COMPONENT]._anvilDisableDropMode?.();
             },
         };
         Object.assign(hooks, containerHooks);
@@ -202,12 +258,34 @@ const createHooks = (jsSelf: JsComponent | JsContainer, spec: CustomComponentSpe
     return hooks;
 };
 
+const ObjectProto = Object.prototype;
+const FunctionProto = Function.prototype;
+
+function getAllPropertyDescriptors(cls: JsComponentConstructor) {
+    let proto = cls.prototype;
+    const prototypes = [];
+
+    while (proto && proto !== ObjectProto && proto !== FunctionProto) {
+        prototypes.push(proto);
+        proto = Object.getPrototypeOf(proto);
+    }
+
+    const rv: PropertyDescriptorMap = {};
+
+    for (const proto of prototypes) {
+        const propertyDescriptorMap = Object.getOwnPropertyDescriptors(proto);
+        Object.assign(rv, propertyDescriptorMap);
+    }
+    return Object.entries(rv);
+}
+
 function pyComponentFromClass(cls: JsComponentConstructor, spec: CustomComponentSpec) {
     const { container, name } = spec;
-    const descriptors = Object.entries(Object.getOwnPropertyDescriptors(cls.prototype));
+    const descriptors = getAllPropertyDescriptors(cls);
     const getsets = descriptors.filter(([, descriptor]) => descriptor.get || descriptor.set);
     const methods = descriptors.filter(
-        ([name, descriptor]) => !name.startsWith("_") && typeof descriptor.value === "function"
+        ([name, descriptor]) =>
+            !name.startsWith("_") && name !== "constructor" && typeof descriptor.value === "function"
     );
 
     const base = container ? Container : Component;
@@ -222,7 +300,7 @@ function pyComponentFromClass(cls: JsComponentConstructor, spec: CustomComponent
                 const self = base.prototype.tp$new.call(this, []) as WrappedJsComponent;
                 const jsSelf = (self[JS_COMPONENT] = new cls());
                 (jsSelf as RawJsComponent)[PY_COMPONENT] = self;
-                self.anvil$hooks = createHooks(self[JS_COMPONENT], spec);
+                jsSelf._anvilNew?.();
                 return self;
             },
             tp$init(args, kws) {
@@ -266,7 +344,7 @@ function pyComponentFromClass(cls: JsComponentConstructor, spec: CustomComponent
 
                 if (descriptor.set) {
                     getset.$set = function (val) {
-                        return returnToPy(descriptor.set?.call(this[JS_COMPONENT], toJs(val)));
+                        return returnToPy(descriptor.set?.call(this[JS_COMPONENT], remapToJsOrWrap(val)));
                     };
                 }
 
@@ -279,7 +357,7 @@ function pyComponentFromClass(cls: JsComponentConstructor, spec: CustomComponent
                     name,
                     {
                         $meth(...args) {
-                            return returnToPy(descriptor.value.apply(this[JS_COMPONENT], args.map(toJs)));
+                            return returnToPy(descriptor.value.apply(this[JS_COMPONENT], args.map(remapToJsOrWrap)));
                         },
                         $flags: { MinArgs: 0 },
                     },
@@ -295,15 +373,18 @@ function pyComponentFromClass(cls: JsComponentConstructor, spec: CustomComponent
                               const jsContainer = this[JS_COMPONENT] as JsContainer;
 
                               const doAddComponent = async () => {
-                                  const { onRemove, setVisibility } = await jsContainer._anvilAddComponent(
-                                      asJsComponent(component),
-                                      layoutProperties
-                                  );
+                                  const {
+                                      onRemove,
+                                      setVisibility,
+                                      isMounted = true,
+                                  } = await jsContainer._anvilAddComponent(asJsComponent(component), layoutProperties);
                                   // We could call super here
                                   // super().add_component(component, on_remove=toPy(onRemove), on_set_visibility=toPy(setVisibility));
-                                  component.anvilComponent$setParent(this, {
+                                  // this might return a suspension and that's fine
+                                  return component.anvilComponent$setParent(this, {
                                       onRemove: () => maybeSuspend(onRemove()),
                                       setVisibility,
+                                      isMounted,
                                   });
                               };
 
@@ -323,11 +404,11 @@ function pyComponentFromClass(cls: JsComponentConstructor, spec: CustomComponent
         },
         flags: { sk$klass: true },
         proto: {
-            [s_anvil_events.toString()]: toPy(cls._anvilEvents ?? []),
+            anvil$hookSpec: createHookSpec(spec),
         },
     });
 
-    initComponentSubclass(pyComponentCls);
+    initNativeSubclass(pyComponentCls);
 
     return pyComponentCls;
 }
@@ -343,21 +424,33 @@ const cleanSpec = ({ name, properties, events, layoutProperties, container, show
 
 export function registerJsComponent(componentCls: JsComponentConstructor, spec: CustomComponentSpec) {
     const { name } = spec;
-    const leafName = name.replace(/^.*\./, "");
+    const match = name.match(/^(.*)\.([^.]+)$/);
+    if (!match) {
+        Sk.builtin.print([`Cannot register JS component with invalid name: ${name}`]);
+        return;
+    }
+    const [_, pkgName, leafName] = match;
     const cls = pyComponentFromClass(componentCls, spec);
 
-    whenEnvironmentReady(() => {
-        // // Try to import the parent package. Honestly this is a nicety
-        // const pyPackage = component.name.replace(/\.[^.]+$/, "");
-        // Sk.importModule(pyPackage, false, false);
-
+    addJsModuleHook(() => {
         const pyMod = new pyModule();
         const pyName = new pyStr(name);
         pyMod.init$dict(pyName, pyNone);
         pyMod.$d[leafName] = cls;
         Sk.sysmodules.mp$ass_subscript(pyName, pyMod);
+
+        try {
+            Sk.importModule(pkgName, false, false);
+            const parentPkg = Sk.sysmodules.mp$subscript(toPy(pkgName));
+            parentPkg.tp$setattr(toPy(leafName), pyMod);
+        } catch (e) {
+            console.error(e);
+            Sk.builtin.print([`Failed to import parent module '${pkgName}' when registering JS component '${name}'`]);
+        }
+
         jsCustomComponents[name] = { pyMod, spec: cleanSpec(spec) };
     });
+    return cls;
 }
 
 export const registerToolboxSection = (section: ToolboxSection) => {

@@ -69,6 +69,22 @@ module.exports = (pyModule) => {
                     s._anvil.elements.gutter.style.justifyContent = v;
                 },
             },
+            vertical_align: /*!componentProp(FlowPanel)!1*/ {
+                name: "vertical_align",
+                type: "enum",
+                options: ["top", "middle", "bottom", "full"],
+                description: "Align this component's content",
+                defaultValue: new Sk.builtin.str("full"),
+                pyVal: true,
+                designerHint: 'align-vertical',
+                set(s, e, v) {
+                    const prefix = getCssPrefix();
+                    v = v.toString();
+                    ["top", "middle", "bottom", "full"].forEach((i) => {
+                        s._anvil.domNode.classList.toggle(prefix + "vertical-align-" + i, v === i);
+                    });
+                },
+            },
 
             spacing: /*!componentProp(FlowPanel)!1*/ {
                 name: "spacing",
@@ -109,7 +125,7 @@ module.exports = (pyModule) => {
             }
         ],
 
-        element({ align, spacing, ...props }) {
+        element({ align, spacing, vertical_align, ...props }) {
             const prefix = getCssPrefix();
             spacing = prefix + "flow-spacing-" + spacing.toString();
             align =
@@ -120,16 +136,17 @@ module.exports = (pyModule) => {
                     justify: "space-between",
                 }[align.toString()] || "flex-start") +
                 ";";
-            
+            vertical_align = prefix + "vertical-align-" + (vertical_align.toString() || 'top');
+
             return (
-                <PyDefUtils.OuterElement className={`${prefix}flow-panel anvil-container anvil-container-overflow ${spacing}`} {...props}>
+                <PyDefUtils.OuterElement className={`${prefix}flow-panel anvil-container anvil-container-overflow ${spacing} ${vertical_align}`} {...props}>
                     <div refName="gutter" className={`${prefix}flow-panel-gutter`} style={align} />
                 </PyDefUtils.OuterElement>
             );
         },
 
         locals($loc) {
-            const ContainerElement = ({ visible, width, expand }) => {
+            const ContainerElement = ({ visible=true, width, expand }) => {
                 const prefix = getCssPrefix();
                 visible = !Sk.misceval.isTrue(visible) ? ` ${prefix}visible-false` : "";
                 let style = "";
@@ -139,7 +156,7 @@ module.exports = (pyModule) => {
                 if (expand) {
                     style += "flex: 1;";
                 }
-                return <div className={`${prefix}flow-panel-item anvil-always-inline-container ${prefix}hide-with-component` + visible} style={style}></div>;
+                return <div className={`${prefix}flow-panel-item anvil-always-inline-container` + visible} style={style}></div>;
             };
 
             /*!defMethod(_,component,[index=],[width=],[expand=])!2*/ "Add a component to this panel. Optionally specify the position in the panel to add it, or the width to apply to components that can't self-size width-wise."
@@ -154,10 +171,8 @@ module.exports = (pyModule) => {
                             return pyModule["ClassicContainer"]._doAddComponent(self, component);
                         }
                         const gutter = self._anvil.elements.gutter;
-                        // TODO: How should components signal visibility to their parents?
-                        const visible = (component._anvil && ("visible" in component._anvil.propMap)) ? component._anvil.getProp("visible") : Sk.builtin.bool.true$;
                         const width = domNode.classList.contains("anvil-inlinable") ? "" : kwargs["width"] || "auto";
-                        const [containerElement] = <ContainerElement visible={visible} width={width} expand={expand} />;
+                        const [containerElement] = <ContainerElement width={width} expand={expand} />;
                         containerElement.appendChild(domNode);
                         if (typeof idx === "number" && idx < gutter.children.length) {
                             gutter.insertBefore(containerElement, gutter.children[idx]);
@@ -170,6 +185,9 @@ module.exports = (pyModule) => {
                                 $(domNode).detach();
                                 containerElement.remove();
                             },
+                            setVisibility(v) {
+                                containerElement.classList.toggle(getCssPrefix() + "visible-false", !v);
+                            }
                         });
                     }
                 );

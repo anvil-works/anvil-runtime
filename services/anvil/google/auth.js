@@ -41,6 +41,12 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
     var mod = {};
 
     var loginCallbackResolve = null;
+    let googleButtonLoaded = false;
+    function loadGoogleSignInButton() {
+        if (googleButtonLoaded) return;
+        googleButtonLoaded = true;
+        PyDefUtils.loadScript(window.anvilAppOrigin + "/_/static/runtime/img/google-signin-buttons/btn.js?sha=277762afd28c6a94830")
+    }
 
     var scopes = [
         'https://www.googleapis.com/auth/userinfo.email',
@@ -91,10 +97,7 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
         if (PyDefUtils.isPopupOK()) {
             doLogin();
         } else {
-            const body = `<button type="button" class="btn" data-dismiss="modal">
-                    <img src="${window.anvilCDNOrigin}/runtime/img/google-signin-buttons/btn_google_signin_light_normal_web.png?buildTime=0" crossorigin/>
-                </button>`;
-
+            loadGoogleSignInButton();
             const modal = new window.anvilModal({
                 id: "google-login-modal",
                 backdrop: "static",
@@ -102,17 +105,25 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
                 dismissible: false,
                 title: "Log in with Google",
                 body: true,
-                buttons: [{ text: "Cancel", onClick: () => {
-                    modal.once("hidden", () => loginCallbackResolve.reject("MODAL_CANCEL"));
-                }}],
+                buttons: [
+                    {
+                        text: "Cancel",
+                        onClick() {
+                            modal.once("hidden", () => loginCallbackResolve.reject("MODAL_CANCEL"));
+                        },
+                    },
+                ],
             });
             const { modalBody } = modal.elements;
-            modalBody.innerHTML = body;
-            modalBody.firstElementChild.addEventListener("click", doLogin);
+            const btn = document.createElement("google-signin-button");
+            btn.textContent = "Sign in with Google"; // not necessary - but if the web component were to fail - this would still render
+            modalBody.appendChild(btn);
+            btn.addEventListener("click", doLogin);
             modalBody.style.textAlign = "center";
             modal.show();
+            return modal;
         }
-    }
+    };
 
     var registerCallbackHandlers = function(messageFns) {
 
@@ -163,7 +174,7 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
 
         loginCallbackResolve = PyDefUtils.defer();
 
-        displayLogInModal(Sk.ffi.remapToJs(pyAdditionalScopes || []));
+        const modal = displayLogInModal(Sk.ffi.remapToJs(pyAdditionalScopes || []));
 
         // TODO: Should probably have a timeout on this promise.
 
@@ -178,7 +189,7 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
                 } else {
                     reject(e);
                 }
-            });
+            }).then(function() { modal && modal.hide(); });;
         });
     });
 

@@ -23,16 +23,19 @@
 ;; Centralise translation between the `request` object (contains Atoms, pretty chunky)
 ;; and a "serialisable request" object suitable for putting on the wire
 
+(defn get-persistence-key [environment app]
+  (apply str
+         (:commit-id environment)
+         (:table_mapping_id environment)
+         (for [[_ {:keys [commit-id]}] (sort-by first (:dependency_code app))] commit-id)))
+
 (defn stateful-request-to-serialisable-request [request return-path profiling-info]
   ;; Takes a (stateful) request+return-path, produces:
   ;;  - a serialisable request
   ;;  - a return path that understands :update-python-session
   ;;  - a precise specification of the app+dependencies version for (retrieve-exact-app) (currently the app itself, but we can make this more efficient)
-  (let [{:keys [app-id app session-state environment call-stack stale-uplink? tracing-span vt_global scheduled-task-id]} request
-        persistence-key (apply str
-                               (:commit-id environment)
-                               (:table_mapping_id environment)
-                               (for [[_ {:keys [commit-id]}] (sort-by first (:dependency_code app))] commit-id))
+  (let [{:keys [app-id app session-state environment call-stack stale-uplink? tracing-span vt_global scheduled-task-id bg-task-timeout]} request
+        persistence-key (get-persistence-key environment app)
         n-responses (atom 0)
         current-session (atom session-state)
         python-session-state-at-send (atom (:pymods @session-state))
@@ -94,7 +97,9 @@
                         {:liveObjectCall (assoc live-object :method func)}
                         {:command func})
                       (when scheduled-task-id
-                        {:scheduled-task-id scheduled-task-id})))
+                        {:scheduled-task-id scheduled-task-id})
+                      (when bg-task-timeout
+                        {:bg-task-timeout  bg-task-timeout})))
         ]
     {:request request, :return-path return-path, :call-context call-context}))
 

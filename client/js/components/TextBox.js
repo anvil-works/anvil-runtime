@@ -61,6 +61,7 @@ module.exports = (pyModule) => {
                 defaultValue: Sk.builtin.str.$empty,
                 pyVal: true,
                 exampleValue: "Enter text here",
+                important: true,
                 set(self, e, v) {
                     v = Sk.builtin.checkNone(v) ? "" : v.toString();
                     self._anvil.elements.input.setAttribute("placeholder", v);

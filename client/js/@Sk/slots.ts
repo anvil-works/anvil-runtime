@@ -5,7 +5,7 @@ export interface tpSlots<T> {
     tp$name: string;
     $r(this: T): pyStr;
     tp$hash: pyNoneType | ((this: T) => number);
-    tp$call(this: T, args: Args, kws?: Kws): pyObject | pyType;
+    tp$call(this: T, args: Args, kws?: Kws): pyObject | pyType | Suspension;
     tp$str(this: T): pyStr;
     tp$getattr(this: T, attr: pyStr, canSuspend?: boolean): pyObject | undefined;
     /** a value of undefined signals deleting an attribute */

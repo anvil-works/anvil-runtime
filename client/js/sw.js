@@ -6,9 +6,30 @@
 const log = false;
 
 const ACTIVE_CACHE = "v0";
-const OFFLINE_TIMEOUT = 5000;
+const OFFLINE_TIMEOUT_CHECK = 5000;
+const STALE_TIMEOUT = 7500;
 
 let lastOffline = 0;
+let lastSlowFetch = 0;
+
+const NETWORK_FIRST = 0;
+const STALE_WITH_REVALIDATE = 1;
+const CACHE_ONLY = 2;
+
+const inIDE = !!new URL(self.location).searchParams.get("inIDE");
+
+// useful for debugging
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const getMode = () => {
+    if (!navigator.onLine || lastOffline > Date.now() - OFFLINE_TIMEOUT_CHECK) {
+        return CACHE_ONLY;
+    } else if (lastSlowFetch > Date.now() - OFFLINE_TIMEOUT_CHECK) {
+        return STALE_WITH_REVALIDATE;
+    } else {
+        return NETWORK_FIRST;
+    }
+};
 
 const cleanupOldCaches = async () => {
     for (const key of await caches.keys()) {
@@ -19,44 +40,132 @@ const cleanupOldCaches = async () => {
     }
 };
 
+const cacheRequest = async (request, resp, cache) => {
+    let clone;
+    if (request.method === "GET" && resp.status === 200 && resp.headers.has("X-Anvil-Cacheable")) {
+        clone = resp.clone();
+    }
+    // clean up old cache which might have different searchParams
+    await cache.delete(request, { ignoreSearch: true });
 
-const _fetch = async (e) => {
-    const cache = await caches.open(ACTIVE_CACHE);
-    const match = await cache.match(e.request);
+    if (clone) {
+        log && console.debug("Caching:", request.url);
+        cache.put(request, clone);
+    } else {
+        log && console.debug("Not caching:", request.url);
+    }
+};
 
-    if (!navigator.onLine || lastOffline > Date.now() - OFFLINE_TIMEOUT) {
-        // Shortcut: Use cache if a request recently failed for something in the cache.
-        if (match) {
-            log && console.debug("Fast offline cache hit:", e.request.url);
-            return match;
-        } else {
-            log && console.debug("Fast offline cache miss:", e.request.url);
-        }
+function getSha(requestLike) {
+    const params = new URL(requestLike.url).searchParams;
+    return params.get("sha") || params.get("buildTime");
+}
+
+function shouldRevalidate(request, match) {
+    if (!match) {
+        return true;
+    }
+    if (match.url !== request.url) {
+        return true;
     }
 
-    try {
-        const resp = await fetch(e.request.clone());
-        lastOffline = 0;
+    const cacheControl = match.headers.get("cache-control");
+    if (cacheControl?.includes("no-cache")) {
+        return true;
+    }
+    const sha = getSha(match);
+    if (sha && sha !== "0") {
+        return sha !== getSha(request);
+    }
+    return true;
+}
 
-        // Allow caching anything that comes back with the X-Anvil-Cacheable header
-        if (e.request.method === "GET" && resp.status === 200 && resp.headers.has("X-Anvil-Cacheable")) {
-            log && console.debug("Caching:", e.request.url);
-            cache.put(e.request, resp.clone());
+function isNotModified(resp) {
+    return resp.status === 304;
+}
+
+async function fetchMaybeNetwork(request, cache, match) {
+    if (match && !shouldRevalidate(request, match)) {
+        log && console.debug(`Not Revalidating: ${request.url}`);
+        return match;
+    }
+    const resp = await fetch(request.clone());
+    lastOffline = 0;
+    if (match && isNotModified(resp)) {
+        log && console.debug(`Not Modified: ${request.url}`);
+        return match;
+    }
+    cacheRequest(request, resp, cache);
+    return resp;
+}
+
+class TimeoutError extends Error {
+    name = "TimeoutError";
+}
+
+const timeout = (ms) => new Promise((res, rej) => setTimeout(() => rej(new TimeoutError()), ms));
+
+// fetching seems slow, so we'll use the cache but update it in the background
+function staleWithRevalidate(request, cache, match) {
+    log && console.debug(`Refetching: ${request.url} in the background`);
+    fetchMaybeNetwork(request, cache, match);
+    return match;
+}
+
+async function networkFirstFallingBackToCache(request, cache, match) {
+    try {
+        if (inIDE) {
+            // always fetch from the network if we're in the IDE
+            return fetchMaybeNetwork(request, cache, match);
         } else {
-            log && console.debug("Not caching:", e.request.url);
-            cache.delete(e.request);
+            return await Promise.race([timeout(STALE_TIMEOUT), fetchMaybeNetwork(request, cache, match)]);
         }
-        return resp;
     } catch (err) {
-        if (match) {
-            lastOffline = Date.now();
-            console.log("Serving Anvil resources from Service Worker cache");
-            log && console.debug("Offline cache hit:", e.request.url);
-            return match;
+        if (err.name === "TimeoutError") {
+            // fetch network will continue in the background
+            console.log(
+                "Resource slow to load, serving Anvil resources from Service Worker cache, and re-fetching in the background"
+            );
+            lastSlowFetch = Date.now();
         } else {
-            log && console.debug("Offline cache miss:", e.request.url);
-            throw err;
+            console.log("Serving Anvil resources from Service Worker cache");
+            lastOffline = Date.now();
         }
+        log && console.error(request.url, err);
+        return match;
+    }
+}
+
+const onFetch = async (e) => {
+    const cache = await caches.open(ACTIVE_CACHE);
+    const match = await cache.match(e.request);
+    const mode = getMode();
+    let request = e.request;
+
+    if (!match) {
+        if (log && (mode === CACHE_ONLY || mode === STALE_WITH_REVALIDATE)) {
+            console.debug("Fast offline cache miss:", request.url);
+        }
+        return fetchMaybeNetwork(request, cache);
+    }
+
+    const eTag = match.headers.get("ETag");
+    if (eTag) {
+        log && console.debug("got etag", eTag, request.url);
+        const headers = new Headers(request.headers);
+        headers.set("If-None-Match", eTag);
+        request = new Request(request, { headers, mode: "cors", credentials: "same-origin" });
+    }
+
+    switch (mode) {
+        case CACHE_ONLY:
+            log && console.debug("Fast offline cache hit:", request.url);
+            return match;
+        case STALE_WITH_REVALIDATE:
+            log && console.debug("Fast cache hit:", request.url);
+            return staleWithRevalidate(request, cache, match);
+        default:
+            return networkFirstFallingBackToCache(request, cache, match);
     }
 };
 
@@ -69,6 +178,7 @@ self.addEventListener("activate", (e) => {
 });
 
 self.addEventListener("fetch", (e) => {
-    e.respondWith(_fetch(e));
+    e.respondWith(onFetch(e));
 });
 
+log && console.log("%cService Worker Script Loaded", "color: green;");

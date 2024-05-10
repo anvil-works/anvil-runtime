@@ -1,6 +1,6 @@
 "use strict";
 
-const { anvilServerMod, anvilMod } = require("../utils");
+const { anvilServerMod, anvilMod } = require("@runtime/runner/py-util");
 
 /*#
 id: js_module
@@ -290,20 +290,6 @@ module.exports = function () {
         description: "The Javascript global 'window' object, wrapped and accessible from Python.",
     });
     pyMod.window = proxy(window);
-    const oldLookup = pyMod.window.$lookup;
-    const strParent = new pyStr("parent");
-    // override the internal method $lookup
-    // it's a bit of a hack but accessing window.parent throws cross origin errors
-    // since the default implementation of $lookup uses toPy
-    // which accesses attributes that end up getting blocked
-    pyMod.window.$lookup = function (pyName) {
-        if (pyName === strParent) {
-            const parent = proxy(this.js$wrapped.parent, { name: "ParentWindow" });
-            parent.$lookup = pyMod.window.$lookup;
-            return parent;
-        }
-        return oldLookup.call(this, pyName);
-    };
     objectSetItem(Sk.sysmodules, new pyStr("anvil.js.window"), pyMod.window);
 
     pyMod.ExternalError = ExternalError;

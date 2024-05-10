@@ -42,13 +42,19 @@
 (defn multi-whitelist!-and-lazy-media [items creds wl-access]
   (doall (for [i items] (whitelist!-and-lazy-media creds wl-access i))))
 
+(defonce apps-needing-drive-scope (atom {}))
+
 (defn get-app-file [_kwargs id]
   (let [wl-access (get-whitelist-access ::file id "google-delegated")
         _ (ensure-whitelist-access-ok wl-access false "read this app file")
 
         resp (request {:url    (str "https://www.googleapis.com/drive/v2/files/" id)
-                       :method :get} "google-delegated")]
-
+                       :method :get} "google-delegated")
+        {:keys [scope] :as _access-token} (get-in @*session-state* [:google :delegation-access-token])
+        scopes (set (.split scope " "))
+        has-drive? (contains? scopes "https://www.googleapis.com/auth/drive")]
+    (when has-drive?
+      (swap! apps-needing-drive-scope assoc *app-id* (select-keys *app-info* [:name :user_id :user_organisation])))
     (whitelist!-and-lazy-media "google-delegated" wl-access resp)))
 
 (defn get-user-files [_kwargs]

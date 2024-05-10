@@ -273,7 +273,7 @@
   (let [_ (assert view-spec)
         table-id (:id view-spec)
         render-value (partial render-transmitted-value tables table-id)
-        cap (types/->Capability ["_" "t" view-spec {:r id}])]
+        cap (types/->Capability ["_" "t" (util-v2/encode-view-spec view-spec) {:r id}])]
     (if cache-clash?
       (dict-row-data rdata cap fetching-cols (get-col-specs table-data view-key) render-value)
       (compact-row-data rdata cap (get-cached-col-order fetch-spec view-spec) render-value))))
@@ -283,7 +283,7 @@
     (let [row-id (get-linked-row-id row-link-json)]
       ;;(log/trace "FILL SCOPE:" ["_" "t" view-spec {:r row-id}])
       (update-in table-data [view-key :rows (str row-id)]
-                 #(or % {:c (types/->Capability ["_" "t" view-spec {:r row-id}])})))
+                 #(or % {:c (types/->Capability ["_" "t" (util-v2/encode-view-spec view-spec) {:r row-id}])})))
     table-data))
 
 (defn- fill-missing-caps [table-data rdata links]

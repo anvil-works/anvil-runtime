@@ -1,5 +1,6 @@
 (ns anvil.dispatcher.serialisation.core
   (:require [digest]
+            [medley.core :refer [map-kv]]
             [crypto.random :as random]
             [clojure.data.json :as json]
             [clojure.tools.logging :as log]
@@ -16,9 +17,10 @@
   (:import (java.util LinkedList Arrays)
            (clojure.lang Counted)
            (anvil.dispatcher.types MediaDescriptor Media SerialisableForRpc ChunkedStream Date DateTime SerializedPythonObject SerializedPythonClass)
-           (java.io InputStream)
+           (java.io InputStream ByteArrayOutputStream)
            (java.time.format DateTimeFormatter)
-           (java.time ZoneOffset)))
+           (java.time ZoneOffset)
+           (org.apache.commons.codec.binary Base64)))
 
 ;;(clj-logging-config.log4j/set-logger! :level :trace)
 
@@ -42,72 +44,89 @@
 
 (defn infinite-buffer [] (InfiniteBuffer. (LinkedList.)))
 
-(defn disassemble-objects
-  ([data do-these-keys-first] (disassemble-objects data '() nil do-these-keys-first))
-  ([data path extra-liveobject-key do-these-keys-first]
+(defn do-disassemble-objects
+  ;;([data do-these-keys-first] (disassemble-objects data '() nil do-these-keys-first))
+  ([data objects path extra-liveobject-key do-these-keys-first]
    (cond
-     (instance? SerialisableForRpc data) [nil [(assoc (.serialiseForRpc data extra-liveobject-key) :path path)]]
+     (instance? SerialisableForRpc data) [nil (conj! objects (assoc (.serialiseForRpc data extra-liveobject-key) :path path))]
 
      (or (instance? ChunkedStream data)
          (instance? Media data))
-     [nil [{:path         path, :type ["DataMedia"], :id (random/base64 10),
-            :mime-type    (.getContentType data), :name (.getName data),
-            :binary-media data}]]
+     [nil (conj! objects
+                 {:path         path, :type ["DataMedia"], :id (random/base64 10),
+                 :mime-type    (.getContentType data), :name (.getName data),
+                 :binary-media data})]
 
      (instance? SerializedPythonObject data)
-     (let [[disassembled-dict dict-objects] (disassemble-objects (:value data) path extra-liveobject-key nil)]
-       [disassembled-dict (doall (concat dict-objects [{:path     path
-                                                        :type     ["ValueType"]
-                                                        :typeName (:type data)}]))])
-     
+     (let [[disassembled-dict objects] (do-disassemble-objects (:value data) objects path extra-liveobject-key nil)]
+       [disassembled-dict (conj! objects
+                                 {:path     path
+                                 :type     ["ValueType"]
+                                 :typeName (:type data)})])
+
      (instance? SerializedPythonClass data)
-     [nil [{:path path
-            :type ["ClassType"]
-            :typeName (:type data)}]]
+     [nil (conj! objects
+                 {:path     path
+                 :type     ["ClassType"]
+                 :typeName (:type data)})]
 
      (map? data)
-     (reduce (fn [[json data] [k v]]
-               (let [[new-v new-data] (disassemble-objects v (concat path [(util/preserve-slashes k)]) extra-liveobject-key nil)]
-                 [(assoc json k new-v) (doall (concat data new-data))]))
-             [{} []]
+     (reduce (fn [[json objects] [k v]]
+               (let [[new-v new-objects] (do-disassemble-objects v objects (concat path [(util/preserve-slashes k)]) extra-liveobject-key nil)]
+                 [(assoc json k new-v) new-objects]))
+             [{} objects]
              (if do-these-keys-first
                (concat (select-keys data do-these-keys-first)
                        (apply dissoc data do-these-keys-first))
                data))
 
      (sequential? data)
-     (let [rets (map-indexed (fn [idx v] (disassemble-objects v (concat path [idx]) extra-liveobject-key nil)) data)]
-       [(apply vector (map first rets)) (doall (mapcat second rets))])
+     (let [[rets objects _] (reduce (fn [[json objects idx] v]
+                                      (let [[new-v objects] (do-disassemble-objects v objects (concat path [idx]) extra-liveobject-key nil)]
+                                        [(cons new-v json) objects (inc idx)]))
+                                    [() objects 0]
+                                    data)]
+       [(reverse rets) objects])
 
      (instance? BigInteger data)
-     [nil [{:path path
-            :type ["Long"]
-            :value (str data)}]]
+     [nil (conj! objects
+                 {:path  path
+                 :type  ["Long"]
+                 :value (str data)})]
 
      (and (instance? Number data)
           (or (Double/isNaN (double data))
               (= Double/POSITIVE_INFINITY data)
               (= Double/NEGATIVE_INFINITY data)))
-     [nil [{:path path
-            :type ["Float"]
-            :value (str data)}]]
+     [nil (conj! objects
+                 {:path  path
+                  :type  ["Float"]
+                  :value (str data)})]
 
      (or (number? data) (string? data) (= false data) (= true data) (nil? data))
-     [data '()]
+     [data objects]
 
      (keyword? data)
-     [(util/preserve-slashes data) '()]
+     [(util/preserve-slashes data) objects]
 
      (instance? java.util.Date data)
-     [nil [(-> (DateTime.
-                 (-> (DateTimeFormatter/ofPattern (str "yyyy-MM-dd HH:mm:ss.SSSSSS'Z'"))
-                     (.withZone (ZoneOffset/UTC))
-                     (.format (.toInstant ^java.util.Date data))))
-               (.serialiseForRpc extra-liveobject-key)
-               (assoc :path path))]]
+     [nil (conj! objects
+                 (-> (DateTime.
+                       (-> (DateTimeFormatter/ofPattern (str "yyyy-MM-dd HH:mm:ss.SSSSSS'Z'"))
+                           (.withZone (ZoneOffset/UTC))
+                           (.format (.toInstant ^java.util.Date data))))
+                     (.serialiseForRpc extra-liveobject-key)
+                     (assoc :path path)))]
 
      :else
      (throw (Exception. (str "Cannot return a " (.getClass data) " object at " (pr-str path)))))))
+
+(defn disassemble-objects
+  ([data do-these-keys-first]
+   (disassemble-objects data '() nil do-these-keys-first))
+  ([data path extra-liveobject-key do-these-keys-first]
+   (let [[json objects] (do-disassemble-objects data (transient []) path extra-liveobject-key do-these-keys-first)]
+     [json (persistent! objects)])))
 
 (defn prune-liveobject-methods [objects]
   (loop [[obj & more-objs :as objects] objects
@@ -132,8 +151,9 @@
              (cons obj pruned-objects)))))
 
 
-(defn assemble-object [outstanding-media message-id {:keys [permitted-live-object-backends session-liveobject-key origin] :as serialisation-config} known-liveobject-methods {:keys [type] :as obj}]
+(defn assemble-object [outstanding-media message-id {:keys [permitted-live-object-backends get-session-liveobject-key origin] :as serialisation-config} known-liveobject-methods {:keys [type] :as obj}]
   (let [origin (or origin :client)                          ;; be conservative if not specified
+        get-session-liveobject-key (or get-session-liveobject-key (constantly nil))
         mk-chunk-stream (fn [request-id {:keys [id name mime-type]}]
                           (let [c (chan (infinite-buffer))
                                 have-consumed? (atom false)]
@@ -184,8 +204,10 @@
                                                     (and (nil? mac) (not= origin :client)
                                                          (first scope) (not= (first scope) "_"))
                                                     ;; Everything else has to match
-                                                    (and mac (= (util/sha-256 (types/gen-cap-mac obj session-liveobject-key))
-                                                                (util/sha-256 mac))))
+                                                    (and mac (or (= (util/sha-256 (types/new-gen-cap-mac obj (get-session-liveobject-key)))
+                                                                    (util/sha-256 mac))
+                                                                 (= (util/sha-256 (types/old-gen-cap-mac obj (get-session-liveobject-key)))
+                                                                    (util/sha-256 mac)))))
                                           (do
                                             (log/info "Invalid Capability MAC" (pr-str mac))
                                             (throw+ {:anvil/invalid-mac "Invalid Capability MAC"})))
@@ -205,27 +227,17 @@
         deserialised-obj)
       (throw (Exception. (str "Cannot deserialise an object of type '" (first type) "'"))))))
 
-
-(defn serialise!
-  "Asynchronously serialise a given payload down a websocket-shaped thing.
-  The payload map may contain LiveObjects and Media.
-  send! will be called with one parameter for string-shaped things, and two parameters
-  for string header + byte[] payload."
-  [payload send! serialise-errors? & {:keys [extra-liveobject-key strip-item-caches? disallow-media? on-complete!]}]
-
+(defn as-serialisable
+  "Synchronously serialise a given payload. Return a serialised JSON payload, plus a sequence of Media objects to send."
+  [payload {:keys [extra-liveobject-key strip-item-caches? disallow-media?]}]
   (log/trace "Serialising" payload)
 
   (when-not (:id payload)
     (throw (Exception. "Any serialised payload needs an ID")))
-  (let [request-id (:id payload)
-        [payload-json objects] (try
+  (let [[payload-json objects] (try
                                  (disassemble-objects payload nil extra-liveobject-key [:vt_global])
                                  (catch Exception e
-                                   (if serialise-errors?
-                                     (let [error-id (random/hex 6)]
-                                       (log/error e "Error in disassemble objects:" error-id)
-                                       [{:id request-id, :error {:type "anvil.server.InternalError" :message (str "Internal server error: " error-id)}} []])
-                                     (throw e))))
+                                   (throw+ {::error-in-disassembly e})))
 
         objects (prune-liveobject-methods objects)
         objects (if strip-item-caches? (map #(dissoc % :itemCache) objects) objects)
@@ -233,49 +245,67 @@
         payload-json (assoc payload-json :objects
                                          (map #(dissoc % :binary-media) objects))
 
-        media-objects (filter :binary-media objects)
-
-        media-objects-remaining (atom (count media-objects))
-        check-complete #(when (zero? @media-objects-remaining)
-                         (when on-complete!
-                           (on-complete!)))
-        ]
+        media-objects (filter :binary-media objects)]
 
     (log/trace "Payload disassembled into json:\n" (with-out-str (pprint (dissoc payload-json :objects))))
     (log/trace "and objects:\n" (with-out-str (pprint objects)))
 
-    (send! (util/write-json-str payload-json))
+    (when (and disallow-media? (not-empty media-objects))
+      (throw+ {:anvil/media-serialisation-error true}))
 
-    (doseq [{:keys [_type id binary-media]} media-objects]
-      (when disallow-media?
-        (throw+ {:anvil/media-serialisation-error true}))
-      (if (instance? ChunkedStream binary-media)
-        (.consume binary-media (fn [chunk-idx last-chunk? data]
-                                 (send! (util/write-json-str {:type       "CHUNK_HEADER", :requestId request-id, :mediaId id,
-                                                              :chunkIndex chunk-idx, :lastChunk last-chunk?})
-                                        data)
-                                 (when last-chunk?
-                                   (swap! media-objects-remaining dec)
-                                   (check-complete))))
+    [payload-json media-objects]))
 
-        ;; It's Media, not a ChunkedStream. All we have is an InputStream, so we soldier on...
-        (let [^InputStream is (.getInputStream binary-media)
-              ^bytes b (byte-array 64000)]
+(defn serialise!
+  "Asynchronously serialise a given payload down a websocket-shaped thing.
+  The payload map may contain LiveObjects and Media.
+  send! will be called with one parameter for string-shaped things, and two parameters
+  for string header + byte[] payload."
+  [payload send! serialise-errors? & {:keys [extra-liveobject-key strip-item-caches? disallow-media? on-complete!] :as options}]
 
-          (loop [idx 0]
-            (let [nb (max (.read is b) 0)
-                  last-chunk? (<= nb 0)
-                  buf (if (= nb (alength b)) b (Arrays/copyOf b (int nb)))]
+  (try+
+    (let [request-id (:id payload)
+          [payload-json media-objects] (as-serialisable payload options)
+          media-objects-remaining (atom (count media-objects))
+          check-complete #(when (zero? @media-objects-remaining)
+                            (when on-complete!
+                              (on-complete!)))]
 
-              (send! (util/write-json-str {:type       "CHUNK_HEADER", :requestId request-id, :mediaId id
-                                           :chunkIndex idx, :lastChunk last-chunk?})
-                     buf)
+      (send! (util/write-json-str payload-json))
 
-              (if last-chunk?
-                (.close is)
-                (recur (inc idx)))))
-          (swap! media-objects-remaining dec))))
-    (check-complete)))
+      (doseq [{:keys [_type id binary-media]} media-objects]
+        (if (instance? ChunkedStream binary-media)
+          (.consume binary-media (fn [chunk-idx last-chunk? data]
+                                   (send! (util/write-json-str {:type       "CHUNK_HEADER", :requestId request-id, :mediaId id,
+                                                                :chunkIndex chunk-idx, :lastChunk last-chunk?})
+                                          data)
+                                   (when last-chunk?
+                                     (swap! media-objects-remaining dec)
+                                     (check-complete))))
+
+          ;; It's Media, not a ChunkedStream. All we have is an InputStream, so we soldier on...
+          (let [^InputStream is (.getInputStream binary-media)
+                ^bytes b (byte-array 64000)]
+
+            (loop [idx 0]
+              (let [nb (max (.read is b) 0)
+                    last-chunk? (<= nb 0)
+                    buf (if (= nb (alength b)) b (Arrays/copyOf b (int nb)))]
+
+                (send! (util/write-json-str {:type       "CHUNK_HEADER", :requestId request-id, :mediaId id
+                                             :chunkIndex idx, :lastChunk last-chunk?})
+                       buf)
+
+                (if last-chunk?
+                  (.close is)
+                  (recur (inc idx)))))
+            (swap! media-objects-remaining dec))))
+      (check-complete))
+    (catch ::error-in-disassembly e
+      (if serialise-errors?
+        (let [error-id (random/hex 6)]
+          (log/error (::error-in-disassembly e) "Error in disassemble objects:" error-id)
+          [{:id (:id payload), :error {:type "anvil.server.InternalError" :message (str "Internal server error: " error-id)}} []])
+        (throw e)))))
 
 (defn serialise-to-websocket-like! [payload lockable send-text-fn send-bytes-fn serialise-errors? session-liveobject-key & [on-complete!]]
   (serialise! payload (fn [^String json & [^bytes bytes]]
@@ -313,11 +343,41 @@
 
 ;; Serialise something to a map for storage
 (defn serialise-to-map [payload]
-  (let [r (atom nil)
-        p (if (contains? payload :id) payload (assoc payload :id "DUMMY"))]
-    (serialise! p (fn [json & _] (reset! r (json/read-str json, :key-fn keyword))) false
-                :disallow-media? true)
-    (if (contains? payload :id) @r (dissoc @r :id))))
+  (let [p (if (contains? payload :id) payload (assoc payload :id "DUMMY"))
+        [result media-objects] (as-serialisable p {:disallow-media? true})]
+    (cond-> result (contains? payload :id) (dissoc :id))))
+
+(defn- collect-media-as-byte-arrays [media-objects call-when-done]
+  (if (empty? media-objects)
+    (call-when-done {})
+    (let [collected (atom {})
+          media-objects-remaining (atom (count media-objects))
+          supply-media! (fn [id bytes]
+                          (swap! collected assoc id bytes)
+                          (when (zero? (swap! media-objects-remaining dec))
+                            (call-when-done @collected)))]
+      (doseq [{:keys [_type id binary-media]} media-objects]
+        (if (instance? ChunkedStream binary-media)
+          (let [baos (ByteArrayOutputStream.)]
+            (.consume binary-media (fn [chunk-idx last-chunk? data]
+                                     (.write baos ^bytes data)
+                                     (when last-chunk?
+                                       (supply-media! id (.toByteArray baos))))))
+
+          ;; It's Media, so all we have is an InputStream. Read it synchronously.
+          (let [bytes (util/inputstream->bytes (.getInputStream binary-media))]
+            (supply-media! id bytes)))))))
+
+(defn serialise-to-map-with-media
+  "Asynchronously serialise a payload and its media into JSON (base64ing as necessary). Calls (on-complete) with both when done."
+  [payload on-complete options]
+  (let [[payload media-objects] (as-serialisable payload options)]
+    (collect-media-as-byte-arrays media-objects
+                                  (fn [media-bytes]
+                                    (on-complete payload
+                                                 (map-kv (fn [id data]
+                                                           [id (Base64/encodeBase64String data)])
+                                                         media-bytes))))))
 
 
 (defn- assoc-in-json [obj [k & ks :as key-seq] v]
@@ -342,7 +402,7 @@
 ;; permitted-live-object-backends is an atom of backends we own, so we don't need to validate the MAC on deserialisation
 (defn mk-Deserialiser
   ([] (mk-Deserialiser {}))
-  ([{:keys [permitted-live-object-backends session-liveobject-key origin] :as serialisation-config}]
+  ([{:keys [permitted-live-object-backends get-session-liveobject-key origin] :as serialisation-config}]
    ;; outstanding media is requestid -> mediaid -> channel
    (let [serialisation-config (merge {:permitted-live-object-backends #{}} serialisation-config)
          outstanding-media (atom {})

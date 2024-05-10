@@ -1,6 +1,6 @@
 {
     "name": "@anvil-works/anvil-react",
-    "version": "0.2.12",
+    "version": "1.0.2",
     "description": "A library for building Anvil Components in React",
     "main": "./index.js",
     "exports": {
@@ -10,7 +10,8 @@
     },
     "type": "module",
     "scripts": {
-        "build": "tsup src/index.ts src/designer.ts src/util.tsx --format esm --dts --out-dir ./"
+        "clean": "find ./ -maxdepth 1 -type f \\( -name '*.js' -o -name '*.d.ts' \\) -delete",
+        "build": "npm run clean && tsup src/index.ts src/designer.ts src/util.tsx --format esm --dts --out-dir ./"
     },
     "repository": {
         "type": "git",
@@ -28,6 +29,7 @@
     },
     "devDependencies": {
         "@types/react": "^18.2.14",
+        "@types/react-dom": "^18.2.21",
         "tsup": "^7.1.0"
     }
 }

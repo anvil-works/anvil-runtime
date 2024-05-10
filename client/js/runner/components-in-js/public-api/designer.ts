@@ -72,11 +72,20 @@ export function requestFormPropertyChange() {
     // TODO
 }
 
+export interface InlineEditingOptions {
+    onFinished?: () => void;
+    sectionId?: string | null;
+}
+
 export function startInlineEditing(
     jsComponent: JsComponent,
     prop: StringPropertyDescription,
     element: HTMLElement,
-    options: { onFinished?: () => void; sectionId?: string | null } = {}
+    options: InlineEditingOptions = {}
 ) {
     return designerApi.startInlineEditing(toPyComponent(jsComponent), prop, element, options);
+}
+
+export function getDesignerState(jsComponent: JsComponent) {
+    return designerApi.getDesignerState(toPyComponent(jsComponent));
 }

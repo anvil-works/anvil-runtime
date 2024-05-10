@@ -4,12 +4,11 @@ from anvil.server import Capability, unwrap_capability
 from ._constants import CAP_KEY, NOT_FOUND, UNCACHED
 
 
-def validate_cap(cap, view_key, table_id, row_id=NOT_FOUND):
-    import json  # we don't need this on the client
-
+def validate_cap(cap, table_id, row_id=NOT_FOUND):
+    # this function ensures that the cap is the right shape and references the right table/row
+    # full validation happens in clojure
     _, _, view_dict, narrowed, _ = unwrap_capability(cap, ["_", "t", Capability.ANY, Capability.ANY, Capability.ANY])
-    assert view_dict == json.loads(view_key)
-    assert table_id == str(view_dict["id"])
+    assert str(view_dict["id"]) == table_id
     if row_id is not NOT_FOUND:
         assert row_id == str(narrowed["r"])
 

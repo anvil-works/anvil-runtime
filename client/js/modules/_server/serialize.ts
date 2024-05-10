@@ -12,7 +12,7 @@ import {
     toJs,
     toPy,
 } from "@Sk";
-import { anvilMod, anvilServerMod, datetimeMod } from "@runtime/utils";
+import { anvilMod, anvilServerMod, datetimeMod } from "@runtime/runner/py-util";
 import PyDefUtils from "PyDefUtils";
 import { CHUNK_SIZE, VT_GLOBAL, pyValueTypes } from "./constants";
 import {

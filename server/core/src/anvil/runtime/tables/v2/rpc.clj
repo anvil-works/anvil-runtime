@@ -8,7 +8,7 @@
     [anvil.runtime.tables.v2.search :as search-v2]
     [anvil.runtime.tables.v2.updates :as updates]
     [anvil.runtime.tables.v2.csv :as csv]
-    [anvil.runtime.tables.v2.util :as util-v2 :refer [unwrap-cap-with-perm!]]
+    [anvil.runtime.tables.v2.util :as util-v2 :refer [unwrap-cap-with-perm! encode-view-spec decode-view-spec encode-search-spec decode-search-spec encode-cursor decode-cursor]]
     [clojure.java.jdbc :as jdbc]
     [clojure.pprint :as pprint]
     [clojure.string :as string]
@@ -21,7 +21,7 @@
     [clojure.set :as set])
   (:import (anvil.dispatcher.types SerializedPythonObject)))
 
-(clj-logging-config.log4j/set-logger! :level :trace)
+(clj-logging-config.log4j/set-logger! "anvil.runtime.tables.v2.rpc" :level :info)
 
 (defn- db [] (old-tables-util/db))
 (defn- quota-ctx [] {:session-state rpc-util/*session-state*, :environment rpc-util/*environment*})
@@ -57,7 +57,9 @@
 
 (defn table-list-columns [_kwargs table-cap]
     (let [tables (util-v2/get-tables)
-          [{:keys [id cols]}] (unwrap-cap-with-perm! tables table-cap :table util-v2/READ)
+          {:keys [id cols]} (-> (unwrap-cap-with-perm! tables table-cap :table util-v2/READ)
+                                (first)
+                                (decode-view-spec))
           all-cols (get-in tables [id :columns])
           available-cols (->> (if cols
                                 (select-keys all-cols cols)
@@ -111,7 +113,9 @@
 
 (defn table-get-view [_kws table-cap new-perm _only-cols query-args query-kws]
   (let [tables (util-v2/get-tables)
-        [{table-id :id :keys [cols perm restrict]}] (util-v2/unwrap-cap table-cap :table)
+        {table-id :id :keys [cols perm restrict]} (-> (util-v2/unwrap-cap table-cap :table)
+                                                      (first)
+                                                      (decode-view-spec))
         current-cols (basic-ops/get-col-names table-id tables cols)
         VIEW-NAMES {"rwc" "cascading writable", "rw" "read-write", "r" "read-only"}
         ;; Conditions for "are they allowed to do this?":
@@ -147,37 +151,43 @@
         new-view-spec (merge {:id table-id :perm new-perm}
                              (when new-cap-cols {:cols new-cap-cols})
                              (when combined-restrict {:restrict combined-restrict}))
-        new-cap (types/->Capability ["_" "t" new-view-spec])]
+        new-cap (types/->Capability ["_" "t" (encode-view-spec new-view-spec)])]
     [new-cap (util-v2/str-view-key new-view-spec)]))
 
 (defn table-delete-all [_kw cap]
   (let [tables (util-v2/get-tables)
-        [view-spec] (unwrap-cap-with-perm! tables cap :table util-v2/WRITE)]
-    (updates/delete-from-query! (db) tables view-spec nil)))
+        view-spec (-> (unwrap-cap-with-perm! tables cap :table util-v2/WRITE)
+                      (first)
+                      (decode-view-spec))]
+    (updates/delete-from-query! (db) (quota-ctx) tables view-spec nil)))
 
 (def CHUNK-SIZE 100)
 
 (defn search-get-page [_kws cap & _args]
   (let [tables (util-v2/get-tables)
-        [view-spec search-spec cursor] (util-v2/unwrap-cap cap :search)
-        {:keys [search fetch order chunk]} search-spec
+        [encoded-view-spec encoded-search-spec encoded-cursor] (util-v2/unwrap-cap cap :search)
+        {:keys [search fetch order chunk]} (decode-search-spec encoded-search-spec)
         chunk-size (or chunk CHUNK-SIZE)
-        [table-data row-ids cursor] (search-v2/get-page tables (db) view-spec fetch search order chunk-size cursor)]
-    [row-ids (when cursor (types/->Capability ["_" "t" view-spec search-spec cursor])) table-data]))
+        [table-data row-ids cursor] (search-v2/get-page tables (db) (decode-view-spec encoded-view-spec) fetch search order chunk-size (decode-cursor encoded-cursor))]
+    [row-ids (when cursor (types/->Capability ["_" "t" encoded-view-spec encoded-search-spec (encode-cursor cursor)])) table-data]))
 
 (defn search-get-length [_kws cap]
   (let [tables (util-v2/get-tables)
-        [view-spec {:keys [search] :as _search-spec} _cursor] (util-v2/unwrap-cap cap :search)]
-    (search-v2/count-rows tables (db) view-spec search)))
+        [encoded-view-spec encoded-search-spec] (util-v2/unwrap-cap cap :search)
+        {:keys [search]} (decode-search-spec encoded-search-spec)]
+    (search-v2/count-rows tables (db) (decode-view-spec encoded-view-spec) search)))
 
 (defn search-delete [_kw cap]
   (let [tables (util-v2/get-tables)
-        [view-spec {:keys [search]} _cursor] (unwrap-cap-with-perm! tables cap :search util-v2/WRITE)]
-    (updates/delete-from-query! (db) tables view-spec search)))
+        [encoded-view-spec encoded-search-spec] (unwrap-cap-with-perm! tables cap :search util-v2/WRITE)
+        {:keys [search]} (decode-search-spec encoded-search-spec)]
+    (updates/delete-from-query! (db) (quota-ctx) tables (decode-view-spec encoded-view-spec) search)))
 
 (defn- setup-search [table-cap search-args query-kws]
   (let [tables (util-v2/get-tables)
-        [{:keys [id cols restrict] :as view-spec}] (unwrap-cap-with-perm! tables table-cap :table util-v2/READ) 
+        {:keys [id cols] :as view-spec} (-> (unwrap-cap-with-perm! tables table-cap :table util-v2/READ)
+                                            (first)
+                                            (decode-view-spec))
         _ (assert id)
         cols (basic-ops/get-col-names id tables cols)
         [search-options query-args] (search-v2/get-search-options tables view-spec search-args)
@@ -188,14 +198,14 @@
   (let [{:keys [order-by chunk-size fetch-request]} search-options]
     (as-> {:search query :fetch fetch-request} search-spec
           (assoc search-spec :order order-by :chunk chunk-size)
-          (types/->Capability ["_" "t" view-spec search-spec cursor]))))
+          (types/->Capability ["_" "t" (encode-view-spec view-spec) (encode-search-spec search-spec) (encode-cursor cursor)]))))
 
 (defn table-search [_kws table-cap search-args query-kws]
-  (let [{:keys [tables view-spec query search-options] :as search-spec} (setup-search table-cap search-args query-kws)
+  (let [{:keys [tables view-spec query search-options] :as search-info} (setup-search table-cap search-args query-kws)
         {:keys [order-by chunk-size fetch-request]} search-options
         chunk-size (or chunk-size CHUNK-SIZE)
         [table-data row-ids cursor] (search-v2/get-page tables (db) view-spec fetch-request query order-by chunk-size nil)]
-    [row-ids (mk-search-cap search-spec nil) (when cursor (mk-search-cap search-spec cursor)) table-data]))
+    [row-ids (mk-search-cap search-info nil) (when cursor (mk-search-cap search-info cursor)) table-data]))
 
 (defn table-get-row [_kws table-cap search-args query-kws]
   (let [{:keys [tables search-options view-spec query]} (setup-search table-cap search-args query-kws)
@@ -208,10 +218,11 @@
 
 (defn table-add-rows [_kw table-cap rows]
   (let [tables (util-v2/get-tables)
-        [{table-id :id :keys [perm cols restrict] :as view-spec}] (unwrap-cap-with-perm! tables table-cap :table util-v2/WRITE)
+        [encoded-view-spec] (unwrap-cap-with-perm! tables table-cap :table util-v2/WRITE)
+        {table-id :id :keys [perm cols] :as view-spec} (decode-view-spec encoded-view-spec)
         new-row-ids (updates/do-insert! (db) (quota-ctx) (can-auto-create?) tables view-spec rows)]
     [(for [row-id new-row-ids]
-       [row-id (types/->Capability ["_" "t" view-spec {:r row-id}])])
+       [row-id (types/->Capability ["_" "t" encoded-view-spec {:r row-id}])])
      (basic-ops/get-table-spec table-id tables perm nil cols)]))
 
 (defn table-add-row [_kws table-cap row]
@@ -220,15 +231,17 @@
 
 (defn row-update [_kw row-cap values]
   (let [tables (util-v2/get-tables)
-        [view-spec {row-id :r}] (unwrap-cap-with-perm! tables row-cap :row util-v2/WRITE)]
-    (updates/do-update! (db) (quota-ctx) (can-auto-create?) tables view-spec [{:row-id row-id :values values}])
+        [encoded-view-spec encoded-search-spec] (unwrap-cap-with-perm! tables row-cap :row util-v2/WRITE)
+        {row-id :r} (decode-search-spec encoded-search-spec)]
+    (updates/do-update! (db) (quota-ctx) (can-auto-create?) tables (decode-view-spec encoded-view-spec) [{:row-id row-id :values values}])
     nil))
 
 (defn row-batch-update [_kw updates]
   (let [tables (util-v2/get-tables)
         all-updates (->> (for [[row-cap update] updates
-                               :let [[view-spec {row-id :r}] (unwrap-cap-with-perm! tables row-cap :row util-v2/WRITE)]]
-                           {:view-spec view-spec :row-id row-id :values update})
+                               :let [[encoded-view-spec encoded-search-spec] (unwrap-cap-with-perm! tables row-cap :row util-v2/WRITE)
+                                     {row-id :r} (decode-search-spec encoded-search-spec)]]
+                           {:view-spec (decode-view-spec encoded-view-spec) :row-id row-id :values update})
                          (group-by :view-spec))]
     (doseq [[view-spec updates] all-updates]
       (updates/do-update! (db) (quota-ctx) (can-auto-create?) tables view-spec updates))))
@@ -236,8 +249,9 @@
 (defn row-batch-delete [_kw row-caps]
   (let [tables (util-v2/get-tables)
         all-deletions (->> (for [row-cap row-caps
-                                 :let [[view-spec {row-id :r}] (unwrap-cap-with-perm! tables row-cap :row util-v2/WRITE)]]
-                             {:view-spec view-spec, :row-id row-id})
+                                 :let [[encoded-view-spec encoded-search-spec] (unwrap-cap-with-perm! tables row-cap :row util-v2/WRITE)
+                                       {row-id :r} (decode-search-spec encoded-search-spec)]]
+                             {:view-spec (decode-view-spec encoded-view-spec), :row-id row-id})
                            (group-by :view-spec))]
     (doseq [[view-spec deletions] all-deletions]
       (updates/do-delete! (db) (quota-ctx) tables view-spec (map :row-id deletions)))))
@@ -250,8 +264,8 @@
 
 (defn row-fetch [_kw row-cap col-names]
   (let [tables (util-v2/get-tables)
-        [view-spec {row-id :r}] (util-v2/unwrap-cap row-cap :row)]
-    (if-let [table-data (do-row-fetch tables view-spec row-id col-names)]
+        [encoded-view-spec {row-id :r}] (util-v2/unwrap-cap row-cap :row)]
+    (if-let [table-data (do-row-fetch tables (decode-view-spec encoded-view-spec) row-id col-names)]
       table-data
       (throw+ (util-v2/general-tables-error "This row has been deleted" "anvil.tables.RowDeleted")))))
 
@@ -263,7 +277,9 @@
 
 (defn table-get-row-by-id [{fetch-request :fetch :as _kws} table-cap row-id]
   (let [tables (util-v2/get-tables)
-        [{table-id :id :as view-spec}] (unwrap-cap-with-perm! tables table-cap :table util-v2/READ)
+        {table-id :id :as view-spec} (-> (unwrap-cap-with-perm! tables table-cap :table util-v2/READ)
+                                         (first)
+                                         (decode-view-spec))
         row-id (basic-ops/validate-clean-row-id row-id table-id)
         requested-cols (validate-fetch-request fetch-request)]
     (when row-id
@@ -273,12 +289,14 @@
 
 (defn table-has-row? [_kw table-cap row-id]
   (let [tables (util-v2/get-tables)
-        [{table-id :id}] (unwrap-cap-with-perm! tables table-cap :table util-v2/READ)
+        {table-id :id} (-> (unwrap-cap-with-perm! tables table-cap :table util-v2/READ)
+                           (first)
+                           (decode-view-spec))
         row-id (basic-ops/validate-clean-row-id row-id table-id)]
     (boolean (when row-id
                (seq (jdbc/query (db) ["SELECT 1 FROM app_storage_data WHERE table_id=? AND id=?" table-id row-id]))))))
 
-(defn- get-csv-lazy-media [tables {table-id :id :keys [cols restrict] :as view-spec} query escape-for-excel?]
+(defn- get-csv-lazy-media [tables {table-id :id :keys [cols restrict] :as _view-spec} query escape-for-excel?]
   (let [cols (or cols (keys (get-in tables [table-id :columns])))
         query (if (and restrict query) (search/both-queries restrict query) (or restrict query))]
     (lazy-media/mk-LazyMedia-with-correct-mac {:manager   "query-csv-v2", :id (util/write-json-str [table-id query cols escape-for-excel?]),
@@ -287,23 +305,28 @@
 
 (defn table-to-csv [{:keys [escape_for_excel]} table-cap]
   (let [tables (util-v2/get-tables)
-        [view-spec] (unwrap-cap-with-perm! tables table-cap :table util-v2/READ)]
+        view-spec (-> (unwrap-cap-with-perm! tables table-cap :table util-v2/READ)
+                      (first)
+                      (decode-view-spec))]
     (get-csv-lazy-media tables view-spec nil escape_for_excel)))
 
 (defn search-to-csv [{:keys [escape_for_excel]} search-cap]
   (let [tables (util-v2/get-tables)
-        [view-spec {:keys [search] :as _search-spec} _cursor] (util-v2/unwrap-cap search-cap :search)]
-    (get-csv-lazy-media tables view-spec search escape_for_excel)))
+        [encoded-view-spec encoded-search-spec] (util-v2/unwrap-cap search-cap :search)
+        {:keys [search]} (decode-search-spec encoded-search-spec)]
+    (get-csv-lazy-media tables (decode-view-spec encoded-view-spec) search escape_for_excel)))
 
 (defn serve-csv-lazy-media [media-id]
   (let [tables (util-v2/get-tables)
         [table-id query cols escape-for-excel?] (json/read-str media-id :key-fn keyword)]
     (csv/serve-query-csv-lazy-media tables (db) table-id query cols escape-for-excel?)))
 
-(defn get-table-schema [_kwargs]
-  (let [tables (util-v2/get-tables)
+(defn get-table-schema [{:keys [_anvil_expose_all_for_designer] :as _kwargs}]
+  (let [tables (dissoc (util-v2/get-tables) ::util-v2/table-mapping)
         server-config (-> (get-service-config) :server_config)
-        available? (->> server-config :expose_record_types keys (map util/preserve-slashes) set)]
+        available? (if (and (:allow-debug? rpc-util/*environment*) _anvil_expose_all_for_designer)
+                     (constantly true)
+                     (->> server-config :expose_record_types keys (map util/preserve-slashes) set))]
     {:name         "Data Tables"
      :description  "Tables from Anvil's built-in database"
      :record_types (for [[table-id {:keys [columns name python_name]}] (sort-by #(:name (second %)) tables)

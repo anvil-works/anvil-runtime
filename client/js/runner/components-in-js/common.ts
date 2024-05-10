@@ -2,11 +2,10 @@ import { pyModule, pyNone, pyObject, pyStr, retryOptionalSuspensionOrThrow, Susp
 import { CustomComponentSpec, ToolboxItem, ToolboxSection } from "@runtime/components/Component";
 
 let environmentSetupHooks: (() => void)[] | null = [];
-export const runPostSetupHooks = () => {
+export const registerJsPythonModules = () => {
     environmentSetupHooks?.forEach((f) => f());
-    environmentSetupHooks = null;
 };
-export const whenEnvironmentReady = (f: () => void) => (environmentSetupHooks ? environmentSetupHooks.push(f) : f());
+export const addJsModuleHook = (f: () => void) => (environmentSetupHooks ? environmentSetupHooks.push(f) : f());
 
 export const jsCustomComponents: { [name: string]: { pyMod: pyModule; spec: CustomComponentSpec } } = {};
 
@@ -31,7 +30,7 @@ function getOrCreateModule(modName: string) {
 }
 
 export function registerModule(modName: string, attributes: { [attr: string]: pyObject }, spec: CustomComponentSpec) {
-    whenEnvironmentReady(() => {
+    addJsModuleHook(() => {
         const pyMod = getOrCreateModule(modName);
         Object.assign(pyMod.$d, attributes);
         jsCustomComponents[modName] = { pyMod, spec };

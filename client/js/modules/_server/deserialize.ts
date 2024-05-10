@@ -14,7 +14,7 @@ import {
     toPy,
     typeLookup,
 } from "@Sk";
-import { anvilMod, anvilServerMod } from "@runtime/utils";
+import { anvilMod, anvilServerMod } from "@runtime/runner/py-util";
 import PyDefUtils from "PyDefUtils";
 import { VT_GLOBAL, pyValueTypes } from "./constants";
 import { DT, INTERNED, TZ } from "./helpers";
@@ -105,6 +105,17 @@ const handlers: Handlers = {
         return new pyFloat(obj.value);
     },
 } as const;
+
+export function getOutstandingMedia(objects: any) {
+    const media: OutstandingMedia = {};
+    // TODO I think object is an array, isn't it?
+    for (const m of Object.values<any>(objects)) {
+        if (m.type?.[0] !== "DataMedia") continue;
+        const { id, ["mime-type"]: mime_type, path, name } = m;
+        media[id] = { mime_type, path, content: [], name };
+    }
+    return media;
+}
 
 function deserialiseObject(
     obj: SerializedObject,
@@ -208,6 +219,7 @@ export async function reconstructObjects(json: DeserializedJson, mediaBlobs: Out
             replaceWith = await retrievePortableClass(reconstructed as string);
         } else if (objectToReplace != null) {
             console.error("Object reconstruction replacing something that's not a null leaf!", objectToReplace);
+            console.log(path, objectToReplace)
         }
 
         // we are either replacing a path into json.response or json.vt_global

@@ -114,7 +114,7 @@
            (= json-value []))
 
       (and (= (:type type-map) "simpleObject")
-           (or (string? json-value) (number? json-value) (contains? #{true false} json-value)))
+           (is-jsonable? json-value))
 
       (= type-map (get-type-from-value json-value))))
 

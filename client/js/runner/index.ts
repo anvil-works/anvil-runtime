@@ -1,76 +1,61 @@
-import {AppYaml, data, DependencyYaml, setData, SetDataParams} from "./data";
+import { AppYaml, data, DependencyYaml, setData, SetDataParams } from "./data";
 
 console.log("Loading runner v2");
 
-import "../messages";
 import "../extra-python-modules";
+import "../messages";
 import "./error-handling";
-import {stdout, logEvent} from "./logging";
+import { logEvent } from "./logging";
 
 if (navigator.userAgent.indexOf("Trident/") > -1) {
+    //@ts-ignore
     window.isIE = true;
 }
 
 // memoiser for module loaders
 const memos = {};
 //@ts-ignore
-window.memoise = (key, fn) => () => (memos[key] || (memos[key] = fn()));
+window.memoise = (key, fn) => () => memos[key] || (memos[key] = fn());
 //@ts-ignore
 window.PyDefUtils = PyDefUtils;
 
 window.anvilCurrentlyConstructingForms = [];
 
-import * as componentModule from "../components";
+import { reconstructObjects } from "@runtime/modules/_server";
+import { OutstandingMedia } from "@runtime/modules/_server/rpc";
+import { Args, Kws, pyCallable, pyCallOrSuspend, pyDict, pyRuntimeError, pyStr, pyTuple, toJs, toPy } from "../@Sk";
 import * as PyDefUtils from "../PyDefUtils";
-import {setupPythonEnvironment} from "./python-environment";
-import * as _jsComponentApi from "./components-in-js/public-api";
 import { registerSolidComponent, solidComponents } from "./components-in-js/component-from-solid";
-import { pyCallable, pyCallOrSuspend, pyDict, pyStr, pyTuple, toJs } from "../@Sk";
+import * as _jsComponentApi from "./components-in-js/public-api";
 import { isCustomAnvilError } from "./error-handling";
-import { Component } from "../components/Component";
-import { anvilMod, anvilServerMod } from "../utils";
 import { setLegacyOptions } from "./legacy-features";
+import { setLoading } from "./loading-spinner";
+import { anvilMod, anvilServerMod } from "./py-util";
+import { setupPythonEnvironment } from "./python-environment";
+import { warn } from "./warnings";
 
+let hooks: { onLoadedApp?: () => void } = {};
 
-let hooks: {onLoadedApp?: () => void} = {};
-
-export function setHooks(h: typeof hooks) { hooks = h; }
-
-
-let loadingRefCount = 0;
-function setLoading(loading?: boolean) {
-    const oldRefCount = loadingRefCount;
-    if (loading) {
-        loadingRefCount++;
-    } else {
-        loadingRefCount--;
-    }
-
-    const spinner = $("#loadingSpinner");
-
-    if (oldRefCount == 0 && loadingRefCount > 0) {
-        spinner.stop(true);
-        spinner.fadeIn(400);
-    } else if (oldRefCount > 0 && loadingRefCount == 0) {
-        spinner.stop(true);
-        spinner.fadeOut(200);
-    }
+export function setHooks(h: typeof hooks) {
+    hooks = h;
 }
-//@ts-ignore
-window.setLoading = setLoading;
 
+//@ts-ignore - backwards compatibility
+window.setLoading = setLoading;
 
 let lastAppHeight = -1;
 function onResize() {
     const newHeight = PyDefUtils.calculateHeight();
 
     if (newHeight != lastAppHeight) {
-
         // We really are happy for this to go to any origin. I don't mind people knowing how tall I am.
-        window.parent.postMessage({
-            fn: "newAppHeight",
-            newHeight: newHeight + 50,
-        }, "*");
+        window.parent.postMessage(
+            {
+                fn: "newAppHeight",
+                newHeight: newHeight + 50,
+            },
+            "*"
+        );
 
         lastAppHeight = newHeight;
     }
@@ -83,7 +68,7 @@ export function hardResize() {
 
 // Load an app, but don't open the main form or module
 function loadApp(preloadModules: string[]) {
-    setLoading(true);
+    setLoading(true, { animate: false });
 
     // Start watching the DOM for changes, so we can report app height.
 
@@ -98,16 +83,17 @@ function loadApp(preloadModules: string[]) {
 
     const modalObserver = new MutationObserver(onResize);
 
-    $(document).on('shown.bs.modal', ".modal", function () {
-        modalObserver.observe(this, { childList: true, subtree: true });
-        onResize();
-    }).on('hidden.bs.modal', ".modal", () => {
-        if (!$('.modal:visible').length) {
-            modalObserver.disconnect();
-        }
-        onResize();
-    });
-
+    $(document)
+        .on("shown.bs.modal", ".modal", function () {
+            modalObserver.observe(this, { childList: true, subtree: true });
+            onResize();
+        })
+        .on("hidden.bs.modal", ".modal", () => {
+            if (!$(".modal:visible").length) {
+                modalObserver.disconnect();
+            }
+            onResize();
+        });
 
     // Load all the available app modules
 
@@ -120,7 +106,17 @@ function loadApp(preloadModules: string[]) {
             return "app/" + topLevelPackage + "/" + name.replace(/\./g, "/") + "/__init__.py";
         } else {
             const dots = name.split(".");
-            return "app/" + topLevelPackage + "/" + dots.slice(0,-1).map(s => s + "/").join("") + dots[dots.length-1] + ".py";
+            return (
+                "app/" +
+                topLevelPackage +
+                "/" +
+                dots
+                    .slice(0, -1)
+                    .map((s) => s + "/")
+                    .join("") +
+                dots[dots.length - 1] +
+                ".py"
+            );
         }
     };
 
@@ -144,7 +140,9 @@ function loadApp(preloadModules: string[]) {
                 fillOutModules(depApp, depApp.package_name);
                 dependencyPackageNames.push(depApp.package_name);
             } else {
-                dependencyErrors.push(`Cannot have two dependencies with the same package name: ${depApp.package_name}`);
+                dependencyErrors.push(
+                    `Cannot have two dependencies with the same package name: ${depApp.package_name}`
+                );
             }
         }
     }
@@ -155,15 +153,13 @@ function loadApp(preloadModules: string[]) {
         dependencyErrors.push(`App cannot have the same package name as one of its dependencies: ${appPackage}`);
     }
 
-
     // jQuery 3 migration
 
     const jQueryDeprecationWarned: { [msg: string]: true } = {};
     //@ts-ignore
     $.migrateWarnings = {
         push: (msg: string) => {
-            if (jQueryDeprecationWarned[msg])
-                return;
+            if (jQueryDeprecationWarned[msg]) return;
 
             //@ts-ignore
             $.migrateMute = false;
@@ -175,38 +171,59 @@ function loadApp(preloadModules: string[]) {
             }
 
             jQueryDeprecationWarned[msg] = true;
-            stdout("WARNING: This application uses deprecated jQuery 2.2 features. Please see the Javascript console for more details. Error: " + msg);
+            warn(
+                "WARNING: This application uses deprecated jQuery 2.2 features. Please see the Javascript console for more details. Error: " +
+                    msg
+            );
             logEvent({
                 warning: {
                     type: "jquery2-deprecation",
-                    msg: msg
-                }
+                    msg: msg,
+                },
             });
-        }
+        },
     };
-
-
-    if (window.isIE) {
-        // @ts-ignore
-        const themeVars = window.anvilThemeVars;
-        // @ts-ignore
-        const themeColors = window.anvilThemeColors;
-        // oh no we can't have theme colors as vars so replace all the vars that were loaded with the colors
-        const styleSheet = document.querySelector('style[title="theme.css"]') as Element;
-        let text = styleSheet.textContent ?? "";
-        for (const [themeName, themeVar] of Object.entries(themeVars)) {
-            text = text.replace(new RegExp(`var\\(${themeVar}\\)`, "g"), themeColors[themeName]);
-        }
-        styleSheet.textContent = text;
-    }
 
     setupPythonEnvironment(preloadModules);
 
     setLoading(false);
 }
 
-function openForm(formName: string) {
-    return PyDefUtils.callAsync(anvilMod.open_form, undefined, undefined, undefined, new Sk.builtin.str(formName));
+async function openForm(formName: string | null, serialisedArgs?: any) {
+    if (!formName) {
+        throw new pyRuntimeError("This app has no startup form or module. To run this app you need to set one.");
+    }
+
+    let formArgs: Args = [],
+        formKwargs: Kws = [];
+
+    if (serialisedArgs) {
+        const { media, ...restArgs } = serialisedArgs ?? {};
+        // Massage this into the slightly wonky form our deserialiser expects
+        const om: OutstandingMedia = {};
+        for (const m of restArgs.objects ?? []) {
+            if (m.type?.[0] === "DataMedia") {
+                const { id, ["mime-type"]: mime_type, path, name } = m;
+
+                const fr = await fetch(`data:${mime_type};base64,` + media[id]);
+                om[id] = { mime_type, path, content: [await fr.blob()], name };
+            }
+        }
+        const { args, kwargs } = (await reconstructObjects(restArgs, om)) as any;
+        formArgs = args.map(toPy);
+        for (const [k, v] of Object.entries(kwargs)) {
+            formKwargs.push(k, toPy(v));
+        }
+    }
+
+    return await PyDefUtils.callAsync(
+        anvilMod.open_form,
+        undefined,
+        undefined,
+        formKwargs,
+        new Sk.builtin.str(formName),
+        ...formArgs
+    );
 }
 
 function openMainModule(moduleName: string) {
@@ -221,18 +238,23 @@ function openMainModule(moduleName: string) {
 
 function printComponents(printId: string, printKey: string) {
     // @ts-ignore
-    const outstandingPrintDelayPromises: {[key:string]: {promise}} = window.outstandingPrintDelayPromises = {};
+    const outstandingPrintDelayPromises: { [key: string]: { promise } } = (window.outstandingPrintDelayPromises = {});
 
     return PyDefUtils.asyncToPromise(() => {
         const openForm = anvilMod.open_form as pyCallable;
         const callFn = anvilServerMod.call as pyCallable;
         return Sk.misceval.chain(
-            pyCallOrSuspend<pyTuple<[pyTuple, pyDict]>>(callFn, [new pyStr("anvil.private.pdf.get_component"), new pyStr(printId), new pyStr(printKey)]),
-            pyOpenFormTuple => Sk.misceval.applyOrSuspend(openForm, pyOpenFormTuple.v[1], undefined, [], pyOpenFormTuple.v[0].v),
+            pyCallOrSuspend<pyTuple<[pyTuple, pyDict]>>(callFn, [
+                new pyStr("anvil.private.pdf.get_component"),
+                new pyStr(printId),
+                new pyStr(printKey),
+            ]),
+            (pyOpenFormTuple) =>
+                Sk.misceval.applyOrSuspend(openForm, pyOpenFormTuple.v[1], undefined, [], pyOpenFormTuple.v[0].v),
             () => {
                 $("#loadingSpinner").hide();
                 console.log(`Print delay promises: ${JSON.stringify(Object.keys(outstandingPrintDelayPromises))}`);
-                return Object.values(outstandingPrintDelayPromises).map(d => d.promise);
+                return Object.values(outstandingPrintDelayPromises).map((d) => d.promise);
             }
         );
     })
@@ -242,7 +264,7 @@ function printComponents(printId: string, printKey: string) {
             delete window.outstandingPrintDelayPromises;
             console.log("READY_TO_PRINT"); // pdf_renderer.py is waiting for this exact output.
         })
-        .catch(e => {
+        .catch((e) => {
             let data;
             if (e instanceof Sk.builtin.BaseException) {
                 data = {
@@ -256,33 +278,36 @@ function printComponents(printId: string, printKey: string) {
                     }
                 }
             } else {
-                data = {message: e.toString(), trace: []};
+                data = { message: e.toString(), trace: [] };
             }
             console.log("PRINT_ERROR", JSON.stringify(data));
-        }).catch(e => {
-            console.log("PRINT_ERROR", JSON.stringify({type: "UnexpectedError", message: e.toString()}));
+        })
+        .catch((e) => {
+            console.log("PRINT_ERROR", JSON.stringify({ type: "UnexpectedError", message: e.toString() }));
         });
 }
-
-
 
 let appLoaded = false;
 
 // @ts-ignore
-window.loadApp = function(params: SetDataParams, preloadModules: string[]) {
+window.loadApp = function (params: SetDataParams, preloadModules: string[]) {
     setData(params);
+    setLegacyOptions(params.app.runtime_options);
 
-    if (appLoaded) { console.log("Rejected duplicate app load"); return {}; }
+    if (appLoaded) {
+        console.log("Rejected duplicate app load");
+        return {};
+    }
 
     if ("serviceWorker" in navigator) {
         navigator.serviceWorker
-            .register(`${data.appOrigin}/_/service-worker`, { scope: `${data.appOrigin}` })
+            .register(`${data.appOrigin}/_/service-worker${params.inIDE ? "?inIDE=1" : ""}`, {
+                scope: `${data.appOrigin}`,
+            })
             .catch((error) => {
                 console.error("Service worker registration failed:", error);
             });
     }
-
-
 
     const appLoadPromise = loadApp(preloadModules);
     appLoaded = true;
@@ -311,20 +336,27 @@ $(window).on("_anvil-call", function (e, resolve, reject) {
     reject(
         new Sk.builtin.RuntimeError(
             "anvil.call() first argument should be a child DOM element of the Form instance you wish to call the function on. " +
-            "The DOM element provided has no parent Form instance." +
-            gotElement
+                "The DOM element provided has no parent Form instance." +
+                gotElement
         )
     );
 });
 
 //@ts-ignore
 window.anvil = {
-    call: function(jsThis: HTMLElement | JQuery, ...args: [fnName: string, ...args: any[]] /*functionName, arg1, arg2, ... */) {
+    call: function (
+        jsThis: HTMLElement | JQuery,
+        ...args: [fnName: string, ...args: any[]] /*functionName, arg1, arg2, ... */
+    ) {
         const e = $(jsThis);
         if (e.length == 0) {
-            console.error("Cannot call anvil function on HTML Panel:", jsThis, "Did you forget to supply 'this' as the first argument to anvil.call?");
+            console.error(
+                "Cannot call anvil function on HTML Panel:",
+                jsThis,
+                "Did you forget to supply 'this' as the first argument to anvil.call?"
+            );
         } else {
-            return new Promise(function(resolve, reject) {
+            return new Promise(function (resolve, reject) {
                 $(jsThis).trigger("_anvil-call", [resolve, reject].concat(args));
             });
         }
@@ -343,9 +375,7 @@ window.anvil = {
         );
         return r;
     },
-    enableLegacy: setLegacyOptions
 };
-
 
 /*
  * TO TEST:

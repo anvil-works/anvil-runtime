@@ -18,6 +18,7 @@
             [anvil.core.tracing :as tracing])
   (:use     [slingshot.slingshot :only [throw+ try+]])
   (:import (anvil.dispatcher.types DateTime)
+           (java.sql Timestamp)
            (java.util Date)
            (java.io StringWriter)))
 
@@ -43,7 +44,7 @@
 
 (defonce create-background-task-record
          (fn [_environment impl task-name session-id]
-           (when-let [oldest-to-keep ^java.sql.Timestamp (:start_time (last (jdbc/query util/db ["SELECT start_time FROM background_tasks WHERE completion_status IS NOT NULL ORDER BY start_time DESC LIMIT 1000"])))]
+           (when-let [oldest-to-keep ^Timestamp (:start_time (last (jdbc/query util/db ["SELECT start_time FROM background_tasks WHERE completion_status IS NOT NULL ORDER BY start_time DESC LIMIT 1000"])))]
              (clean-all-finished-tasks-older-than! (.getTime oldest-to-keep)))
            (let [new-id (str/lower-case (random/base32 25))]
              (map->BackgroundTask (first (jdbc/query util/db ["INSERT INTO background_tasks (id,session_id,routing,task_name,debug,start_time,last_seen_alive) VALUES (?,?,?::jsonb,?,FALSE,NOW(),NOW()) RETURNING *"
@@ -72,8 +73,8 @@
 (defn present-background-task [bt]
   (-> bt
       (select-keys [:id :completion_status :task_name :debug :session_id])
-      (assoc :last_seen_alive (.getTime (:last_seen_alive bt)))
-      (assoc :start_time (.getTime (:start_time bt)))
+      (assoc :last_seen_alive (.getTime ^Timestamp (:last_seen_alive bt)))
+      (assoc :start_time (.getTime ^Timestamp (:start_time bt)))
       (assoc :session_sha (util/sha-256 (str (:session bt))))))
 
 ;; Useful predicate for get-state
@@ -205,7 +206,7 @@
             req chunked-streams)))
 
 
-(def rpc-handlers {"anvil.private.background_tasks.launch"    {:fn (fn [{{[task-fn] :args} :call, :keys [origin from-bg-task? app-id environment session-state tracing-span], :as request} return-path]
+(def rpc-handlers {"anvil.private.background_tasks.launch"    {:fn (fn [{{[task-fn] :args} :call, :keys [origin from-bg-task? app-id environment session-state tracing-span bg-task-timeout], :as request} return-path]
                                                                      (worker-pool/run-task! {:type :native-rpc,
                                                                                              :name ::bg-task-launch-async-for-media-wait
                                                                                              :tags (worker-pool/get-task-tags-for-dispatch-request request)}
@@ -238,8 +239,8 @@
                                                                                                                                (assoc :background? true)
                                                                                                                                (assoc :scheduled? (boolean (:scheduled-task-id request)))
                                                                                                                                (assoc :bg-task-timeout (if restrict?
-                                                                                                                                                         30000
-                                                                                                                                                         nil))
+                                                                                                                                                         (min 300 (or bg-task-timeout 300))
+                                                                                                                                                         bg-task-timeout))
                                                                                                                                ;; It's useful to use the existing span here, because then we get all the task's executor info on *this* span, which has custom rendering anyway.
                                                                                                                                (assoc :use-existing-tracing-span? true))
                                                                                                                            return-path))]

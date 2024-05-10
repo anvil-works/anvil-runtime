@@ -1,9 +1,10 @@
 "use strict";
 
 var PyDefUtils = require("PyDefUtils");
-const {pyNone} = require("@Sk");
+const {pyNone, pyStr, pyBool, pyCall} = require("@Sk");
 const { validateChild } = require("./Container");
 const { getCssPrefix } = require("@runtime/runner/legacy-features");
+const { notifyVisibilityChange } = require("./Component");
 
 /*#
 id: datarowpanel
@@ -166,20 +167,12 @@ module.exports = function(pyModule) {
     });
 
 
-    let updateVisible = self => {
-        let e = self._anvil.element;
-        let v = isTrue(self._anvil.getProp("visible")) && !self._anvil.hideOnThisPage;
+    const updateVisible = self => {
+        const d = self._anvil.domNode;
+        const v = isTrue(self._anvil.getProp("visible")) && !self._anvil.hideOnThisPage;
         const prefix = getCssPrefix();
-        if (v) {
-            e.removeClass(prefix + "visible-false");
-            e.parent().removeClass(prefix + "visible-false");
-            // Trigger events for components that need to update themselves when visible
-            // (eg Maps, Canvas)
-            return self._anvil.shownOnPage();
-        } else {
-            e.addClass(prefix + "visible-false");
-            e.parent(`.${prefix}hide-with-component`).addClass(prefix + "visible-false");
-        }
+        d.classList.toggle(prefix + "visible-false", !v);
+        return notifyVisibilityChange(self, v);
     };
 
     let updateColData = (self, colSpec, column) => {

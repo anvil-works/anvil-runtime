@@ -83,7 +83,11 @@ $("#error-indicator").on("click", function () {
 window.onerror = function (errormsg, url, line, col, errorObj) {
     if (typeof errormsg === "string" && errormsg.indexOf("__gCrWeb.autofill.extractForms") > -1) {
         // This is a Chrome-on-iOS bug. Only happens when autofill=off in settings. Ignore.
-        return;
+        return true;
+    }
+    if (typeof errormsg === "string" && errormsg.includes("ResizeObserver loop completed with undelivered notifications")) {
+        console.warn(errormsg);
+        return true;
     }
     try {
         const anvilServerMod = Sk.sysmodules.quick$lookup(new Sk.builtin.str("anvil.server"));

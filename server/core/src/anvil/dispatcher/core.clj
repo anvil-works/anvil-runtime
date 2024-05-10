@@ -155,127 +155,133 @@
       (log/trace "Args:" (pr-str args))
       (log/trace "Kwargs:" (pr-str kwargs)))
 
-    (when (util/app-locked? app-id)
-      (log/debug (str "Cannot dispatch function " (pr-str func) " on locked app '" app-id "'"))
-      (respond! return-path {:error {:type    "anvil.server.InternalError",
-                                     :message (str "This app is currently down for maintenance. Please try again in a few minutes.")}})
-      (throw+ {:anvil/server-error "App down for maintenance"}))
 
-    (when (> (count call-stack) 10)
-      (respond! return-path {:error {:type    "anvil.server.StackOverflow",
-                                     :message (str "Too many nested anvil.server.call()s")}})
-      (throw+ {:anvil/server-error "Too many nested anvil.server.call()s"}))
+    (cond
+      (util/app-locked? app-id)
+      (do
+        (log/debug (str "Cannot dispatch function " (pr-str func) " on locked app '" app-id "'"))
+        (respond! return-path {:error {:type    "anvil.server.InternalError",
+                                       :message (str "This app is currently down for maintenance. Please try again in a few minutes.")}}))
 
-    (when (and (re-matches #".*:.*" func) (= :client origin))
-      (log/debug "Denied client access to scoped function" (pr-str func))
+      (> (count call-stack) 10)
+      (do
+        (respond! return-path {:error {:type    "anvil.server.StackOverflow",
+                                       :message (str "Too many nested anvil.server.call()s")}}))
+
+      (and (re-matches #".*:.*" func) (= :client origin))
+      (do
+        (log/debug "Denied client access to scoped function" (pr-str func))
+        (respond! return-path {:error {:type    "anvil.server.PermissionDenied",
+                                       :message (str "Cannot call scoped server function " (pr-str func) " from client code")}}))
+
+      (when-let [limit (accounting/limit? app-id)]
+        (or (= :client origin) (= (:type limit) :all)))
       (respond! return-path {:error {:type    "anvil.server.PermissionDenied",
-                                     :message (str "Cannot call scoped server function " (pr-str func) " from client code")}})
-      (throw+ {:anvil/server-error "Cannot call scoped server function from client code"}))
+                                     :message (str "This app cannot be accessed due to plan limits being exceeded.")}})
 
-    (binding [*stale-uplink?* (atom false)]
-      (let [start-time (System/nanoTime)
-            dispatch-end (atom 0)
-            clock-stopped (atom 0)
-            metrics-timer (atom nil)
-            wrapped-respond! (fn [resp]
-                               (when (and use-quota? (= 1 (swap! clock-stopped inc)))
-                                 (accounting/record-platform-server-use! session-state (/ (double (- (System/nanoTime) start-time)) 1000000000.0)))
+      :else
+      (binding [*stale-uplink?* (atom false)]
+        (let [start-time (System/nanoTime)
+              dispatch-end (atom 0)
+              clock-stopped (atom 0)
+              metrics-timer (atom nil)
+              wrapped-respond! (fn [resp]
+                                 (when (and use-quota? (= 1 (swap! clock-stopped inc)))
+                                   (accounting/record-platform-server-use! session-state (/ (double (- (System/nanoTime) start-time)) 1000000000.0)))
 
-                               (when-let [stop-timer! @metrics-timer]
-                                 (stop-timer!))
+                                 (when-let [stop-timer! @metrics-timer]
+                                   (stop-timer!))
 
-                               (respond! return-path
-                                         (merge resp
-                                                (when (and session-state
-                                                           (:anvil/enable-profiling @session-state))
-                                                  {:profile (merge {:origin      "Server (Native)"
-                                                                    :description (str "Server dispatch (" func ")")
-                                                                    :start-time  (/ start-time 1000000.0)
-                                                                    :end-time    (/ (System/nanoTime) 1000000.0)}
-                                                                   (when (:profile resp)
-                                                                     {:children [{:origin "Dispatch" :description "Dispatch setup" :start-time (/ start-time 1000000.0) :end-time (/ @dispatch-end 1000000.0)} (:profile resp)]}))}))))
+                                 (respond! return-path
+                                           (merge resp
+                                                  (when (and session-state
+                                                             (:anvil/enable-profiling @session-state))
+                                                    {:profile (merge {:origin      "Server (Native)"
+                                                                      :description (str "Server dispatch (" func ")")
+                                                                      :start-time  (/ start-time 1000000.0)
+                                                                      :end-time    (/ (System/nanoTime) 1000000.0)}
+                                                                     (when (:profile resp)
+                                                                       {:children [{:origin "Dispatch" :description "Dispatch setup" :start-time (/ start-time 1000000.0) :end-time (/ @dispatch-end 1000000.0)} (:profile resp)]}))}))))
 
-            return-path (assoc return-path :respond! wrapped-respond!)
+              return-path (assoc return-path :respond! wrapped-respond!)
 
-            request (if app-info
-                      request
-                      (assoc request :app-info (or (and session-state (:app-info @session-state))
-                                                   (app-data/get-app-info-insecure app-id))))
-            app-info (:app-info request)
-            request (if (or app (not app-id))
-                      request
-                      (let [{:keys [content version dependency-versions]} (tracing/with-span ["Load app" {:internal true} child-span]
-                                                                            (app-data/get-app app-info (app-data/get-version-spec-for-environment environment) false))]
-                        (-> request
-                            (assoc :app content)
-                            (update-in [:environment] assoc :commit-id version :dependency-commit-ids dependency-versions))))
+              request (if app-info
+                        request
+                        (assoc request :app-info (or (and session-state (:app-info @session-state))
+                                                     (app-data/get-app-info-insecure app-id))))
+              app-info (:app-info request)
+              request (if (or app (not app-id))
+                        request
+                        (let [{:keys [content version dependency-versions]} (tracing/with-span ["Load app" {:internal true} child-span]
+                                                                              (app-data/get-app app-info (app-data/get-version-spec-for-environment environment) false))]
+                          (-> request
+                              (assoc :app content)
+                              (update-in [:environment] assoc :commit-id version :dependency-commit-ids dependency-versions))))
 
-            request (if thread-id
-                      request
-                      (assoc request :thread-id (str (name (or origin :unknown)) "-" (random/base64 18))))
+              request (if thread-id
+                        request
+                        (assoc request :thread-id (str (name (or origin :unknown)) "-" (random/base64 18))))
 
-            ;; TODO: We will create a permissions system where executors/dispatch handlers
-            ;;       gate which things you're allowed to call based on your permissions.
-            ;;       For now, we hard-code the first use case, which is "table uplink keys
-            ;;       can only access table functions"
-            executor (if (= origin :db-read-uplink)
-                       (util/with-meta-when {:executor :native}
-                         (or (when-not live-object
-                               (get @db-only-native-rpc-handlers func))
-                             {:fn (fn [req return-path] (respond! return-path {:error {:message (str "Illegal call target for DB uplink") :type "anvil.server.PermissionDenied"}}))}))
-                       (or (util/with-meta-when {:executor :native}
-                             (if live-object
-                               (get @native-live-object-backends (:backend live-object))
-                               (get @native-rpc-handlers func)))
+              ;; TODO: We will create a permissions system where executors/dispatch handlers
+              ;;       gate which things you're allowed to call based on your permissions.
+              ;;       For now, we hard-code the first use case, which is "table uplink keys
+              ;;       can only access table functions"
+              executor (if (= origin :db-read-uplink)
+                         (util/with-meta-when {:executor :native}
+                                              (or (when-not live-object
+                                                    (get @db-only-native-rpc-handlers func))
+                                                  {:fn (fn [req return-path] (respond! return-path {:error {:message (format "Illegal call target for DB uplink: %s" func) :type "anvil.server.PermissionDenied"}}))}))
+                         (or (util/with-meta-when {:executor :native}
+                                                  (if live-object
+                                                    (get @native-live-object-backends (:backend live-object))
+                                                    (get @native-rpc-handlers func)))
 
-                           (some #(% request) (second @dispatch-handlers))
-
-                           (do
-                             (respond! return-path {:error {:message (str "Internal server error: Server runtime not available.")}})
-                             (log/error (str "Internal server error: Server runtime not available for app " app-id " when calling " func))
-                             (throw+ {:anvil/server-error "Internal server error: Server runtime not available."}))))
-
-            _ (when (not= "anvil.private.echo" func)
-                (log/trace "Using executor:" executor))
-
-            executor-fn (:fn executor)
-
-            return-path (assoc return-path
-                          :respond! (fn [resp]
-                                      (when (not= "anvil.private.echo" func)
-                                        (log/trace "Executor responded:" (pr-str resp)))
-                                      (respond! return-path resp)))
-
-            request (assoc request :stale-uplink? @*stale-uplink?*)
-
-            executor-type (get (meta executor) :executor :unknown)
-            metric-labels {:executor  (name executor-type)
-                           :version   (get (meta executor) :version nil)
-
-                           :type      (cond
-                                        live-object "lo-method-call"
-                                        scheduled? "scheduled-task"
-                                        background? "background-task"
-                                        :else "function-call")
-
-                           :native-fn (when (= :native executor-type)
-                                        (str (when live-object (str (:backend live-object) ".")) func))}]
-
-
-        ;;(log/trace "Using executor:" executor)
-        (reset! metrics-timer (metrics/start-timer :api/runtime-dispatch-duration-seconds metric-labels))
-        (tracing/merge-span-attrs child-span (-> metric-labels
-                                                 (dissoc :native-fn)))
-
-        (try+
-          (if-not background?
+                             (some #(% request) (second @dispatch-handlers))))]
+          (if-not executor
             (do
-              (reset! dispatch-end (System/nanoTime))
-              (executor-fn request return-path))
-            (let [background-launch-fn (or (:bg-fn executor) (partial @default-background-wrapper executor))]
-              (background-launch-fn request return-path)))
+              (log/error (str "Internal server error: Server runtime not available for app " app-id " when calling " func))
+              (respond! return-path {:error {:message (str "Internal server error: Server runtime not available.")}}))
 
-          (catch Exception e
-            (let [error-id (random/hex 6)]
-              (log/error e "Unexpected error in downlink executor:" error-id)
-              (respond! return-path {:error {:message (str "Internal server error: " error-id)}}))))))))
+            (do
+              (when (not= "anvil.private.echo" func)
+                (log/trace "Using executor:" executor))
+              (let [executor-fn (:fn executor)
+
+                    return-path (assoc return-path
+                                  :respond! (fn [resp]
+                                              (when (not= "anvil.private.echo" func)
+                                                (log/trace "Executor responded:" (pr-str resp)))
+                                              (respond! return-path resp)))
+
+                    request (assoc request :stale-uplink? @*stale-uplink?*)
+
+                    executor-type (get (meta executor) :executor :unknown)
+                    metric-labels {:executor  (name executor-type)
+                                   :version   (get (meta executor) :version nil)
+
+                                   :type      (cond
+                                                live-object "lo-method-call"
+                                                scheduled? "scheduled-task"
+                                                background? "background-task"
+                                                :else "function-call")
+
+                                   :native-fn (when (= :native executor-type)
+                                                (str (when live-object (str (:backend live-object) ".")) func))}]
+
+                ;;(log/trace "Using executor:" executor)
+                (reset! metrics-timer (metrics/start-timer :api/runtime-dispatch-duration-seconds metric-labels))
+                (tracing/merge-span-attrs child-span (-> metric-labels
+                                                         (dissoc :native-fn)))
+
+                (try+
+                  (if-not background?
+                    (do
+                      (reset! dispatch-end (System/nanoTime))
+                      (executor-fn request return-path))
+                    (let [background-launch-fn (or (:bg-fn executor) (partial @default-background-wrapper executor))]
+                      (background-launch-fn request return-path)))
+
+                  (catch Exception e
+                    (let [error-id (random/hex 6)]
+                      (log/error e "Unexpected error in downlink executor:" error-id)
+                      (respond! return-path {:error {:message (str "Internal server error: " error-id)}}))))))))))))

@@ -1,4 +1,5 @@
-import { anvilServerMod, defer, Deferred, generateUUID, globalSuppressLoading } from "@runtime/utils";
+import { defer, Deferred, generateUUID, globalSuppressLoading } from "@runtime/utils";
+import { anvilServerMod } from "@runtime/runner/py-util";
 import { Args, Kws, promiseToSuspension, pyStr } from "@Sk";
 import PyDefUtils from "PyDefUtils";
 import { diagnosticData, diagnosticRequest } from "./diagnostics";

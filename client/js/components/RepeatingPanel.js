@@ -1,7 +1,10 @@
 "use strict";
 
 import { getCssPrefix } from "@runtime/runner/legacy-features";
+import { chainOrSuspend, pyCallOrSuspend, pyFalse, pyNone, pyStr, pyTrue } from "@Sk";
 import {getFormInstantiator} from "../runner/instantiation";
+import { notifyComponentMounted } from "./Component";
+import { Mutex } from "@runtime/runner/py-util";
 
 /*#
 id: repeatingpanel
@@ -94,6 +97,7 @@ module.exports = (pyModule, componentsModule) => {
                 set(s, e, v) {
                     return lockingCall(s, () => (window.anvilRuntimeVersion === 2) ? setItemTemplateV2(s, e, v) : setItemTemplateV3(s, v));
                 },
+                important: true,
             },
 
             items: /*!componentProp(RepeatingPanel)!1*/ {
@@ -127,22 +131,9 @@ module.exports = (pyModule, componentsModule) => {
                 // we use composition with Container to implement some basic Container functions
                 self._anvil.itemsElement = $(self._anvil.elements.items);
                 self._anvil.pyHiddenContainer = PyDefUtils.pyCall(pyModule["ClassicContainer"]);
-                self._anvil.pyHiddenContainer._anvil.delayAddingChildrenToPage = true;
                 self._anvil.pyHiddenContainer._anvil.overrideParentObj = self;
                 self._anvil.itemCache = [];
                 self._anvil.componentCache = [];
-                self._anvil.pageEvents = {
-                    add() {
-                        self._anvil.pyHiddenContainer._anvil.parent = self._anvil.parent;
-                        return self._anvil.pyHiddenContainer._anvil.addedToPage();
-                    },
-                    remove() {
-                        return self._anvil.pyHiddenContainer._anvil.removedFromPage();
-                    },
-                    show() {
-                        return self._anvil.pyHiddenContainer._anvil.shownOnPage();
-                    },
-                };
 
                 // Are we being instantiated from YAML? If so, remember which is "our" app package so we can import
                 // from it when given ambiguous item_template strings.
@@ -203,7 +194,7 @@ module.exports = (pyModule, componentsModule) => {
         if (!self._anvil.pyIterator)
             return undefined;
 
-        if (!self._anvil.itemCache) self._anvil.itemCache = [];
+        self._anvil.itemCache ??= [];
         // If we already have this item in the cache, return it.
 
         if (idx < self._anvil.itemCache.length)
@@ -265,14 +256,14 @@ module.exports = (pyModule, componentsModule) => {
         let idx = stoppedIdx + (childDone === true ? 1 : 0);
         let idxOnPage = 0;
 
-        const adder = self._anvil.pyHiddenContainer.tp$getattr(new Sk.builtin.str("add_component"));
+        const adder = pyModule["ClassicContainer"]._doAddComponent;
         const addComponent = (pyC) => {
             // pyC is always a new component so we can skip validateChild
             self._anvil.elements.items.appendChild(pyC._anvil.domNode);
             if (self._anvil.dataGrid && pyC._anvil) {
                 pyC._anvil.dataGrid = self._anvil.dataGrid;
             } 
-            return PyDefUtils.pyCallOrSuspend(adder, [pyC]);
+            return adder(self._anvil.pyHiddenContainer, pyC, {}, {isMounted: false});
         };
 
         if (!self._anvil.constructItemTemplate) {
@@ -303,6 +294,7 @@ module.exports = (pyModule, componentsModule) => {
 
         const currentPagination = [];
         currentPagination.pyIterator = self._anvil.pyIterator;
+        currentPagination.constructItemTemplate = self._anvil.constructItemTemplate;
 
         self._anvil.element.addClass(prefix + "paginating");
 
@@ -322,7 +314,12 @@ module.exports = (pyModule, componentsModule) => {
 
                         const [currentItemIdx, currentItemRowsDisplayed, currentItemStartAfter, templateInstance] = lp;
 
-                        if (self._anvil.lastPagination.pyIterator === self._anvil.pyIterator) {
+                        const lastPagination = self._anvil.lastPagination;
+
+                        if (
+                            lastPagination.pyIterator === self._anvil.pyIterator &&
+                            lastPagination.constructItemTemplate === self._anvil.constructItemTemplate
+                        ) {
                             // We are still looking at the same iterator, so we might be able to keep something.
 
                             if (currentItemIdx === idx) {
@@ -508,7 +505,12 @@ module.exports = (pyModule, componentsModule) => {
                 return Sk.misceval.chain(
                     null,
                     () => {
-                        if (self._anvil.onPage) return self._anvil.pyHiddenContainer._anvil.addedToPage();
+                        const fns = self._anvil.pyHiddenContainer._anvil.components.map(
+                            ({ component: c }) =>
+                                () =>
+                                    notifyComponentMounted(c)
+                        );
+                        return chainOrSuspend(pyNone, ...fns);
                     },
                     () => r
                 );
@@ -532,11 +534,9 @@ module.exports = (pyModule, componentsModule) => {
             // We don't care about thread-safe-ness in the designer.
             return fn();
         } else {
-            self._anvil.itemCache = [];
             self._anvil.componentCache = [];
-            if (!self._anvil.lock) self._anvil.lock = Promise.resolve();
-            self._anvil.lock = self._anvil.lock.then(() => PyDefUtils.asyncToPromise(fn));
-            return PyDefUtils.suspensionFromPromise(self._anvil.lock);
+            self._anvil.mutex ??= new Mutex();
+            return self._anvil.mutex.runWithLock(fn);
         }
     };
 
@@ -621,6 +621,7 @@ module.exports = (pyModule, componentsModule) => {
 
     const setItems = (s, e, v) => {
         s._anvil.itemsCounter++;
+        s._anvil.itemCache = [];
         if (checkNone(v)) {
             s._anvil.pyIterator = Sk.abstr.iter(new Sk.builtin.list([]));
         } else {

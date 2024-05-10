@@ -1,36 +1,62 @@
 // TODO: The Python types in this file belong in the global Anvil module. This should probably be unified at some
 // point, but anvil.js is already 1300 lines of JS, so we're doing it here for now.
 import {
-    s_add_component,
-    kwToObj,
-    kwargsToPyMap,
-    s_layout,
-    s_parent,
-    s_slots,
-    objToKw,
-    strError,
-    s_remove_from_parent,
-    s_x_anvil_propagate_page_added,
-    s_x_anvil_propagate_page_shown,
-    s_x_anvil_propagate_page_removed
-} from "./py-util";
-import * as py from "./py-util";
-import { Args, chainOrSuspend, checkCallable, isTrue, Kws, pyCallable, pyCallOrSuspend, pyDict, pyFunc, pyIsSubclass,
-    pyList, pyNone,
-    pyNoneType, pyObject, pyStr, pyType, Suspension, toJs, toPy } from "../@Sk";
-import {data} from "./data";
+    Args,
+    Kws,
+    Suspension,
+    chainOrSuspend,
+    checkCallable,
+    isTrue,
+    pyCallOrSuspend,
+    pyCallable,
+    pyDict,
+    pyIsSubclass,
+    pyList,
+    pyNone,
+    pyObject,
+    pyStr,
+    pySuper,
+    pyType,
+    toJs,
+    toPy,
+    tryCatchOrSuspend,
+} from "../@Sk";
 import {
-    addEventHandler,
     Component,
     ComponentConstructor,
     ContainerDesignInfo,
+    DropZone,
     DroppingSpecification,
-    DropZone, EMPTY_DESIGN_INFO,
-    initComponentSubclass,
+    ToolboxItem,
+    addEventHandler,
     raiseEventOrSuspend,
-    ToolboxItem
 } from "../components/Component";
-import {getAnvilComponentInstantiator, getNamedFormInstantiator, ResolvedForm, resolveFormSpec} from "./instantiation";
+import { data } from "./data";
+import {
+    ResolvedForm,
+    getAnvilComponentInstantiator,
+    getNamedFormInstantiator,
+    resolveFormSpec,
+} from "./instantiation";
+import {
+    anvilMod,
+    getModule,
+    importFrom,
+    initNativeSubclass,
+    kwToObj,
+    kwargsToPyMap,
+    objToKw,
+    s_add_component,
+    s_hide,
+    s_init_subclass,
+    s_layout,
+    s_remove_from_parent,
+    s_show,
+    s_slots,
+    s_x_anvil_classic_hide,
+    s_x_anvil_classic_show,
+    strError,
+} from "./py-util";
 
 interface SlotConstructor extends pyType<Slot> {
     new (
@@ -38,7 +64,7 @@ interface SlotConstructor extends pyType<Slot> {
         index?: number,
         setLayoutProps?: { [prop: string]: pyObject },
         oneComponent?: boolean,
-        templateSpec?: ToolboxItem,
+        templateSpec?: ToolboxItem
     ): Slot;
 }
 
@@ -54,8 +80,8 @@ export interface HasRelevantHooks {
 }
 
 interface SlotCache {
-    pyTarget: pyObject,
-    hooks: HasRelevantHooks,
+    pyTarget: pyObject;
+    hooks: HasRelevantHooks;
     pyAddComponent: pyCallable;
 }
 
@@ -80,7 +106,13 @@ export interface Slot extends pyObject {
     _slotState: SlotState;
 }
 
-function mkSlotState(getPyTarget: () => Suspension | pyObject, insertionIndex: number, pyLayoutProps: pyDict, oneComponent: boolean, templateSpec: ToolboxItem | undefined) : SlotState {
+function mkSlotState(
+    getPyTarget: () => Suspension | pyObject,
+    insertionIndex: number,
+    pyLayoutProps: pyDict,
+    oneComponent: boolean,
+    templateSpec: ToolboxItem | undefined
+): SlotState {
     return {
         getPyTarget: getPyTarget,
         pyLayoutProps,
@@ -90,13 +122,23 @@ function mkSlotState(getPyTarget: () => Suspension | pyObject, insertionIndex: n
         templateSpec,
         lastUse: null,
         earlierSlots: [],
-        canAddComponent() { return this.components.length === 0 || !this.oneComponent; },
+        canAddComponent() {
+            return this.components.length === 0 || !this.oneComponent;
+        },
         fillCache() {
-            return this.cache || chainOrSuspend(getPyTarget(), pyTarget => chainOrSuspend(
-                pyTarget._slotState?.fillCache(), () => {
-                    const pyAddComponent = Sk.abstr.gattr(pyTarget, s_add_component) as pyCallable;
-                    return this.cache = { pyTarget, pyAddComponent, hooks: pyTarget.anvil$hooks || pyTarget._slotState };
-                }));
+            return (
+                this.cache ||
+                chainOrSuspend(getPyTarget(), (pyTarget) =>
+                    chainOrSuspend(pyTarget._slotState?.fillCache(), () => {
+                        const pyAddComponent = Sk.abstr.gattr(pyTarget, s_add_component) as pyCallable;
+                        return (this.cache = {
+                            pyTarget,
+                            pyAddComponent,
+                            hooks: pyTarget.anvil$hooks || pyTarget._slotState,
+                        });
+                    })
+                )
+            );
         },
         calculateOffset() {
             let offset = 0;
@@ -108,26 +150,74 @@ function mkSlotState(getPyTarget: () => Suspension | pyObject, insertionIndex: n
         enableDropMode(dropping) {
             const pyLayoutProperties = (dropping.pyLayoutProperties || new pyDict()).nb$or(this.pyLayoutProps);
             const offset = this.calculateOffset();
-            const dropZones: DropZone[] = this.cache?.hooks.enableDropMode?.({...dropping, pyLayoutProperties, minChildIdx: this.insertionIndex+offset, maxChildIdx: this.insertionIndex+offset+this.components.length }) || [];
-            const filteredDropzones = dropZones.filter(({element, dropInfo: {minChildIdx, maxChildIdx, layout_properties}}) =>
-                (minChildIdx === undefined && maxChildIdx === undefined || // This DZ will accept a component at any index
-                    (maxChildIdx === undefined && minChildIdx !== undefined && minChildIdx <= this.insertionIndex+offset+this.components.length) ||
-                    (minChildIdx === undefined && maxChildIdx !== undefined && maxChildIdx >= this.insertionIndex+offset) ||
-                    (minChildIdx !== undefined && maxChildIdx !== undefined && minChildIdx <= this.insertionIndex+offset+this.components.length && maxChildIdx >= this.insertionIndex+offset)) &&
-                (this.pyLayoutProps.$items().every(([pyPropName, pyPropVal]) => Sk.misceval.richCompareBool(toPy(layout_properties?.[pyPropName.toString()]), pyPropVal, "Eq")))
-            ).map(({dropInfo: {minChildIdx, maxChildIdx, layout_properties, ...dropInfo}, ...dz}) =>
-                ({...dz, dropInfo: {
+            const dropZones: DropZone[] =
+                this.cache?.hooks.enableDropMode?.({
+                    ...dropping,
+                    pyLayoutProperties,
+                    minChildIdx: this.insertionIndex + offset,
+                    maxChildIdx: this.insertionIndex + offset + this.components.length,
+                }) || [];
+            const filteredDropzones = dropZones
+                .filter(
+                    ({ element, dropInfo: { minChildIdx, maxChildIdx, layout_properties } = {} }) =>
+                        ((minChildIdx === undefined && maxChildIdx === undefined) || // This DZ will accept a component at any index
+                            (maxChildIdx === undefined &&
+                                minChildIdx !== undefined &&
+                                minChildIdx <= this.insertionIndex + offset + this.components.length) ||
+                            (minChildIdx === undefined &&
+                                maxChildIdx !== undefined &&
+                                maxChildIdx >= this.insertionIndex + offset) ||
+                            (minChildIdx !== undefined &&
+                                maxChildIdx !== undefined &&
+                                minChildIdx <= this.insertionIndex + offset + this.components.length &&
+                                maxChildIdx >= this.insertionIndex + offset)) &&
+                        this.pyLayoutProps
+                            .$items()
+                            .every(([pyPropName, pyPropVal]) =>
+                                Sk.misceval.richCompareBool(
+                                    toPy(layout_properties?.[pyPropName.toString()]),
+                                    pyPropVal,
+                                    "Eq"
+                                )
+                            )
+                )
+                .map(({ dropInfo: { minChildIdx, maxChildIdx, layout_properties, ...dropInfo } = {}, ...dz }) => ({
+                    ...dz,
+                    dropInfo: {
                         ...dropInfo,
-                        layout_properties: Object.fromEntries(Object.entries(layout_properties ?? {}).filter(([k,v]) => !this.pyLayoutProps.quick$lookup(new pyStr(k)))),
-                        minChildIdx: minChildIdx === undefined ? undefined : Math.max(minChildIdx - this.insertionIndex - offset, 0),
-                        maxChildIdx: maxChildIdx === undefined ? undefined : Math.min(maxChildIdx - this.insertionIndex - offset, this.components.length),
+                        layout_properties: Object.fromEntries(
+                            Object.entries(layout_properties ?? {}).filter(
+                                ([k, v]) => !this.pyLayoutProps.quick$lookup(new pyStr(k))
+                            )
+                        ),
+                        minChildIdx:
+                            minChildIdx === undefined
+                                ? undefined
+                                : Math.max(minChildIdx - this.insertionIndex - offset, 0),
+                        maxChildIdx:
+                            maxChildIdx === undefined
+                                ? undefined
+                                : Math.min(maxChildIdx - this.insertionIndex - offset, this.components.length),
                         _originalMinChildIdx: minChildIdx, // For debugging
                         _originalMaxChildIdx: maxChildIdx,
-                    }
+                    },
                 }));
 
-
-            console.log(toJs(this.pyLayoutProps), "got DZs from parent", dropZones, "with offset", offset, "target", this.cache?.pyTarget, "insertion idx", this.insertionIndex, "components",  this.components.length, "Filtered DZs:", filteredDropzones);
+            console.log(
+                toJs(this.pyLayoutProps),
+                "got DZs from parent",
+                dropZones,
+                "with offset",
+                offset,
+                "target",
+                this.cache?.pyTarget,
+                "insertion idx",
+                this.insertionIndex,
+                "components",
+                this.components.length,
+                "Filtered DZs:",
+                filteredDropzones
+            );
             return filteredDropzones;
         },
         disableDropMode() {
@@ -135,23 +225,39 @@ function mkSlotState(getPyTarget: () => Suspension | pyObject, insertionIndex: n
         },
         getContainerDesignInfo(pyComponent) {
             const di = this.cache?.hooks.getContainerDesignInfo?.(pyComponent);
-            return {...(di || {}), layoutPropertyDescriptions: (di?.layoutPropertyDescriptions || []).filter(lpd => !pyLayoutProps.quick$lookup(new pyStr(lpd.name)))};
-        }
+            return {
+                ...(di || {}),
+                layoutPropertyDescriptions: (di?.layoutPropertyDescriptions || []).filter(
+                    (lpd) => !pyLayoutProps.quick$lookup(new pyStr(lpd.name))
+                ),
+            };
+        },
     };
 }
 
 export const Slot: SlotConstructor = Sk.abstr.buildNativeClass("anvil.Slot", {
     constructor: function Slot(getPyContainer, insertionIndex, layoutProps, oneComponent, templateSpec) {
         if (getPyContainer) {
-            this._slotState = mkSlotState(getPyContainer, insertionIndex!, toPy(layoutProps || {}), !!oneComponent, templateSpec);
+            this._slotState = mkSlotState(
+                getPyContainer,
+                insertionIndex!,
+                toPy(layoutProps || {}),
+                !!oneComponent,
+                templateSpec
+            );
         }
     },
     slots: {
         tp$init(args, kwargs) {
             Sk.abstr.checkArgsLen("Slot", args, 2, 3);
-            const [pyContainer, pyInsertionIndex, pyLayoutProps, pyTemplateSpec] = args as [pyObject, pyObject, pyObject, pyObject|undefined];
+            const [pyContainer, pyInsertionIndex, pyLayoutProps, pyTemplateSpec] = args as [
+                pyObject,
+                pyObject,
+                pyObject,
+                pyObject | undefined
+            ];
             const insertionIndex = toJs(pyInsertionIndex);
-            if (typeof(insertionIndex) !== "number") {
+            if (typeof insertionIndex !== "number") {
                 throw new Sk.builtin.TypeError("the second argument (insertion index) should be an integer");
             }
             if (!(pyLayoutProps instanceof Sk.builtin.dict)) {
@@ -161,7 +267,13 @@ export const Slot: SlotConstructor = Sk.abstr.buildNativeClass("anvil.Slot", {
                 throw new Sk.builtin.TypeError("the third argument (template spec) should be a dict or None");
             }
             const { one_component } = kwToObj(kwargs);
-            this._slotState = mkSlotState(() => pyContainer, insertionIndex, pyLayoutProps, isTrue(one_component), toJs(pyTemplateSpec) as ToolboxItem);
+            this._slotState = mkSlotState(
+                () => pyContainer,
+                insertionIndex,
+                pyLayoutProps,
+                isTrue(one_component),
+                toJs(pyTemplateSpec) as ToolboxItem
+            );
         },
     },
     methods: {
@@ -171,7 +283,7 @@ export const Slot: SlotConstructor = Sk.abstr.buildNativeClass("anvil.Slot", {
                 const [pyComponent] = args;
                 const layoutProps = kwToObj(kwargs);
 
-                const {_slotState} = this;
+                const { _slotState } = this;
 
                 // Overwrite layout props with props this slot sets
                 for (const [k, v] of _slotState.pyLayoutProps.$items()) {
@@ -180,10 +292,10 @@ export const Slot: SlotConstructor = Sk.abstr.buildNativeClass("anvil.Slot", {
 
                 // Adjust for index
                 const insertionIndex = layoutProps["index"] ? toJs(layoutProps["index"]) : _slotState.components.length;
-                if (typeof(insertionIndex) !== "number") {
+                if (typeof insertionIndex !== "number") {
                     throw new Sk.builtin.ValueError("index= must be a number");
                 }
-                const offset = _slotState.calculateOffset()
+                const offset = _slotState.calculateOffset();
                 layoutProps["index"] = new Sk.builtin.int_(insertionIndex + _slotState.insertionIndex + offset);
 
                 //console.log("Inserting", pyComponent, "into slot at index", layoutProps["index"].v, "because this slot has insertion index", _slotState.insertionIndex, "and offset", offset);
@@ -194,16 +306,18 @@ export const Slot: SlotConstructor = Sk.abstr.buildNativeClass("anvil.Slot", {
                 }
                 _slotState.lastUse = pyComponent;
 
-
-                return chainOrSuspend(_slotState.fillCache(), ({pyAddComponent}) =>
-                    Sk.misceval.callsimOrSuspendArray(pyAddComponent, [pyComponent], nextKws), () => {
-                    // Add it to components
-                    pyComponent.anvilComponent$onRemove(() => {
-                        _slotState.components = _slotState.components.filter(c => c !== pyComponent);
-                    });
-                    _slotState.components.push(pyComponent);
-                    return pyNone;
-                });
+                return chainOrSuspend(
+                    _slotState.fillCache(),
+                    ({ pyAddComponent }) => Sk.misceval.callsimOrSuspendArray(pyAddComponent, [pyComponent], nextKws),
+                    () => {
+                        // Add it to components
+                        pyComponent.anvilComponent$onRemove(() => {
+                            _slotState.components = _slotState.components.filter((c) => c !== pyComponent);
+                        });
+                        _slotState.components.push(pyComponent);
+                        return pyNone;
+                    }
+                );
             },
             $flags: { FastCall: true },
         },
@@ -231,52 +345,61 @@ export const Slot: SlotConstructor = Sk.abstr.buildNativeClass("anvil.Slot", {
                 return pyNone;
             },
             $flags: { FastCall: true },
-        }
+        },
     },
 });
 /*!defMethod(_,target_container,insertion_index,[layout_properties])!2*/ ({
     $doc: "A Slot class represents a way to add components to an underlying container. You will rarely instantiate a Slot on its own; instead your form's layout will contain Slots to which you can add components.",
     anvil$args: {
         target_container: "The target container into which components added to this slot will be added.",
-        insertion_index: "The starting index (within the target container) at which components added to this slot will be inserted.",
-        layout_properties: "A dictionary of layout properties that will be passed as keyword arguments to the target container's add_component() call, overriding any values provided to the slot's add_component().",
-    }
-}); ["__init__"];
+        insertion_index:
+            "The starting index (within the target container) at which components added to this slot will be inserted.",
+        layout_properties:
+            "A dictionary of layout properties that will be passed as keyword arguments to the target container's add_component() call, overriding any values provided to the slot's add_component().",
+    },
+});
+["__init__"];
 /*!defMethod(_,component,[index=None],**layout_properties)!2*/ ({
     $doc: "Add a component to this slot.\n\nCalling add_component() on a Slot will add the specified component to its target container.",
     anvil$args: {
         component: "The component to add to this slot.",
         index: "The index, within the slot, at which the component is to be inserted.\n\nNote: This argument is index is within the Slot, not within the target container. The Slot will adjust for its own insertion_index, as well as components in any previous slots registered with offset_by_slot(), when computing the index= parameter to the target container's add_component() method.",
-        layout_properties: "Layout properties will be passed on as keyword arguments to the target container's add_component() method, unless overridden by the Slot.",
-    }
-}); ["add_component"];
+        layout_properties:
+            "Layout properties will be passed on as keyword arguments to the target container's add_component() method, unless overridden by the Slot.",
+    },
+});
+["add_component"];
 /*!defMethod(_,offset_by_slot)!2*/ ({
     $doc: "Inform this Slot of an earlier Slot with the same target container. Future calls to add_component() will take account of any components inserted into the earlier slot when calculating the insertion index for the target container, thereby preserving ordering between the two slots' components.",
     anvil$args: {
-        earlier_slot: "The Slot whose contents will offset this Slot's target indices. This argument must be a Slot object with the same target container as this one, and the same or earlier insertion_index.",
-    }
-}); ["offset_by_slot"];
+        earlier_slot:
+            "The Slot whose contents will offset this Slot's target indices. This argument must be a Slot object with the same target container as this one, and the same or earlier insertion_index.",
+    },
+});
+["offset_by_slot"];
 /*!defClass(anvil,Slot)!*/
-/*!hideClassBehindAB(anvil,Slot,runtimeV3)!*/
 
-
-export function getComponentClass(typeSpec: string, defaultDepId: string) {
+export function getComponentClass(typeSpec: string, defaultDepId: string): ComponentConstructor | Suspension {
     const customComponentMatch = typeSpec.match(/^form:(?:([^:]+):)?([^:]*)$/);
     if (!customComponentMatch) {
-        return py.getValue("anvil", typeSpec);
+        return anvilMod[typeSpec] as ComponentConstructor;
     }
     const [_, logicalDepId, formName] = customComponentMatch;
     const depId = logicalDepId ? data.logicalDepIds[logicalDepId] : null;
-    const appPackage = depId ? data.app.dependency_code[depId].package_name : defaultDepId ? data.app.dependency_code[defaultDepId].package_name : data.appPackage;
+    const appPackage = depId
+        ? data.app.dependency_code[depId].package_name
+        : defaultDepId
+        ? data.app.dependency_code[defaultDepId].package_name
+        : data.appPackage;
     if (!appPackage) {
         throw `Missing dependency with ID "${depId || logicalDepId}"`;
     }
     const [__, pkgPrefix, className] = formName.match(/^(.+\.)?([^.]+)$/)!;
     const formModuleName = `${appPackage}.${pkgPrefix || ""}${className}`;
 
-    return Sk.misceval.chain(
-        Sk.misceval.tryCatch(
-            () => Sk.importModule(formModuleName, false, true),
+    return chainOrSuspend(
+        tryCatchOrSuspend(
+            () => getModule(formModuleName, true),
             (exception) => {
                 // This is probably user code, so surface it:
                 // @ts-ignore
@@ -284,32 +407,38 @@ export function getComponentClass(typeSpec: string, defaultDepId: string) {
                 throw `Error importing ${formModuleName}: ${strError(exception)}`;
             }
         ),
-        () => py.getValue(formModuleName, className)
+        () => importFrom<ComponentConstructor>(formModuleName, className)
     );
 }
 
 type InstantiateFn = (kwargs?: Kws, pathId?: string | number) => Component | Suspension;
 
 interface LayoutSubclassHooks {
-    layout: {type: "form", formSpec: ResolvedForm} | {type: "builtin", name: string} | {type: "constructor", constructor: pyCallable};
+    layout:
+        | { type: "form"; formSpec: ResolvedForm }
+        | { type: "builtin"; name: string }
+        | { type: "constructor"; constructor: pyCallable };
 }
 interface WithLayoutConstructor extends ComponentConstructor {
     _withLayoutSubclass?: LayoutSubclassHooks;
     new (): WithLayout;
 }
+
 export interface WithLayout extends Component {
-    readonly constructor: WithLayoutConstructor;
     $d: pyDict;
     _withLayout: {
         kwargs?: Kws;
         // TODO what is the type of pyLayout?
-        onCreate?(pyLayout: Component, pyForm: WithLayout): pyObject | Suspension;
+        onAssociate?(pyLayout: Component, pyForm: WithLayout): pyObject | Suspension;
+        onDissociate?(pyLayout: Component, pyForm: WithLayout): pyObject | Suspension;
         domElement: HTMLElement | undefined | null;
         pyLayout?: Component | null;
+        _pyLayout?: Component | null;
         _withLayoutSubclass?: LayoutSubclassHooks;
     };
+    $setupPageState(this: WithLayout): void;
+    $requireLayout(this: WithLayout, fn: (layout: Component) => any): any;
 }
-
 
 export const WithLayout: WithLayoutConstructor = Sk.abstr.buildNativeClass("anvil.WithLayout", {
     constructor: function WithLayout() {
@@ -320,56 +449,116 @@ export const WithLayout: WithLayoutConstructor = Sk.abstr.buildNativeClass("anvi
 
     slots: {
         tp$new(args, kwargs) {
-            const {_withLayoutSubclass} = this.constructor;
+            const { _withLayoutSubclass } = this.constructor as WithLayoutConstructor;
             const self = Component.prototype.tp$new.call(this, []) as WithLayout;
-            const pyOnCreate = args[0];
-            const onCreate = checkCallable(pyOnCreate) ? ((pyLayout: Component, pyForm: WithLayout) => pyOnCreate.tp$call([pyLayout, pyForm])) : undefined;
+            const [pyOnAssociate, pyOnDissociate] = args;
+            const onAssociate = checkCallable(pyOnAssociate)
+                ? (pyLayout: Component, pyForm: WithLayout) => pyOnAssociate.tp$call([pyLayout, pyForm])
+                : undefined;
+            const onDissociate = checkCallable(pyOnDissociate)
+                ? (pyLayout: Component, pyForm: WithLayout) => pyOnDissociate.tp$call([pyLayout, pyForm])
+                : undefined;
 
-            self._withLayout = { kwargs, onCreate, domElement: null, pyLayout: null, _withLayoutSubclass };
-            const requireLayout = (fn: (layout: Component) => any) =>
-                chainOrSuspend(Sk.abstr.gattr<Component>(self, s_layout, true), pyLayout => {
-                    return chainOrSuspend(pyLayout.anvil$hooks.setupDom(), () => fn(pyLayout));
-                });
-
-            self.anvil$hooks = {
-                setupDom() {
-                    return (
-                        self._withLayout.domElement ||
-                        requireLayout((layout) => {
-                            // TODO could layout.anvil$hooks.domElement be undefined here?
-                            return (self._withLayout.domElement = layout.anvil$hooks.domElement as HTMLElement);
-                        })
-                    );
+            self._withLayout = {
+                kwargs,
+                onAssociate,
+                onDissociate,
+                domElement: null,
+                _pyLayout: null,
+                _withLayoutSubclass,
+                get pyLayout() {
+                    return this._pyLayout;
                 },
-                get domElement() {
-                    return self._withLayout.domElement;
+                set pyLayout(v) {
+                    if (this._pyLayout) {
+                        delete this._pyLayout._Component.portalParent;
+                    }
+                    this._pyLayout = v;
+                    self.$setupPageState();
                 },
             };
 
-            for (const eventName of [s_x_anvil_propagate_page_added, s_x_anvil_propagate_page_removed, s_x_anvil_propagate_page_shown]) {
-                addEventHandler(self, eventName, () => requireLayout(layout => raiseEventOrSuspend(layout, eventName)));
-            }
+            addEventHandler(self, s_x_anvil_classic_show, () => raiseEventOrSuspend(self, s_show));
+            addEventHandler(self, s_x_anvil_classic_hide, () => raiseEventOrSuspend(self, s_hide));
 
             return self;
         },
-        // @ts-ignore: Type of tp$init is wrong.
         tp$init(args, kwargs) {
-            const pyOnCreate = args[0];
-            if (pyOnCreate) {
-                this._withLayout.onCreate = (pyLayout, pyForm) => pyCallOrSuspend(pyOnCreate, [pyLayout, pyForm]);
+            const [pyOnAssociate, pyOnDissociate] = args;
+            if (pyOnAssociate) {
+                this._withLayout.onAssociate = (pyLayout, pyForm) => pyCallOrSuspend(pyOnAssociate, [pyLayout, pyForm]);
+            }
+            if (pyOnDissociate) {
+                this._withLayout.onDissociate = (pyLayout, pyForm) =>
+                    pyCallOrSuspend(pyOnDissociate, [pyLayout, pyForm]);
             }
             if (kwargs && kwargs.length !== 0) {
                 this._withLayout.kwargs = kwargs;
             }
-            return pyNone;
-        }
+        },
     },
+    proto: {
+        $requireLayout(fn) {
+            return chainOrSuspend(Sk.abstr.gattr<Component>(this, s_layout, true), (pyLayout) => {
+                return chainOrSuspend(pyLayout.anvil$hooks.setupDom(), () => fn(pyLayout));
+            });
+        },
+        $setupPageState() {
+            const withLayoutPageState = this._Component.pageState;
+            const pyLayout = this._withLayout.pyLayout;
+            if (!pyLayout) return;
 
+            const layoutPageState = pyLayout._Component.pageState;
+            layoutPageState.ancestorsVisible =
+                withLayoutPageState.ancestorsVisible && withLayoutPageState.currentlyVisible;
+            layoutPageState.ancestorsMounted =
+                withLayoutPageState.ancestorsMounted && withLayoutPageState.currentlyMounted;
+            layoutPageState.currentlyMounted = true;
+            Object.defineProperty(pyLayout._Component, "portalParent", {
+                get: () => {
+                    return this._Component.parent;
+                },
+                configurable: true,
+            });
+            this._Component.parent?.setVisibility?.(layoutPageState.currentlyVisible);
+        },
+        anvil$hookSpec: {
+            setupDom(this: WithLayout) {
+                return (
+                    this._withLayout.domElement ||
+                    this.$requireLayout((layout) => {
+                        // TODO could layout.anvil$hooks.domElement be undefined here?
+                        return (this._withLayout.domElement = layout.anvil$hooks.domElement as HTMLElement);
+                    })
+                );
+            },
+            getDomElement() {
+                return (this as unknown as WithLayout)._withLayout.domElement;
+            },
+            getEvents() {
+                return [
+                    {
+                        name: "show",
+                        description: "When the form is shown on the page",
+                        parameters: [],
+                        important: true,
+                    },
+                    {
+                        name: "hide",
+                        description: "When the form is hidden on the page",
+                        parameters: [],
+                        important: true,
+                    },
+                ];
+            },
+        },
+    },
+    flags: {
+        sk$klass: true,
+    },
     classmethods: {
         __init_subclass__: {
             $meth(args: Args, kws?: Kws) {
-                initComponentSubclass(this);
-
                 const kwMap = kwargsToPyMap(kws);
                 type LayoutFromYaml = { type: string; defaultDepId: string };
                 type Layout = ComponentConstructor | LayoutFromYaml | undefined;
@@ -384,78 +573,91 @@ export const WithLayout: WithLayoutConstructor = Sk.abstr.buildNativeClass("anvi
                     // This is a YAML spec passed from form.ts
                     // Delay the actual type lookup until the first one gets instantiated; otherwise you might try to look up
                     // a form template that hasn't been created yet. Not an issue for layouts created directly in Python.
-                    const {type, defaultDepId} = layoutClass;
+                    const { type, defaultDepId } = layoutClass;
                     const isForm = type.startsWith("form:");
                     this._withLayoutSubclass = {
                         layout: isForm
-                            ? {type: "form", formSpec: resolveFormSpec(type.substring(5), defaultDepId)}
-                            : {type: "builtin", name: type},
+                            ? { type: "form", formSpec: resolveFormSpec(type.substring(5), defaultDepId) }
+                            : { type: "builtin", name: type },
                     };
-
-                } else if (layoutClass && (layoutClass instanceof pyType) && isTrue(pyIsSubclass(layoutClass, Component))) {
+                } else if (
+                    layoutClass &&
+                    layoutClass instanceof pyType &&
+                    isTrue(pyIsSubclass(layoutClass, Component))
+                ) {
                     delete kwMap["layout"];
                     this._withLayoutSubclass = {
-                        layout: {type: "constructor", constructor: layoutClass}
+                        layout: { type: "constructor", constructor: layoutClass },
                     };
                 } else if (!layoutClass && this.prototype.tp$base?._withLayoutSubclass) {
                     this._withLayoutSubclass = this.prototype.tp$base._withLayoutSubclass;
                 } else {
                     throw new Sk.builtin.ValueError("layout= argument to WithLayout must be a subclass of Component");
                 }
-                return pyNone;
+                const superInit = new pySuper(WithLayout, this).tp$getattr<pyCallable>(s_init_subclass);
+                return pyCallOrSuspend(superInit, args, kws);
             },
-            $flags: { FastCall: true }
-        }
+            $flags: { FastCall: true },
+        },
     },
 
     getsets: {
-        "layout": {
+        layout: {
             $get() {
-                const {pyLayout, kwargs, onCreate, _withLayoutSubclass} = this._withLayout;
-                if (pyLayout) { return pyLayout; }
+                const { pyLayout, kwargs, onAssociate, _withLayoutSubclass } = this._withLayout;
+                if (pyLayout) {
+                    return pyLayout;
+                }
 
                 // First touch! Time to create.
 
-                if (!_withLayoutSubclass) { return pyNone; }
+                if (!_withLayoutSubclass) {
+                    return pyNone;
+                }
                 const l = _withLayoutSubclass.layout;
 
                 const t = l.type;
 
                 return chainOrSuspend(
-                    l.type === "form" ? getNamedFormInstantiator(l.formSpec, this) :
-                        l.type === "builtin" ? getAnvilComponentInstantiator({fromYaml: false, requestingComponent: this}, l.name) :
-                            (kws?: Kws) => pyCallOrSuspend(l.constructor, [], kws),
+                    l.type === "form"
+                        ? getNamedFormInstantiator(l.formSpec, this)
+                        : l.type === "builtin"
+                        ? getAnvilComponentInstantiator({ fromYaml: false, requestingComponent: this }, l.name)
+                        : (kws?: Kws) => pyCallOrSuspend(l.constructor, [], kws),
                     (instantiate) => instantiate(kwargs) as Component,
                     (pyL) => {
                         this._withLayout.pyLayout = pyL;
-                        if (onCreate) {
-                            return onCreate(pyL, this);
-                        }
+                        return onAssociate?.(pyL, this);
                     },
                     () => this._withLayout.pyLayout!
                 );
             },
             $set(newLayout) {
-                const {onCreate, pyLayout} = this._withLayout;
+                const { onAssociate, pyLayout } = this._withLayout;
                 if (pyLayout) {
-                    throw new Sk.builtin.ValueError("Cannot overwrite the 'layout' property of a form after it has been initialised.");
+                    throw new Sk.builtin.ValueError(
+                        "Cannot overwrite the 'layout' property of a form after it has been initialised."
+                    );
                 }
                 if (newLayout == null) {
                     throw new Sk.builtin.AttributeError("Cannot delete the 'layout'.");
                 }
                 if (!newLayout.tp$getattr(s_slots)) {
-                    throw new Sk.builtin.ValueError(`A form's 'layout' property must be set to a layout form, not a ${Sk.abstr.typeName(newLayout)} object.`);
+                    throw new Sk.builtin.ValueError(
+                        `A form's 'layout' property must be set to a layout form, not a ${Sk.abstr.typeName(
+                            newLayout
+                        )} object.`
+                    );
                 }
                 this._withLayout.pyLayout = newLayout as Component;
-                return onCreate?.(newLayout as Component, this);
-            }
+                return onAssociate?.(newLayout as Component, this);
+            },
         },
         __dict__: Sk.generic.getSetDict, // useful in designer
-    }
+    },
 });
-/*!defMethod(_)!2*/ ("Parent class of any form with a layout."); ["__init__"];
-/*!defAttr()!1*/ ({name: "layout", type: "anvil.Component instance", description: "This form's layout."});
+/*!defMethod(_)!2*/ ("Parent class of any form with a layout.");
+["__init__"];
+/*!defAttr()!1*/ ({ name: "layout", type: "anvil.Component instance", description: "This form's layout." });
 /*!defClass(anvil,WithLayout,Component)!*/
-/*!hideClassBehindAB(anvil,WithLayout,runtimeV3)!*/
-initComponentSubclass(WithLayout as ComponentConstructor);
-
+initNativeSubclass(WithLayout as ComponentConstructor);

@@ -1,0 +1,56 @@
+<svg class="anvil-spinner-svg" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    @keyframes anvil-chase {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+    @keyframes anvil-chase-dot {
+        80%,
+        to {
+            transform: rotate(360deg);
+        }
+    }
+    @keyframes anvil-scale-dot {
+        0%,
+        100% {
+            transform: scale(1);
+        }
+        50% {
+            transform: scale(0.4);
+        }
+    }
+    .anvil-spinner-g circle {
+        transform-origin: 12px 2.5px;
+        animation: anvil-scale-dot 2s ease-in-out infinite;
+    }
+    .anvil-spinner-g > g {
+        transform-origin: center;
+        animation: anvil-chase-dot 2s ease-in-out infinite;
+    }
+    .anvil-spinner-svg {
+        fill:currentColor;
+        stroke:currentColor;
+    }
+  </style>
+  <g class="anvil-spinner-g" style="transform-origin:center;animation:anvil-chase 2.5s infinite linear both">
+    <g style="animation-delay:-1.1s">
+      <circle cx="12" cy="2.5" r="1.5" style="animation-delay:-1.1s"/>
+    </g>
+    <g style="animation-delay:-1s">
+      <circle cx="12" cy="2.5" r="1.5" style="animation-delay:-1s"/>
+    </g>
+    <g style="animation-delay:-.9s">
+      <circle cx="12" cy="2.5" r="1.5" style="animation-delay:-.9s"/>
+    </g>
+    <g style="animation-delay:-.8s">
+      <circle cx="12" cy="2.5" r="1.5" style="animation-delay:-.8s"/>
+    </g>
+    <g style="animation-delay:-.7s">
+      <circle cx="12" cy="2.5" r="1.5" style="animation-delay:-.7s"/>
+    </g>
+    <g style="animation-delay:-.6s">
+      <circle cx="12" cy="2.5" r="1.5" style="animation-delay:-.6s"/>
+    </g>
+  </g>
+</svg>

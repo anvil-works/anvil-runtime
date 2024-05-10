@@ -27,6 +27,7 @@ module.exports = (pyModule) => {
                 multiline: true,
                 suggested: true,
                 inlineEditElement: "text",
+                group: undefined,
             },
         }),
 

@@ -13,9 +13,9 @@ import {
     pyCall,
     pyCallable,
     pyCallOrSuspend,
-    pyCheckType,
+    pyCheckType, pyDict,
     pyException,
-    pyFunc,
+    pyFunc, pyIterFor,
     pyList,
     pyLookupError,
     pyNewableType,
@@ -37,7 +37,8 @@ import {
 } from "@Sk";
 import PyDefUtils from "PyDefUtils";
 import { anvilAppOnline } from "../app_online";
-import { anvilMod, globalSuppressLoading } from "../utils";
+import { globalSuppressLoading } from "../utils";
+import { anvilMod } from "@runtime/runner/py-util";
 import {
     connect,
     doHttpCall,
@@ -50,11 +51,15 @@ import {
     websocket,
 } from "./_server";
 import type { Capability } from "./_server/types";
+import { loading_indicator } from "./_anvil/loading-indicator";
+import {invalid} from "moment";
 
+//@ts-ignore
 module.exports = function (appId: string, appOrigin: string) {
     const pyMod: { [attr: string]: pyObject } = {
         __name__: new pyStr("anvil.server"),
         app_origin: toPy(appOrigin),
+        loading_indicator,
     };
 
     const checkCommand = (cmd: any): cmd is pyStr => {
@@ -101,6 +106,8 @@ module.exports = function (appId: string, appOrigin: string) {
     // This class is deprecated - no need to subclass it any more.
     pyMod["Serializable"] = buildPyClass(pyMod, () => {}, "Serializable", [pyObject]);
 
+    pyMod["_n_invalidations"] = toPy(0);
+
     const _CapAny = buildNativeClass("_CapAny", {
         constructor: function () {},
         slots: {
@@ -113,6 +120,7 @@ module.exports = function (appId: string, appOrigin: string) {
 
     const pyCapability: pyNewableType<Capability> = (pyMod["Capability"] = buildNativeClass("anvil.server.Capability", {
         constructor: function Capability(scope, mac, narrow) {
+            this._nInvalidations = pyMod["_n_invalidations"].valueOf();
             this._scope = scope;
             this._mac = mac;
             this._narrow = narrow || (narrow = []);
@@ -207,6 +215,11 @@ module.exports = function (appId: string, appOrigin: string) {
                     return this._pyFullScope;
                 },
             },
+            is_valid: {
+                $get() {
+                    return new pyBool(this._nInvalidations === pyMod["_n_invalidations"].valueOf());
+                },
+            },
         },
         proto: {
             ANY: _ANY,
@@ -221,10 +234,12 @@ module.exports = function (appId: string, appOrigin: string) {
             type: "list",
             description:
                 "A list representing what this capability represents. It can be extended by calling narrow(), but not shortened.\n\nEg: ['my_resource', 42, 'foo']",
-        },
-    ];
-    [
-        /*!defClassAttr()!1*/ {
+        }, /*!defAttr()!1*/ {
+            name: "is_valid",
+            type: "boolean",
+            description:
+                "True if this Capability is still valid; False if it has been invalidated (for example, by session expiry)",
+        }, /*!defClassAttr()!1*/ {
             name: "ANY",
             type: "object",
             description: "Sentinel value for unwrap_capability",
@@ -464,22 +479,32 @@ module.exports = function (appId: string, appOrigin: string) {
     });
     pyMod["no_loading_indicator"] = pyCall(_NoLoadingIndicator);
 
+    const invalidatedMacs =  pyMod["__anvil$doInvalidatedMacs"] = () =>  {
+        console.log("Invalidated MACs!");
+        pyMod["_n_invalidations"] = toPy(pyMod["_n_invalidations"].valueOf() + 1);
+
+        return pyIterFor(pyMod["_invalidation_callbacks"].tp$iter(), (f) => pyCallOrSuspend(f, []));
+    };
+    
     /*!defFunction(anvil.server,!_)!2*/ ("Reset the current session to prevent further SessionExpiredErrors.");
     pyMod["reset_session"] = new pyFunc(function () {
+
         // Prevent the session from complaining about expiry.
-        return PyDefUtils.suspensionFromPromise(
-            PyDefUtils.callAsync(
-                pyMod["call_s"],
-                undefined,
-                undefined,
-                undefined,
-                toPy("anvil.private.reset_session")
-            ).then((r) => {
-                window.anvilSessionToken = toJs(r as pyStr);
-                return pyNone;
-            })
-        );
+        return chainOrSuspend(pyCallOrSuspend(pyMod["call_s"], [new pyStr("anvil.private.reset_session")]), (token: pyStr) => {
+            window.anvilSessionToken = toJs(token);
+            return invalidatedMacs();
+        }, () => pyNone);
     });
+
+    pyMod["_invalidation_callbacks"] = new pyList();
+    pyMod["_on_invalidate_client_objects"] = new pyFunc(function(f) {
+        pyCall(pyMod["_invalidation_callbacks"].tp$getattr(new pyStr("append"))!, [f]);
+        return pyNone;
+    })
+
+    pyMod["invalidate_client_objects"] = new pyFunc(function() {
+        return chainOrSuspend(doServerCall([], [], "anvil.private.invalidate_client_objects"), invalidatedMacs, () => pyNone);
+    })
 
     function add_event_handler(pyEventName: pyStr, pyHandler: pyCallable) {
         pyCheckType("event_name", "str", checkString(pyEventName));
@@ -584,7 +609,7 @@ module.exports = function (appId: string, appOrigin: string) {
             return toPy(isTrue(pyPreferEmphemeralDebug) ? window.anvilAppOrigin : (window.anvilEnvironmentOrigin || window.anvilAppOrigin));
         }
         return pyCallOrSuspend(pyMod["call_s"], [toPy("anvil.private.get_app_origin"), pyEnvironmentType], ["prefer_ephemeral_debug", pyPreferEmphemeralDebug]);
-    }
+    };
 
     pyMod["get_app_origin"] = new pyFunc(function (pyEnvironmentType, pyPreferEmphemeralDebug) {
         return getAppOrigin(pyEnvironmentType, pyPreferEmphemeralDebug);

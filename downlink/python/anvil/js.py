@@ -9,3 +9,6 @@ class ProxyType:
     def __new_deserialized__(data, globals):
         return data
 
+
+def __getattr__(attr):
+    raise ImportError("anvil.js attributes are only available client-side")

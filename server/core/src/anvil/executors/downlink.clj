@@ -34,7 +34,7 @@
 (def STACK-FRAME-INFO {:origin :server, :stack-frame-type :server_module})
 
 (defn- sanitise-app-for-downlink [app]
-  (select-keys app [:modules :server_modules :forms :runtime_options :dependency_code :dependency_order :dependency_ids :package_name]))
+  (select-keys app [:modules :server_modules :forms :scripts :runtime_options :dependency_code :dependency_order :dependency_ids :package_name :config]))
 
 
 (def WS-SERVER-PARAMS {:link-name "Downlink",
@@ -139,7 +139,7 @@
                             ;; Draining; please don't send me any new calls
                             (= (:type raw-data) "DRAIN")
                             (do
-                              (log/info "Downlink draining:" @registration-cookie)
+                              (log/trace "Downlink draining:" @registration-cookie)
                               (drain-downlink! @registration-cookie))
 
                             ;; Background task shuffling off its mortal coil
@@ -151,7 +151,7 @@
                             (= (:type raw-data) "GET_APP")
                             (if-let [get-app (::get-app (:context (get-pending-response (:originating-call raw-data))))]
                               (send! channel (util/write-json-str {:type   "PROVIDE_APP", :id (:id raw-data),
-                                                                   :app-id (:id raw-data), :app-version (:app-version raw-data),
+                                                                   :app-id (:app-id raw-data), :app-version (:app-version raw-data),
                                                                    :app    (sanitise-app-for-downlink (get-app))}))
                               (log/warn "Downlink made GET_APP request without originating-call data:" raw-data))
 
@@ -179,7 +179,7 @@
                                 (when (and @disconnect-on-idle? (is-idle?))
                                   (close channel)))
 
-                            (contains? raw-data :output)
+                            (or (contains? raw-data :output) (contains? raw-data :invalidate-macs))
                             (handle-update! raw-data))))
 
 

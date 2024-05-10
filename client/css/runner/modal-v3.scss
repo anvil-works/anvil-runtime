@@ -165,7 +165,7 @@ $modal-sm: 300px;
     // When fading in the modal, animate it to slide down
     &.#{$prefix}fade .#{$prefix}modal-dialog {
         @include translate(0, -25%);
-        @include transition-transform("0.3s ease-out");
+        @include transition-transform(0.3s ease-out);
     }
 
     &.#{$prefix}in .#{$prefix}modal-dialog {

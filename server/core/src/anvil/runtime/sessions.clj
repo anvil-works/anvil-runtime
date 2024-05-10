@@ -75,7 +75,7 @@
   {:readers {'anvil/UserData (fn [data] (map->UserData (util/read-json-str data)))}})
 
 ;; cached-state is an atom with keys:
-;; {:val VALUE, :db-last-seen (last_seen from DB), :last-read (last read from DB), :deleted? true}
+;; {:val VALUE, :db-last-seen (last_seen from DB), :db-expires (expires from DB), :last-read (last read from DB), :deleted? true}
 
 (def -edn-roundtrip-ok?)
 (deftype DBSession [id cached-state ephemeral-cache]
@@ -99,9 +99,9 @@
             now (System/currentTimeMillis)
             age (- now last-read)
             reload! (fn [query]
-                      (if-let [{:keys [state last_seen]} (first (jdbc/query util/db query))]
+                      (if-let [{:keys [state last_seen expires]} (first (jdbc/query util/db query))]
                         (do
-                          (reset! cached-state {:status :backed, :db-last-seen (.getTime last_seen), :last-read now, :val (edn/read-string edn-options state)})
+                          (reset! cached-state {:status :backed, :db-last-seen (.getTime last_seen), :db-expires (some-> expires (.getTime)), :last-read now, :val (edn/read-string edn-options state)})
                           (swap! ephemeral-cache dissoc ::dirty))
                         (do
                           (log/trace "Resurrecting session" id)
@@ -113,14 +113,14 @@
 
           ;; TODO actually use last_seen to make this decision. Also below.
           (> age SESSION-TOUCH-AFTER)
-          (do
+          (let [expiry-timeout-mins (::expiry-timeout-mins val)]
             (metrics/inc! :api/runtime-session-deref-update-total)
-            (reload! ["UPDATE runtime_sessions SET last_seen=NOW() WHERE session_id=? RETURNING state, last_seen" id]))
+            (reload! ["UPDATE runtime_sessions SET last_seen=NOW(), expires=CASE WHEN ?::boolean THEN NULL ELSE NOW() + ?::interval END WHERE session_id=? RETURNING state, last_seen, expires", (nil? expiry-timeout-mins), (str expiry-timeout-mins " minutes") id]))
 
           :else
           (do
             (metrics/inc! :api/runtime-session-deref-select-total)
-            (reload! ["SELECT state, last_seen FROM runtime_sessions WHERE session_id=?" id]))))))
+            (reload! ["SELECT state, last_seen, expires FROM runtime_sessions WHERE session_id=?" id]))))))
 
   IDeref
   (deref [this]
@@ -153,15 +153,16 @@
                                       new-v (f old-v)
                                       new-v-str (pr-str new-v)
                                       now (System/currentTimeMillis)
-                                      user-id (get-in new-v [:users :logged-in-id])]
+                                      user-id (get-in new-v [:users :logged-in-id])
+                                      expiry-timeout-mins (::expiry-timeout-mins new-v)]
                                   (when-not (and found-in-db?
                                                  (or (= new-v old-v)
                                                      (= new-v ::no-change)))
                                     ;; Check it's still round-trippable *before* we write it back to the DB
                                     (assert (-edn-roundtrip-ok? new-v new-v-str))
                                     (metrics/inc! :api/runtime-session-update-total)
-                                    (when-not (seq (jdbc/query db-c ["UPDATE runtime_sessions SET state=?, user_id=?, last_seen=NOW() WHERE session_id=? RETURNING 1" new-v-str user-id id]))
-                                      (jdbc/execute! db-c ["INSERT INTO runtime_sessions (session_id,state,user_id,last_seen) VALUES (?,?,?,NOW())" id new-v-str user-id]))
+                                    (when-not (seq (jdbc/query db-c ["UPDATE runtime_sessions SET state=?, user_id=?, last_seen=NOW(), expires=CASE WHEN ?::boolean THEN NULL ELSE NOW() + ?::INTERVAL END WHERE session_id=? RETURNING 1" new-v-str user-id (nil? expiry-timeout-mins) (str expiry-timeout-mins " minutes") id]))
+                                      (jdbc/execute! db-c ["INSERT INTO runtime_sessions (session_id,state,user_id,last_seen,expires) VALUES (?,?,?,NOW(),CASE WHEN ?::boolean THEN NULL ELSE NOW() + ?::INTERVAL END)" id new-v-str user-id (nil? expiry-timeout-mins) (str expiry-timeout-mins " minutes")]))
                                     (reset! cached-state {:db-last-seen now, :last-read now, :val new-v})
                                     (swap! ephemeral-cache assoc ::dirty true)) ;; This session has been modified since it was loaded.
                                   new-v))
@@ -237,11 +238,12 @@
                 val (assoc val ::tokens {:cookie (gen-token), :url (gen-token), :tmp #{}, :burned nil})
                 val-str (pr-str val)
                 now (System/currentTimeMillis)
-                user-id (get-in val [:users :logged-in-id])]
+                user-id (get-in val [:users :logged-in-id])
+                expiry-timeout-mins (::expiry-timeout-mins val)]
 
             (assert (-edn-roundtrip-ok? val val-str))
-            (jdbc/execute! util/db ["INSERT INTO runtime_sessions (session_id,state,user_id,last_seen) VALUES (?,?,?,NOW())" id val-str user-id])
-            (reset! draft-state {:db-session (->DBSession id (atom {:val val, :db-last-seen now, :last-read now}) ephemeral-cache)})
+            (jdbc/execute! util/db ["INSERT INTO runtime_sessions (session_id,state,user_id,last_seen,expires) VALUES (?,?,?,NOW(),CASE WHEN ?::boolean THEN NULL ELSE NOW() + ?::INTERVAL END)" id val-str user-id (nil? expiry-timeout-mins) (str expiry-timeout-mins " minutes")])
+            (reset! draft-state {:db-session (->DBSession id (atom {:val val, :db-last-seen now, :db-expires (when expiry-timeout-mins (+ now (* 60000 expiry-timeout-mins))) :last-read now}) ephemeral-cache)})
             (swap! ephemeral-cache dissoc ::dirty))))))
   (persisted? [this] (boolean (:db-session @draft-state)))
   (id-when-persisted [this] (when-let [s (:db-session @draft-state)]
@@ -295,9 +297,9 @@
 
 (defn load-session-by-id-without-authentication [id]
   (cache/lookup session-cache id
-                #(when-let [{:keys [state last_seen]} (first (jdbc/query util/db ["SELECT state, last_seen FROM runtime_sessions WHERE session_id = ?" id]))]
+                #(when-let [{:keys [state last_seen expires]} (first (jdbc/query util/db ["SELECT state, last_seen, expires FROM runtime_sessions WHERE session_id = ?" id]))]
                    (log/trace "Loaded session" id "from DB")
-                   (->DBSession id (atom {:val (edn/read-string edn-options state), :db-last-seen (.getTime last_seen) :last-read (System/currentTimeMillis)}) (atom {})))))
+                   (->DBSession id (atom {:val (edn/read-string edn-options state), :db-last-seen (.getTime last_seen), :db-expires (some-> expires (.getTime)) :last-read (System/currentTimeMillis)}) (atom {})))))
 
 (defn load-session-by-token [token get-valid-tokens-from-session]
   (when token
@@ -375,6 +377,8 @@
            :client               (client-info-from-request client-type req)
 
            ::last-accessed       (System/currentTimeMillis)
+           ::expiry-timeout-mins (or (get conf/override-session-expiry-timeout-mins (:app-id req))
+                                     conf/default-session-expiry-timeout-mins) ;; Yes, I did mean to use 'or', in case override is set to nil.
            ::remote-addr         (:remote-addr req)         ; Happily, Ring seems to magically use x-real-ip if behind proxy.
            ::user-agent          (get-in req [:headers "user-agent"])}
 
@@ -389,10 +393,10 @@
 (defn get-session-for-request [request cookie-name]
   (log/trace "Get session for" (:uri request) (pr-str (:params request)))
   (let [create-blank-session #(do
-                               (log/trace "Creating blank session from:" (pr-str %))
-                               ;; We create a lot of these. Don't log this until someone touches it
-                               (new-unlogged-session-with-state (merge (new-session-state-from-request request)
-                                                                       (when % {:anvil.runtime/replacement-session true}))
+                                (log/trace "Creating blank session from:" (pr-str %))
+                                ;; We create a lot of these. Don't log this until someone touches it
+                                (new-unlogged-session-with-state (merge (new-session-state-from-request request)
+                                                                        (when % {:anvil.runtime/replacement-session true}))
                                                                 (app-log/log-data-from-ring-request request)))
 
         get-session-from-cookie-token-or-create-blank (fn []
@@ -454,32 +458,37 @@
       ;; No URL token? Look for a session from a cookie instead.
       (get-session-from-cookie-token-or-create-blank))))
 
-(defn with-app-session [ring-handler get-cookie-name]
-  (fn [req]
-    (let [cookie-name (get-cookie-name req)
-          {:keys [session cookie-token url-token]} (get-session-for-request req cookie-name)
-          req (assoc req :app-session session :session-url-token url-token)
-          _ (when-let [callback (::call-when-app-session-loaded! req)]
-              (callback session))
-          existing-session? (persisted? session)
-          _ (when existing-session?
-              (log/trace "Loaded session" (get-id session) "for request to" (:uri req)))]
+(defn with-app-session [get-cookie-name]
+  [(fn [req]
+     (let [cookie-name (get-cookie-name req)
+           {:keys [session cookie-token url-token]} (get-session-for-request req cookie-name)
+           req (assoc req :app-session session :session-url-token url-token)
+           _ (when-let [callback (::call-when-app-session-loaded! req)]
+               (callback session))
+           existing-session? (persisted? session)
+           _ (when existing-session?
+               (log/trace "Loaded session" (get-id session) "for request to" (:uri req)))]
+       (assoc req ::info {:session           session
+                          :existing-session? existing-session?
+                          :cookie-token      cookie-token
+                          :cookie-name       cookie-name})))
+   (fn [req resp]
+     (let [{:keys [session existing-session? cookie-token cookie-name]} (::info req)
+           post-id (id-when-persisted session)]
+       (when (and post-id (not existing-session?))
+         (log/trace "Created session" post-id "for request to" (:uri req)))
 
-      (when-let [resp (ring-handler req)]
-        (let [post-id (id-when-persisted session)]
-          (when (and post-id (not existing-session?))
-            (log/trace "Created session" post-id "for request to" (:uri req)))
+       (if-let [cookie-token (or cookie-token
+                                 (when post-id
+                                   (get-in @session [::tokens :cookie])))]
+         (assoc-in resp [:cookies cookie-name] (merge {:path      "/"
+                                                       :value     cookie-token
+                                                       :http-only true}
+                                                      (when conf/force-secure-cookies?
+                                                        {:same-site :none
+                                                         :secure    true})))
+         resp)))])
 
-          (if-let [cookie-token (or cookie-token
-                                    (when post-id
-                                      (get-in @session [::tokens :cookie])))]
-            (assoc-in resp [:cookies cookie-name] (merge {:path      "/"
-                                                          :value     cookie-token
-                                                          :http-only true}
-                                                         (when conf/force-secure-cookies?
-                                                           {:same-site :none
-                                                            :secure    true})))
-            resp))))))
 
 (defn generate-tmp-url-token! [session]
   (persist! session)                                        ;; TODO this will error out anywhere we use a bare atom. Using bare atoms needs to go away.
@@ -493,7 +502,7 @@
 
 (defn cleanup-sessions! []
   (util/with-db-lock ::cleanup-sessions! false
-    (jdbc/execute! util/db ["DELETE FROM runtime_sessions WHERE last_seen < NOW() - INTERVAL '30 minutes'"])))
+    (jdbc/execute! util/db ["DELETE FROM runtime_sessions WHERE COALESCE(expires, last_seen + INTERVAL '30 minutes') < NOW()"])))
 
 
 (defonce session-matches-environment? (fn [environment session] false))

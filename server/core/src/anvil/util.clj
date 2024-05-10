@@ -10,7 +10,6 @@
             [ring.util.codec :as codec]
             [clojure.string :as string]
             [anvil.metrics :as metrics]
-            [clojure.core.cache.wrapped :as cache]
             [org.httpkit.client :as http]
             [org.httpkit.sni-client :as sni]
             [org.httpkit.sni-client :as https]
@@ -263,6 +262,9 @@
 
 (def ^:dynamic *db-locks* {})
 
+;; Only take the lock once for this whole VM, rather than tying up lots of DB connections
+(defonce db-lock-objects (atom {}))                         ;; lock name -> {:lock (Object.) :nrefs NUMBER}
+
 (defn -with-db-lock [lock-name flags f]
   (let [flags (if (boolean? flags) {:shared? flags} flags)
         {:keys [shared? try?]} flags]
@@ -270,18 +272,31 @@
       (if (or (:shared? flags) (not (:shared? lock)))
         (f)
         (throw (Exception. (str "Tried to upgrade from a shared to an exclusive lock for " lock-name))))
-      (let [lock-number (.hashCode (str lock-name))]
+      (let [lock-number (.hashCode (str lock-name))
+            {lock-obj :lock} (when-not (or shared? try?)
+                               (-> (swap! db-lock-objects update lock-name (fn [lockmap]
+                                                                             (if lockmap
+                                                                               (update lockmap :nrefs inc)
+                                                                               {:lock (Object.) :nrefs 1})))
+                                   (get lock-name)))]
         (swap! db-locks assoc lock-number lock-name)
         (try
-          (jdbc/with-db-transaction [db-t db]               ;; Note that we don't actually use this txn connection for anything except locking.
-            (let [FN_NAME (str "pg_" (when try? "try_") "advisory_xact_lock" (when shared? "_shared"))
-                  gained-try-lock? (:success (first (jdbc/query db-t [(str "SELECT " FN_NAME "(?::bigint) AS success") lock-number])))]
-              (when (and try? (not gained-try-lock?))
-                (throw+ {:anvil/lock-unavailable lock-name}))
-              (binding [*db-locks* (assoc *db-locks* lock-name {:shared? shared?})]
-                (f))))
+          (locking (or lock-obj (Object.))
+            (jdbc/with-db-transaction [db-t db]             ;; Note that we don't actually use this txn connection for anything except locking.
+              (let [FN_NAME (str "pg_" (when try? "try_") "advisory_xact_lock" (when shared? "_shared"))
+                    gained-try-lock? (:success (first (jdbc/query db-t [(str "SELECT " FN_NAME "(?::bigint) AS success") lock-number])))]
+                (when (and try? (not gained-try-lock?))
+                  (throw+ {:anvil/lock-unavailable lock-name}))
+                (binding [*db-locks* (assoc *db-locks* lock-name {:shared? shared?})]
+                  (f)))))
           (finally
-            (swap! db-locks dissoc lock-number)))))))
+            (swap! db-locks dissoc lock-number)
+            (when lock-obj
+              (swap! db-lock-objects (fn [dlo]
+                                       (let [{:keys [obj nrefs]} (get dlo lock-name)]
+                                         (if (or (nil? nrefs) (<= nrefs 1))
+                                           (dissoc dlo lock-name)
+                                           (update-in dlo [lock-name :nrefs] dec))))))))))))
 
 (defmacro with-db-lock [lock-name flags & body]
   `(-with-db-lock ~lock-name ~flags (fn [] ~@body)))
@@ -374,13 +389,6 @@
     (apply vary-meta val fn args)))
 
 (defmacro $ [a b c] `(~b ~a ~c))
-
-(defmacro defn-with-ttl-memoization [func args ttl & body]
-  `(def ~func
-     (let [ttl-cache# (cache/ttl-cache-factory {} :ttl ~ttl)]
-       (fn ~args
-         (-> (cache/through-cache ttl-cache# ~args (fn [~args] ~@body))
-             (get ~args))))))
 
 (defn dissoc-in-or-remove [map [key & more-keys]]
   (if (nil? key)

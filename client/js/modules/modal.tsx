@@ -72,6 +72,7 @@ function setPrefix() {
 
 const BACKDROP_TRANSITION = 150;
 const TRANSITION = 300;
+const KNOWN_ELEMENTS_TO_INERT = ["appGoesHere", "anvil-header", "anvil-badge"];
 
 function calcScrollbarWidth() {
     const outer = document.createElement("div");
@@ -137,9 +138,10 @@ function AlertModal({ id, large, title, footer, dismissible, body }: AlertProps)
     const footerVisible = footer ? {} : DISPLAY_NONE;
     const closeVisible = dismissible ? {} : DISPLAY_NONE;
     const size = large == null ? "" : `${prefix}modal-${large ? "lg" : "sm"}`;
+    const className = `${prefix}modal ${prefix}fade ${prefix}alert-modal`;
     return (
-        <div refName="modal" id={id} className={`${prefix}modal ${prefix}fade ${prefix}alert-modal`} style={ALERT_MODAL_ZINDEX}>
-            <div refName="modalDialog" className={`${prefix}modal-dialog ${size}`}>
+        <div refName="modal" id={id} className={className} style={ALERT_MODAL_ZINDEX}>
+            <div refName="modalDialog" tabIndex={0} className={`${prefix}modal-dialog ${size}`}>
                 <div refName="modalContent" className={`${prefix}modal-content`}>
                     <div refName="modalHeader" className={`${prefix}modal-header`} {...titleVisible}>
                         <button
@@ -161,7 +163,7 @@ function AlertModal({ id, large, title, footer, dismissible, body }: AlertProps)
                     </div>
                     <div
                         refName="modalBody"
-                        className={`${prefix}modal-body ${typeof body === "string" ? prefix+"alert-text" : ""}`}
+                        className={`${prefix}modal-body ${typeof body === "string" ? prefix + "alert-text" : ""}`}
                         {...bodyVisible}>
                         {body}
                     </div>
@@ -197,6 +199,7 @@ interface Elements {
 
 class Modal extends EventEmitter {
     static options = DEFAULT_OPTIONS;
+    static _activeAlerts: Modal[] = [];
 
     el: HTMLElement;
     backdrop: HTMLElement;
@@ -316,6 +319,10 @@ class Modal extends EventEmitter {
         const el = this.el;
         reflow(this.el);
         el.classList.add(ANIMATE_IN_CLASS);
+        if (document.activeElement) {
+            (document.activeElement as HTMLElement)?.blur();
+        }
+        this.elements.modalDialog.focus();
         this._resize();
 
         setTimeout(() => {
@@ -344,6 +351,13 @@ class Modal extends EventEmitter {
         this._setScrollbar();
 
         document.body.classList.add(`${prefix}modal-open`);
+        KNOWN_ELEMENTS_TO_INERT.forEach((id) => {
+            document.getElementById(id)?.setAttribute("inert", "");
+        });
+        Modal._activeAlerts.forEach((modal) => {
+            modal.elements.modal.setAttribute("inert", "");
+        });
+        Modal._activeAlerts.push(this);
 
         const el = this.el;
         el.style.display = "block";
@@ -355,7 +369,6 @@ class Modal extends EventEmitter {
         if (!el.isConnected) {
             document.body.appendChild(el);
         }
-
         this.emit("show", this);
         this._isShown = true;
         this._showBackdrop(() => this._showElement());
@@ -391,9 +404,19 @@ class Modal extends EventEmitter {
         }
 
         this._removeEvents();
+        Modal._activeAlerts = Modal._activeAlerts.filter((x) => x !== this);
+        if (!Modal._activeAlerts.length) {
+            document.body.classList.remove(`${prefix}modal-open`);
+            KNOWN_ELEMENTS_TO_INERT.forEach((id) => {
+                document.getElementById(id)?.removeAttribute("inert");
+            });
+        } else {
+            const active = Modal._activeAlerts[Modal._activeAlerts.length - 1];
+            active.elements.modal.removeAttribute("inert");
+            active.elements.modalDialog.focus();
+        }
 
         setTimeout(() => {
-            document.body.classList.remove(`${prefix}modal-open`);
             document.body.style.paddingRight = this._originalBodyPad;
         }, BACKDROP_TRANSITION);
 

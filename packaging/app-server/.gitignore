@@ -1,3 +1,2 @@
-/python-package-build
-/python-package-release
+/python-package-*
 /build-tmp

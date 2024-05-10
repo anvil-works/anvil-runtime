@@ -9,8 +9,10 @@
             [anvil.runtime.quota :as quota]
             [anvil.dispatcher.core :as dispatcher]
             [anvil.core.worker-pool :as worker-pool]
-            [anvil.core.tracing :as tracing])
-  (:import (com.stripe.exception StripeException)))
+            [anvil.core.tracing :as tracing]
+            [anvil.util :as util])
+  (:import (com.stripe.exception StripeException)
+           (java.util Timer)))
 
 ;(clj-logging-config.log4j/set-logger! :level :trace)
 
@@ -24,6 +26,7 @@
 (def ^:dynamic *session-state* nil)
 (def ^:dynamic *rpc-print* (fn [& args] nil))
 (def ^:dynamic *rpc-println* (fn [& args] nil))
+(def ^:dynamic *rpc-update!* (fn [update-message] nil))
 (def ^:dynamic *rpc-cookies-updated?* nil)
 (def ^:dynamic *request-origin* nil)
 (def ^:dynamic *client-request?* nil)
@@ -62,10 +65,16 @@
             *rpc-println* (fn [& args#]
                             (do (apply *rpc-print* args#)
                                 (*rpc-print* "\n")))
+            *rpc-update!* (fn [update#]
+                            (dispatcher/update! ~return-path update#))
             *rpc-cookies-updated?* (atom false)
             *request-origin* (:origin ~request)
             *client-request?* (= (:origin ~request) :client)]
     ~@body))
+
+(defonce ^:private delayed-task-timer (Timer. true))
+(def ^:private orgs-to-delay {1 50})
+
 
 (defn wrap-native-fn
   ([f] (wrap-native-fn f nil))
@@ -75,63 +84,72 @@
           :keys                                           [app app-id app-info app-origin session-state origin thread-id environment tracing-span]
           :as                                             request}
          return-path]
-      (let [func-name (if live-object (format "%s.%s" (:backend live-object) func) func)]
-        (worker-pool/run-task! {:type :native-rpc,
-                                :name func-name
-                                :tags (worker-pool/get-task-tags-for-dispatch-request request)}
-          (with-native-bindings-from-request request return-path
-            (tracing/with-parent-span tracing-span
-              (binding [*profiles* (atom [])
-                        *lo-cache-updates* (atom nil)]
-                (try
-                  (let [start-time (double (System/currentTimeMillis))
-                        stop-time (atom nil)]
-                    (try+
-                      (let [resp (try
-                                   (apply f kwargs args)
-                                   (finally
-                                     (reset! stop-time (double (System/currentTimeMillis)))))]
+      (let [func-name (if live-object (format "%s.%s" (:backend live-object) func) func)
+            tags (worker-pool/get-task-tags-for-dispatch-request request)
+            delay (worker-pool/get-delay-for-dispatch-request request)
+            launch-task! (fn []
+                           (worker-pool/run-task! {:type :native-rpc,
+                                                   :name func-name
+                                                   :tags tags}
+                             (with-native-bindings-from-request request return-path
+                               (tracing/with-parent-span tracing-span
+                                 (binding [*profiles* (atom [])
+                                           *lo-cache-updates* (atom nil)]
+                                   (try
+                                     (let [start-time (double (System/currentTimeMillis))
+                                           stop-time (atom nil)]
+                                       (try+
+                                         (let [resp (try
+                                                      (apply f kwargs args)
+                                                      (finally
+                                                        (reset! stop-time (double (System/currentTimeMillis)))))]
 
-                        (when @*rpc-cookies-updated?*
-                          (dispatcher/update! return-path {:set-cookie true}))
+                                           (when @*rpc-cookies-updated?*
+                                             (dispatcher/update! return-path {:set-cookie true}))
 
-                        (dispatcher/respond! return-path
-                                             (merge {:response resp}
-                                                    (when @*lo-cache-updates*
-                                                      {:cacheUpdates (live-objects/filter-cache-updates
-                                                                       @*lo-cache-updates*
-                                                                       (live-objects/get-seen-liveobjects args kwargs live-object resp))})
-                                                    (when (and *session-state*
-                                                               (:anvil/enable-profiling @*session-state*))
-                                                      {:profile (merge {:description "Running native fn"
-                                                                        :start-time  start-time
-                                                                        :end-time    (double (System/currentTimeMillis))}
-                                                                       (when *profiles*
-                                                                         {:children @*profiles*}))}))))
-                      (catch :anvil/server-error e
-                        (log/trace (:throwable &throw-context) "Server error")
-                        (dispatcher/respond! return-path
-                                             {:error (-> e
-                                                         (assoc :type (or (:type e) "anvil.server.InternalError"))
-                                                         (assoc :message (:anvil/server-error e))
-                                                         (assoc :trace [["<rpc>", 0]])
-                                                         (dissoc :anvil/server-error))}))
-                      (finally
-                        (when time-quota-key
-                          (quota/decrement! session-state environment nil
-                                            time-quota-key
-                                            (/ (- @stop-time start-time) 1000))))))
-                  (catch clojure.lang.ArityException e
-                    (log/trace e "Probably incorrect arity from user code")
-                    (dispatcher/respond! return-path
-                                         {:error {:type    "TypeError"
-                                                  :message (str "Wrong number of arguments (" (dec (.actual e)) ") passed to " func "(). Did you pass keyword arguments as positional arguments, or vice versa?")
-                                                  :trace   [["<rpc>", 0]]}}))
-                  (catch Exception e
-                    (let [error-id (random/hex 6)]
-                      (log/error e "Internal server error:" error-id)
-                      (dispatcher/respond! return-path
-                                           {:error {:type "anvil.server.InternalError" :message (str "Internal server error: " error-id)}}))))))))))}))
+                                           (dispatcher/respond! return-path
+                                                                (merge {:response resp}
+                                                                       (when @*lo-cache-updates*
+                                                                         {:cacheUpdates (live-objects/filter-cache-updates
+                                                                                          @*lo-cache-updates*
+                                                                                          (live-objects/get-seen-liveobjects args kwargs live-object resp))})
+                                                                       (when (and *session-state*
+                                                                                  (:anvil/enable-profiling @*session-state*))
+                                                                         {:profile (merge {:description "Running native fn"
+                                                                                           :start-time  start-time
+                                                                                           :end-time    (double (System/currentTimeMillis))}
+                                                                                          (when *profiles*
+                                                                                            {:children @*profiles*}))}))))
+                                         (catch :anvil/server-error e
+                                           (log/trace (:throwable &throw-context) "Server error")
+                                           (dispatcher/respond! return-path
+                                                                {:error (-> e
+                                                                            (assoc :type (or (:type e) "anvil.server.InternalError"))
+                                                                            (assoc :message (:anvil/server-error e))
+                                                                            (assoc :trace [["<rpc>", 0]])
+                                                                            (dissoc :anvil/server-error))}))
+                                         (finally
+                                           (when time-quota-key
+                                             (quota/decrement! session-state environment nil
+                                                               time-quota-key
+                                                               (/ (- @stop-time start-time) 1000))))))
+                                     (catch clojure.lang.ArityException e
+                                       (log/trace e "Probably incorrect arity from user code")
+                                       (dispatcher/respond! return-path
+                                                            {:error {:type    "TypeError"
+                                                                     :message (str "Wrong number of arguments (" (dec (.actual e)) ") passed to " func "(). Did you pass keyword arguments as positional arguments, or vice versa?")
+                                                                     :trace   [["<rpc>", 0]]}}))
+                                     (catch Exception e
+                                       (let [error-id (random/hex 6)]
+                                         (log/error e "Internal server error:" error-id)
+                                         (dispatcher/respond! return-path
+                                                              {:error {:type "anvil.server.InternalError" :message (str "Internal server error: " error-id)}})))))))))]
+        (if (and delay (not= delay 0))
+          (.schedule delayed-task-timer
+                     (util/timer-task "Delaying native RPC launch"
+                       (launch-task!))
+                     delay)
+          (launch-task!))))}))
 
 (defn wrap-lazy-media-server [f]
   (fn [{:keys [app-id environment app session-state] :as request} media-id]
@@ -255,3 +273,10 @@
   ([operation]
    (when *client-request?*
      (throw+ {:anvil/server-error (str "Permission denied. Cannot " (or operation "call this function") " from client code.")}))))
+
+(defn invalidate-client-objects-without-notify! [app-session]
+  (swap! app-session assoc :liveobject-secret (random/base64 128) :lazy-media-secret (random/base64 32)))
+
+(defn invalidate-client-objects! []
+  (invalidate-client-objects-without-notify! *session-state*)
+  (*rpc-update!* {:invalidate-macs true}))

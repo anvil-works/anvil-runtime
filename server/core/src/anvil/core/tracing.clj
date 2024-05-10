@@ -15,13 +15,16 @@
 
 (defn merge-span-attrs
   ([attrs] (merge-span-attrs (Span/current) attrs))
-  ([span attrs]
+  ([^Span span attrs]
    (when span
-     (doseq [[k v] attrs]
-       (.setAttribute span (name k) (cond
-                                      (instance? Integer v) (long v)
-                                      (keyword? v) (name v)
-                                      :else v))))))
+     (doseq [[k v] attrs
+             :let [key-name ^String (name k)]]
+       (cond
+         (instance? Integer v) (.setAttribute span key-name (long v))
+         (keyword? v) (.setAttribute span key-name ^String (name v))
+         (string? v) (.setAttribute span key-name ^String v)
+         (nil? v) (.setAttribute span key-name nil)
+         :else (.setAttribute span key-name v))))))
 
 (defn span->map [span]
   (let [carrier (atom {})
