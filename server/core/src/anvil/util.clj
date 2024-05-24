@@ -14,6 +14,7 @@
             [org.httpkit.sni-client :as sni]
             [org.httpkit.sni-client :as https]
             [compojure.core]
+            [ring.middleware.gzip :as gzip]
             [clojure.java.io :as io])
   (:import (java.sql SQLException)
            (javax.crypto Mac)
@@ -24,7 +25,7 @@
            (java.net InetAddress)
            (com.maxmind.db CHMCache)
            (com.maxmind.geoip2 DatabaseReader$Builder DatabaseReader)
-           (java.io File ByteArrayOutputStream ByteArrayInputStream FileOutputStream)
+           (java.io InputStream File ByteArrayOutputStream ByteArrayInputStream FileOutputStream)
            (com.maxmind.geoip2.exception GeoIp2Exception)
            (com.mchange.v2.c3p0 DataSources)
            (java.util Properties Map)
@@ -335,6 +336,22 @@
 ;; Not currently supported by ring-core - https://github.com/ring-clojure/ring/pull/479
 (def additional-mime-types
   {"wasm" "application/wasm" "woff2" "application/font-woff2"})
+
+
+;; https://github.com/bertrandk/ring-gzip/issues/10
+;; add support for other gzip types
+(defn- supported-type?
+  [resp]
+  (let [{:keys [headers body]} resp]
+    (or (string? body)
+        (seq? body)
+        (instance? InputStream body)
+        (and (instance? File body)
+             (re-seq #"(?i)\.(htm|html|css|js|json|xml|svg|wasm|woff|woff2)" (.getName body))))))
+
+;; Override the original function in the ring.middleware.gzip namespace
+(alter-var-root (ns-resolve 'ring.middleware.gzip 'supported-type?) (constantly supported-type?))
+
 
 (defn iso-instant [^Instant instant]
   (.format (.withZone (DateTimeFormatter/ofPattern "yyyy-MM-dd'T'HH:mm:ss'Z'")

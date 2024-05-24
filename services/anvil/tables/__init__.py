@@ -174,7 +174,11 @@ class Transaction:
 # anvil$helpLink: "/docs/data-tables/transactions"
 #  } ["in_transaction"]
 def in_transaction(maybe_f=None, relaxed=None):
+    # we don't want to import this on the client unnecessarily
+    import functools
+
     def wrap(f):
+        @functools.wraps(f)
         def new_f(*args, **kwargs):
             n = 0
             while True:
@@ -202,8 +206,6 @@ def in_transaction(maybe_f=None, relaxed=None):
             pass
         else:
             reregister(new_f)
-
-        new_f.__name__ = f.__name__
 
         return new_f
 

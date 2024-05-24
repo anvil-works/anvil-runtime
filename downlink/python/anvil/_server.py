@@ -1197,11 +1197,14 @@ registrations = {}
 
 registrations = {}
 
-_registration_warning = "Warning: a callable with the name {!r} has already been registered. This is probably not what you want"
+_registration_warning = "Warning: a callable with the name {!r} has already been registered (previously by {!r} now by {!r})."
+_warnings = []
 
-def _add_to_register(name, fn):
-    if name in registrations:
-        print(_registration_warning.format(name))
+def _add_to_register(name, fn, ignore_warnings=False):
+    if not ignore_warnings and name in registrations and name not in _warnings:
+        prev = registrations[name]
+        print(_registration_warning.format(name, "%s.%s" % (prev.__module__, prev.__name__), "%s.%s" % (fn.__module__, fn.__name__)))
+        _warnings.append(name)
     registrations[name] = fn
 
 
@@ -1401,6 +1404,7 @@ def register(fn, name=None, name_prefix=None, require_user=None):
 
     if require is not None:
         def require_wrap(f):
+            @functools.wraps(f)
             def with_req(*args, **kwargs):
                 if require():
                     return f(*args, **kwargs)
@@ -1417,7 +1421,7 @@ def register(fn, name=None, name_prefix=None, require_user=None):
         on_register(name, False)
 
     def reregister(new_f):
-        _add_to_register(name, require_wrap(new_f))
+        _add_to_register(name, require_wrap(new_f), ignore_warnings=True)
         new_f._anvil_reregister = reregister
 
     fn._anvil_reregister = reregister
@@ -1456,6 +1460,7 @@ def http_endpoint(path, require_credentials=False, authenticate_users=False, aut
 
         path_regex = re.sub(":([^/]*)", register_path_part, path)
 
+        @functools.wraps(fn)
         def wrapped_fn(method, path, query_params, form_params, origin, headers, remote_address, body, username, password, same_app_alternate_origin=None, **more_kwargs):
 
             api_request._prevent_access = False

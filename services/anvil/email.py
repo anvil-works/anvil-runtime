@@ -46,6 +46,8 @@ def send(**kw):
 # NB no defFunction() here; this one is defined in the autocompleter
 def handle_message(fn=None, require_dkim=False):
     def wrapper(fn):
+        import functools # don't try to import this on the client
+        @functools.wraps(fn)
         def handler(msg_dict):
             msg = Message(msg_dict)
             if require_dkim and not msg.dkim.valid_from_sender:

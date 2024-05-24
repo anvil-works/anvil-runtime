@@ -573,10 +573,15 @@ module.exports = (pyModule) => {
 
         async function getTemplate() {
             // In Figure objects that came from the server, template will be an empty object {}. Treat this as if it's missing entirely.
-            let template = (jsLayout.template && Object.keys(jsLayout.template).length > 0) ? jsLayout.template : Templates.default;
+            let template =
+                jsLayout.template && Object.keys(jsLayout.template).length > 0 ? jsLayout.template : Templates.default;
             if (typeof template === "string") {
-                template = Sk.ffi.toJs(await Templates[template]);
-                jsLayout.template = template;
+                try {
+                    template = Sk.ffi.toJs(await Templates[template]);
+                    jsLayout.template = template;
+                } catch (e) {
+                    console.warn(e);
+                }
             }
         }
 
@@ -592,7 +597,7 @@ module.exports = (pyModule) => {
         PyDefUtils.withDelayPrint(
             loadPlotly(self)
                 .then(getTemplate)
-                .finally(() => {
+                .then(() => {
                     const outerEl = self._anvil.domNode;
                     // react is faster than newPlot on the same div element
                     Plotly.react(outerEl, jsData, jsLayout, jsConfig);

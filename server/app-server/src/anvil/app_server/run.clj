@@ -27,7 +27,8 @@
             [embedded-traefik.core :as traefik]
             [ring.middleware.json :as ring-json]
             [anvil.core.worker-pool :as worker-pool]
-            [anvil.core.ring.middleware.absolute-redirects :as absolute-redirects])
+            [anvil.core.ring.middleware.absolute-redirects :as absolute-redirects]
+            [org.httpkit.server :refer [send! Channel]])
   (:gen-class)
   (:import (org.subethamail.smtp.server SMTPServer)
            (java.io File)
@@ -319,6 +320,12 @@
                                             (:http-port config)
                                             #(init-config % parsed-opts))))))
 
+(defn handle! [{:keys [async-channel] :as request} handler]
+  (let [{:keys [body] :as result} (handler request)]
+    (when-not (satisfies? Channel body)
+      (send! async-channel result)))
+  {:body (:async-channel request)})
+
 (defn launch-runtime-server! [{:keys [config options] :as parsed-opts}]
   (try+
     (conf/set-config! config)
@@ -348,15 +355,15 @@
                                                                :deny))
                         (assoc-in [:responses :absolute-redirects] false))
 
-        handler (wrap-defaults
-                  (absolute-redirects/wrap-absolute-redirects
-                    (ring-json/wrap-json-response
-                      (core/wrap-provide-source
-                        (core/wrap-with-origin-scheme-and-port
-                          #'core/http-routes
-                          (.getScheme origin-uri)
-                          (or (get-port (:origin config)) (if https-origin? 443 80))))))
-                  ring-config)]
+        handler #(handle! % (wrap-defaults
+                              (absolute-redirects/wrap-absolute-redirects
+                                (ring-json/wrap-json-response
+                                  (core/wrap-provide-source
+                                    (core/wrap-with-origin-scheme-and-port
+                                      #'core/http-routes
+                                      (.getScheme origin-uri)
+                                      (or (get-port (:origin config)) (if https-origin? 443 80))))))
+                              ring-config))]
     (anvil-server/run-server (:ip config) (:http-port config)
                              (core/wrap-retrieve-original-remote-address ;; We'll deal with X-Forwarded-For headers ourselves.
                                (if (or (:use-reverse-proxy? config)

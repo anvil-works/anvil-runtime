@@ -4,14 +4,13 @@
   :dependencies [[anvil-runtime "latest"]
                  [anvil-migrator-core "latest"]
 
-                 [org.clojure/clojure "1.9.0"]
+                 [org.clojure/clojure "1.11.2"]
                  [compojure "1.6.1"]
                  [ring/ring-defaults "0.3.2"]
                  [ring/ring-core "1.8.0"]
                  [ring/ring-json "0.5.0"]
 
                  [crypto-random "1.1.0"]
-                 [clj-yaml "0.4.0"]
 
                  [org.clojure/tools.logging "0.4.1"]
                  [org.slf4j/slf4j-reload4j "1.7.36"]

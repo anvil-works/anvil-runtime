@@ -117,7 +117,7 @@
 
                :when service-name
                :let [service-conf (yaml/parse-string (slurp (or (io/resource (str "services-core/" service-name ".yml"))
-                                                                (io/resource (str "services-platform/" service-name ".yml")))) true)
+                                                                (io/resource (str "services-platform/" service-name ".yml")))))
                      source-paths (:path_whitelist service-conf)
                      preload-modules (if-let [p (:preload_module service-conf)] [p] (:preload_modules service-conf))]]
            (apply str
