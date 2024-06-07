@@ -84,15 +84,19 @@ class WrappedObject(dict):
 @serializable_type
 class WrappedList(list):
     def __init__(self, lst=[]):
-        for x in lst:
-            self.append(x)
+        if isinstance(lst, (WrappedObject, WrappedList)):
+            list.__init__(self, lst)
+        else:
+            list.__init__(self, map(_wrap, lst))
 
     def append(self, item):
         list.append(self, _wrap(item))
 
     def extend(self, items):
-        for i in items:
-            self.append(i)
+        if isinstance(items, (WrappedObject, WrappedList)):
+            list.extend(self, items)
+        else:
+            list.__init__(self, map(_wrap, items))
 
     def insert(self, offset, item):
         list.insert(self, offset, _wrap(item))
