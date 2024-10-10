@@ -50,27 +50,31 @@
                (swap! *lo-cache-updates* assoc backend nil)))
   ([backend id] (update-live-object-cache! backend id nil)))
 
-(defmacro with-native-bindings-from-request [request return-path & body]
+(defmacro with-basic-native-bindings-from-request [request & body]
   `(binding [*app-id* (:app-id ~request)
-            *app* (:app ~request)
-            *app-info* (:app-info ~request)
-            *environment* (:environment ~request)
-            *app-origin* (:app-origin ~request)
-            *req* ~request
-            *thread-id* (:thread-id ~request)
-            *trace-id* (tracing/get-trace-id (:tracing-span ~request))
-            *session-state* (:session-state ~request)
-            *rpc-print* (fn [& args#]
+             *app* (:app ~request)
+             *app-info* (:app-info ~request)
+             *environment* (:environment ~request)
+             *app-origin* (:app-origin ~request)
+             *req* ~request
+             *thread-id* (:thread-id ~request)
+             *trace-id* (tracing/get-trace-id (:tracing-span ~request))
+             *session-state* (:session-state ~request)
+             *request-origin* (:origin ~request)
+             *client-request?* (= (:origin ~request) :client)]
+     ~@body))
+
+(defmacro with-native-bindings-from-request [request return-path & body]
+  `(binding [*rpc-print* (fn [& args#]
                           (dispatcher/update! ~return-path {:output (with-out-str (apply print args#))}))
             *rpc-println* (fn [& args#]
                             (do (apply *rpc-print* args#)
                                 (*rpc-print* "\n")))
             *rpc-update!* (fn [update#]
                             (dispatcher/update! ~return-path update#))
-            *rpc-cookies-updated?* (atom false)
-            *request-origin* (:origin ~request)
-            *client-request?* (= (:origin ~request) :client)]
-    ~@body))
+            *rpc-cookies-updated?* (atom false)]
+     (with-basic-native-bindings-from-request ~request
+       ~@body)))
 
 (defonce ^:private delayed-task-timer (Timer. true))
 (def ^:private orgs-to-delay {1 50})
@@ -139,7 +143,7 @@
                                                             {:error {:type    "TypeError"
                                                                      :message (str "Wrong number of arguments (" (dec (.actual e)) ") passed to " func "(). Did you pass keyword arguments as positional arguments, or vice versa?")
                                                                      :trace   [["<rpc>", 0]]}}))
-                                     (catch Exception e
+                                     (catch Throwable e
                                        (let [error-id (random/hex 6)]
                                          (log/error e "Internal server error:" error-id)
                                          (dispatcher/respond! return-path

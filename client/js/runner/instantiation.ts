@@ -33,7 +33,7 @@ import {
     setDefaultDepIdForNextComponent,
 } from "../components/Component";
 import type { Component, ComponentConstructor } from "../components/Component";
-import { PyModMap, anvilMod } from "./py-util";
+import {PyModMap, anvilMod, funcFastCall} from "./py-util";
 import {YamlCreationStack} from "@runtime/runner/component-creation";
 import { PyInstantiatorFunction } from "./component-property-utils-api";
 
@@ -170,7 +170,7 @@ export const getFormInstantiator = (context: InstantiationContext, formSpec: pyS
 }
 
 // Used from Python code
-export const pyInstantiateComponent = PyDefUtils.funcFastCall((args_: Args, kws_?: Kws) => {
+export const pyInstantiateComponent = funcFastCall((args_: Args, kws_?: Kws) => {
     let requestingComponent: Component,
         component: pyStr | ComponentConstructor,
         pyArgs: pyIterable<pyObject>,

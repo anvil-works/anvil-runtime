@@ -104,7 +104,7 @@
                                                (fn [_kwargs lm is-download?]
                                                  (let [{:keys [manager key id name]} (.serialiseForRpc lm nil)
                                                        enc util/real-actual-genuine-url-encoder]
-                                                   (str native-util/*app-origin* "/_/lm/" (enc manager) "/" (enc key) "/" (enc id) "/" (enc (or name "")) "?s="
+                                                   (str native-util/*app-origin* "/_/lm/" (enc manager) "/" (enc key) "/" (enc id) "/" (enc (or name "")) "?_anvil_session="
                                                         (sessions/url-token native-util/*session-state*)
                                                         (if is-download? "" "&nodl=1")))))
 

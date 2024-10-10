@@ -69,7 +69,6 @@ function setPrefix() {
     ANIMATE_IN_CLASS = prefix + ANIMATE_IN_CLASS;
 }
 
-
 const BACKDROP_TRANSITION = 150;
 const TRANSITION = 300;
 const KNOWN_ELEMENTS_TO_INERT = ["appGoesHere", "anvil-header", "anvil-badge"];
@@ -319,10 +318,6 @@ class Modal extends EventEmitter {
         const el = this.el;
         reflow(this.el);
         el.classList.add(ANIMATE_IN_CLASS);
-        if (document.activeElement) {
-            (document.activeElement as HTMLElement)?.blur();
-        }
-        this.elements.modalDialog.focus();
         this._resize();
 
         setTimeout(() => {
@@ -344,7 +339,6 @@ class Modal extends EventEmitter {
         if (this._isShown) {
             return;
         }
-
 
         this._setEvents();
         this._checkScrollbar();
@@ -369,9 +363,14 @@ class Modal extends EventEmitter {
         if (!el.isConnected) {
             document.body.appendChild(el);
         }
-        this.emit("show", this);
         this._isShown = true;
+
         this._showBackdrop(() => this._showElement());
+
+        // do this after show backdrop otherwise the backdrop flashes oddly
+        (document.activeElement as HTMLElement)?.blur?.();
+        this.elements.modalDialog.focus();
+        this.emit("show", this);
 
         return this;
     }
@@ -394,8 +393,8 @@ class Modal extends EventEmitter {
         const o = this._options;
         const backdrop = this.backdrop;
         const elClassList = this.el.classList;
-        this.emit("hide", this);
         this._isShown = false;
+        this.emit("hide", this);
 
         elClassList.remove(ANIMATE_IN_CLASS);
 

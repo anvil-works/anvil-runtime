@@ -16,6 +16,10 @@ export function defer<T = any>() {
     return deferred as Deferred<T>;
 }
 
+export function wait(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export function getRandomStr(len: number) {
     let rv = "";
     for (let i = 0; i < len; i++) {

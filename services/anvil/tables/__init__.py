@@ -7,12 +7,6 @@ from . import _config
 from ._errors import NoSuchColumnError, QuotaExceededError, RowDeleted, TableError, TransactionConflict
 from ._helpers import _hash_wrapper
 
-# Hack: Force ourselves into the top-level package, even
-# if we were loaded into a runtime-v1 per-app Anvil package
-__package__ = "anvil.tables"
-__name__ = "anvil.tables"
-
-
 # Use old app tables by default
 class AppTables(object):
     cache = None

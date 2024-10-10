@@ -56,6 +56,10 @@ class SimpleLoader(object):
 
         real_name = self._real_name or name
 
+        if real_name in sys.modules:
+            sys.modules[name] = sys.modules[real_name]
+            return sys.modules[name]
+
         mod = self._module.get("module_object") or imp.new_module(real_name)
         sys.modules[real_name] = mod
         # Grungy horrid double-loading hack for Python 3

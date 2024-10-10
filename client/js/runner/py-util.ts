@@ -52,6 +52,7 @@ export const s_add_event_handler = new pyStr("add_event_handler"),
     s_anvil_events = new pyStr("_anvil_events_"),
     s_anvil_properties = new pyStr("_anvil_properties_"),
     s_anvil_get_interactions = new pyStr("_anvil_get_interactions_"),
+    s_anvil_get_unset_property_values = new pyStr("_anvil_get_unset_property_values_"),
     s_name = new pyStr("name"),
     s_form = new pyStr("form"),
     s_builtin = new pyStr("builtin"),
@@ -66,7 +67,9 @@ export const s_add_event_handler = new pyStr("add_event_handler"),
     s_x_anvil_classic_show = new pyStr("x-anvil-classic-show"),
     s_x_anvil_classic_hide = new pyStr("x-anvil-classic-hide"),
     s_show = new pyStr("show"),
-    s_hide = new pyStr("hide");
+    s_hide = new pyStr("hide"),
+    s_update = new pyStr("update"),
+    s_setdefault = new pyStr("setdefault");
 
 /** gets the module from sys modules - imports the module if it's not there */
 export function getModule(name: string): pyModule;

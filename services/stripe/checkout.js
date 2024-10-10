@@ -13,7 +13,7 @@ var $builtinmodule = window.memoise('stripe.checkout', function() {
     var loadKeys = PyDefUtils.defer();
     var anvil = PyDefUtils.getModule("anvil");
     var appPath = Sk.ffi.remapToJs(anvil.tp$getattr(new Sk.builtin.str("app_path")));
-    $.get(appPath + "/_/get_stripe_publishable_keys?s=" + window.anvilSessionToken, function(data) {
+    $.get(appPath + "/_/get_stripe_publishable_keys?_anvil_session=" + window.anvilSessionToken, function(data) {
     	loadKeys.resolve(data);
     });
 

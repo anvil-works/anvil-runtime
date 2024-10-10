@@ -267,7 +267,7 @@
                           (send! channel (util/write-json-str {:error (:anvil/server-error e)}))
                           (log/warn "Closing uplink channel:" (:anvil/server-error e))
                           (close channel))
-                        (catch Exception e
+                        (catch Object e
                           (let [error-id (random/hex 6)]
                             (log/error e "Error processing message from uplink. Internal server error:" error-id)
                             (reset! internal-error error-id))

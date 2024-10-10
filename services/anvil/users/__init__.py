@@ -45,7 +45,7 @@ def signup_with_email(email, password, remember=False):
 
 #!defFunction(anvil.users,_,email_address)!2: "Send a password-reset email to the specified user" ["send_password_reset_email"]
 def send_password_reset_email(email):
-    anvil.server.call("anvil.private.users.send_password_reset_email", email)
+    return anvil.server.call("anvil.private.users.send_password_reset_email", email)
 
 #!defFunction(anvil.users,_,email_address)!2: "Send a login link email to the specified user" ["send_token_login_email"]
 def send_token_login_email(email):
@@ -259,19 +259,16 @@ else:
 
         if get_client_config().get("use_email", False):
             some_method_available = True
-            lp.add_component(Label(text="Email:", **_label_style))
-            email_box = TextBox(placeholder="address@example.com", text=initial_email)
+            email_box = TextBoxWithLabel(placeholder="address@example.com", text=initial_email, label="Email:")
             email_box.set_event_handler("pressed_enter", email_pressed_enter)
             lp.add_component(email_box)
 
         if get_client_config().get("use_email", False):
             some_method_available = True
-            passwd_box = [TextBox(hide_text=True, placeholder=p) for p in ["password", "repeat password"]]
-            lp.add_component(Label(text="Password:", **_label_style))
+            passwd_box = [TextBoxWithLabel(hide_text=True, placeholder=p) for p in [("Password:", "password"), ("Retype password:", "repeat password")]]
             passwd_box[0].set_event_handler("pressed_enter", passwd_1_pressed_enter)
             passwd_box[0].text = initial_password
             lp.add_component(passwd_box[0])
-            lp.add_component(Label(text="Retype password:", **_label_style))
             passwd_box[1].set_event_handler("pressed_enter", passwd_2_pressed_enter)
             lp.add_component(passwd_box[1])
 
@@ -280,8 +277,12 @@ else:
             some_method_available = True
             def google_login(**evt):
                 import anvil.google.auth
-                if anvil.google.auth.login():
-                    lp.raise_event('x-close-alert', value='google')
+                try:
+                    if anvil.google.auth.login():
+                        lp.raise_event('x-close-alert', value='google')
+                except Exception as e:
+                    pass # On error, just return to the signup dialog.
+            
             fp = FlowPanel(align="center", spacing_above="large", spacing_below="none")
             lnk = Link(spacing_above="none", spacing_below="none")
             fp.add_component(lnk)
@@ -293,8 +294,12 @@ else:
             some_method_available = True
             def facebook_login(**evt):
                 import anvil.facebook.auth
-                if anvil.facebook.auth.login():
-                    lp.raise_event('x-close-alert', value='facebook')
+                try:
+                    if anvil.facebook.auth.login():
+                        lp.raise_event('x-close-alert', value='facebook')
+                except Exception as e:
+                    pass # On error, just return to the signup dialog.
+
             b = Button(text="Sign up with Facebook", icon="fa:facebook", icon_align="left")
             lp.add_component(b)
             b.set_event_handler("click", facebook_login)
@@ -303,8 +308,12 @@ else:
             some_method_available = True
             def microsoft_login(**evt):
                 import anvil.microsoft.auth
-                if anvil.microsoft.auth.login():
-                    lp.raise_event('x-close-alert', value='microsoft')
+                try:
+                    if anvil.microsoft.auth.login():
+                        lp.raise_event('x-close-alert', value='microsoft')
+                except Exception as e:
+                    pass # On error, just return to the signup dialog.
+            
             b = Button(text="Sign up with Microsoft", icon="fa:windows", icon_align="left")
             lp.add_component(b)
             b.set_event_handler("click", microsoft_login)
@@ -313,8 +322,12 @@ else:
             some_method_available = True
             def saml_login(**evt):
                 import anvil.saml.auth
-                if anvil.saml.auth.login():
-                    lp.raise_event('x-close-alert', value='saml')
+                try:
+                    if anvil.saml.auth.login():
+                        lp.raise_event('x-close-alert', value='saml')
+                except Exception as e:
+                    pass # On error, just return to the signup dialog.
+            
             b = Button(text="Sign up via SAML", icon="fa:lock", icon_align="left")
             lp.add_component(b)
             b.set_event_handler("click", saml_login)
@@ -323,8 +336,12 @@ else:
             some_method_available = True
             import raven.auth
             def raven_login(**evt):
-                if raven.auth.login():
-                    lp.raise_event('x-close-alert', value='raven')
+                try:
+                    if raven.auth.login():
+                        lp.raise_event('x-close-alert', value='raven')
+                except Exception as e:
+                    pass # On error, just return to the signup dialog.
+            
             b = Button(text="Sign up with Raven", icon="fa:lock", icon_align="left")
             lp.add_component(b)
             b.set_event_handler("click", raven_login)
@@ -429,6 +446,11 @@ else:
            if u:
                return u
 
+        TextBox = pluggable_ui['anvil.TextBox']
+        TextBoxWithLabel = pluggable_ui['anvil.TextBoxWithLabel']
+        Button = pluggable_ui['anvil.Button']
+        CheckBox = pluggable_ui['anvil.CheckBox']
+
         lp = LinearPanel()
         email_box = None
         passwd_box = None
@@ -451,8 +473,8 @@ else:
 
             last_email = anvil.server.call("anvil.private.users.get_last_login_email")
 
-            email_box = TextBox(placeholder="email@address.com", text=last_email)
-            passwd_box = TextBox(placeholder="password", hide_text=True, spacing_below="none")
+            email_box = TextBoxWithLabel(label="Email:", placeholder="email@address.com", text=last_email)
+            passwd_box = TextBoxWithLabel(label="Password:", placeholder="password", hide_text=True, spacing_below="none")
 
             email_box.set_event_handler("pressed_enter", focus_password)
             passwd_box.set_event_handler("pressed_enter", close_alert)
@@ -462,9 +484,7 @@ else:
             else:
                 lp.set_event_handler("show", focus_password)
 
-            lp.add_component(Label(text="Email:", **_label_style))
             lp.add_component(email_box)
-            lp.add_component(Label(text="Password:", **_label_style))
             lp.add_component(passwd_box)
             reset_link = Link(text="Forgot your password?", font_size=12, spacing_above="none", align="right")
             reset_link.set_event_handler('click', lambda **e: lp.raise_event('x-close-alert', value='reset_password'))
@@ -475,9 +495,12 @@ else:
             some_method_available = True
             def google_login(**evt):
                 import anvil.google.auth
-                if anvil.google.auth.login():
-                    lp.raise_event('x-close-alert', value='google')
-
+                try:
+                    if anvil.google.auth.login():
+                        lp.raise_event('x-close-alert', value='google')
+                except Exception as e:
+                    pass # On error, just return to the login dialog.
+            
             fp = FlowPanel(align="center", spacing_above="large", spacing_below="none")
             lnk = Link(spacing_above="none", spacing_below="none")
             fp.add_component(lnk)
@@ -489,9 +512,12 @@ else:
             some_method_available = True
             def facebook_login(**evt):
                 import anvil.facebook.auth
-                if anvil.facebook.auth.login():
-                    lp.raise_event('x-close-alert', value='facebook')
-                
+                try:
+                    if anvil.facebook.auth.login():
+                        lp.raise_event('x-close-alert', value='facebook')
+                except Exception as e:
+                    pass # On error, just return to the login dialog.
+            
             b = Button(text="Log in with Facebook", icon="fa:facebook", icon_align="left")
             b.set_event_handler('click', facebook_login)
             lp.add_component(b)
@@ -500,9 +526,12 @@ else:
             some_method_available = True
             def microsoft_login(**evt):
                 import anvil.microsoft.auth
-                if anvil.microsoft.auth.login():
-                    lp.raise_event('x-close-alert', value='microsoft')
-                
+                try:
+                    if anvil.microsoft.auth.login():
+                        lp.raise_event('x-close-alert', value='microsoft')
+                except Exception as e:
+                    pass # On error, just return to the login dialog.
+            
             b = Button(text="Log in with Microsoft", icon="fa:windows", icon_align="left")
             b.set_event_handler('click', microsoft_login)
             lp.add_component(b)
@@ -511,9 +540,12 @@ else:
             some_method_available = True
             def saml_login(**evt):
                 import anvil.saml.auth
-                if anvil.saml.auth.login():
-                    lp.raise_event('x-close-alert', value='saml')
-                
+                try:
+                    if anvil.saml.auth.login():
+                        lp.raise_event('x-close-alert', value='saml')
+                except Exception as e:
+                    pass # On error, just return to the login dialog.
+            
             b = Button(text="Log in via SAML", icon="fa:lock", icon_align="left")
             b.set_event_handler('click', saml_login)
             lp.add_component(b)
@@ -522,9 +554,12 @@ else:
             some_method_available = True
             def raven_login(**evt):
                 import raven.auth
-                if raven.auth.login():
-                    lp.raise_event('x-close-alert', value='raven')
-                
+                try:
+                    if raven.auth.login():
+                        lp.raise_event('x-close-alert', value='raven')
+                except Exception as e:
+                    pass # On error, just return to the login dialog.
+            
             b = Button(text="Log in with Raven", icon="fa:lock", icon_align="left")
             b.set_event_handler('click', raven_login)
             lp.add_component(b)
@@ -632,6 +667,9 @@ else:
 
     #!defFunction(anvil.users,_,[require_old_password=True])!2: "Display a form allowing the current user to reset their password. " ["change_password_with_form"]
     def change_password_with_form(require_old_password=True):
+
+        TextBox = pluggable_ui['anvil.TextBox']
+
 
         err = None
         while True:

@@ -24,6 +24,10 @@
   (ensure-client-id!)
   (-> @*session-state* :google :user-tokens :refresh-token))
 
+(defn get-user-scope [_kwargs]
+  (ensure-client-id!)
+  (-> @*session-state* :google :user-tokens :scope))
+
 (defn refresh-access-token [_kwargs refresh-token]
   (let [google-service (first (filter #(= (:source %) "/runtime/services/google.yml") (:services *app*)))
         google-client-id (or (get-in google-service [:server_config :client_id]) (and (:custom? conf/google-client-config) (:client-id conf/google-client-config)))]
@@ -41,4 +45,5 @@
                "anvil.private.google.get_config" (wrap-native-fn get-config)
                "anvil.private.google.auth.get_user_access_token" (wrap-native-fn get-user-access-token)
                "anvil.private.google.auth.get_user_refresh_token" (wrap-native-fn get-user-refresh-token)
+               "anvil.private.google.auth.get_user_scope" (wrap-native-fn get-user-scope)
                "anvil.private.google.auth.refresh_access_token" (wrap-native-fn refresh-access-token)})

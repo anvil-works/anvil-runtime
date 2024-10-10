@@ -324,7 +324,9 @@
   (when (instance? SerializedPythonObject arg)
     (condp = (:type arg)
       "anvil.tables.fetch_only" (assoc options :fetch-request (:spec (:value arg)))
-      "anvil.tables.query.page_size" (assoc options :chunk-size (:rows (:value arg)))
+      "anvil.tables.query.page_size" (if (and (number? (:rows (:value arg))) (pos? (:rows (:value arg))))
+                                       (assoc options :chunk-size (:rows (:value arg)))
+                                       (throw+ (util-v2/general-tables-error (str "Page size must be a positive number."))))
       "anvil.tables.order_by" (let [{:keys [column_name]} (:value arg)]
                                 (assert-order-by tables table-id cols column_name)
                                 (update options :order-by (fnil conj []) (:value arg)))

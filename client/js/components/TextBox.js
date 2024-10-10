@@ -34,7 +34,7 @@ module.exports = (pyModule) => {
 
 
     pyModule["TextBox"] = PyDefUtils.mkComponentCls(pyModule, "TextBox", {
-        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(TextBox)!2*/ ["layout", "text", "interaction", "appearance", "tooltip", "user data"], {
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(TextBox)!2*/ ["layout", "layout_margin", "text", "interaction", "appearance", "tooltip", "user data"], {
             text: {
                 dataBindingProp: true,
                 get(self, e) {

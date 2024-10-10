@@ -44,7 +44,7 @@ module.exports = (pyModule) => {
     pyModule["GridPanel"] = PyDefUtils.mkComponentCls(pyModule, "GridPanel", {
         base: pyModule["ClassicContainer"],
 
-        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(GridPanel)!2*/ ["layout", "containers", "appearance", "user data", "tooltip"]),
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(GridPanel)!2*/ ["layout", "layout_spacing", "containers", "appearance", "user data", "tooltip"]),
 
         events: PyDefUtils.assembleGroupEvents("grid panel", /*!componentEvents(GridPanel)!1*/ ["universal"]),
 

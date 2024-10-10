@@ -59,16 +59,18 @@ interface LoadingIndicator extends pyObject {
 }
 
 export const LoadingIndicator: pyNewableType<LoadingIndicator> = buildNativeClass("anvil.loading_indicator", {
-    constructor: function () {},
+    constructor: function () {
+        this.$running = false;
+    },
     slots: {
         tp$init(args, kws) {
             checkArgsLen("loading_indicator", args, 0, 1);
             // In the future we can support kws
             // checkNoKwargs("loading_indicator", kws);
             this._opts = kwargsToJsObject(kws);
-            if (this._opts.min_height === undefined) {
-                this._opts.min_height = 220;
-            }
+            // if (this._opts.min_height === undefined) {
+            //     this._opts.min_height = 220;
+            // }
             const [el] = args;
             this._dom = el ? toJs(pyCall(anvilJsMod.get_dom_node, [el])) : document.body;
         },
@@ -79,27 +81,53 @@ export const LoadingIndicator: pyNewableType<LoadingIndicator> = buildNativeClas
     methods: {
         __enter__: {
             $meth() {
-                if (this._dom === document.body) {
-                    this._loader = getBodySpinner() ?? this.$getLoadingSpinner();
-                } else {
-                    this._loader = this.$getLoadingSpinner();
-                }
-                this._loader.setLoading(true);
-                globalSuppressLoading.inc();
+                this.$start();
                 return this;
             },
             $flags,
         },
         __exit__: {
             $meth() {
-                this._loader.setLoading(false);
-                globalSuppressLoading.dec();
+                this.$stop();
+                return pyNone;
+            },
+            $flags,
+        },
+        start: {
+            $meth() {
+                this.$start();
+                return pyNone;
+            },
+            $flags,
+        },
+        stop: {
+            $meth() {
+                this.$stop();
                 return pyNone;
             },
             $flags,
         },
     },
     proto: {
+        $start(this: LoadingIndicator) {
+            if (this._dom === document.body) {
+                this._loader ??= getBodySpinner() ?? this.$getLoadingSpinner();
+            } else {
+                this._loader ??= this.$getLoadingSpinner();
+            }
+            if (!this.$running) {
+                this.$running = true;
+                this._loader.setLoading(true);
+                globalSuppressLoading.inc();
+            }
+        },
+        $stop(this: LoadingIndicator) {
+            if (this.$running) {
+                this.$running = false;
+                this._loader.setLoading(false);
+                globalSuppressLoading.dec();
+            }
+        },
         $getLoadingSpinner(this: LoadingIndicator) {
             // At the moment this returns the cached overlay if it's active
             // If we support options, we could potentially manipulate the overlay if the options change

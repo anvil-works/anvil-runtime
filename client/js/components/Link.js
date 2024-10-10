@@ -1,6 +1,7 @@
 "use strict";
 import { getCssPrefix } from "@runtime/runner/legacy-features";
 import { setHandled, isHandled } from "./events";
+import {setElementMargin, setElementPadding} from "@runtime/runner/components-in-js/public-api/property-utils";
 var PyDefUtils = require("PyDefUtils");
 const { isTrue } = Sk.misceval;
 
@@ -90,6 +91,22 @@ module.exports = (pyModule) => {
                     }
                 },
             },
+            text_padding: /*!componentProp(Link)!1*/ {
+                group: "layout",
+                name: "text_padding",
+                type: "padding",
+                noDoc: true, // Exclude from API docs
+                hidden: localStorage.previewSpacingProperties !== 'true',
+                description: "Padding for the link text. Only available in apps that have been migrated to use Layouts.",
+                defaultValue: Sk.builtin.none.none$,
+                priority: 0,
+                set(s, e, v) {
+                    setElementPadding(s._anvil.elements.holder, v);
+                },
+                getUnset(s, e, v) {
+                    return PyDefUtils.getUnsetPadding(s._anvil.elements.holder, v);
+                },
+            }
         }),
 
         events: PyDefUtils.assembleGroupEvents(/*!componentEvents(Link)!1*/ "Link", ["universal"], {
@@ -115,6 +132,7 @@ module.exports = (pyModule) => {
             const prefix = getCssPrefix();
             const outerClass = PyDefUtils.getOuterClass(props);
             const outerStyle = PyDefUtils.getOuterStyle(props);
+            const textPaddingStyle = PyDefUtils.getPaddingStyle({padding: props.text_padding});
             const outerAttrs = PyDefUtils.getOuterAttrs(props);
             const initialText = (props.text = Sk.builtin.checkNone(props.text) ? "" : props.text.toString());
             const colSpacing = prefix + "col-padding-" + col_spacing.toString();
@@ -132,7 +150,7 @@ module.exports = (pyModule) => {
                     style={outerStyle}
                     {...outerAttrs}>
                     <PyDefUtils.IconComponent side="left" {...props} />
-                    <div refName="holder" className={`${prefix}link-text` }style={`display: ${ initialText ? 'inline-block' : 'none'}; ${underlineStyle}`}>
+                    <div refName="holder" className={`${prefix}link-text` } style={textPaddingStyle + `display: ${ initialText ? 'inline-block' : 'none'}; ${underlineStyle}`}>
                         {Sk.builtin.checkNone(props.text) ? "" : props.text.toString()}
                     </div>
                     <PyDefUtils.IconComponent side="right" {...props} />

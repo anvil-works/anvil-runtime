@@ -1,6 +1,5 @@
 name: Microsoft API
 prelude: "import anvil.microsoft.auth"
-preload_module: "anvil.microsoft"
 path_whitelist:
   - microsoft/__init__.py
   - microsoft/auth.js

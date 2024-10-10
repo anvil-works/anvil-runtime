@@ -219,7 +219,7 @@ export async function reconstructObjects(json: DeserializedJson, mediaBlobs: Out
             replaceWith = await retrievePortableClass(reconstructed as string);
         } else if (objectToReplace != null) {
             console.error("Object reconstruction replacing something that's not a null leaf!", objectToReplace);
-            console.log(path, objectToReplace)
+            console.log(path, objectToReplace);
         }
 
         // we are either replacing a path into json.response or json.vt_global
@@ -240,4 +240,19 @@ export async function reconstructObjects(json: DeserializedJson, mediaBlobs: Out
         }
     }
     return json;
+}
+
+export async function reconstructSerializedMapWithMedia(serialisedArgs: any) {
+    const { media, ...restArgs } = serialisedArgs ?? {};
+    // Massage this into the slightly wonky form our deserialiser expects
+    const om: OutstandingMedia = {};
+    for (const m of restArgs.objects ?? []) {
+        if (m.type?.[0] === "DataMedia") {
+            const { id, ["mime-type"]: mime_type, path, name } = m;
+
+            const fr = await fetch(`data:${mime_type};base64,` + media[id]);
+            om[id] = { mime_type, path, content: [await fr.blob()], name };
+        }
+    }
+    return (await reconstructObjects(restArgs, om)) as any;
 }

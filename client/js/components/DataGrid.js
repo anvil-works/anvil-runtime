@@ -77,7 +77,7 @@ module.exports = function(pyModule) {
     pyModule["DataGrid"] = PyDefUtils.mkComponentCls(pyModule, "DataGrid", {
         base: pyModule["Paginator"],
 
-        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(DataGrid)!1*/ ["layout", "containers", "appearance", "user data", "tooltip"], {
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(DataGrid)!1*/ ["layout", "layout_margin", "containers", "appearance", "user data", "tooltip"], {
             columns: /*!componentProp(DataGrid)!1*/ {
                 name: "columns",
                 type: "dataGridColumns",

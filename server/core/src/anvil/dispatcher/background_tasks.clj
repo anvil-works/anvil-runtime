@@ -152,7 +152,7 @@
                                      [nil {:message "The state or return value could not be serialised"}])
                                    (catch :anvil/server-error e
                                      [nil {:message (:anvil/server-error e) :type (:type e)}])
-                                   (catch Exception e
+                                   (catch Object e
                                      (log/error e response)
                                      [nil {:message "An unknown serialisation error occurred"}]))
 
@@ -391,7 +391,7 @@
        (catch :anvil/server-error e
          (record-final-state! session-state bt {:error {:message (:anvil/server-error e) :type (:type e)}} true)
          (swap! local-background-tasks dissoc (:id bt)))
-       (catch Exception e
+       (catch Object e
          (record-final-state! session-state bt {:error {:message "Internal error launching task"}} true)
          (swap! local-background-tasks dissoc (:id bt))
          (throw e)))
@@ -426,11 +426,11 @@
                                                   (let [return-path {:respond! #(dispatcher/respond! return-path (assoc % :taskState @(::task-state request)))
                                                                      :update!  #(dispatcher/update! return-path %)}]
                                                     (dispatcher/report-exceptions-to-return-path return-path
-                                                      (try+
+                                                      (try
                                                         (rpc-util/with-native-bindings-from-request request return-path
                                                           (binding [*native-bg-task-state* (::task-state rpc-util/*req*)]
                                                             (dispatcher/respond! return-path {:response (f)})))
-                                                        (catch InterruptedException e
+                                                        (catch InterruptedException _
                                                           (record-final-state! (:session-state request) (::task request) {:taskState @(::task-state request)} :killed))))))]
                                           (swap! local-background-tasks (fn [ts]
                                                                           (if (contains? ts (:id (::task request)))

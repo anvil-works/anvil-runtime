@@ -149,7 +149,7 @@ function onResize(e) {
 }
 
 // Load an app, but don't open the main form or module
-function loadApp(app, appId, appOrigin, preloadModules) {
+function loadApp(app, appId, appOrigin) {
 
     window.setLoading(true);
 
@@ -1138,16 +1138,6 @@ function loadApp(app, appId, appOrigin, preloadModules) {
 
     PyDefUtils.loadModule("anvil.code_completion_hints", require("./modules/code-completion-hints")());
 
-    try {
-        Sk.misceval.retryOptionalSuspensionOrThrow(Sk.importModule("anvil.tables", false, true));
-    } catch (e) {
-        console.log("Failed to preload anvil.tables", e);
-    }
-
-    for (let pm of (preloadModules || [])) {
-        Sk.misceval.retryOptionalSuspensionOrThrow(Sk.importModule(pm, false, true));
-    }
-
     // Runtime v1 and below uses a really grotty mechanism for getting templates.
     // We use prototypical inheritance to give each app a slightly different
     // view of the 'anvil' module, with its own form templates in.
@@ -1293,7 +1283,7 @@ window.setLoading = function(loading) {
 
 var appLoaded = false;
 
-window.loadApp = function(params, preloadModules) {
+window.loadApp = function(params) {
     window.anvilParams = params;
 
     var appOrigin = params["appOrigin"];
@@ -1307,7 +1297,7 @@ window.loadApp = function(params, preloadModules) {
 
 
 
-    var appLoadPromise = loadApp(params["app"], params["appId"], appOrigin, preloadModules);
+    var appLoadPromise = loadApp(params["app"], params["appId"], appOrigin);
     appLoaded = true;
 
     if (window.anvilOnLoadApp) {

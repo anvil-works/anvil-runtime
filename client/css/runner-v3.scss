@@ -15,6 +15,15 @@ but our css minifier doesn't support this syntax - if we upgrade to webpack 5 th
 @import "./runner/error-indicator.scss";
 @import "./runner/loading-spinner.scss";
 
+@font-face {
+    font-family: "Glyphicons Halflings";
+    src: url("../fonts/glyphicons-halflings-regular.eot");
+    src: url("../fonts/glyphicons-halflings-regular.eot?#iefix") format("embedded-opentype"),
+        url("../fonts/glyphicons-halflings-regular.woff") format("woff"),
+        url("../fonts/glyphicons-halflings-regular.ttf") format("truetype"),
+        url("../fonts/glyphicons-halflings-regular.svg#glyphicons_halflingsregular") format("svg");
+}
+
 /* Fix a bootstrap-ism that isn't helpful */
 .anvil-form-control,
 .anvil-btn {
@@ -36,7 +45,8 @@ but our css minifier doesn't support this syntax - if we upgrade to webpack 5 th
     cursor: not-allowed;
 }
 
-.anvil-runner .anvil-visible-false, .anvil-runner [anvil-visible-false] {
+.anvil-runner .anvil-visible-false,
+.anvil-runner [anvil-visible-false] {
     display: none !important;
 }
 
@@ -117,7 +127,6 @@ span.anvil-inline-container > .anvil-inlinable,
         max-width: none;
     }
 }
-
 
 .anvil-panel-section-gutter {
     margin: 0 -15px;

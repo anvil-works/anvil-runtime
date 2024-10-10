@@ -180,6 +180,7 @@ export interface PropertyDescriptionBase {
     supportsWriteback?: boolean;
     priority?: number;
     defaultBindingProp?: boolean;
+    showInDesignerWhen?: string;
 }
 
 export type StringPropertyType = "string";
@@ -241,7 +242,7 @@ export interface ColorPropertyDescription extends PropertyDescriptionBase {
 }
 export interface IconPropertyDescription extends PropertyDescriptionBase {
     type: IconPropertyType;
-    iconset?: string;
+    iconsets?: string[];
 }
 export interface RolePropertyDescription extends PropertyDescriptionBase {
     type: RolePropertyType;
@@ -394,7 +395,7 @@ export interface HandleInteraction extends InteractionBase {
     position?: "left" | "top" | "right" | "bottom";
     direction?: "x" | "y";
     callbacks: {
-        grab: () => void;
+        grab: (pageX: number, pageY: number) => void;
         drag: (relativeX: number, relativeY: number, metaKey: boolean) => HandleDragResult | void;
         drop: (relativeX: number, relativeY: number) => void;
         doubleClick?: () => void;
@@ -446,10 +447,20 @@ export type Interaction =
     | DesignerEventsInteraction
     | RegionInteraction;
 
+export interface UnsetPropertyValue {
+    value: any;
+    css: string;
+}
+
+export interface UnsetPropertyValues {
+    [propName: string]: UnsetPropertyValue;
+}
+
 export interface DesignInfo {
     propertyDescriptions: PropertyDescription[];
     events: EventDescription[];
     interactions: Interaction[];
+    unsetPropertyValues: UnsetPropertyValues;
 }
 
 export interface ContainerDesignInfo {
@@ -519,6 +530,7 @@ export interface AnvilHookSpec<T extends Component = Component> {
     getEvents?(this: T): EventDescription[];
     updateDesignName?(this: T, name: string): void;
     getInteractions?(this: T): Interaction[];
+    getUnsetPropertyValues?(this: T): UnsetPropertyValues;
     getContainerDesignInfo?(this: T, forChild: Component): ContainerDesignInfo;
     updateLayoutProperties?(
         this: T,
@@ -544,6 +556,7 @@ export interface AnvilHooks extends Partial<HasRelevantHooks> {
     events: EventDescription[];
     updateDesignName?(name: string): void;
     getInteractions?(): Interaction[];
+    getUnsetPropertyValues?(): UnsetPropertyValues;
     getContainerDesignInfo?(forChild: Component): ContainerDesignInfo;
     updateLayoutProperties?(
         forChild: Component,
@@ -686,6 +699,14 @@ export interface PastingSlot extends PastingObject {
 }
 export type PastingObjects = (PastingComponent | PastingSlot)[];
 
+// mostly used by the autocompleter
+interface MethodSpec {
+    name: string;
+    description?: string;
+    args?: any[];
+    returns?: any;
+}
+
 // All custom components defined in JS/React need to be able to produce one of these to be sent to the IDE.
 export interface CustomComponentSpec {
     // Right now, name must be fully-qualified with the package name. It would be nice to separate this out, but we can do it later.
@@ -693,6 +714,7 @@ export interface CustomComponentSpec {
     properties?: (PropertyDescription & { defaultValue?: any })[];
     layoutProperties?: PropertyDescription[];
     events?: EventDescription[];
+    methods?: MethodSpec[];
     container?: boolean;
     // TODO: layout?: boolean; (probably +slots)
 
@@ -705,6 +727,7 @@ export const EMPTY_DESIGN_INFO: DesignInfo = {
     propertyDescriptions: [],
     events: [],
     interactions: [],
+    unsetPropertyValues: {},
 };
 
 export const EMPTY_CONTAINER_DESIGN_INFO: ContainerDesignInfo = {
@@ -793,6 +816,9 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
             },
             getInteractions() {
                 return [];
+            },
+            getUnsetPropertyValues() {
+                return {};
             },
         },
         $verifyEventName(pyEventName: pyStr, msg: string): string {
@@ -1273,6 +1299,7 @@ export function notifyComponentUnmounted(c: Component, root = false) {
 }
 
 export function notifyVisibilityChange(c: Component, visible: boolean) {
+    visible = isTrue(visible); // ensure boolean
     const pageState = c._Component.pageState;
     const prevVisibility = pageState.currentlyVisible;
     if (prevVisibility === visible) return pyNone;

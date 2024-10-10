@@ -178,7 +178,7 @@
 
                                 ;; Don't catch :anvil/server-error here, as dispatch functions should do that themselves
                                 ;; and respond appropriately.
-                                (catch Exception e
+                                (catch Object e
                                   (let [error-id (random/hex 6)]
                                     (log/error e "Error in function dispatch for '" (:command data) "/" (:method (:liveObjectCall data)) "':" error-id)
                                     (responder {:error {:message (str "Internal server error: " error-id)}}

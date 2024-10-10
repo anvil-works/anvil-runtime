@@ -34,7 +34,7 @@ module.exports = (pyModule) => {
 
     pyModule["Image"] = PyDefUtils.mkComponentCls(pyModule, "Image", {
         properties: PyDefUtils.assembleGroupProperties(
-            /*!componentProps(Image)!1*/ ["layout", "height", "appearance", "tooltip", "user data"],
+            /*!componentProps(Image)!1*/ ["layout", "layout_margin", "height", "appearance", "tooltip", "user data"],
             {
                 height: {
                     defaultValue: new Sk.builtin.str("200"),
@@ -70,9 +70,9 @@ module.exports = (pyModule) => {
                     defaultValue: new Sk.builtin.str("shrink_to_fit"),
                     pyVal: true,
                     options: ["shrink_to_fit", "zoom_to_fill", "fill_width", "original_size"],
-                    description:
-                        "Determines how the image's size should be adjusted to fit the size of this Image component",
                     initialize: true,
+                    description:
+                        "Determines how the image's size should be adjusted to fit the size of this Image component.\n\n - `shrink_to_fit` scales the image to fit while maintaining its aspect ratio.\n- `zoom_to_fill` scales the image to fill the entire container while maintaining its aspect ratio. If the image is too large, it will be cropped to fit.\n- `fill_width` shrinks or grows the image so the width fits the container.\n- `original_size` - displays the image at whatever the browser thinks the original size is. If that would cause the image to be wider than the Image component, it shrinks the image to ensure it fits within the width of the Image component.",
                     set(self, element, v) {
                         v = v.toString();
                         self._anvil.isSelfSizing = v === "original_size" || v === "fill_width";
@@ -92,6 +92,19 @@ module.exports = (pyModule) => {
                     pyVal: true,
                     set(s, e, v) {
                         s._anvil.setProp("horizontal_align", v);
+                    },
+                },
+                border_radius: /*!componentProp(Image)!1*/ {
+                    name: "border_radius",
+                    type: "string",
+                    description: "The border radius of this component",
+                    group: "Appearance",
+                    defaultValue: Sk.builtin.str.$empty,
+                    pyVal: true,
+                    exampleValue: "5px",
+                    set(s, e, v) {
+                        v = Sk.builtin.checkNone(v) ? "" : PyDefUtils.cssLength(v.toString());
+                        s._anvil.domNode.style.borderRadius = v;
                     },
                 },
 

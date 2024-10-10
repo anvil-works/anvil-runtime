@@ -117,8 +117,12 @@
                               "cvc_check" (.getCvcCheck s)})
          "url"             (str "https://dashboard.stripe.com/" (if live-mode? "" "test/") "subscriptions/" (.getId subscription))})
 
-      (catch Exception e
+      (catch Throwable e
         (throw+ {:anvil/server-error (.getMessage e)
+                 :docId "stripe_service"
+                 :docLinkTitle "Learn more about the Stripe service"}))
+      (catch Object e
+        (throw+ {:anvil/server-error (str e)
                  :docId "stripe_service"
                  :docLinkTitle "Learn more about the Stripe service"})))))
 

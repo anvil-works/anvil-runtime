@@ -1,6 +1,7 @@
 (ns anvil.core.sso.google
   (:use [slingshot.slingshot])
-  (:require [compojure.response]
+  (:require [clojure.set :as set]
+            [compojure.response]
             [ring.util.response]
             [clojure.data.json :as json]
             [org.httpkit.client :as http]
@@ -26,7 +27,7 @@
       ;; Caller is responsible for storing the CSRF token somewhere suitable.
       csrf-token]))
 
-(defn process-callback [code state required-csrf-token client-id client-secret redirect-uri]
+(defn process-callback [code state required-csrf-token required-scopes client-id client-secret redirect-uri]
   (let [provided-csrf-token (last (.split ^String state "G"))]
 
     ;; First, check the CSRF token matches the one we put in the session
@@ -43,32 +44,39 @@
                                                             :client_secret client-secret
                                                             :redirect_uri  redirect-uri
                                                             :grant_type    "authorization_code"}}))
-            body          (json/read-str body-json :key-fn keyword)]
+            body          (json/read-str body-json :key-fn keyword)
+            scopes        (some-> body (:scope) (.split " ") (set))]
 
         (if (:error body)
 
           ;; Something went wrong.
           (throw (Exception. (str "FAILED TO GET ACCESS TOKEN: " body-json)))
 
-          ;; There was no error, so we should be able to find the access token
-          (let [access-token  (:access_token body)
-                refresh-token (:refresh_token body)
+          (if (and required-scopes
+                   (contains? body :scope)
+                   (not (set/superset? scopes required-scopes)))
+            (throw (Exception. (str "ALL CONSENTS NOT GRANTED")))
 
-                ;; Decrypt the ID token.
-                id-token-json (:body @(http/get "https://www.googleapis.com/oauth2/v1/tokeninfo"
-                                                {:keepalive -1
-                                                 :query-params {:id_token (:id_token body)}}))
-                id-token      (json/read-str id-token-json :key-fn keyword)]
+            ;; There was no error, so we should be able to find the access token
+            (let [access-token (:access_token body)
+                  refresh-token (:refresh_token body)
 
-            (if (:error id-token)
+                  ;; Decrypt the ID token.
+                  id-token-json (:body @(http/get "https://www.googleapis.com/oauth2/v1/tokeninfo"
+                                                  {:keepalive    -1
+                                                   :query-params {:id_token (:id_token body)}}))
+                  id-token (json/read-str id-token-json :key-fn keyword)]
 
-              ;; Something went wrong.
-              (throw (Exception. (str "FAILED TO VERIFY ID TOKEN: " id-token-json)))
+              (if (:error id-token)
 
-              ;; There was no error, so we have our credentials. Return an auth map so that friend can do its thing.
-              {:access-token access-token
-               :refresh-token refresh-token
-               :id-token id-token})))))))
+                ;; Something went wrong.
+                (throw (Exception. (str "FAILED TO VERIFY ID TOKEN: " id-token-json)))
+
+                ;; There was no error, so we have our credentials. Return an auth map so that friend can do its thing.
+                (merge {:access-token  access-token
+                        :refresh-token refresh-token
+                        :id-token      id-token}
+                       (select-keys body [:scope]))))))))))
 
 (defn refresh-access-token [refresh-token client-id client-secret]
   (let [params {:keepalive -1

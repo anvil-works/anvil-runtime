@@ -9,7 +9,7 @@ from ._utils import check_serialized, clean_local_datetime, init_spec_rows, init
 
 PREFIX = SERVER_PREFIX + "row."
 _make_refs = None  # for circular imports
-_auto_create_is_enabled = None
+_auto_create_is_enabled = NOT_FOUND
 
 
 def _copy(so):
@@ -335,7 +335,7 @@ class Row(BaseRow):
             self._fill_cache()
         elif hit is NOT_FOUND:
             global _auto_create_is_enabled
-            if _auto_create_is_enabled is None:
+            if _auto_create_is_enabled is NOT_FOUND:
                 _auto_create_is_enabled = anvil.server.call(PREFIX + "can_auto_create")
             if _auto_create_is_enabled:
                 # try to force fetch this key - incase we have a bad spec - i.e auto-columns

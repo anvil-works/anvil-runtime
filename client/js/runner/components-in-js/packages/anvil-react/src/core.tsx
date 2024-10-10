@@ -99,12 +99,23 @@ const useNotifyMounted = (c: JsComponent, isRoot = false) => {
     React.useLayoutEffect(() => {
         notifyMounted(c, isRoot);
         return () => {
-            notifyUnmounted(c, isRoot);
+            const parent = getParent(c);
+            if (isRoot || parent === null || isReactComponent(parent)) {
+                // in anvil-react we are responsible for unmounting ourselves in useEffect cleanups
+                // this allows developers to write react components like Tabs, and not have to worry about anvil page events
+                // but if our parent is not a react component,
+                // then the responsibility for unmounting falls to our parent anvil component
+                // (or from calling remove_from_parent)
+                // In anvil page events - the responsibility for mounting/unmounting is on the parent
+                // if we unmount ourselves when we are removed from the dom tree, we may still be in the Anvil component tree
+                // and then if our parent is remounted, we might never get remounted, because our parent didn't unmount us!
+                notifyUnmounted(c, isRoot);
+            }
         };
     }, []);
 };
 
-const portalElementCache = new WeakMap<JsComponent, ReactComponent[]>();
+const portalElementCache = new WeakMap<JsComponent, { components: ReactComponent[]; forceRender: () => void }>();
 
 const ElementWrapper = ({ el, c }: { el: HTMLElement; c: JsComponent }) => {
     const ref = React.useRef<HTMLDivElement>(null!);
@@ -122,7 +133,7 @@ const ElementWrapper = ({ el, c }: { el: HTMLElement; c: JsComponent }) => {
         <div data-anvil-react-wrapper="" ref={ref}>
             {portalElementCache
                 .get(c)
-                ?.map(
+                ?.components.map(
                     (c) => c._.portalElement && createPortal(c._.reactComponent(), c._.portalElement, c._.id.toString())
                 )}
         </div>
@@ -158,6 +169,7 @@ export interface ReactComponentWrapper {
     nextComponentKey: number;
     designName?: string;
     nextDesignerStateId: number;
+    methodHandlers: Record<string, (...args: any[]) => any>;
 }
 
 export interface DropZoneSpec {
@@ -298,7 +310,7 @@ function setRef<T>(ref: ReactRef<T> | undefined | null, value: T): void {
     }
 }
 
-const isReactComponent = (obj: any): obj is ReactComponent => !!obj[IS_REACT];
+const isReactComponent = (obj: any): obj is ReactComponent => !!obj?.[IS_REACT];
 let componentId = 0;
 
 function setupReactComponent(self: ReactComponent, spec: ReactComponentDefinition) {
@@ -374,6 +386,14 @@ function setupReactComponent(self: ReactComponent, spec: ReactComponentDefinitio
         useActions: () => actions,
         useDesignerApi: () => ({ ...designerApiContext, designName: designerApi.getDesignName(self) }),
         useDropping: () => _.dropping,
+        useMethodHandler(methodName: string, handler: (...args: any[]) => any) {
+            React.useEffect(() => {
+                _.methodHandlers[methodName] = handler;
+                return () => {
+                    delete _.methodHandlers[methodName];
+                };
+            });
+        },
         useInteraction: (maybeInteraction: InteractionSpec) => {
             // Maybe make second arg an object?
             const id = React.useId();
@@ -514,12 +534,15 @@ function setupReactComponent(self: ReactComponent, spec: ReactComponentDefinitio
                 setRef(localRef, element);
             };
         },
-        useDesignerInteractionRef: (event: "dblclick", callback, otherRef) => (element) => {
-            setRef(otherRef, element);
-            if (element) {
-                designerApi.registerInteraction(self, { event, callback, element });
-            }
-        },
+        useDesignerInteractionRef:
+            (event: "dblclick", callback, otherRef, options = {}) =>
+            (element) => {
+                setRef(otherRef, element);
+                const { enabled = true } = options;
+                if (element && enabled) {
+                    designerApi.registerInteraction(self, { event, callback, element });
+                }
+            },
         useVisibility: (visible: boolean) => {
             notifyVisibilityChange(self, visible);
         },
@@ -653,6 +676,7 @@ function setupReactComponent(self: ReactComponent, spec: ReactComponentDefinitio
         nextComponentKey: 0,
         componentKeys: new WeakMap(),
         nextDesignerStateId: 0,
+        methodHandlers: {},
     };
 
     const _ = _ReactComponentWrapper;
@@ -711,10 +735,11 @@ function mkComponentClass(spec: ReactComponentDefinition): JsComponentConstructo
                 flushSync(() => {
                     let parent = getParent(this);
                     while (parent) {
-                        const portalElements = portalElementCache.get(parent);
+                        const { components: portalElements, forceRender } = portalElementCache.get(parent) ?? {};
                         if (portalElements) {
                             if (!portalElements.includes(this)) {
                                 portalElements.push(this);
+                                forceRender?.();
                             }
                             return;
                         }
@@ -727,11 +752,12 @@ function mkComponentClass(spec: ReactComponentDefinition): JsComponentConstructo
                 if (!this._.portalElement) return;
                 let parent = getParent(this);
                 while (parent) {
-                    const portalElements = portalElementCache.get(parent);
+                    const { components: portalElements, forceRender } = portalElementCache.get(parent) ?? {};
                     if (portalElements) {
                         const idx = portalElements.findIndex((c) => c === this);
                         if (idx > 0) {
                             portalElements.splice(idx, 1);
+                            forceRender?.();
                             return;
                         }
                     }
@@ -780,19 +806,19 @@ function mkComponentClass(spec: ReactComponentDefinition): JsComponentConstructo
             layoutProperties: { [prop: string]: any; index?: number | undefined }
         ) {
             const _ = this._;
+            if (!isReactComponent(component)) {
+                await component._anvilSetupDom();
+                portalElementCache.set(component, { components: [], forceRender: () => _.forceRender?.() });
+            } else {
+                // in case somoeone asked for this elements dom node before being rendered
+                // we know this element doesn't have a parent at this stage
+                delete component._.portalElement;
+            }
             _.componentKeys.set(component, _.componentKeys.get(component) || _.nextComponentKey++);
             if ("index" in layoutProperties && typeof layoutProperties.index === "number") {
                 _.components.splice(layoutProperties.index, 0, component);
             } else {
                 _.components.push(component);
-            }
-            if (!isReactComponent(component)) {
-                await component._anvilSetupDom();
-                portalElementCache.set(component, []);
-            } else {
-                // in case somoeone asked for this elements dom node before being rendered
-                // we know this element doesn't have a parent at this stage
-                delete component._.portalElement;
             }
             _.componentLayoutProps.set(component, layoutProperties);
             _.componentVisibility.set(component, true);
@@ -884,7 +910,7 @@ function mkComponentClass(spec: ReactComponentDefinition): JsComponentConstructo
 }
 
 function mkComponent(spec: ReactComponentDefinition) {
-    const { properties } = spec;
+    const { properties, methods } = spec;
 
     const cls = mkComponentClass(spec);
 
@@ -900,6 +926,15 @@ function mkComponent(spec: ReactComponentDefinition) {
         });
     }
 
+    for (const { name } of methods ?? []) {
+        Object.defineProperty(cls.prototype, name, {
+            value: function (...args: any[]) {
+                return this._.methodHandlers[name]?.(...args);
+            },
+            configurable: true,
+        });
+    }
+
     return cls;
 }
 
@@ -910,7 +945,8 @@ const reactComponentToSpec = ({
     layoutProperties,
     container,
     showInToolbox,
-}: ReactComponentDefinition) => ({ name, properties, events, layoutProperties, container, showInToolbox });
+    methods,
+}: ReactComponentDefinition) => ({ name, properties, events, layoutProperties, container, showInToolbox, methods });
 
 export function registerReactComponent(spec: ReactComponentDefinition) {
     return registerJsComponent(mkComponent(spec), reactComponentToSpec(spec));
@@ -957,13 +993,15 @@ interface AnvilReactHooks {
     useDesignerInteractionRef<T extends HTMLElement>(
         event: "dblclick",
         callback: () => void,
-        otherRef?: React.Ref<T>
+        otherRef?: React.Ref<T>,
+        options?: { enabled?: boolean }
     ): React.Ref<T>;
     useRegionInteractionRef<T extends HTMLElement>(
         callback: () => void,
         otherRef?: React.Ref<T>,
         options?: Partial<Pick<RegionInteraction, "sensitivity">>
     ): React.Ref<T>;
+    useMethodHandler(methodName: string, handler?: ((...args: any[]) => any) | null): void;
 }
 
 export const hooks: AnvilReactHooks = {
@@ -980,6 +1018,7 @@ export const hooks: AnvilReactHooks = {
     useSectionRefs: (...args) => React.useContext(HooksContext).useSectionRefs(...args),
     useDesignerInteractionRef: (...args) => React.useContext(HooksContext).useDesignerInteractionRef(...args),
     useRegionInteractionRef: (...args) => React.useContext(HooksContext).useRegionInteractionRef(...args),
+    useMethodHandler: (...args) => React.useContext(HooksContext).useMethodHandler(...args),
 };
 
 export const inDesigner = designerApi.inDesigner;

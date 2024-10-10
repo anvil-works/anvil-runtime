@@ -1,6 +1,5 @@
 /target
 /classes
-pom.xml
 pom.xml.asc
 *.jar
 *.class

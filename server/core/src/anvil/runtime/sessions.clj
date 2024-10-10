@@ -72,7 +72,8 @@
   (print-method (util/write-json-str data) w))
 
 (def edn-options
-  {:readers {'anvil/UserData (fn [data] (map->UserData (util/read-json-str data)))}})
+  {:readers (merge *data-readers* ; Make sure we keep the default readers (clj-yaml adds ordered maps, for example)
+                   {'anvil/UserData (fn [data] (map->UserData (util/read-json-str data)))})})
 
 ;; cached-state is an atom with keys:
 ;; {:val VALUE, :db-last-seen (last_seen from DB), :db-expires (expires from DB), :last-read (last read from DB), :deleted? true}
@@ -426,7 +427,7 @@
                                                               ;; Else, this is an invalid session
                                                               {:session (create-blank-session (and supplied-cookie-token (not= supplied-cookie-token "")))})))]
     ;; First look for a session token in the URL
-    (if-let [supplied-url-token (not-empty (get-in request [:params :s]))]
+    (if-let [supplied-url-token (not-empty (get-in request [:params :_anvil_session]))]
       ;; If we specified a valid URL token, load the session from it.
       (or (when-let [[session id] (load-session-by-token supplied-url-token #(do
                                                                                (log/trace "Looking through URL tokens on session" (.hashCode %) (pr-str (get-in % [::tokens])) "for" (pr-str supplied-url-token))

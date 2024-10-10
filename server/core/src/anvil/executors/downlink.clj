@@ -33,8 +33,12 @@
 
 (def STACK-FRAME-INFO {:origin :server, :stack-frame-type :server_module})
 
+(def SANITISED-KEYS [:modules :server_modules :forms :scripts :runtime_options :dependency_code :dependency_order :dependency_ids :package_name :config])
 (defn- sanitise-app-for-downlink [app]
-  (select-keys app [:modules :server_modules :forms :scripts :runtime_options :dependency_code :dependency_order :dependency_ids :package_name :config]))
+  (let [sanitise #(select-keys % SANITISED-KEYS)]
+    (-> app
+        (sanitise)
+        (update :dependency_code update-vals sanitise))))
 
 
 (def WS-SERVER-PARAMS {:link-name "Downlink",

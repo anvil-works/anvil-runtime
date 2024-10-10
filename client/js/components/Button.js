@@ -2,6 +2,7 @@
 
 import { getCssPrefix } from "@runtime/runner/legacy-features";
 import { setHandled } from "./events";
+import {setElementMargin, setElementPadding} from "@runtime/runner/components-in-js/public-api/property-utils";
 var PyDefUtils = require("PyDefUtils");
 
 /*#
@@ -31,7 +32,7 @@ module.exports = (pyModule) => {
 
     pyModule["Button"] = PyDefUtils.mkComponentCls(pyModule, "Button", {
         properties: PyDefUtils.assembleGroupProperties(
-            /*!componentProps(Button)!2*/ ["layout", "interaction", "text", "appearance", "icon", "user data", "tooltip"],
+            /*!componentProps(Button)!2*/ ["layout", "layout_spacing", "interaction", "text", "appearance", "icon", "user data", "tooltip"],
             {
                 align: {
                     defaultValue: new Sk.builtin.str("center"),
@@ -96,6 +97,15 @@ module.exports = (pyModule) => {
                         s._anvil.elements.button.style.color = PyDefUtils.getColor(v);
                     },
                 },
+                spacing: {
+                    set(s, e, v) {
+                        setElementMargin(e[0], v?.margin);
+                        setElementPadding(s._anvil.elements.button, v?.padding);
+                    },
+                    getUnset(s, e, currentValue) {
+                        return PyDefUtils.getUnsetSpacing(e[0], s._anvil.elements.button, currentValue);
+                    }
+                },
             }
         ),
 
@@ -119,20 +129,22 @@ module.exports = (pyModule) => {
             },
         }),
 
-        element({ font, font_size, bold, italic, underline, background, foreground, ...props }) {
+        element({ font, font_size, bold, italic, underline, background, foreground, spacing,...props }) {
             const align = props.align.toString();
             const alignStyle = align === "full" ? " width: 100%;" : "";
+            const outerSpacingStyle = PyDefUtils.getOuterStyle({spacing}, false);
+            const buttonPaddingStyle = PyDefUtils.getPaddingStyle({spacing});
             const buttonStyle = PyDefUtils.getOuterStyle({ font, font_size, bold, italic, underline, background, foreground });
             const buttonAttrs = !isTrue(props.enabled) ? {disabled: ""} : {};
-            const inlinable = align !== "full" ? "anvil-inlinable " : ""
+            const inlinable = align !== "full" ? "anvil-inlinable " : "";
             const prefix = getCssPrefix();
             return (
-                <PyDefUtils.OuterElement className= {inlinable + "anvil-button"} {...props}>
+                <PyDefUtils.OuterElement className= {inlinable + "anvil-button"} style={outerSpacingStyle} {...props}>
                     <button
                         refName="button"
                         ontouchstart=""
                         className={`${prefix}btn ${prefix}btn-default ${prefix}to-disable`}
-                        style={"max-width:100%; text-overflow:ellipsis; overflow:hidden; " + buttonStyle + alignStyle}
+                        style={"max-width:100%; text-overflow:ellipsis; overflow:hidden; " + buttonStyle + alignStyle + buttonPaddingStyle}
                         {...buttonAttrs}>
                         <PyDefUtils.IconComponent side="left" {...props} />
                         <span refName="text" className={`${prefix}button-text`}>

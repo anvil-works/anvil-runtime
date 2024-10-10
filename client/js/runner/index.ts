@@ -21,9 +21,20 @@ window.PyDefUtils = PyDefUtils;
 
 window.anvilCurrentlyConstructingForms = [];
 
-import { reconstructObjects } from "@runtime/modules/_server";
-import { OutstandingMedia } from "@runtime/modules/_server/rpc";
-import { Args, Kws, pyCallable, pyCallOrSuspend, pyDict, pyRuntimeError, pyStr, pyTuple, toJs, toPy } from "../@Sk";
+import { reconstructSerializedMapWithMedia } from "@runtime/modules/_server/deserialize";
+import {
+    Args,
+    Kws,
+    pyCallable,
+    pyCallOrSuspend,
+    pyDict,
+    pyNone,
+    pyRuntimeError,
+    pyStr,
+    pyTuple,
+    toJs,
+    toPy,
+} from "../@Sk";
 import * as PyDefUtils from "../PyDefUtils";
 import { registerSolidComponent, solidComponents } from "./components-in-js/component-from-solid";
 import * as _jsComponentApi from "./components-in-js/public-api";
@@ -67,7 +78,7 @@ export function hardResize() {
 }
 
 // Load an app, but don't open the main form or module
-function loadApp(preloadModules: string[]) {
+async function loadApp() {
     setLoading(true, { animate: false });
 
     // Start watching the DOM for changes, so we can report app height.
@@ -94,64 +105,6 @@ function loadApp(preloadModules: string[]) {
             }
             onResize();
         });
-
-    // Load all the available app modules
-
-    const appPackage = data.appPackage;
-
-    const appModules: { [path: string]: string } = {};
-
-    const getFilePath = (name: string, isPackage: boolean | undefined, topLevelPackage: string) => {
-        if (isPackage) {
-            return "app/" + topLevelPackage + "/" + name.replace(/\./g, "/") + "/__init__.py";
-        } else {
-            const dots = name.split(".");
-            return (
-                "app/" +
-                topLevelPackage +
-                "/" +
-                dots
-                    .slice(0, -1)
-                    .map((s) => s + "/")
-                    .join("") +
-                dots[dots.length - 1] +
-                ".py"
-            );
-        }
-    };
-
-    const fillOutModules = (app: AppYaml | DependencyYaml, topLevelPackage: string) => {
-        for (const f of app.forms) {
-            appModules[getFilePath(f.class_name, f.is_package, topLevelPackage)] = f.code;
-        }
-
-        for (const m of app.modules) {
-            appModules[getFilePath(m.name, m.is_package, topLevelPackage)] = m.code;
-        }
-    };
-
-    const dependencyErrors = [];
-    const dependencyPackageNames = [];
-    const dataBindingCompilations = {};
-
-    for (const [app_id, depApp] of Object.entries(data.app.dependency_code)) {
-        if (depApp.package_name) {
-            if (dependencyPackageNames.indexOf(depApp.package_name) == -1) {
-                fillOutModules(depApp, depApp.package_name);
-                dependencyPackageNames.push(depApp.package_name);
-            } else {
-                dependencyErrors.push(
-                    `Cannot have two dependencies with the same package name: ${depApp.package_name}`
-                );
-            }
-        }
-    }
-
-    if (dependencyPackageNames.indexOf(appPackage) == -1) {
-        fillOutModules(data.app, appPackage);
-    } else {
-        dependencyErrors.push(`App cannot have the same package name as one of its dependencies: ${appPackage}`);
-    }
 
     // jQuery 3 migration
 
@@ -184,7 +137,7 @@ function loadApp(preloadModules: string[]) {
         },
     };
 
-    setupPythonEnvironment(preloadModules);
+    await setupPythonEnvironment();
 
     setLoading(false);
 }
@@ -198,18 +151,7 @@ async function openForm(formName: string | null, serialisedArgs?: any) {
         formKwargs: Kws = [];
 
     if (serialisedArgs) {
-        const { media, ...restArgs } = serialisedArgs ?? {};
-        // Massage this into the slightly wonky form our deserialiser expects
-        const om: OutstandingMedia = {};
-        for (const m of restArgs.objects ?? []) {
-            if (m.type?.[0] === "DataMedia") {
-                const { id, ["mime-type"]: mime_type, path, name } = m;
-
-                const fr = await fetch(`data:${mime_type};base64,` + media[id]);
-                om[id] = { mime_type, path, content: [await fr.blob()], name };
-            }
-        }
-        const { args, kwargs } = (await reconstructObjects(restArgs, om)) as any;
+        const { args = [], kwargs = {} } = await reconstructSerializedMapWithMedia(serialisedArgs);
         formArgs = args.map(toPy);
         for (const [k, v] of Object.entries(kwargs)) {
             formKwargs.push(k, toPy(v));
@@ -289,14 +231,23 @@ function printComponents(printId: string, printKey: string) {
 
 let appLoaded = false;
 
+async function deserializeStartupData(startupData: any) {
+    if (startupData) {
+        const { data: deserializedStartupData } = await reconstructSerializedMapWithMedia(startupData);
+        data.appStartupData = toPy(deserializedStartupData);
+    } else {
+        data.appStartupData = pyNone;
+    }
+}
+
 // @ts-ignore
-window.loadApp = function (params: SetDataParams, preloadModules: string[]) {
+window.loadApp = async function (params: SetDataParams) {
     setData(params);
     setLegacyOptions(params.app.runtime_options);
 
     if (appLoaded) {
         console.log("Rejected duplicate app load");
-        return {};
+        return;
     }
 
     if ("serviceWorker" in navigator) {
@@ -309,16 +260,15 @@ window.loadApp = function (params: SetDataParams, preloadModules: string[]) {
             });
     }
 
-    const appLoadPromise = loadApp(preloadModules);
+    await loadApp();
     appLoaded = true;
 
     if (data.serverParams.consoleMessage) {
         console.log(data.serverParams.consoleMessage);
     }
+    await deserializeStartupData(params.appStartupData);
 
     hooks.onLoadedApp?.();
-
-    return {};
 };
 
 // Entry points will be called by server-generated JS

@@ -109,6 +109,8 @@ export interface FormYaml {
         designer_hint?: DesignerHint;
         include_none_option?: boolean;
         none_option_label?: string;
+        iconsets?: string[];
+        show_in_designer_when?: string;
     }[];
     events?: CustomComponentEvents[];
     toolbox_item?: CustomComponentToolboxItem;
@@ -121,6 +123,11 @@ export interface ModuleYaml {
     name: string;
     is_package?: boolean;
     code: string;
+}
+
+export interface AssetYaml {
+    name: string;
+    content: string;
 }
 
 export interface DependencyCode {
@@ -174,10 +181,15 @@ export interface DependencyYaml {
     forms: FormYaml[];
     modules: ModuleYaml[];
     runtime_options: RuntimeOptions;
-    toolbox_sections?: ToolboxSection[];
+    toolbox_sections?: ToolboxSection[]; // Legacy. Use toolbox.sections instead.
+    toolbox?: {
+        sections?: ToolboxSection[];
+        hide_classic_components?: boolean;
+    }
     layouts?: CustomLayoutYaml[];
     config_schema?: DepConfigSchema;
     config: DepConfigResolved;
+    client_init_module?: string;
 }
 
 export interface ThemeRole {
@@ -201,7 +213,11 @@ export interface AppConfig {
     theme: AppTheme;
     services?: { source: string; client_config: any }[];
     runtime_options: RuntimeOptions;
-    toolbox_sections?: ToolboxSection[];
+    toolbox_sections?: ToolboxSection[]; // Legacy. Use toolbox.sections instead.
+    toolbox?: {
+        sections?: ToolboxSection[];
+        hide_classic_components?: boolean;
+    }
     layouts?: CustomLayoutYaml[];
     dependency_ids: { [logicalDepId: string]: string };
     // Temporary, while we're fixing some broken apps that worked by accident
@@ -214,6 +230,7 @@ export interface AppYaml extends DependencyYaml, AppConfig {
     //dependencies: {app_id: string, version: any}[];
     dependency_code: DependencyCode; // client version
     dependency_ids: { [dep_id: string]: string };
+    dependency_order: string[];
 }
 
 interface ServerParams {
@@ -230,6 +247,7 @@ interface Data {
     dependencyPackages: { [depId: string]: string };
     logicalDepIds: { [logicalDepId: string]: string };
     appOrigin: string;
+    appStartupData?: any;
     serverParams: ServerParams;
 }
 
@@ -255,10 +273,13 @@ declare global {
         anvilFormTemplates: any[];
         anvilSessionToken: string;
         anvilVersion: number;
+        anvilRuntimeVersion: number;
     }
 }
 
-export type SetDataParams = Pick<Data, "app" | "appId" | "appOrigin"> & ServerParams;
+window.anvilRuntimeVersion = 3; // At some point we may need to load this from the app.
+
+export type SetDataParams = Pick<Data, "app" | "appId" | "appOrigin" | "appStartupData"> & ServerParams;
 
 export function temporaryHackSetupData(d: Partial<Data>) {
     data = d as Data;
@@ -336,7 +357,7 @@ const EmptyObject = {};
 export const getClientConfig = (packageName?: string) => {
     // we're calling this too early from javascript - return undefined and the js can handle it how it likes
     if (!data) return;
-    if (packageName === undefined || packageName === window.anvilAppMainPackage) {
+    if (packageName === undefined || packageName === data.appPackage) {
         return data.app.config?.client ?? EmptyObject;
     } else {
         for (const dep of Object.values(data.app?.dependency_code ?? {})) {

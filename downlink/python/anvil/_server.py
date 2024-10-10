@@ -436,6 +436,7 @@ class SerializeWithIdentity(object):
         return [my_id, data]
 
 
+#!defFunction(anvil.server,%,[name])!2: {anvil$args: {name: "A unique name under which the class will be registered."}, $doc: "When applied to a class as a decorator, the class becomese available to be passed from server to client code."} ["portable_class"]
 def portable_class(cls, name=None):
     def register(cls, name):
         if not hasattr(cls, "__new__"):
@@ -1292,18 +1293,52 @@ class HttpResponse(object):
             raise TypeError("headers should be set to a dictionary")
 
 
+def _ensure_only_kws(class_name, args, kwargs, expected_kwargs):
+    if args:
+        raise TypeError("{}() takes keyword arguments only".format(class_name))
+    for key in kwargs:
+        if key not in expected_kwargs:
+            raise TypeError("{}() got an unexpected keyword argument '{}'".format(class_name, key))
+
+# Private API
+@portable_class("anvil.server._LoadAppResponse")
+class _LoadAppResponse(object):
+    def __init__(self, **kws):
+        self.__dict__.update(kws)
+
+
 #!defFunction(anvil.server,%,[form],*args,**kws)!2:
 # {
 #   $doc: "Open the specified form as a new page from a route.\n\n'form' is a string, and when received by the client the new form will be created (extra arguments will be passed to its constructor).",
 #   anvil$helpLink: "/docs/"
 # } ["FormResponse"]
-@portable_class("anvil.server.FormResponse")
-class FormResponse(object):
-    def __init__(self, form_name, *args, **kwargs):
-        self.form_name = form_name
-        self.args = args
-        self.kwargs = kwargs
+def FormResponse(form_name, *args, **kwargs):
+    return _LoadAppResponse(form=form_name, args=args, kwargs=kwargs)
 
+
+class AppResponder(object):
+    #!defMethod(_, data=None, meta=None)!2: ("Create an AppResponder object") ["__init__"];
+    def __init__(self, *args, **kws):
+        # because keyword only syntax is not supported in python2
+        _ensure_only_kws("AppResponder", args, kws, ["data", "meta"])
+        self.data = kws.get("data")
+        self.meta = kws.get("meta")
+
+    #!defMethod(_, [form], *args, **kwargs)!2: ("Open the specified form as a new page from a route") ["load_form"];
+    def load_form(self, form_name, *args, **kwargs):
+        return _LoadAppResponse(
+            data=self.data, meta=self.meta, form=form_name, args=args, kwargs=kwargs
+        )
+
+    #!defMethod(_, module_name)!2: ("Opens the specified module as a new page from a route") ["load_module"];
+    def load_module(self, module_name):
+        return _LoadAppResponse(data=self.data, meta=self.meta, module=module_name)
+
+    #!defMethod(_)!2: ("Loads an app at it's startup form/module") ["load_app"]; 
+    def load_app(self):
+        return _LoadAppResponse(data=self.data, meta=self.meta)
+
+#!defClass(anvil.server,%AppResponder)!0:
 
 class CallContext(object):
     class ClientInfo(object):
@@ -1428,14 +1463,14 @@ def register(fn, name=None, name_prefix=None, require_user=None):
 
     return fn
 
-#!defFunction(anvil.server,%,[name], [require_user])!2: {anvil$args: {fn_or_name: "The name by which you want to call your function from the client.", require_user: "Allows you to verify whether a user is logged in. Can be a boolean or a function."}, anvil$helpLink: "server#calling-server-functions-from-client-code", $doc: "When applied to a function as a decorator, the function becomes available from the client side."} ["callable"]
+#!defFunction(anvil.server,%,[fn_or_name], [require_user])!2: {anvil$args: {fn_or_name: "The name by which you want to call your function from the client.", require_user: "Allows you to verify whether a user is logged in. Can be a boolean or a function."}, anvil$helpLink: "/docs/server#calling-server-functions-from-client-code", $doc: "When applied to a function as a decorator, the function becomes available from the client side."} ["callable"]
 def callable(fn_or_name=None, require_user=None):
     if fn_or_name is None or isinstance(fn_or_name, string_type):
         return lambda f: register(f, fn_or_name, require_user=require_user)
     else:
         return register(fn_or_name)
 
-
+#!defFunction(anvil.server,%,[fn_or_name])!2: {anvil$args: {fn_or_name: "The name by which you want to call your function."}, anvil$helpLink: "/docs/background-tasks", $doc: "When applied to a function as a decorator, the function becomes available to run in the background."} ["background_task"]
 def background_task(fn_or_name=None):
     if fn_or_name is None or isinstance(fn_or_name, string_type):
         return lambda f: register(f, fn_or_name, name_prefix="task")

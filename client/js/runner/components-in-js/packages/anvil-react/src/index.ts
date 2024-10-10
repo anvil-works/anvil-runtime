@@ -1,7 +1,7 @@
 import { hooks } from "./core";
 
 export { registerReactComponent, openForm, propertyUtils, includeContext, useClientConfig } from "./core";
-export const { useActions, useComponentState, useVisibility } = hooks;
+export const { useActions, useComponentState, useVisibility, useMethodHandler } = hooks;
 
 export type {
     ReactComponentDefinition,

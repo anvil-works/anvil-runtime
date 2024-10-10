@@ -39,7 +39,9 @@
             [anvil.dispatcher.native-rpc-handlers.users.totp :as totp]
             [anvil.dispatcher.native-rpc-handlers.users.twilio :as twilio]
             [anvil.runtime.sessions :as sessions]
-            [anvil.runtime.conf :as runtime-conf])
+            [anvil.runtime.conf :as runtime-conf]
+            [anvil.core.worker-pool :as worker-pool]
+            [anvil.runtime.conf :as conf])
   (:import (anvil.dispatcher.types DateTime)
            (java.text SimpleDateFormat)
            (java.util Date)
@@ -513,11 +515,16 @@
       (if (get-user-check-enabled-and-validate user_table {:email email} :email)
         (let [reset-link (str (get-our-origin)
                               "/_/reset_password/"
-                              (anvil-util/real-actual-genuine-url-encoder (generate-email-link-token nil email "pw-reset")))]
+                              (anvil-util/real-actual-genuine-url-encoder (generate-email-link-token nil email "pw-reset")))
+              request util/*req*]
 
-          (send-email! props email :reset_password {:email email :reset_url reset-link} {:reset_link reset-link})
-          nil)
-        (throw+ {:anvil/server-error "User disabled, or not found." :type "anvil.users.AuthenticationFailed"})))))
+          (worker-pool/run-task! ::send-reset-email
+            (util/with-basic-native-bindings-from-request request
+              (send-email! props email :reset_password {:email email :reset_url reset-link} {:reset_link reset-link})))
+          (when-not conf/dont-confirm-emails-during-auth?
+            true))
+        (when-not conf/dont-confirm-emails-during-auth?
+          (throw+ {:anvil/server-error "This username does not exist or is disabled." :type "anvil.users.AuthenticationFailed"}))))))
 
 (defn call-if-confirmation-key-correct [app environment email confirmation-key require-settings f]
   (binding [util/*client-request?* false

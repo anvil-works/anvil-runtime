@@ -238,7 +238,6 @@ export interface pyGetSetDescriptorConstructor<I extends pyObject = pyObject> ex
 
 export interface pyGetSetDescriptor extends pyObject {}
 
-
 export interface WrapperDescriptorDef<I> {
     $wrapper: (this: (...args: any[]) => any, self: I, args: Args, kws: Kws) => pyObject | Suspension;
     $flags: Flags;
@@ -394,7 +393,7 @@ export interface pyFloat extends pyObject {
 }
 
 export interface pyDictConstructor extends pyType<pyDict> {
-    new (entries?: pyObject[]): pyDict;
+    new <K = pyObject, V = pyObject>(entries?: pyObject[]): pyDict<K, V>;
 }
 
 export interface pyDict<K = pyObject, V = pyObject> extends pyObject, pyIterable<K> {

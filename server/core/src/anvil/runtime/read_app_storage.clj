@@ -191,7 +191,7 @@ If you want to get to the basics as quickly as possible, each section of this do
           (let [package-pyb (get content "__init__.py")
                 package-py (when package-pyb (String. ^bytes package-pyb))
                 form-yamlb (get content "form_template.yaml")
-                form-yaml (when form-yamlb (yaml/parse-string (String. ^bytes form-yamlb)))
+                form-yaml (util/parse-yaml-bytes form-yamlb)
                 yaml (cond
                        (and client? package-py form-yaml)
                        (update-in yaml [:forms] concat
@@ -217,7 +217,7 @@ If you want to get to the basics as quickly as possible, each section of this do
           (let [module-py (String. ^bytes content)
                 [_ module-name] (re-matches #"(.*)\.py" name)
                 form-yamlb (get tree (str module-name ".yaml"))
-                form-yaml (when form-yamlb (yaml/parse-string (String. ^bytes form-yamlb)))]
+                form-yaml (util/parse-yaml-bytes form-yamlb)]
             (if (and client? form-yaml)
               (update-in yaml [:forms] concat
                          [(assoc form-yaml
@@ -266,8 +266,8 @@ If you want to get to the basics as quickly as possible, each section of this do
 
 (def get-app-yaml-from-resource-directory)
 (defn tree-map-to-yaml [tm ignore-extra-files? generate-item-uids?]
-  (let [read-yaml #(when-let [^bytes ymlb (get-in tm %)]
-                    (yaml/parse-string (String. ymlb)))
+  (let [read-yaml #(-> (get-in tm %)
+                       (util/parse-yaml-bytes))
 
         editor-yaml (read-yaml [".anvil_editor.yaml"])
 
@@ -285,10 +285,10 @@ If you want to get to the basics as quickly as possible, each section of this do
                             (->>
                               (for [[src-name, src] (get tm "forms")
                                     :let [[_ form-name] (re-matches #"(.+)\.py" src-name)
-                                          ^bytes yaml (when form-name (get-in tm ["forms" (str form-name ".yaml")]))]
-                                    :when yaml]
-                                (assoc (yaml/parse-string (String. yaml)) :class_name form-name :code (String. ^bytes (deref src))
-                                                                          :id (get-id :forms form-name)))
+                                          ^bytes yamlb (when form-name (get-in tm ["forms" (str form-name ".yaml")]))]
+                                    :when yamlb]
+                                (assoc (util/parse-yaml-bytes yamlb) :class_name form-name :code (String. ^bytes (deref src))
+                                                                    :id (get-id :forms form-name)))
                               (sort-by :class_name))
 
                             :modules

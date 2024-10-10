@@ -50,7 +50,7 @@ export class SpinnerLoader {
         try {
             this.animation.commitStyles();
         } catch (e) {
-            console.error(e);
+            console.warn(e);
             // might throw if we can't commit styles (e.g. the element isn't rendered)
         }
         this.animation.cancel();

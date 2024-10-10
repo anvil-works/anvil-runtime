@@ -7,10 +7,6 @@ from ._helpers import _hash_wrapper
 _make_refs = lambda x: x
 
 
-# Hack: Force ourselves into the top-level package, even
-# if we were loaded into a runtime-v1 per-app Anvil package
-__package__ = "anvil.tables"
-__name__ = "anvil.tables.query"
 
 
 class _pattern_query(object):

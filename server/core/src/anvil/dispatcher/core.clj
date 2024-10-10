@@ -73,7 +73,9 @@
     (if return? (respond! return-path {:response (f)}) (f))
     (catch :anvil/server-error e
       (respond! return-path {:error {:message (:anvil/server-error e), :type (:type e)}}))
-    (catch Throwable e
+    (catch :anvil/websocket-payload-too-large e
+      (respond! return-path {:error {:message "Data payload too big - please use Media objects to transfer large amounts of data." :type "anvil.server.SerializationError"}}))
+    (catch Object e
       (let [error-id (random/hex 6)]
         (log/error e "Unexpected error in synchronous-return-path code:" error-id)
         (respond! return-path {:error {:message (str "Internal server error: " error-id)}})))))
@@ -281,7 +283,7 @@
                     (let [background-launch-fn (or (:bg-fn executor) (partial @default-background-wrapper executor))]
                       (background-launch-fn request return-path)))
 
-                  (catch Exception e
+                  (catch Object e
                     (let [error-id (random/hex 6)]
                       (log/error e "Unexpected error in downlink executor:" error-id)
                       (respond! return-path {:error {:message (str "Internal server error: " error-id)}}))))))))))))

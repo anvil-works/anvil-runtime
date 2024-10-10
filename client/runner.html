@@ -135,9 +135,13 @@
         2: "{{app-origin}}/_/static/runtime/js/lib/skulpt-stdlib-2.json?buildTime=0",
         3: "{{app-origin}}/_/static/runtime/js/lib/skulpt-stdlib-3.json?buildTime=0"
       };
-
-      // NB: We will need to preserve things other than ?s= at some point.
-      window.history.replaceState(window.history.state || {}, "Anvil App", document.location.origin + document.location.pathname + document.location.hash);
+ 
+      {
+        // remove _anvil_session to prevent referrer links from including the session
+        const url = new URL(window.location.href);
+        url.searchParams.delete("_anvil_session");
+        window.history.replaceState(window.history.state || {}, "Anvil App", url);
+      }
 
       // {{load-app-code}}
   </script>

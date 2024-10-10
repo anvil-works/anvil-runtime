@@ -34,7 +34,7 @@ module.exports = (pyModule) => {
 
 
     pyModule["YouTubeVideo"] = PyDefUtils.mkComponentCls(pyModule, "YouTubeVideo", {
-        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(YouTubeVideo)!1*/ ["layout", "height", /*"interaction",*/ "appearance", "user data"], {
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(YouTubeVideo)!1*/ ["layout", "layout_margin", "height", /*"interaction",*/ "appearance", "user data"], {
             height: { defaultValue: new Sk.builtin.int_(300) },
 
             youtube_id: /*!componentProp(YouTubeVideo)!1*/ {

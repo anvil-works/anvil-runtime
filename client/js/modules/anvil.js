@@ -9,6 +9,7 @@ import { notifyComponentMounted, notifyComponentUnmounted } from "../components/
 import {anvilServerMod, kwToObj, s_clear, s_slots} from "../runner/py-util";
 import { defer, getRandomStr } from "../utils";
 import Modal, { BOOTSTRAP_MODAL_BG } from "./modal";
+import { pluggableUI } from "@runtime/modules/_anvil/pluggable-ui";
 
 module.exports = function(appOrigin, uncaughtExceptions) {
 
@@ -102,6 +103,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
 
     });
 
+    /*!defFunction(anvil,!,val)!2*/ "Sets the hash of the currently open URL. If val is a string, it is added to the URL after a #. If val is a dictionary, it will be interpreted as query-string-type parameters and added to the URL after a hash and question mark (eg '#?a=foo&b=bar')."
     pyModule["set_url_hash"] = new Sk.builtin.func(function(pyVal) {
 
         var val = Sk.ffi.remapToJs(pyVal);
@@ -254,7 +256,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         },/*!defAttr()!1*/ {
             name: "branch",
             type: "string",
-            description: "The Git branch from which the current app is being run.\n\nThis is 'master' for development apps or apps without a published version, and 'published' if this app is being run from its published version.",
+            description: "The Git branch from which the current app is being run. This is 'master' for development apps or apps without a published version, and 'published' if this app is being run from its published version.",
         },];
         /*!defClass(anvil,#AppInfo)!*/
 
@@ -262,9 +264,11 @@ module.exports = function(appOrigin, uncaughtExceptions) {
     [/*!defModuleAttr(anvil)!1*/{
         name: "app",
         pyType: "anvil.AppInfo instance",
-        description: "Information about the current app, as an instance of anvil.AppInfo",
+        description: "Information about the current app, as an instance of [anvil.AppInfo](#AppInfo)",
     }];
     pyModule["app"] = PyDefUtils.pyCall(appInfoClass);
+
+    pyModule["pluggable_ui"] = pluggableUI;
 
     const appPlaceHolder = document.getElementById("appGoesHere");
 
@@ -285,12 +289,16 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                     : bLayout.constructor === aLayout.constructor);
     };
 
-    function openFormInstance(pyForm) {
+    function assertOpenFormIsComponent(pyForm) {
         if (!pyForm.anvil$hooks) {
             throw new Sk.builtin.TypeError(
                 `Attempting to open a form which is not an anvil component, (got type ${pyForm?.tp$name})`
             );
         }
+    }
+
+    function openFormInstance(pyForm) {
+        assertOpenFormIsComponent(pyForm);
 
         if (pyForm !== topLevelForms.openForm) {
             // it's ok to call open_form on the same form
@@ -353,11 +361,17 @@ module.exports = function(appOrigin, uncaughtExceptions) {
             return notifyComponentMounted(pyForm, true);
         });
 
+        fns.push(() => pyForm);
+
         return Sk.misceval.chain(null, ...fns);
     }
 
+    let openFormCall = 0;
+
     /*!defFunction(anvil,!,form,*args,**kwargs)!2*/ "Open the specified form as a new page.\n\nIf 'form' is a string, a new form will be created (extra arguments will be passed to its constructor).\nIf 'form' is a Form object, it will be opened directly."
     pyModule["open_form"] = new Sk.builtin.func(PyDefUtils.withRawKwargs(function(rawKwargs, pyForm, ...args) {
+        const thisFormCall = ++openFormCall;
+
         if (pyForm === undefined) {
             throw new Sk.builtin.TypeError("anvil.open_form() requires an argument");
         }
@@ -402,7 +416,17 @@ module.exports = function(appOrigin, uncaughtExceptions) {
 
                 return PyDefUtils.pyCallOrSuspend(formConstructor, args, rawKwargs);
             },
-            (pyForm) => openFormInstance(pyForm)
+            (pyForm) => {
+                if (thisFormCall !== openFormCall) {
+                    // during instantiation of a form, another call to open_form() is made
+                    // this either happened during the __init__ method of constructing the form
+                    // or some external event like browser back/forward, or clicking a button
+                    assertOpenFormIsComponent(pyForm);
+                    return pyForm;
+                } else {
+                    return openFormInstance(pyForm);
+                }
+            }
         );
 
     }));
@@ -709,7 +733,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
             const [self, pyDownload] = Sk.abstr.copyKeywordsToNamedArgs("get_url", ["self", "download"], args, kws, [Sk.builtin.bool.true$]);
             var appOrigin = Sk.ffi.toJs(anvilServerMod["app_origin"]);//.replace(/[^\/]+\/?$/, "");
             var isDownload = Sk.misceval.isTrue(pyDownload);
-            return new Sk.builtin.str(appOrigin + "/_/lm/" + encodeURIComponent(self._spec.manager) + "/" + encodeURIComponent(self._spec.key) + "/" + encodeURIComponent(self._spec.id) + "/" + encodeURIComponent(self._spec.name || "") + "?s=" + window.anvilSessionToken + (isDownload ? "" : "&nodl=1"));
+            return new Sk.builtin.str(appOrigin + "/_/lm/" + encodeURIComponent(self._spec.manager) + "/" + encodeURIComponent(self._spec.key) + "/" + encodeURIComponent(self._spec.id) + "/" + encodeURIComponent(self._spec.name || "") + "?_anvil_session=" + window.anvilSessionToken + (isDownload ? "" : "&nodl=1"));
         });
 
         $loc["get_name"] = new Sk.builtin.func(function(self) {
@@ -1034,21 +1058,19 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         let hideFired = false;
         a.once("hide", () => {
             hideFired = true;
-            setTimeout(() => {
-                if (pyForm) {
-                    $(pyForm.anvil$hooks.domElement).detach();
-                    topLevelForms.alertForms.delete(pyForm);
-                    PyDefUtils.asyncToPromise(() => notifyComponentUnmounted(pyForm, true)).then(() =>
-                        resolveReturn(returnValue)
-                    );
-                } else {
-                    resolveReturn(returnValue);
-                }
-            });
         });
 
         a.once("hidden", () => {
             activeModalLength--;
+            if (pyForm) {
+                $(pyForm.anvil$hooks.domElement).detach();
+                topLevelForms.alertForms.delete(pyForm);
+                PyDefUtils.asyncToPromise(() => notifyComponentUnmounted(pyForm, true)).then(() =>
+                    resolveReturn(returnValue)
+                );
+            } else {
+                resolveReturn(returnValue);
+            }
         });
 
         const {promise: loadPromise, resolve: loadResolve} = defer();
@@ -1071,8 +1093,6 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                         // do this synchronously
                         // it's possible for hide to be called before shown
                         topLevelForms.alertForms.add(pyForm);
-                    });
-                    a.once("shown", () => {
                         if (hideFired) {
                             loadResolve();
                         } else {
@@ -1080,7 +1100,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                         }
                     });
                 } else {
-                    a.once("shown", () => {
+                    a.once("show", () => {
                         loadResolve();
                     });
                 }

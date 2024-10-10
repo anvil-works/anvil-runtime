@@ -26,7 +26,7 @@ module.exports = (pyModule) => {
     const { isTrue } = Sk.misceval;
 
     pyModule["TextArea"] = PyDefUtils.mkComponentCls(pyModule, "TextArea", {
-        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(TextArea)!2*/ ["layout", "height", "text", "interaction", "appearance", "tooltip", "user data"], {
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(TextArea)!2*/ ["layout", "layout_margin", "height", "text", "interaction", "appearance", "tooltip", "user data"], {
             text: {
                 dataBindingProp: true,
                 get(s, e) {
@@ -106,16 +106,16 @@ module.exports = (pyModule) => {
             const outerStyle = PyDefUtils.getOuterStyle(props);
             const outerAttrs = PyDefUtils.getOuterAttrs(props);
             text = Sk.builtin.checkNone(text) ? "" : text.toString();
-            placeholder = Sk.builtin.checkNone(placeholder) ? "" : placeholder.toString()
+            placeholder = Sk.builtin.checkNone(placeholder) ? "" : placeholder.toString();
             return (
                 <textarea
                     refName="outer"
                     className={`anvil-text-area ${prefix}form-control ${prefix}to-disable ${outerClass}`}
                     style={outerStyle}
                     placeholder={placeholder}
-                    {...outerAttrs}>
-                    {text}
-                </textarea>
+                    value={text}
+                    {...outerAttrs}
+                />
             );
         },
 

@@ -19,7 +19,7 @@
            (org.bouncycastle.openssl PEMParser)
            (org.bouncycastle.openssl.jcajce JcaPEMKeyConverter)))
 
-(clj-logging-config.log4j/set-logger! :level :debug)
+(clj-logging-config.log4j/set-logger! :level :info)
 
 (defn generate-key-pair []
   (-> (doto (KeyPairGenerator/getInstance "RSA")

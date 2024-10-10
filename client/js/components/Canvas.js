@@ -241,7 +241,7 @@ module.exports = function(pyModule) {
     }
 
     pyModule["Canvas"] = PyDefUtils.mkComponentCls(pyModule, "Canvas", {
-        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(Canvas)!1*/ ["layout", "height", "appearance", "user data", "tooltip"]),
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(Canvas)!1*/ ["layout", "layout_margin", "height", "appearance", "user data", "tooltip"]),
 
         events: PyDefUtils.assembleGroupEvents(/*!componentEvents()!2*/ "Canvas", ["universal", "mouse"], {
             reset: /*!componentEvent(Canvas)!1*/ {

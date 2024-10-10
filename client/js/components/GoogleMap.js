@@ -485,7 +485,7 @@ module.exports = function(pyModule) {
         locals: GoogleMapLocals,
 
         // MAP PROPERTIES
-        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(GoogleMap)!1*/ ["layout", "height", "visibility", "user data"], {
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(GoogleMap)!1*/ ["layout", "layout_margin", "height", "visibility", "user data"], {
             /*!componentProp(GoogleMap)!1*/
             map_data: {
                 name: "map_data",

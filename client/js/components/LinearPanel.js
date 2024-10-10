@@ -39,7 +39,7 @@ module.exports = (pyModule) => {
     pyModule["LinearPanel"] = PyDefUtils.mkComponentCls(pyModule, "LinearPanel", {
         base: pyModule["ClassicContainer"],
 
-        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(LinearPanel)!1*/ ["layout", "containers", "appearance", "tooltip", "user data"]),
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(LinearPanel)!1*/ ["layout", "layout_spacing", "containers", "appearance", "tooltip", "user data"]),
 
         events: PyDefUtils.assembleGroupEvents("linear panel", /*!componentEvents(LinearPanel)!1*/ ["universal"]),
 

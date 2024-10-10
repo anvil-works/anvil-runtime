@@ -56,7 +56,7 @@ export function handleOutput(d: any) {
 }
 
 export function handleCookie() {
-    $.post(window.anvilAppOrigin + "/_/request_cookies?s=" + window.anvilSessionToken);
+    $.post(window.anvilAppOrigin + "/_/request_cookies?_anvil_session=" + window.anvilSessionToken);
 }
 
 export function handleInvalidateMacs() {

@@ -1,7 +1,6 @@
 name: Email
 prelude:
   server: "import anvil.email"
-preload_module: anvil.email
 path_whitelist:
   - email.py
 server_config_properties:

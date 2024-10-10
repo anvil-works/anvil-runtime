@@ -1,5 +1,4 @@
 name: SAML Authentication
-preload_module: "anvil.saml"
 path_whitelist:
   - saml/__init__.py
   - saml/auth.js

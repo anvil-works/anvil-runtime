@@ -149,7 +149,7 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
             var anvil = PyDefUtils.getModule("anvil");
             var appPath = Sk.ffi.remapToJs(anvil.tp$getattr(new Sk.builtin.str("app_path")));
 
-            $.get(appPath + "/_/client_auth_id_token?s=" + window.anvilSessionToken).done(function(idToken) {
+            $.get(appPath + "/_/client_auth_id_token?_anvil_session=" + window.anvilSessionToken).done(function(idToken) {
                 console.debug("Got app user ID token:", idToken);
                 if (loginCallbackResolve) {
                     loginCallbackResolve.resolve(idToken);

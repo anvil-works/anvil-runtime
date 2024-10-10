@@ -34,7 +34,7 @@ module.exports = (pyModule) => {
     pyModule["XYPanel"] = PyDefUtils.mkComponentCls(pyModule, "XYPanel", {
         base: pyModule["ClassicContainer"],
 
-        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(XYPanel)!1*/ ["layout", "height", "appearance", "align", "tooltip", "user data"], {
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(XYPanel)!1*/ ["layout", "layout_margin", "height", "appearance", "align", "tooltip", "user data"], {
             height: {
                 set(s, e, v) {
                     s._anvil.elements.holder.style.height = PyDefUtils.cssLength(v.toString());

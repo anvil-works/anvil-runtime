@@ -220,6 +220,7 @@ class File(DriveItem,rpc.LazyMedia):
 
     def __str__(self):
         return "<Google Drive File: %s>" % self["title"]
+#!defAttr()!1: {name: "id", type: "string", description: "ID of the file"}
 #!defClass(anvil.google.drive,#File, anvil.google.drive.DriveItem, anvil.Media)!:
 
 

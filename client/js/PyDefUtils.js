@@ -1,10 +1,29 @@
 "use strict";
 
-const { pyTypeError, pyObject, toPy, Suspension, pyFunc, pyList, pyDict, pyStr, pyCallOrSuspend, pyFalse } = require("./@Sk");
+const {
+    pyTypeError,
+    pyObject,
+    toJs,
+    toPy,
+    Suspension,
+    pyFunc,
+    pyList,
+    pyDict,
+    pyStr,
+    pyCallOrSuspend,
+    pyTuple,
+    Kws,
+    Args,
+    pyCallable,
+} = require("./@Sk");
 const { notifyVisibilityChange } = require("./components/Component");
 const { getCssPrefix, hasLegacyDict } = require("./runner/legacy-features");
 const { objectToKwargs, s_raise_event, pyTryFinally } = require("./runner/py-util");
 const { defer } = require("./utils");
+const { setElementSpacing, setElementMargin, setElementPadding, getSpacingStyles, getMarginStyles, getPaddingStyles,
+    styleObjectToString
+} = require("@runtime/runner/components-in-js/public-api/property-utils");
+const {getSpacingObject} = require("@runtime/runner/component-property-utils-api");
 
 var PyDefUtils = {};
 
@@ -89,8 +108,7 @@ PyDefUtils.funcWithRawKwargsDict = function(f) {
 
 /**
  * @template {pyObject | Suspension} T 
- * @template {import("./@Sk").Args} A
- * @param {(args: A, kws?: import("./@Sk").Kws) => T} f 
+ * @param {(args: Args, kws?: Kws) => T} f 
  * @returns {pyFunc<T>}
  */
 PyDefUtils.funcFastCall = (f) => {
@@ -290,13 +308,14 @@ PyDefUtils.initClassicComponentClassPrototype = function (cls, options = {}) {
             "priority",
             "hidden",
             "deprecated",
+            "deprecateFromRuntimeVersion",
             "pyVal",
             "hideFromDesigner",
             "allowBindingWriteback",
             "showInDesignerWhen",
             "inlineEditElement",
             "designerHint",
-            "iconset",
+            "iconsets",
             "allowCustomValue",
             "accept",
         ].forEach((prop) => {
@@ -409,7 +428,11 @@ PyDefUtils.h = PyDefUtils.createElement = function createElement (tag, _props, .
 
     Object.keys(props).forEach((propName) => {
         const propValue = props[propName];
-        element.setAttribute(propName, propValue == null ? propValue : propValue.toString() );
+        if (propName === "value") {
+            element.value = propValue;
+        } else {
+            element.setAttribute(propName, propValue == null ? propValue : propValue.toString() );
+        }
     });
 
     _children.forEach((child) => {
@@ -470,11 +493,15 @@ PyDefUtils.callAsyncWithoutDefaultError = function() {
 
 /**
  * @template {pyObject} T
- * @param  {...any} args
+ * @param {pyObject | pyCallable<pyObject | Suspension>} func
+ * @param {pyDict=} kwDict
+ * @param {pyTuple=} varargseq
+ * @param {Kws=} kws
+ * @param {Args} args
  * @returns {Promise<T>}
  */
-PyDefUtils.callAsync = (...args) =>
-    Sk.misceval.callAsync(PyDefUtils.suspensionHandlers, ...args).catch((e) => {
+PyDefUtils.callAsync = (func, kwDict, varargseq, kws, ...args) =>
+    Sk.misceval.callAsync(PyDefUtils.suspensionHandlers, func, kwDict, varargseq, kws, ...args).catch((e) => {
         // unhandled errors are caught by window.onunhandledrejection
         throw e;
     });
@@ -777,7 +804,22 @@ PyDefUtils.loadScript = (url, onload) => {
     return p;
 };
 
-PyDefUtils.getOuterStyle = function getOuterStyle({ align, font_size, font, bold, italic, underline, background, foreground, border, height, width }) {
+PyDefUtils.getPaddingStyle = function getPaddingStyle({padding, spacing}) {
+    const style = {};
+
+    if (isTrue(padding)) {
+        Object.assign(style, getPaddingStyles(toJs(padding)));
+    } else if (isTrue(spacing)) {
+        const p = toJs(spacing).padding;
+        if (p) {
+            Object.assign(style, getPaddingStyles(p));
+        }
+    }
+
+    return styleObjectToString(style);
+};
+
+PyDefUtils.getOuterStyle = function getOuterStyle({ align, font_size, font, bold, italic, underline, background, foreground, border, border_radius, height, width, spacing, margin, padding }, includePadding = true) {
     const style = {};
     if (isTrue(align)) {
         style["text-align"] = align.toString();
@@ -807,6 +849,9 @@ PyDefUtils.getOuterStyle = function getOuterStyle({ align, font_size, font, bold
     if (isTrue(border)) {
         style["border"] = border.toString();
     }
+    if (isTrue(border_radius)) {
+        style["border-radius"] = PyDefUtils.cssLength(border_radius.toString());
+    }
     if (isTrue(height)) {
         style["height"] = PyDefUtils.cssLength(height.toString()); 
     }
@@ -814,12 +859,25 @@ PyDefUtils.getOuterStyle = function getOuterStyle({ align, font_size, font, bold
         style["width"] = PyDefUtils.cssLength(width.toString());
     }
 
-    const ret = Object.keys(style)
-        .map((key) => key + ": " + style[key])
-        .join("; ");
-    return ret ? ret + ";" : ret;
+    if (isTrue(spacing)) {
+        const jsSpacing = toJs(spacing);
+        if (jsSpacing.margin) {
+            Object.assign(style, getMarginStyles(jsSpacing.margin));
+        }
+        if (includePadding && jsSpacing.padding) {
+            Object.assign(style, getPaddingStyles(jsSpacing.padding));
+        }
+    } else {
+        if (isTrue(margin)) {
+            Object.assign(style, getMarginStyles(toJs(margin)));
+        }
+        if (includePadding && isTrue(padding)) {
+            Object.assign(style, getPaddingStyles(toJs(padding)));
+        }
+    }
 
-}
+    return styleObjectToString(style);
+};
 
 PyDefUtils.getOuterAttrs = function getOuterAttrs ({tooltip, source, role, enabled}) {
     const attrs = {};
@@ -868,15 +926,74 @@ PyDefUtils.IconComponent = ({side, icon, icon_align}) => {
     return <i refName={refName} className={`anvil-component-icon ${side} ${iconClass} ${icon_align}`}/>;
 }
 
-PyDefUtils.OuterElement = ({refName, style, className, ...props}, ...children) => {
+PyDefUtils.OuterElement = ({refName, includePadding=true, style, className, ...props}, ...children) => {
     const outerClass = PyDefUtils.getOuterClass(props) + (className ? " " + className : "");
-    const outerStyle = PyDefUtils.getOuterStyle(props) + (style ? " " + style : "");
+    const outerStyle = PyDefUtils.getOuterStyle(props, includePadding) + (style ? " " + style : "");
     const outerAttrs = PyDefUtils.getOuterAttrs(props);
     return (
         <div refName={refName || "outer"} className={outerClass} style={outerStyle} {...outerAttrs} children={children}/>
     );
 
-}
+};
+
+const styleToCssVal = (m) => m ? `${m.value}${m.unit}` : null;
+const styleToVal = (m) => m ? (m.unit === "px" ? m.value : styleToCssVal(m)) : null;
+
+const getUnsetMargin = PyDefUtils.getUnsetMargin = (e, currentValue) => {
+    if (!e.computedStyleMap) {
+        return undefined; // Not supported in Firefox
+    }
+    const currentSpacingObject = getSpacingObject(toJs(currentValue), "");
+
+    const styleMap = e.computedStyleMap();
+    const styles = [
+        currentSpacingObject['Top'] === "" ? styleMap.get("margin-top") : null,
+        currentSpacingObject['Right'] === "" ? styleMap.get("margin-right") : null,
+        currentSpacingObject['Bottom'] === "" ? styleMap.get("margin-bottom") : null,
+        currentSpacingObject['Left'] === "" ? styleMap.get("margin-left") : null,
+    ];
+    return {
+        value: styles.map(styleToVal),
+        css: styles.map(styleToCssVal),
+    };
+};
+
+const getUnsetPadding = PyDefUtils.getUnsetPadding = (e, currentValue) => {
+    if (!e.computedStyleMap) {
+        return undefined; // Not supported in Firefox
+    }
+    const currentSpacingObject = getSpacingObject(toJs(currentValue), "");
+    const styleMap = e.computedStyleMap();
+    const styles = [
+        currentSpacingObject['Top'] === "" ? styleMap.get("padding-top") : null,
+        currentSpacingObject['Right'] === "" ? styleMap.get("padding-right") : null,
+        currentSpacingObject['Bottom'] === "" ? styleMap.get("padding-bottom") : null,
+        currentSpacingObject['Left'] === "" ? styleMap.get("padding-left") : null,
+    ];
+    return {
+        value: styles.map(styleToVal),
+        css: styles.map(styleToCssVal),
+    };
+};
+
+const getUnsetSpacing = PyDefUtils.getUnsetSpacing = (marginElement, paddingElement, currentValue) => {
+    const margin = getUnsetMargin(marginElement, toPy(toJs(currentValue)?.margin));
+    const padding = getUnsetPadding(paddingElement, toPy(toJs(currentValue)?.padding));
+    // firefox support
+    if (margin === undefined || padding === undefined) {
+        return undefined;
+    }
+    return {
+        value: {
+            margin: margin.value,
+            padding: padding.value,
+        },
+        css: {
+            margin: margin.css,
+            padding: padding.css,
+        }
+    };
+};
 
 
 /*!propGroups()!1*/
@@ -929,6 +1046,19 @@ var propertyGroups = {
             set(s, e, v) {
                 v = Sk.ffi.remapToJs(v);
                 e.css("font-size", typeof v === "number" ? v + "px" : "");
+            },
+            getUnset(s, e, currentValue) {
+                if (!e[0].computedStyleMap) {
+                    return undefined; // Not supported in Firefox
+                }
+                const jsVal = toJs(currentValue);
+                if (jsVal === null || jsVal === undefined || jsVal === "") {
+                    const v = e[0].computedStyleMap().get("font-size");
+                    return {
+                        value: styleToVal(v),
+                        css: styleToCssVal(v),
+                    };
+                }
             },
         },
         font: {
@@ -985,7 +1115,7 @@ var propertyGroups = {
             name: "icon",
             type: "icon",
 
-            iconset: "font-awesome-4.7.0",
+            iconsets: ["font-awesome-4.7.0"],
 
             defaultValue: Sk.builtin.str.$empty,
             exampleValue: "fa:user",
@@ -1222,6 +1352,7 @@ var propertyGroups = {
             options: ["none", "small", "medium", "large"],
             defaultValue: new Sk.builtin.str("small"),
             pyVal: true,
+            deprecateFromRuntimeV3: localStorage.previewSpacingProperties === 'true', // Once you have margins, this is no longer needed. But we can't remove it entirely, because people might have used it. Hide from designer, allow override via margin property.
             description: "The vertical space above this component.",
             set(s, e, v) {
                 v = v.toString();
@@ -1242,6 +1373,7 @@ var propertyGroups = {
             options: ["none", "small", "medium", "large"],
             defaultValue: new Sk.builtin.str("small"),
             pyVal: true,
+            deprecateFromRuntimeV3: localStorage.previewSpacingProperties === 'true', // Once you have margins, this is no longer needed. But we can't remove it entirely, because people might have used it. Hide from designer, allow override via margin property.
             description: "The vertical space below this component.",
             set(s, e, v) {
                 v = v.toString();
@@ -1256,6 +1388,66 @@ var propertyGroups = {
                 }
             },
         },
+    },
+
+    layout_spacing: {
+        spacing: {
+            group: "layout", // Override group for this property
+            name: "spacing",
+            type: "spacing",
+            noDoc: true, // Exclude from API docs
+            hidden: localStorage.previewSpacingProperties !== 'true',
+            description: "Margin and padding for this container. Only available in apps that have been migrated to use Layouts.",
+            defaultValue: Sk.builtin.none.none$,
+            important: true,
+            priority: 0,
+            set(s, e, v) {
+                setElementSpacing(e[0], v);
+            },
+            getUnset(s, e, currentValue) {
+                return getUnsetSpacing(e[0], e[0], currentValue);
+            },
+        }
+    },
+
+    layout_margin: {
+        margin: {
+            group: "layout", // Override group for this property
+            name: "margin",
+            type: "margin",
+            noDoc: true, // Exclude from API docs
+            hidden: localStorage.previewSpacingProperties !== 'true',
+            description: "Margin for this component. Only available in apps that have been migrated to use Layouts.",
+            defaultValue: Sk.builtin.none.none$,
+            important: true,
+            priority: 0,
+            set(s, e, v) {
+                setElementMargin(e[0], v);
+            },
+            getUnset(s, e, v) {
+                return getUnsetMargin(e[0], v);
+            },
+        }
+    },
+
+    layout_padding: {
+        padding: {
+            group: "layout", // Override group for this property
+            name: "padding",
+            type: "padding",
+            noDoc: true,// Exclude from API docs
+            hidden: localStorage.previewSpacingProperties !== 'true',
+            description: "Padding for this component. Only available in apps that have been migrated to use Layouts.",
+            defaultValue: Sk.builtin.none.none$,
+            important: true,
+            priority: 0,
+            set(s, e, v) {
+                setElementPadding(e[0], v);
+            },
+            getUnset(s, e, v) {
+                return getUnsetPadding(e[0], v);
+            },
+        }
     },
 
     containers: {
@@ -1598,7 +1790,7 @@ PyDefUtils.assembleGroups = function assembleGroups(groups, componentName, group
         const groupProps = groups[groupName];
         for (let i in groupProps) {
             let prop = groupProps[i];
-            prop.group = groupName;
+            prop.group ||= groupName; // Allow properties defined in one group (above) to actually appear in another group
             const override = overrides[prop.name] || {};
             prop = { ...prop, ...override };
             if (prop.description) {

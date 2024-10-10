@@ -371,7 +371,7 @@ module.exports = (pyModule) => {
     pyModule["RichText"] = PyDefUtils.mkComponentCls(pyModule, "RichText", {
         base: pyModule["ClassicContainer"],
 
-        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(RichText)!2*/ ["text", "layout", "appearance", "tooltip", "user data"], {
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(RichText)!2*/ ["text", "layout", "layout_spacing", "appearance", "tooltip", "user data"], {
             text: {omit: true},
             bold: {omit: true},
             italic: {omit: true},

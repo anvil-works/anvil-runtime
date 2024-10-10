@@ -33,11 +33,10 @@ description: |
 
 module.exports = (pyModule) => {
 
-
     pyModule["ColumnPanel"] = PyDefUtils.mkComponentCls(pyModule, "ColumnPanel", {
         base: pyModule["ClassicContainer"],
 
-        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(ColumnPanel)!1*/ ["layout", "containers", "appearance", "user data", "tooltip"], {
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(ColumnPanel)!1*/ ["layout", "layout_spacing", "containers", "appearance", "user data", "tooltip"], {
             col_widths: /*!componentProp(ColumnPanel)!1*/ {
                 name: "col_widths",
                 type: "string",

@@ -7,9 +7,12 @@ import {
     chainOrSuspend,
     checkCallable,
     isTrue,
+    objectRepr,
+    pyAttributeError,
     pyCallOrSuspend,
     pyCallable,
     pyDict,
+    pyException,
     pyIsSubclass,
     pyList,
     pyNone,
@@ -363,7 +366,7 @@ export const Slot: SlotConstructor = Sk.abstr.buildNativeClass("anvil.Slot", {
     $doc: "Add a component to this slot.\n\nCalling add_component() on a Slot will add the specified component to its target container.",
     anvil$args: {
         component: "The component to add to this slot.",
-        index: "The index, within the slot, at which the component is to be inserted.\n\nNote: This argument is index is within the Slot, not within the target container. The Slot will adjust for its own insertion_index, as well as components in any previous slots registered with offset_by_slot(), when computing the index= parameter to the target container's add_component() method.",
+        index: "The index, within the slot, at which the component is to be inserted. Note: This argument is index is within the Slot, not within the target container. The Slot will adjust for its own insertion_index, as well as components in any previous slots registered with offset_by_slot(), when computing the index= parameter to the target container's add_component() method.",
         layout_properties:
             "Layout properties will be passed on as keyword arguments to the target container's add_component() method, unless overridden by the Slot.",
     },
@@ -472,6 +475,7 @@ export const WithLayout: WithLayoutConstructor = Sk.abstr.buildNativeClass("anvi
                 set pyLayout(v) {
                     if (this._pyLayout) {
                         delete this._pyLayout._Component.portalParent;
+                        this.domElement = null;
                     }
                     this._pyLayout = v;
                     self.$setupPageState();
@@ -618,18 +622,33 @@ export const WithLayout: WithLayoutConstructor = Sk.abstr.buildNativeClass("anvi
 
                 const t = l.type;
 
-                return chainOrSuspend(
-                    l.type === "form"
-                        ? getNamedFormInstantiator(l.formSpec, this)
-                        : l.type === "builtin"
-                        ? getAnvilComponentInstantiator({ fromYaml: false, requestingComponent: this }, l.name)
-                        : (kws?: Kws) => pyCallOrSuspend(l.constructor, [], kws),
-                    (instantiate) => instantiate(kwargs) as Component,
-                    (pyL) => {
-                        this._withLayout.pyLayout = pyL;
-                        return onAssociate?.(pyL, this);
-                    },
-                    () => this._withLayout.pyLayout!
+                return tryCatchOrSuspend(
+                    () =>
+                        chainOrSuspend(
+                            l.type === "form"
+                                ? getNamedFormInstantiator(l.formSpec, this)
+                                : l.type === "builtin"
+                                ? getAnvilComponentInstantiator({ fromYaml: false, requestingComponent: this }, l.name)
+                                : (kws?: Kws) => pyCallOrSuspend(l.constructor, [], kws),
+                            (instantiate) => instantiate(kwargs) as Component,
+                            (pyL) => {
+                                this._withLayout.pyLayout = pyL;
+                                return onAssociate?.(pyL, this);
+                            },
+                            () => this._withLayout.pyLayout!
+                        ),
+                    (e) => {
+                        // See #5358 - Attribute Errors thrown when instantiating a layout are not likely to propagate
+                        // to the user, so we wrap it in an Exception and re-throw.
+                        if (e instanceof pyAttributeError) {
+                            const wrapE = new pyException(
+                                `Failed to instantiate layout for ${objectRepr(this)}: got ${objectRepr(e)}`
+                            );
+                            wrapE.traceback = e.traceback;
+                            e = wrapE;
+                        }
+                        throw e;
+                    }
                 );
             },
             $set(newLayout) {

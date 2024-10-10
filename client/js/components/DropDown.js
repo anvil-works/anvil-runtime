@@ -45,7 +45,7 @@ module.exports = (pyModule) => {
     const { isTrue } = Sk.misceval;
 
     pyModule["DropDown"] = PyDefUtils.mkComponentCls(pyModule, "DropDown", {
-        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(DropDown)!2*/ ["layout", "interaction", "text", "appearance", "user data", "tooltip"], {
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(DropDown)!2*/ ["layout", "layout_margin", "interaction", "text", "appearance", "user data", "tooltip"], {
             align: {
                 defaultValue: new Sk.builtin.str("full"),
                 options: ["left", "center", "right", "full"],

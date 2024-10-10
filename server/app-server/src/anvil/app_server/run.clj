@@ -143,7 +143,7 @@
   (logging/setup-logging!)
 
   (let [options (if-let [config (:config-file options)]
-                  (merge (yaml/parse-string (slurp config)) options)
+                  (merge (util/parse-yaml-str (slurp config)) options)
                   options)
 
         _ (when (or errors (seq arguments))
@@ -281,7 +281,7 @@
 
       (let [traefik-exited (traefik/run-traefik (merge
                                                   ;; Common config
-                                                  {:traefik-dir       (str (.getAbsolutePath (File. ^String (:data-dir options))) "/traefik")
+                                                  {:traefik-dir       (str (.getAbsolutePath (File. ^String (:data-dir config))) "/traefik")
                                                    :forward-to        (str "http://localhost:" http-port)
                                                    :listen-ip         (:ip config)
                                                    :http-listen-port  (:http-redirect-port config)
@@ -294,7 +294,7 @@
                                                   (when letsencrypt?
                                                     {:letsencrypt-domain   (.getHost origin-uri)
                                                      :letsencrypt-staging? (:letsencrypt-staging options)
-                                                     :letsencrypt-storage  (:letsencrypt-storage options)})
+                                                     :letsencrypt-storage  (:letsencrypt-storage config)})
 
                                                   ;; If we're providing our own certificates
                                                   (when manual-tls?

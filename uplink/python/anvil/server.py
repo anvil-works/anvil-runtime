@@ -42,6 +42,7 @@ from ._server import (register,
                       api_request as request, 
                       HttpResponse,
                       FormResponse,
+                      _LoadAppResponse,
                       Capability,
                       unwrap_capability,
                       cookies,
@@ -59,6 +60,11 @@ from ._server import (register,
 _threaded_server.send_reqresp = lambda r, collect_capabilities=None, remote_is_trusted=False: _get_connection().send_reqresp(r, collect_capabilities=collect_capabilities, remote_is_trusted=remote_is_trusted)
 
 __author__ = 'Meredydd Luff <meredydd@anvil.works>'
+
+def __getattr__(name):
+    if name == "startup_data":
+        raise RuntimeError("anvil.server.startup_data is only available on the client")
+    raise AttributeError(name)
 
 _url = 'wss://anvil.works/uplink'
 

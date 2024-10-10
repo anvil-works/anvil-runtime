@@ -35,6 +35,8 @@ from ._server import (register,
                       api_request as request, 
                       HttpResponse,
                       FormResponse,
+                      _LoadAppResponse,
+                      AppResponder,
                       cookies,
                       raise_event,
                       list_client_sessions,
@@ -47,6 +49,12 @@ from ._server import (register,
                       _on_invalidate_client_objects)
 
 from . import _threaded_server, _server
+
+#~!defModuleAttr(anvil.server)!1: {name: 'startup_data', type: 'any', description: 'data loaded when returning a LoadAppResponse from a route'}
+def __getattr__(name):
+    if name == "startup_data":
+        raise RuntimeError("anvil.server.startup_data is only available on the client")
+    raise AttributeError(name)
 
 #!defFunction(anvil.server,%, function_name, **kwargs)!2: "Allows you to call server-side functions from the client. It requires the name of the function that you want to call, passed as a string. Any extra arguments are passed through to the server function." ["call"]
 def call(*args, **kwargs):
@@ -63,24 +71,24 @@ def call(*args, **kwargs):
 
 
 # Once downlinks rebuilt and updated for all of legacy, dynamic and sandbox, update these to include [prefer_ephemeral_debug=] and update docs
-#!defFunction(anvil.server,string,[environment_type])!2: {anvil$args: {environment: "Pass 'published' to get the published URL"}, anvil$helpLink: "/docs/http-apis/creating-http-endpoints#getting-the-url-for-your-api", $doc: "Returns the root URL for the current app.\n\nBy default, this function returns the URL for the current environment, which might be private or temporary (for example, if you are running your app in the Anvil Editor). If you want the URL for the published branch, pass 'published' as an argument."} ["get_app_origin"]
+#!defFunction(anvil.server,string,[environment_type])!2: {anvil$args: {environment_type: "Pass 'published' to get the published URL"}, anvil$helpLink: "/docs/http-apis/creating-http-endpoints#getting-the-url-for-your-api", $doc: "Returns the root URL for the current app.\n\nBy default, this function returns the URL for the current environment, which might be private or temporary (for example, if you are running your app in the Anvil Editor). If you want the URL for the published branch, pass 'published' as an argument."} ["get_app_origin"]
 def get_app_origin(environment_type=None, **kwargs):
     return call("anvil.private.get_app_origin", environment_type, **kwargs)
 
 
-#!defFunction(anvil.server,string,[environment_type])!2: {anvil$args: {environment: "Pass 'published' to get the published URL"}, anvil$helpLink: "/docs/http-apis/creating-http-endpoints#getting-the-url-for-your-api", $doc: "Returns the root URL of the API for the current app.\n\nBy default, this function returns the URL for the current environment, which might be private or temporary (for example, if you are running your app in the Anvil Editor). If you want the URL for the published branch, pass 'published' as an argument."} ["get_api_origin"]
+#!defFunction(anvil.server,string,[environment_type])!2: {anvil$args: {environment_type: "Pass 'published' to get the published URL"}, anvil$helpLink: "/docs/http-apis/creating-http-endpoints#getting-the-url-for-your-api", $doc: "Returns the root URL of the API for the current app.\n\nBy default, this function returns the URL for the current environment, which might be private or temporary (for example, if you are running your app in the Anvil Editor). If you want the URL for the published branch, pass 'published' as an argument."} ["get_api_origin"]
 def get_api_origin(environment_type=None, **kwargs):
     return call("anvil.private.get_api_origin", environment_type, **kwargs)
 
-
+#!defFunction(anvil.server,Task object,fn_name, [args])!2: {anvil$args: {fn_name: "The name of the background function to launch", args: "Arguments to pass into the background function"}, anvil$helpLink: "/docs/background-tasks/defining-and-running", $doc: "Launches a function to run in the background. The function must be decorated with @anvil.server.background_task. Returns a Task object."} ["launch_background_task"]
 def launch_background_task(fn_name, *args, **kwargs):
     return call("anvil.private.background_tasks.launch", fn_name, *args, **kwargs)
 
-
+#!defFunction(anvil.server,Task object,id)!2: {anvil$args: {id: "The id of a background task"}, anvil$helpLink: "/docs/background-tasks/communicating-back", $doc: "Returns the Task object of a background task from its id. You can get the task id from task.get_id()."} ["get_background_task"]
 def get_background_task(id):
     return call("anvil.private.background_tasks.get_by_id", id)
 
-
+#!defFunction(anvil.server,list of Task objects,[all_environments])!2: {anvil$args: {all_environments: "Defaults to False. If False, the function will only return background tasks running in the environment in which this function was called. If True, the return value will include all background tasks regardless of environment."}, anvil$helpLink: "/docs/background-tasks#list-background-tasks-from-code", $doc: "Returns a list of all Tasks running in the current environment. If all_environments is True, this function will return all of the app's running Tasks regardless of environemnt."} ["list_background_tasks"]
 def list_background_tasks(all_environments=False):
     return call("anvil.private.background_tasks.list", all_environments=all_environments)
 

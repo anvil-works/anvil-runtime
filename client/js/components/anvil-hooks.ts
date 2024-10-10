@@ -28,14 +28,14 @@ import {
     s_anvil_get_container_design_info,
     s_anvil_get_interactions,
     s_anvil_get_section_dom_element,
-    s_anvil_get_sections,
+    s_anvil_get_sections, s_anvil_get_unset_property_values,
     s_anvil_properties,
     s_anvil_set_section_property_values,
     s_anvil_setup_dom,
     s_anvil_update_design_name,
     s_anvil_update_layout_properties,
 } from "@runtime/runner/py-util";
-import { AnvilHookSpec, AnvilHooks, Component, ComponentConstructor } from "./Component";
+import {AnvilHookSpec, AnvilHooks, Component, ComponentConstructor, UnsetPropertyValues} from "./Component";
 
 /**
 # The Anvil hook machinery
@@ -131,6 +131,11 @@ const anvilHookPyWrapperDescriptors: Partial<Record<AnvilKeys, WrapperDescriptor
     getInteractions: {
         $name: "_anvil_get_interactions_",
         $wrapper: wrapNoArgs("_anvil_get_interactions_"),
+        $flags: NoArgs,
+    },
+    getUnsetPropertyValues: {
+        $name: "_anvil_get_unset_property_values_",
+        $wrapper: wrapNoArgs("_anvil_get_unset_property_values_"),
         $flags: NoArgs,
     },
     getContainerDesignInfo: {
@@ -317,6 +322,7 @@ const jsCallWrappers = {
     getSectionDomElement: noSuspensionWrapper,
     setSectionPropertyValues: noSuspensionWrapper,
     getInteractions: noSuspensionWrapper,
+    getUnsetPropertyValues: noSuspensionWrapper,
 };
 
 const jsToPyName = {
@@ -333,6 +339,7 @@ const jsToPyName = {
     properties: s_anvil_properties,
     events: s_anvil_events,
     getInteractions: s_anvil_get_interactions,
+    getUnsetPropertyValues: s_anvil_get_unset_property_values,
 };
 
 function setUpHookProxy(self: Component, cls: ComponentConstructor) {
@@ -381,6 +388,7 @@ const specNameToHookName: Record<keyof AnvilHookSpec, keyof AnvilHooks> = {
     getEvents: "events",
     updateDesignName: "updateDesignName",
     getInteractions: "getInteractions",
+    getUnsetPropertyValues: "getUnsetPropertyValues",
     getContainerDesignInfo: "getContainerDesignInfo",
     updateLayoutProperties: "updateLayoutProperties",
     getSections: "getSections",

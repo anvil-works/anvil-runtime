@@ -644,9 +644,9 @@
                              {:order_by (:id (get-col (:column_name value))) :ascending (boolean (:ascending value))}
 
                              "anvil.tables.query.page_size"
-                             (if (number? (:rows value))
+                             (if (and (number? (:rows value)) (pos? (:rows value)))
                                {:chunk_size (:rows value)}
-                               (throw+ (general-tables-error (str "Page size must be a number."))))
+                               (throw+ (general-tables-error (str "Page size must be a positive number."))))
 
                              (throw+ (general-tables-error (str "Invalid data tables search modifier: '" (pr-str modifier) "'")))))]
 

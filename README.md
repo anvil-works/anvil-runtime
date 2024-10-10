@@ -7,7 +7,7 @@
  * Your [browser-side code](https://anvil.works/python-browser) is in Python
  * Your [user interface](https://anvil.works/articles/python-gui-builder-web) is in Python
  * Your [server-side code](https://anvil.works/docs/server-code) is in Python
- * (Optional:) Your [database](https://anvil.works/docs/data-tables) is Python object
+ * Your [database](https://anvil.works/docs/data-tables) is all Python objects
 
 The Anvil Runtime is the open-source engine that powers those apps. This repository contains the Anvil Runtime libraries, as well as a standalone App Server which uses the Runtime to serve an Anvil app from the local filesystem.
 

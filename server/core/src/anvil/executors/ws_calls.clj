@@ -163,7 +163,8 @@
                                         (dispatcher/update! return-path %)))
 
                          :respond! #(when (= 1 (swap! n-responses inc))
-                                      (dispatcher/respond! return-path %))}
+                                      (dispatcher/report-exceptions-to-return-path return-path
+                                        (dispatcher/respond! return-path %)))}
                         return-path)]
 
       (dispatcher/dispatch! request return-path))))

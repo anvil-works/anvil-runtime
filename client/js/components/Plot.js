@@ -134,7 +134,7 @@ module.exports = (pyModule) => {
     // See closed pr #2890 which has one possible approach using a beforeSet hook
     
     pyModule["Plot"] = PyDefUtils.mkComponentCls(pyModule, "Plot", {
-        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(Plot)!2*/ ["layout", "height", "visibility", "tooltip", "user data"], {
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(Plot)!2*/ ["layout", "layout_margin", "height", "visibility", "tooltip", "user data"], {
             height: {
                 defaultValue: new Sk.builtin.int_(450),
             },

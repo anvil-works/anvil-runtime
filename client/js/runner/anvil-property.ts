@@ -170,6 +170,6 @@ export const anvil_property: AnvilPropertyConstructor = buildNativeClass("anvil.
         },
     },
     flags: {
-        sk$acceptable_as_base_class: false,
+        sk$unacceptableBase: true,
     },
 });

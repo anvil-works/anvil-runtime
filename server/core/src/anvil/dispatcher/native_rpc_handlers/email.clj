@@ -239,7 +239,7 @@
       (when-not quota-available
         (rpc-util/*rpc-println* (str "Email quota exceeded. Rerouting email to app owner instead of '" (or to @reroute-address) "'.")))
 
-      (try+
+      (try
         (let [msg ^MimeMessage (smtp-send
                                  (get-smtp-connection email-service-config rpc-util/*environment*)
                                  {:from-address       from_address

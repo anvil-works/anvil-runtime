@@ -1,6 +1,5 @@
 name: Users
 prelude: "import anvil.users"
-preload_module: anvil.users
 path_whitelist:
   - users/__init__.py
   - users/exceptions.py

@@ -86,7 +86,7 @@ Here is an example entry in `anvil.yaml` that adds an existing Anvil app with ID
 ```
 dependencies:
 - app_id: ZBDT7UM6GVGR7W4D
-  version: {dev: false}
+  version: {branch: "master"}
 ```
 
 You will also need to inform the Anvil App Server of any dependencies when launching your apps locally, either on the command line or in a config file. See the [README](../README.md) for more information. 

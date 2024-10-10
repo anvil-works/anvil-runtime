@@ -14,6 +14,7 @@ import {
     s_x_anvil_page_shown,
 } from "../runner/py-util";
 import { Component, getListenerCallbacks, raiseWritebackEventOrSuspend } from "./Component";
+import {data} from "@runtime/runner/data";
 
 var PyDefUtils = require("PyDefUtils");
 
@@ -34,8 +35,9 @@ module.exports = (pyModule) => {
     );
 
     function getPropertyDescriptions(rawPropDescriptions) {
-        return rawPropDescriptions.map(
-            ({
+        return rawPropDescriptions
+            .filter(({type}) => data.app.runtime_options.version >= 3 || !["margin", "padding", "spacing"].includes(type))
+            .map(({
                 name,
                 type,
                 group,
@@ -44,7 +46,7 @@ module.exports = (pyModule) => {
                 hidden,
                 options,
                 accept,
-                iconset,
+                iconsets,
                 allowCustomValue,
                 designerHint,
                 multiline,
@@ -54,6 +56,8 @@ module.exports = (pyModule) => {
                 noneOptionLabel,
                 defaultBindingProp,
                 priority,
+                showInDesignerWhen,
+                deprecateFromRuntimeV3
             }) => ({
                 name,
                 type,
@@ -63,16 +67,17 @@ module.exports = (pyModule) => {
                 hidden,
                 options,
                 accept,
-                iconset,
+                iconsets,
                 allowCustomValue,
                 designerHint,
                 multiline,
-                deprecated,
+                deprecated: deprecated || (deprecateFromRuntimeV3 && data.app.runtime_options.version >= 3),
                 supportsWriteback: allowBindingWriteback,
                 includeNoneOption,
                 noneOptionLabel,
                 defaultBindingProp,
                 priority,
+                showInDesignerWhen,
             })
         );
     }
@@ -156,6 +161,13 @@ module.exports = (pyModule) => {
                         });
                     }
                     return interactions;
+                },
+                getUnsetPropertyValues() {
+                    return Object.fromEntries(
+                        Object.entries(this._anvil.propMap)
+                        .map(([name, {getUnset}]) => [name, getUnset?.(this, this._anvil.element, this._anvil.props[name])])
+                        .filter(([_, unset]) => unset)
+                    );
                 },
                 getProperties() {
                     // we don't use _anvil because 'this' might be the prototype

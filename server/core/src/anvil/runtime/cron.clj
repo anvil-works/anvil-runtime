@@ -152,7 +152,7 @@
                                              (update-job! util/db job {:last_bg_task_id (json/read-str (:id response))})))}))
                           (catch :anvil/app-loading-error e
                             (log/warn e (str "Failed to load app when launching scheduled task " job_id " for app " app_id ": " (:anvil/app-loading-error e) "-" (:message e))))
-                          (catch Exception e
+                          (catch Object e
                             (log/error e (str "Failed to launch scheduled task " job_id " for app " app_id)))))]
           (if (nil? last_bg_task_id)
             (launch!)

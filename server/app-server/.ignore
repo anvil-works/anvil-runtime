@@ -1,0 +1,2 @@
+# Ignore all files through the checkouts symlinks, so VSCode search won't find them.
+/checkouts/

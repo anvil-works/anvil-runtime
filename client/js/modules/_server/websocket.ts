@@ -34,7 +34,7 @@ function heartbeatInterval(ws: WebSocket) {
 
 const getWebSocketEndpoint = () => {
     const base = window.anvilAppOrigin.replace(/^http/, "ws");
-    return `${base}/_/ws/${window.anvilParams.accessKey || ""}?s=${window.anvilSessionToken}`;
+    return `${base}/_/ws/${window.anvilParams.accessKey || ""}?_anvil_session=${window.anvilSessionToken}`;
 };
 
 let firstSendFail = true;

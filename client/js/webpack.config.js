@@ -42,7 +42,16 @@ const plugins = [
 
 const cssLoader = {
     test: /\.(sa|sc|c)ss$/,
-    use: [MiniCssExtractPlugin.loader, "css-loader", "sass-loader"],
+    use: [
+        MiniCssExtractPlugin.loader,
+        {
+            loader: "css-loader",
+            options: {
+                url: false, // Disable URL handling in CSS
+            },
+        },
+        "sass-loader"
+    ],
 };
 
 module.exports = (env, argv) => {

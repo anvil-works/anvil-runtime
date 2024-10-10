@@ -11,9 +11,12 @@ import threading
 import time
 from select import select
 import os.path
+import shutil
 from pprint import pprint
 from numbers import Number
 from tempfile import NamedTemporaryFile, TemporaryDirectory
+import random
+import string
 
 if sys.version_info < (3,0,0):
     import urllib
@@ -127,7 +130,8 @@ class Browser:
         port = SystemRandom().randint(10000, 20000)
         print(f"Booting browser on port {port}...")
         # Chrome starts lots of processes. Use os.setsid to start all of them in a new process group, so we can kill them all later.
-        with subprocess.Popen(CHROME_SANDBOX_ARGS + ["google-chrome", "--headless", "--disable-gpu", f"--remote-debugging-port={port}"], stderr=subprocess.PIPE, stdout=subprocess.PIPE, preexec_fn=os.setsid) as process:
+        tmp_dir = "".join(random.choices(string.ascii_uppercase + string.digits, k=10))
+        with subprocess.Popen(CHROME_SANDBOX_ARGS + ["bash", "-c", f"XDG_CACHE_HOME=/tmp/{tmp_dir} XDG_CONFIG_HOME=/tmp/{tmp_dir} google-chrome --headless --disable-gpu --remote-debugging-port={port}"], stderr=subprocess.PIPE, stdout=subprocess.PIPE, preexec_fn=os.setsid) as process:
 
             try:
 
@@ -278,6 +282,7 @@ class Browser:
                     if cpid != 0:
                         n_terminated += 1
                 print(f"{n_terminated} children reaped")
+                shutil.rmtree(f"/tmp/{tmp_dir}", ignore_errors=True)
 
     def get_pdf_options(self):
         # Whitelist these options carefully; they're going into the management end of Chrome

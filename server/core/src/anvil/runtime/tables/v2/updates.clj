@@ -36,7 +36,7 @@
 
 (defn- check-values-for-update [tables {table-id :id :keys [perm cols restrict] :as view-spec} value-args]
   (let [table-columns (get-in tables [table-id :columns])]
-    (reduce (fn [{:keys [reduced-values media-to-write media-to-displace] :as rv} [col-name value]]
+    (reduce (fn [rv [col-name value]]
               (let [col-name (util/preserve-slashes col-name)
                     _ (when-not (if cols
                                   (some #{col-name} cols)
@@ -60,7 +60,15 @@
                   (-> rv
                       (update :media-to-displace conj col-id)
                       (assoc-in [:reduced-values col-id] nil)
-                      (cond-> value (assoc-in [:media-to-write col-id] value)))
+                      (cond-> value (assoc-in [:media-to-write col-id] {:media value
+                                                                        :bytes (delay ; Don't do this until we need it, because it may never be required. In batch updates,
+                                                                                      ; check-values-for-update is called repeatedly, and we only actually want the last one.
+                                                                                      ; This is a delay rather than a fn because we can't re-consume the media object in the
+                                                                                      ; event of a transaction retry.
+                                                                                 (with-open [in-stream ^InputStream (blocking-hacks/?->InputStream rpc-util/*req* value)
+                                                                                             out-stream (ByteArrayOutputStream.)]
+                                                                                   (IOUtils/copy in-stream out-stream 4096)
+                                                                                   (.toByteArray out-stream)))})))
 
                   :else
                   (assoc-in rv [:reduced-values col-id] (table-types/reduce-val col-type value))))
@@ -155,7 +163,7 @@
           media-ids (mapcat (fn [{:keys [row_id data]}]
                               (let [{:keys [media-to-displace media-to-write]} (get rows-by-id row_id)]
                                 (for [col-id media-to-displace
-                                      :let [{:keys [type manager id] :as new-media} (get media-to-write col-id)
+                                      :let [{:keys [type manager id] :as new-media} (get-in media-to-write [col-id :media])
                                             current-oid (get data (keyword col-id))]
                                       ;; Destroy if there is media here and it's not being overwritten with itself
                                       :when (and current-oid (or (nil? new-media)
@@ -167,34 +175,6 @@
                                   current-oid))) results)]
       (delete-media! db-c media-ids))))
 
-(defn- create-blob! [db-c quota-ctx media]
-  (let [[oid ^Blob blob] (jdbc/db-query-with-resultset db-c ["SELECT lo_create(0)"]
-                                                       (fn [^ResultSet x]
-                                                         (.next x)
-                                                         [(.getLong x 1) (.getBlob x 1)]))
-
-        out-stream (.setBinaryStream blob 1)
-        in-stream ^InputStream (blocking-hacks/?->InputStream rpc-util/*req* media)
-        size (IOUtils/copy in-stream out-stream 4096)]
-    (quota/decrement-if-possible-c! quota-ctx db-c :db-bytes size)
-    (.close out-stream)
-    (.close in-stream)
-    (.free blob)
-    oid))
-
-(defn- create-blobs! [db-c quota-ctx rows]
-  (worker-pool/with-expanding-threadpool-when-slow
-    (doall
-      (for [{:keys [media-to-write] :as row} rows]
-        (if-not media-to-write
-          row
-          (let [created-oids (into {}
-                                   (for [[col-id media] media-to-write
-                                         :when media-to-write]
-                                     [col-id (create-blob! db-c quota-ctx media)]))]
-            (-> row
-                (assoc :created-oids created-oids)
-                (update-in [:reduced-values] merge created-oids))))))))
 
 (defn- create-media-records! [db-c table-id quota-ctx rows]
   ;; At this point we don't (necessarily) know row-id. That's fine, in the case of an insert, we'll come back later and fill it in.
@@ -203,17 +183,12 @@
       row
       (let [created-oids
             (into {}
-                  (for [[col-id media] media-to-write
+                  (for [[col-id {:keys [media bytes]}] media-to-write
                         :when media]
-                    (let [in-stream ^InputStream (blocking-hacks/?->InputStream rpc-util/*req* media)
-                          out-stream (ByteArrayOutputStream.)
-                          size (IOUtils/copy in-stream out-stream 4096)
-                          data (.toByteArray out-stream)]
-                      (.close in-stream)
-                      (.close out-stream)
+                    (let [size (alength @bytes)]
                       (quota/decrement-if-possible-c! quota-ctx db-c :db-bytes size)
                       (let [object-id (:object_id (first (jdbc/query db-c ["INSERT INTO app_storage_media(content_type, name, table_id, row_id, column_id, data) VALUES (?, ?, ?, ?, ?, ?) RETURNING object_id"
-                                                                           (dispatcher-types/getContentType media) (dispatcher-types/getName media) table-id row-id (util/preserve-slashes col-id) data])))]
+                                                                           (dispatcher-types/getContentType media) (dispatcher-types/getName media) table-id row-id (util/preserve-slashes col-id) @bytes])))]
                         [col-id object-id]))))]
         (-> row
             (dissoc :media-to-write)

@@ -39,4 +39,24 @@
         margin-left: 50px;
         margin-top: 10px;
     }
+
+    .glyphicon {
+        position: relative;
+        top: 1px;
+        display: inline-block;
+        font-family: "Glyphicons Halflings";
+        font-style: normal;
+        font-weight: 400;
+        line-height: 1;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+    }
+
+    .glyphicon-warning-sign:before {
+        content: "\e107";
+    }
+
+    .glyphicon-remove:before {
+        content: "\e014";
+    }
 }

@@ -67,7 +67,8 @@
   (when u/*client-request?*
     (throw+ {:anvil/server-error "Cannot call this function from client code", :type "anvil.server.PermissionDenied"}))
   (worker-pool/with-expanding-threadpool-when-slow
-    (let [method (keyword (.toLowerCase (or method "GET")))
+    (let [start-time (System/currentTimeMillis)
+          method (keyword (.toLowerCase (or method "GET")))
           headers (reduce merge {} (for [[k v] headers]
                                      {(.substring (.toLowerCase (str k)) 1) v}))
           headers (if username
@@ -112,6 +113,7 @@
                                                          @(http/request httpkit-map nil))]
 
       (log/trace resp)
+      (log/debug (str "anvil.private.http.request from app " u/*app-id* " to " url " took " (- (System/currentTimeMillis) start-time) "ms"))
 
       (when error
         (throw+ (general-http-error "anvil.http.HttpRequestFailed"

@@ -1,7 +1,8 @@
 (ns anvil.util
   (:use [clojure.pprint]
         [slingshot.slingshot])
-  (:require [digest]
+  (:require [clj-yaml.core :as yaml]
+            [digest]
             [crawlers.detector :as crawlers]
             [anvil.runtime.conf :as conf]
             [clojure.data.json :as json]
@@ -21,14 +22,14 @@
            (javax.crypto.spec SecretKeySpec)
            (javax.net.ssl SSLContext)
            (org.mindrot.jbcrypt BCrypt)
-           (clojure.lang Keyword)
+           (clojure.lang IPersistentMap Keyword)
            (java.net InetAddress)
            (com.maxmind.db CHMCache)
            (com.maxmind.geoip2 DatabaseReader$Builder DatabaseReader)
            (java.io InputStream File ByteArrayOutputStream ByteArrayInputStream FileOutputStream)
            (com.maxmind.geoip2.exception GeoIp2Exception)
            (com.mchange.v2.c3p0 DataSources)
-           (java.util Properties Map)
+           (java.util LinkedHashMap Properties Map)
            (javax.sql DataSource)
            (java.time Instant ZoneOffset)
            (java.time.format DateTimeFormatter)
@@ -53,6 +54,15 @@
 (def insecure-client (http/make-client {}))
 (defn get-default-ssl-engine []
   (.createSSLEngine (SSLContext/getDefault)))
+
+;; Override clj-yaml encoder to sort map keys, so YAML is stable for git diffs.
+(extend-protocol yaml/YAMLCodec
+  IPersistentMap
+  (yaml/encode [data]
+    (let [lhm (LinkedHashMap.)]
+      (doseq [k (sort (keys data))]
+        (.put lhm (yaml/encode k) (yaml/encode (get data k))))
+      lhm)))
 
 ;; To define hookable functions, in runtime:
 ;;     (def set-foo-hooks! (hook-setter #{foo bar baz})
@@ -135,6 +145,15 @@
 (defn read-json-str [val]
   (json/read-str val :key-fn keyword))
 
+(def YAML-CODE-POINT-LIMIT 99999999)                        ; Override 3 MB default
+
+(defn parse-yaml-str [val & args]
+  (apply yaml/parse-string val :code-point-limit YAML-CODE-POINT-LIMIT args))
+
+(defn parse-yaml-bytes [^bytes val & args]
+  (when val
+    (apply parse-yaml-str (String. val) args)))
+
 (defn as-properties [kw-map]
   (let [p (Properties.)]
     (doseq [[k v] kw-map]
@@ -208,8 +227,8 @@
 (defmacro log-time [level message & body]
   `(let [start-time# (System/currentTimeMillis)
          val# (do ~@body)]
-    (log/logp ~level ~message (str "(" (- (System/currentTimeMillis) start-time#) " ms)"))
-    val#))
+     (log/logp ~level ~message (str "(" (- (System/currentTimeMillis) start-time#) " ms)"))
+     val#))
 
 (def TXN-RETRIES 26)                                        ; Max time ~30s. Probably.
 
@@ -231,9 +250,9 @@
           [recur? r]
           (try+
             (jdbc/with-db-transaction [db-c db-spec {:isolation actual-isolation-level}]
-              (let [db-c (if rollback-state (assoc db-c :anvil-quota-rollback-state rollback-state
-                                                        :anvil-txn-isolation-level actual-isolation-level) db-c)]
-                [false (f db-c)]))
+                                      (let [db-c (if rollback-state (assoc db-c :anvil-quota-rollback-state rollback-state
+                                                                                :anvil-txn-isolation-level actual-isolation-level) db-c)]
+                                        [false (f db-c)]))
             (catch #(or (and (instance? SQLException %) (#{"40001" "40P01"} (.getSQLState %)))
                         (and (:anvil/server-error %) (= (:type %) "anvil.tables.TransactionConflict")))
                    e
@@ -245,10 +264,10 @@
                   (Thread/sleep (long (* (Math/random) (Math/pow 2 (* 0.5 (- TXN-RETRIES n))))))
                   [true nil])
                 (throw+ e)))
-            (catch Throwable e
+            (catch Object e
               (when rollback-state
                 (rollback-quota-changes! rollback-state))
-              (throw e)))]
+              (throw+ e)))]
       (if recur?
         (do
           (swap! total-txn-retries inc)
@@ -259,7 +278,7 @@
   `(-with-db-transaction ~spec ~isolation-level (fn [db#]
                                                   (let [~conn-sym db#]
                                                     ~@body))))
-(defonce db-locks (atom {})) ;; So we can look up locks by number if necessary
+(defonce db-locks (atom {}))                                ;; So we can look up locks by number if necessary
 
 (def ^:dynamic *db-locks* {})
 
@@ -284,12 +303,12 @@
         (try
           (locking (or lock-obj (Object.))
             (jdbc/with-db-transaction [db-t db]             ;; Note that we don't actually use this txn connection for anything except locking.
-              (let [FN_NAME (str "pg_" (when try? "try_") "advisory_xact_lock" (when shared? "_shared"))
-                    gained-try-lock? (:success (first (jdbc/query db-t [(str "SELECT " FN_NAME "(?::bigint) AS success") lock-number])))]
-                (when (and try? (not gained-try-lock?))
-                  (throw+ {:anvil/lock-unavailable lock-name}))
-                (binding [*db-locks* (assoc *db-locks* lock-name {:shared? shared?})]
-                  (f)))))
+                                      (let [FN_NAME (str "pg_" (when try? "try_") "advisory_xact_lock" (when shared? "_shared"))
+                                            gained-try-lock? (:success (first (jdbc/query db-t [(str "SELECT " FN_NAME "(?::bigint) AS success") lock-number])))]
+                                        (when (and try? (not gained-try-lock?))
+                                          (throw+ {:anvil/lock-unavailable lock-name}))
+                                        (binding [*db-locks* (assoc *db-locks* lock-name {:shared? shared?})]
+                                          (f)))))
           (finally
             (swap! db-locks dissoc lock-number)
             (when lock-obj
@@ -432,7 +451,7 @@
      (run []
        (try
          ~@body
-         (catch Exception e#
+         (catch Throwable e#
            (log/error e# "TimerTask error" ~error-context))))))
 
 (in-ns 'compojure.core)
@@ -445,7 +464,7 @@
 (defn wait-for [pred timeout check-ms]
   (let [timeout-time (+ (System/currentTimeMillis) timeout)]
     (while (and (not (pred))
-               (< (System/currentTimeMillis) timeout-time))
+                (< (System/currentTimeMillis) timeout-time))
       (Thread/sleep check-ms)))
   (pred))
 

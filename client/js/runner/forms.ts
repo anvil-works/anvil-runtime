@@ -1,6 +1,7 @@
 import type { Kws, pyNoneType, pyObject, pyTuple } from "../@Sk";
 import {
     Args,
+    Suspension,
     buildNativeClass,
     buildPyClass,
     chainOrSuspend,
@@ -12,8 +13,8 @@ import {
     pyBaseException,
     pyBuiltinFunctionOrMethod,
     pyCall,
-    pyCallable,
     pyCallOrSuspend,
+    pyCallable,
     pyDict,
     pyFunc,
     pyIter,
@@ -25,10 +26,10 @@ import {
     pySuper,
     pyType,
     retryOptionalSuspensionOrThrow,
-    Suspension,
     toPy,
     tryCatchOrSuspend,
 } from "../@Sk";
+import * as PyDefUtils from "../PyDefUtils";
 import {
     AnvilHooks,
     Component,
@@ -37,14 +38,13 @@ import {
     PropertyDescriptionBase,
     raiseWritebackEventOrSuspend,
 } from "../components/Component";
-import * as PyDefUtils from "../PyDefUtils";
 import {
+    SetupResult,
     addEventHandlers,
     addFormComponentsToLayout,
     getAndCheckNextCreationStack,
     removeEventHandlers,
     setupFormComponents,
-    SetupResult,
 } from "./component-creation";
 import type {
     ComponentYaml,
@@ -55,13 +55,14 @@ import type {
     FormYaml,
 } from "./data";
 import { BindingError, CustomAnvilError, isCustomAnvilError } from "./error-handling";
-import { getAnvilComponentClass, getFormClassObject, resolveFormSpec } from "./instantiation"; // for type stub
+import { getAnvilComponentClass, getFormClassObject, resolveFormSpec } from "./instantiation";
+// for type stub
 import {
+    PyModMap,
     funcFastCall,
     kwToObj,
-    objectToKwargs,
     objToKw,
-    PyModMap,
+    objectToKwargs,
     s_add_component,
     s_add_event_handler,
     s_anvil_events,
@@ -113,6 +114,8 @@ function cleanPropertyDescriptions(properties: FormYaml["properties"]): Property
                 priority,
                 designer_hint,
                 default_binding_prop,
+                show_in_designer_when,
+                iconsets,
             }) =>
                 ({
                     name,
@@ -133,6 +136,8 @@ function cleanPropertyDescriptions(properties: FormYaml["properties"]): Property
                             : undefined,
                     designerHint: designer_hint,
                     defaultBindingProp: default_binding_prop,
+                    showInDesignerWhen: show_in_designer_when,
+                    iconsets,
                 } as PropertyDescription)
         ) ?? []
     );

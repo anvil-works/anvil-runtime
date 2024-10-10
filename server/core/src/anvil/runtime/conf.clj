@@ -14,6 +14,8 @@
                      :public-key  (str data-path "/anvil-saml-public-key.pem")
                      :certificate (str data-path "/anvil-saml-cert.pem")})
 
+(defonce dont-confirm-emails-during-auth? false)
+
 (def twilio-config nil)
 
 (defonce geoip-db-path nil)
@@ -54,8 +56,6 @@
 (def max-websocket-payload 16777216)
 
 (def max-http-body 268435456) ;; 256 MB
-
-(def runtime-session-expire-seconds (* 30 60))
 
 (def anvil-version "<unknown>")
 

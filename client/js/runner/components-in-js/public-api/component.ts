@@ -413,13 +413,22 @@ function pyComponentFromClass(cls: JsComponentConstructor, spec: CustomComponent
     return pyComponentCls;
 }
 
-const cleanSpec = ({ name, properties, events, layoutProperties, container, showInToolbox }: CustomComponentSpec) => ({
+const cleanSpec = ({
     name,
     properties,
     events,
     layoutProperties,
     container,
     showInToolbox,
+    methods,
+}: CustomComponentSpec) => ({
+    name,
+    properties,
+    events,
+    layoutProperties,
+    container,
+    showInToolbox,
+    methods,
 });
 
 export function registerJsComponent(componentCls: JsComponentConstructor, spec: CustomComponentSpec) {

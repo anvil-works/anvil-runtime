@@ -86,7 +86,7 @@ module.exports = (pyModule, componentsModule) => {
 
 
     pyModule["RepeatingPanel"] = PyDefUtils.mkComponentCls(pyModule, "RepeatingPanel", {
-        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(RepeatingPanel)!2*/ ["appearance", "layout", "tooltip", "user data"], {
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(RepeatingPanel)!2*/ ["appearance", "layout", "layout_margin", "tooltip", "user data"], {
             item_template: /*!componentProp(RepeatingPanel)!1*/ {
                 name: "item_template",
                 type: "form",

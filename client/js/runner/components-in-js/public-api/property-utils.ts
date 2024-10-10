@@ -8,6 +8,11 @@ export const getSpacingStyles = (spacing: SpacingPropertyValue) => ({
     ...getSpacingObject(spacing?.padding as PaddingPropertyValue, "padding"),
 });
 
+export const styleObjectToString = (style: any) => {
+    const s = Object.entries(style).map(([key, value]) => `${key.replace(/([A-Z])/g, "-$1").toLowerCase()}: ${value}`).join("; ");
+    return s ? s + ";" : "";
+};
+
 export const setElementMargin = (element: HTMLElement, margin: MarginPropertyValue) =>
     Object.assign(element.style, getMarginStyles(margin));
 export const setElementPadding = (element: HTMLElement, padding: PaddingPropertyValue) =>

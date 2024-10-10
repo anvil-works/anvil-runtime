@@ -23,19 +23,22 @@
             the response (as returned from the handler or inner layers of middleware)
 
     - Synchronous middleware: Standard Ring middleware
+
+    *** NB THIS WRAPPER IS KNOWN TO BE BUGGY WITH CERTAIN ORDERINGS OF SYNC AND ASYNC WRAPPERS; TAKE CARE ***
 "
   [handler middlewares]
   (let [inner-response-transformer (fn [reqs resp] resp)
+        ;; Build up the function to call on the response when we finally get it
         async-response-transformer (loop [response-handler inner-response-transformer [middleware & more-middlewares :as middlewares] middlewares]
                                      (cond
                                        (empty? middlewares)
                                        response-handler
 
                                        (vector? middleware)
-                                       (let [[_req-transformer resp-transformer] middleware]
-                                         (recur (fn [[req & more-reqs] resp]
-                                                  (resp-transformer req (response-handler more-reqs resp)))
-                                                more-middlewares))
+                                       (let [[_req-transformer resp-transformer] middleware
+                                             new-resp-transformer (fn [[req & more-reqs] resp]
+                                                                    (resp-transformer req (response-handler more-reqs resp)))]
+                                         (recur new-resp-transformer more-middlewares))
 
                                        :else
                                        (let [[composed-handler more-middlewares] (chunk-sync-middleware middlewares #(::constant-response %))]
@@ -45,6 +48,7 @@
                                                 more-middlewares))))
 
         inner-handler (fn [req]
+                        ;; Call the inner handler
                         (let [ch (:async-channel req)
                               request-snapshots (::request-snapshots req)
                               first-response? (atom true)

@@ -209,7 +209,7 @@
               (throw (RejectException. code message))))
           (catch RejectException e
             (throw e))
-          (catch Exception e
+          (catch Object e
             (let [error-id (random/hex 6)]
               (log/error e "Error in app API:" error-id)
               (throw (RejectException. (str "Internal server error: " error-id))))))))))

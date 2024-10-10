@@ -76,6 +76,10 @@
         app-info))))
 
 
+(defn- is-branch? [{branch :branch}]
+  (when (string? branch)
+    branch))
+
 (defn- is-vtag? [{vtag :version_tag}]
   (and (string? vtag)
        (re-matches #"v\d.*" vtag)
@@ -85,18 +89,22 @@
 ;; assumes is-vtag? has already been checked
 
 (defn- clean-version-spec [dep-version-spec]
-  (if-let [vtag (is-vtag? dep-version-spec)]
-    {:version_tag vtag}
-    {:dev (is-dev? dep-version-spec)}))
+  (if-let [branch (is-branch? dep-version-spec)]
+    {:branch branch}
+    (if-let [vtag (is-vtag? dep-version-spec)]
+      {:version_tag vtag}
+      {:dev (is-dev? dep-version-spec)})))
 
 (defn- report-version [dep-version-spec]
   (cond
+    (is-branch? dep-version-spec) (str (:branch dep-version-spec) " branch")
     (is-vtag? dep-version-spec) (:version_tag dep-version-spec)
     (is-dev? dep-version-spec) "Development"
     :else "Published"))
 
 (defn- version-spec->git-map [dep-version-spec]
-  (cond (is-vtag? dep-version-spec) {:ref (str "refs/tags/" (:version_tag dep-version-spec))}
+  (cond (is-branch? dep-version-spec) {:branch (:branch dep-version-spec)}
+        (is-vtag? dep-version-spec) {:ref (str "refs/tags/" (:version_tag dep-version-spec))}
         (is-dev? dep-version-spec) {:branch "master"}
         :else {:branch "published", :fallback-branch "master"}))
 
@@ -202,29 +210,38 @@
 
             ;; All good - load the app!
             :else
-            (let [full-dep (get-app-content dep-info git-version-spec)
-                  {:keys [config_schema] :as dep-content} (:content full-dep)
-                  {dep-assets false, overridden-dep-assets true} (->> (get-in dep-content [:theme :assets])
-                                                                      (group-by #(and (contains? seen-assets (:name %)) (not= (:name %) "theme.css"))))]
-              ;;(println depending-app "(" (:name dep-info) ") -> " (:id dep-info) " (" (:name dep-info) ") version " version " / " version-sha "/" (:version full-dep))
-              (recur (assoc loaded-deps app-id
-                                        (-> (select-keys dep-content [:forms :modules :server_modules :package_name :secrets :native_deps :runtime_options :toolbox_sections :layouts :config_schema])
-                                            (assoc :version-spec (clean-version-spec version)
-                                                   :commit-id (:version full-dep)
-                                                   :depending_app depending-app
-                                                   :name (:name dep-info)
-                                                   :assets dep-assets
-                                                   :overriden_assets (map :name overridden-dep-assets)
-                                                   :form_templates (get-in dep-content [:theme :templates])
-                                                   :color_scheme (get-in dep-content [:theme :parameters :color_scheme])
-                                                   :roles (get-in dep-content [:theme :parameters :roles]))))
-                     (assoc dependency-versions app-id (:version full-dep))
-                     (assoc config-overrides app-id (list config))
-                     (cons app-id dep-order)
-                     (merge (util/string-keys (:dep_ids dep-info)) all-dep-ids)
-                     seen-dep-ids
-                     (into seen-assets (map :name dep-assets))
-                     (concat more-deps-to-process (map #(assoc % :depending-app app-id) (:dependencies dep-content)))))))))))
+            (let [{:keys [full-dep error]} (try+
+                                             {:full-dep (get-app-content dep-info git-version-spec)}
+                                             (catch :anvil/app-loading-error e
+                                               {:error (:message e)})
+                                             (catch Throwable e
+                                               {:error (.getMessage e)})
+                                             (catch Object e
+                                               {:error (str e)}))]
+              (if-not full-dep
+                (recur (assoc loaded-deps app-id {:error error}) dependency-versions config-overrides dep-order all-dep-ids seen-dep-ids seen-assets more-deps-to-process)
+                (let [{:keys [config_schema] :as dep-content} (:content full-dep)
+                      {dep-assets false, overridden-dep-assets true} (->> (get-in dep-content [:theme :assets])
+                                                                          (group-by #(and (contains? seen-assets (:name %)) (not= (:name %) "theme.css"))))]
+                  ;;(println depending-app "(" (:name dep-info) ") -> " (:id dep-info) " (" (:name dep-info) ") version " version " / " version-sha "/" (:version full-dep))
+                  (recur (assoc loaded-deps app-id
+                                            (-> (select-keys dep-content [:forms :modules :server_modules :package_name :secrets :native_deps :runtime_options :toolbox_sections :toolbox :layouts :config_schema :client_init_module])
+                                                (assoc :version-spec (clean-version-spec version)
+                                                       :commit-id (:version full-dep)
+                                                       :depending_app depending-app
+                                                       :name (:name dep-info)
+                                                       :assets dep-assets
+                                                       :overriden_assets (map :name overridden-dep-assets)
+                                                       :form_templates (get-in dep-content [:theme :templates])
+                                                       :color_scheme (get-in dep-content [:theme :parameters :color_scheme])
+                                                       :roles (get-in dep-content [:theme :parameters :roles]))))
+                         (assoc dependency-versions app-id (:version full-dep))
+                         (assoc config-overrides app-id (list config))
+                         (cons app-id dep-order)
+                         (merge (util/string-keys (:dep_ids dep-info)) all-dep-ids)
+                         seen-dep-ids
+                         (into seen-assets (map :name dep-assets))
+                         (concat more-deps-to-process (map #(assoc % :depending-app app-id) (:dependencies dep-content)))))))))))))
 
 
 (defn get-app
@@ -351,7 +368,7 @@
          style (app->style yaml id app-session-state flags)]
 
      [app-info
-      (-> (select-keys yaml [:name :package_name :forms :modules :startup :startup_form :services :theme :dependency_code :dependency_order :dependency_ids :allow_embedding :metadata :runtime_options :config])
+      (-> (select-keys yaml [:name :package_name :forms :modules :startup :startup_form :services :theme :dependency_code :dependency_order :dependency_ids :allow_embedding :metadata :runtime_options :config :client_init_module])
           (update-in [:runtime_options] only-version)
           (update-in [:theme] (fn [theme]
                                 {:html
@@ -362,7 +379,7 @@
                                  :color_scheme
                                  (:theme-colors style)}))
           (update-in [:dependency_code] (fn [deps] (into {} (for [[app-id dep] deps]
-                                                              [app-id (-> (select-keys dep [:modules :forms :package_name :runtime_options :config])
+                                                              [app-id (-> (select-keys dep [:modules :forms :package_name :runtime_options :config :client_init_module])
                                                                           (update-in [:runtime_options] only-version)
                                                                           (update-in [:config] select-keys [:client]))]))))
           (update-in [:services] (fn [svcs]

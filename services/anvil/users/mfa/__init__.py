@@ -4,40 +4,42 @@ from ..exceptions import AuthenticationFailed, MFAException
 from ..config import get_client_config
 from anvil.js import window
 
-def replace(s, pattern, replacement):
+
+def _replace(s, pattern, replacement):
     return window.String.prototype.replace.call(s, window.RegExp(pattern, "g"), replacement)
 
-class PhoneBox(TextBox):
 
-    def __init__(self, **properties):
-        TextBox.__init__(self, **properties)
+class PhoneNumberValidator(object):
+    def __init__(self):
+        self.box = pluggable_ui['anvil.TextBox'](type="tel")
         self.valid_number = None
-        self.type="tel"
-        self.add_event_handler("focus", self.on_focus)
-        self.add_event_handler("lost_focus", self.on_blur)
-        self.add_event_handler("pressed_enter", self.on_blur)
+        self.box.add_event_handler("focus", self.on_focus)
+        self.box.add_event_handler("lost_focus", self.on_blur)
+        self.box.add_event_handler("pressed_enter", self.on_blur)
 
     def on_focus(self, **e):
-        self.placeholder = "(123) 456 7890" if window.navigator.language == "en-US" else "+1 000 0..."
+        if hasattr(self.box, "placeholder"):
+            self.box.placeholder = "(123) 456 7890" if window.navigator.language == "en-US" else "+1 000 0..."
 
     def on_blur(self, **e):
         self.validate()
 
     def validate(self):
-        leadingPlus = self.text.startswith("+")
-        self.text = replace(self.text, "[^0-9]", "")
+        leadingPlus = self.box.text.startswith("+")
+        text = self.box.text = _replace(self.box.text, "[^0-9]", "")
         if leadingPlus:
-            if len(self.text) > 3: # What's a valid minimum length?
-                self.text = "+" + self.text
-                self.valid_number = self.text
+            if len(text) > 3: # What's a valid minimum length?
+                self.box.text = "+" + text
+                self.valid_number = text
             else:
                 self.valid_number = None
         else:
-            if len(self.text) == 10:
-                self.valid_number = "+1" + self.text
-                self.text = "(" + self.text[0:3] + ") " + self.text[3:6] + " " + self.text[6:]
+            if len(text) == 10:
+                self.valid_number = "+1" + text
+                self.box.text = "(" + text[0:3] + ") " + text[3:6] + " " + text[6:]
             else:
                 self.valid_number = None
+        
 
 
 #!defFunction(anvil.users,_,email_address)!2: "Send a two-factor authentication reset email to the specified user." ["send_mfa_reset_email"]
@@ -103,6 +105,8 @@ else:
         return anvil.server.call("anvil.private.users.get_enabled_mfa_types")
 
     def _configure_mfa(email, mfa_error, require_password, allow_cancel, confirm_button_text):
+        TextBox = pluggable_ui['anvil.TextBox']
+        
         mfa_types = get_enabled_mfa_types()
         selected_mfa_type = None
         mfa_methods = {}
@@ -168,11 +172,11 @@ else:
 
                 elif selected_mfa_type == "twilio-verify":
                     if not mfa_methods.get('twilio-verify'):
-                        phone_box = PhoneBox(placeholder="Enter your phone number", align="center")
-                        phone_box.add_event_handler("pressed_enter", lambda **e: mfa_panel.raise_event("x-close-alert"))
-                        #phone_box.add_event_handler("lost_focus", lambda **e: print(phone_box.valid_number))
+                        phone_box = PhoneBoxValidator(placeholder="Enter your phone number", align="center")
+                        phone_box.box.add_event_handler("pressed_enter", lambda **e: mfa_panel.raise_event("x-close-alert"))
+                        #phone_box.box.add_event_handler("lost_focus", lambda **e: print(phone_box.valid_number))
                         #mfa_panel.add_component(Label(text="Enter your phone number", align="center"))
-                        mfa_panel.add_component(phone_box)
+                        mfa_panel.add_component(phone_box.box)
                     else:
                         twilio_box = TextBox(placeholder="Enter 6-digit code", align="center", font="monospace")
                         twilio_box.set_event_handler("pressed_enter", lambda **e: mfa_panel.raise_event("x-close-alert"))
@@ -248,6 +252,8 @@ else:
 
     #!defFunction(anvil.users.mfa,!,email_address, password)!2: "Display a form to collect two-factor authentication credentials from the user currently logging in by passing the function their email and password." ["mfa_login_with_form"]
     def mfa_login_with_form(email, password):
+        TextBox = pluggable_ui['anvil.TextBox']
+
         mfa_panel = LinearPanel()
 
         mfa_types = get_available_mfa_types(email, password)

@@ -1,9 +1,13 @@
 "use strict";
 
+import {getSpacingStyles, setElementSpacing} from "@runtime/runner/components-in-js/public-api/property-utils";
+
 var PyDefUtils = require("PyDefUtils");
 import { validateChild } from "./Container";
 import { getCssPrefix } from "@runtime/runner/legacy-features";
 import { isInvisibleComponent } from "./helpers";
+import {pyNone, toJs, toPy} from "@Sk";
+import {data} from "@runtime/runner/data";
 
 /*#
 id: flowpanel
@@ -44,11 +48,19 @@ description: |
 
 module.exports = (pyModule) => {
 
+    const GAP_VALUES = ["none", "tiny", "small", "medium", "large", "huge"];
+
+    const setGap = (s, e, v) => {
+        const prefix = getCssPrefix();
+        GAP_VALUES.forEach((i) => {
+            s._anvil.domNode.classList.toggle(prefix + "flow-spacing-" + i, v === i);
+        });
+    };
 
     pyModule["FlowPanel"] = PyDefUtils.mkComponentCls(pyModule, "FlowPanel", {
         base: pyModule["ClassicContainer"],
 
-        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(FlowPanel)!1*/ ["appearance", "user data", "layout", "tooltip"], {
+        properties: PyDefUtils.assembleGroupProperties(/*!componentProps(FlowPanel)!1*/ ["appearance", "user data", "layout", "layout_spacing", "tooltip"], {
             align: /*!componentProp(FlowPanel)!1*/ {
                 name: "align",
                 important: true,
@@ -86,21 +98,42 @@ module.exports = (pyModule) => {
                 },
             },
 
-            spacing: /*!componentProp(FlowPanel)!1*/ {
-                name: "spacing",
-                description: "Space between components",
+            spacing: {
+                set(s, e, v) {
+                    if (GAP_VALUES.includes(v?.toString())) {
+                        s._anvil.props.gap = v;
+                        setGap(s, e, v);
+                        setElementSpacing(e[0], null);
+                    } else {
+                        setElementSpacing(e[0], v);
+                    }
+                },
+            },
+
+            gap: /*!componentProp(FlowPanel)!1*/ {
+                name: "gap",
+                description: "Gap between components",
                 type: "enum",
                 options: ["none", "tiny", "small", "medium", "large", "huge"],
-                defaultValue: new Sk.builtin.str("medium"),
-                pyVal: true,
+                defaultValue: Sk.builtin.none.none$, // Means look at spacing prop, otherwise use "medium". pyNone breaks gendoc.
                 important: false,
                 priority: 0,
+                get(s, e) {
+                    const currentPyGap = s._anvil.props.gap;
+
+                    if (currentPyGap && currentPyGap !== pyNone) {
+                        return currentPyGap;
+                    } else {
+                        const currentPySpacing = s._anvil.props.spacing;
+                        if (GAP_VALUES.includes(currentPySpacing.toString())) {
+                            return currentPySpacing;
+                        } else {
+                            return toPy("medium");
+                        }
+                    }
+                },
                 set(s, e, v) {
-                    const prefix = getCssPrefix();
-                    v = v.toString();
-                    ["none", "tiny", "small", "medium", "large", "huge"].forEach((i) => {
-                        s._anvil.domNode.classList.toggle(prefix + "flow-spacing-" + i, v === i);
-                    });
+                    setGap(s, e, v);
                 },
             },
         }),
@@ -125,9 +158,20 @@ module.exports = (pyModule) => {
             }
         ],
 
-        element({ align, spacing, vertical_align, ...props }) {
+        element({ align, spacing, gap, vertical_align, ...props }) {
             const prefix = getCssPrefix();
-            spacing = prefix + "flow-spacing-" + spacing.toString();
+
+            let gapClass = "flow-spacing-medium";
+            const spacingJs = toJs(spacing);
+            const actualGapJs = toJs(gap) ?? spacingJs;
+            if (GAP_VALUES.includes(actualGapJs)) {
+                gapClass = prefix + "flow-spacing-" + actualGapJs;
+            }
+
+            if (!GAP_VALUES.includes(spacingJs)) {
+                props.spacing = spacing;
+            }
+
             align =
                 "justify-content: " +
                 ({
@@ -139,7 +183,7 @@ module.exports = (pyModule) => {
             vertical_align = prefix + "vertical-align-" + (vertical_align.toString() || 'top');
 
             return (
-                <PyDefUtils.OuterElement className={`${prefix}flow-panel anvil-container anvil-container-overflow ${spacing} ${vertical_align}`} {...props}>
+                <PyDefUtils.OuterElement className={`${prefix}flow-panel anvil-container anvil-container-overflow ${gapClass} ${vertical_align}`} {...props}>
                     <div refName="gutter" className={`${prefix}flow-panel-gutter`} style={align} />
                 </PyDefUtils.OuterElement>
             );
@@ -194,7 +238,6 @@ module.exports = (pyModule) => {
             });
         },
     });
-
 };
 
 /*!defClass(anvil,FlowPanel,Container)!*/

@@ -1,21 +1,26 @@
 "use strict";
 
+import { anvilMod } from "@runtime/runner/py-util";
 import {
     Args,
     buildNativeClass,
     buildPyClass,
     chainOrSuspend,
     checkCallable,
-    checkString, isTrue,
+    checkString,
+    isTrue,
     Kws,
     objectRepr,
-    promiseToSuspension, pyBool,
+    promiseToSuspension,
+    pyAttributeError,
+    pyBool,
     pyCall,
     pyCallable,
     pyCallOrSuspend,
-    pyCheckType, pyDict,
+    pyCheckType,
     pyException,
-    pyFunc, pyIterFor,
+    pyFunc,
+    pyIterFor,
     pyList,
     pyLookupError,
     pyNewableType,
@@ -25,7 +30,7 @@ import {
     pyObject,
     pyObjectHash,
     pyRuntimeError,
-    pyStr, pyTrue,
+    pyStr,
     pyType,
     pyTypeError,
     pyValueError,
@@ -38,7 +43,7 @@ import {
 import PyDefUtils from "PyDefUtils";
 import { anvilAppOnline } from "../app_online";
 import { globalSuppressLoading } from "../utils";
-import { anvilMod } from "@runtime/runner/py-util";
+import { loading_indicator } from "./_anvil/loading-indicator";
 import {
     connect,
     doHttpCall,
@@ -51,8 +56,7 @@ import {
     websocket,
 } from "./_server";
 import type { Capability } from "./_server/types";
-import { loading_indicator } from "./_anvil/loading-indicator";
-import {invalid} from "moment";
+import { data } from "@runtime/runner/data";
 
 //@ts-ignore
 module.exports = function (appId: string, appOrigin: string) {
@@ -234,12 +238,14 @@ module.exports = function (appId: string, appOrigin: string) {
             type: "list",
             description:
                 "A list representing what this capability represents. It can be extended by calling narrow(), but not shortened.\n\nEg: ['my_resource', 42, 'foo']",
-        }, /*!defAttr()!1*/ {
+        },
+        /*!defAttr()!1*/ {
             name: "is_valid",
             type: "boolean",
             description:
                 "True if this Capability is still valid; False if it has been invalidated (for example, by session expiry)",
-        }, /*!defClassAttr()!1*/ {
+        },
+        /*!defClassAttr()!1*/ {
             name: "ANY",
             type: "object",
             description: "Sentinel value for unwrap_capability",
@@ -455,6 +461,17 @@ module.exports = function (appId: string, appOrigin: string) {
         [pyException]
     );
 
+    /*!defFunction(anvil.server, context, component_name=None, min_height=None)!2*/
+    ({
+        anvil$helplink: "/docs/client",
+        $doc: "By default, a loading indicator is displayed when your app is retrieving data. This stops users from being able to interact with your app while the server returns data. `loading_indicator` is a context manager which allows you to create loading indicators manually.",
+        anvil$args: {
+            component_name: "Optionally give the component or container that the loading indicator should overlay. This will block any user interaction with the given component, and any child components they have.",
+            min_height: "Optionally set the minimum height of the loading indicator. If no minimum height is given and no `component_name` is given, it defaults to the size of the image or SVG being used. If no minimum height is given but a `component_name` _is_ given, then the indicator scales to fit the component or container."
+        },
+    }); 
+    ["loading_indicator"];
+
     const _NoLoadingIndicator = buildPyClass(
         pyMod,
         function ($gbl, $loc) {
@@ -470,41 +487,49 @@ module.exports = function (appId: string, appOrigin: string) {
         "no_loading_indicator",
         []
     );
-
+    
     /*!defModuleAttr(anvil.server)!1*/
-    ({
+    ({ 
         name: "!no_loading_indicator",
         description:
             "Use `with anvil.server.no_loading_indicator:` to suppress the loading indicator when making server calls",
     });
     pyMod["no_loading_indicator"] = pyCall(_NoLoadingIndicator);
 
-    const invalidatedMacs =  pyMod["__anvil$doInvalidatedMacs"] = () =>  {
+    // @ts-expect-error
+    const invalidatedMacs = (pyMod["__anvil$doInvalidatedMacs"] = () => {
         console.log("Invalidated MACs!");
         pyMod["_n_invalidations"] = toPy(pyMod["_n_invalidations"].valueOf() + 1);
 
         return pyIterFor(pyMod["_invalidation_callbacks"].tp$iter(), (f) => pyCallOrSuspend(f, []));
-    };
-    
+    });
+
     /*!defFunction(anvil.server,!_)!2*/ ("Reset the current session to prevent further SessionExpiredErrors.");
     pyMod["reset_session"] = new pyFunc(function () {
-
         // Prevent the session from complaining about expiry.
-        return chainOrSuspend(pyCallOrSuspend(pyMod["call_s"], [new pyStr("anvil.private.reset_session")]), (token: pyStr) => {
-            window.anvilSessionToken = toJs(token);
-            return invalidatedMacs();
-        }, () => pyNone);
+        return chainOrSuspend(
+            pyCallOrSuspend(pyMod["call_s"], [new pyStr("anvil.private.reset_session")]),
+            (token: pyStr) => {
+                window.anvilSessionToken = toJs(token);
+                return invalidatedMacs();
+            },
+            () => pyNone
+        );
     });
 
     pyMod["_invalidation_callbacks"] = new pyList();
-    pyMod["_on_invalidate_client_objects"] = new pyFunc(function(f) {
-        pyCall(pyMod["_invalidation_callbacks"].tp$getattr(new pyStr("append"))!, [f]);
+    pyMod["_on_invalidate_client_objects"] = new pyFunc(function (f) {
+        pyCall(pyMod["_invalidation_callbacks"].tp$getattr<pyList>(new pyStr("append")), [f]);
         return pyNone;
-    })
+    });
 
-    pyMod["invalidate_client_objects"] = new pyFunc(function() {
-        return chainOrSuspend(doServerCall([], [], "anvil.private.invalidate_client_objects"), invalidatedMacs, () => pyNone);
-    })
+    pyMod["invalidate_client_objects"] = new pyFunc(function () {
+        return chainOrSuspend(
+            doServerCall([], [], "anvil.private.invalidate_client_objects"),
+            invalidatedMacs,
+            () => pyNone
+        );
+    });
 
     function add_event_handler(pyEventName: pyStr, pyHandler: pyCallable) {
         pyCheckType("event_name", "str", checkString(pyEventName));
@@ -599,6 +624,17 @@ module.exports = function (appId: string, appOrigin: string) {
             $doc: "decorator for marking a function as an event handler.",
             $flags: { OneArg: true },
         },
+        __getattr__: {
+            $meth(pyName) {
+                const name = pyName.toString();
+                if (name === "startup_data") {
+                    // this needs to be lazy - because appStartupData doesn't exist until after the app has started
+                    return data.appStartupData ?? pyNone;
+                }
+                throw new pyAttributeError(name);
+            },
+            $flags: { OneArg: true },
+        },
     });
 
     // Old name, for apps written before portable classes were released
@@ -606,9 +642,17 @@ module.exports = function (appId: string, appOrigin: string) {
 
     const getAppOrigin = (pyEnvironmentType: pyStr | pyNoneType, pyPreferEmphemeralDebug: pyBool) => {
         if (pyEnvironmentType === pyNone) {
-            return toPy(isTrue(pyPreferEmphemeralDebug) ? window.anvilAppOrigin : (window.anvilEnvironmentOrigin || window.anvilAppOrigin));
+            return toPy(
+                isTrue(pyPreferEmphemeralDebug)
+                    ? window.anvilAppOrigin
+                    : window.anvilEnvironmentOrigin || window.anvilAppOrigin
+            );
         }
-        return pyCallOrSuspend(pyMod["call_s"], [toPy("anvil.private.get_app_origin"), pyEnvironmentType], ["prefer_ephemeral_debug", pyPreferEmphemeralDebug]);
+        return pyCallOrSuspend(
+            pyMod["call_s"],
+            [toPy("anvil.private.get_app_origin"), pyEnvironmentType],
+            ["prefer_ephemeral_debug", pyPreferEmphemeralDebug]
+        );
     };
 
     pyMod["get_app_origin"] = new pyFunc(function (pyEnvironmentType, pyPreferEmphemeralDebug) {
@@ -618,8 +662,10 @@ module.exports = function (appId: string, appOrigin: string) {
     pyMod["get_app_origin"].func_code.$defaults = [pyNone, pyNone];
 
     pyMod["get_api_origin"] = new pyFunc(function (pyEnvironmentType, pyPreferEmphemeralDebug) {
-        return chainOrSuspend(getAppOrigin(pyEnvironmentType, pyPreferEmphemeralDebug),
-            (pyOrigin) => new pyStr(pyOrigin.toString() + "/_/api"));
+        return chainOrSuspend(
+            getAppOrigin(pyEnvironmentType, pyPreferEmphemeralDebug),
+            (pyOrigin) => new pyStr(pyOrigin.toString() + "/_/api")
+        );
     });
     pyMod["get_api_origin"].func_code.co_varnames = ["branch", "prefer_ephemeral_debug"]; // As above
     pyMod["get_api_origin"].func_code.$defaults = [pyNone, pyNone];

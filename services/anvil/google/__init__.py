@@ -1,5 +1,6 @@
 
 import anvil, anvil.server
+from . import auth
 
 _config = None
 

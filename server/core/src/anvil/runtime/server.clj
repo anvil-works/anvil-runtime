@@ -133,7 +133,7 @@
                                  (resp/status 400)
                                  (resp/content-type "text/plain"))))
 
-            (catch Exception e
+            (catch Object e
               (let [error-id (random/hex 6)]
                 (log/error e "Error getting lazy media:" error-id)
                 (send! channel (-> {:body (str "Internal server error: " error-id)}
@@ -166,7 +166,7 @@
     (when-let [app (get-app-from-request request)]
       (when (user-service/do-login-with-token app (request :environment) (request :app-session) (codec/url-decode token))
         (sessions/persist! (request :app-session))
-        (resp/redirect (str (:app-origin request) "?s=" (sessions/url-token (request :app-session)))))))
+        (resp/redirect (str (:app-origin request) "?_anvil_session=" (sessions/url-token (request :app-session)))))))
 
   (POST "/_/email-pw-reset/:email/:email-key" [email email-key password :as request]
     (when-let [app (get-app-from-request request)]
@@ -503,6 +503,7 @@
             (let [tokens (google-sso/process-callback (-> req :params :code)
                                                       (-> req :params :state)
                                                       (::google-csrf-token session-state)
+                                                      nil ; Don't require all scopes to be granted - that's for the app developer to decide.
                                                       google-client-id
                                                       google-client-secret
                                                       (::google-redirect session-state))]
@@ -657,10 +658,7 @@
                         app (:content (get-app-from-request request))
                         saml-service (first (filter #(= (:source %) "/runtime/services/anvil/saml.yml") (:services app)))
                         settings (saml/get-settings (:server_config saml-service) (:app-info request))
-
-                        saml-response (doto (SamlResponse. settings nil)
-                                        (.loadXmlFromBase64 saml-response)
-                                        (.setDestinationUrl (str conf/runtime-common-url "/_/saml_auth_login")))]
+                        saml-response (SamlResponse. settings (str conf/runtime-common-url "/_/saml_auth_login") saml-response)]
 
                     ;; Make sure we can't use this token again
                     (swap! app-session dissoc ::saml-csrf-token)
