@@ -434,6 +434,12 @@ input[type="number"]::-webkit-outer-spin-button {
     white-space: pre-wrap;
 }
 
+.anvil-alert-footer-button-panel {
+    display: flex !important;
+    gap: 7px;
+    justify-content: end;
+}
+
 .anvil-data-grid {
     /*border: 1px solid black;*/
 }

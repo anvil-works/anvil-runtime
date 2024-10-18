@@ -21,7 +21,7 @@ import {
     toJs,
     toPy,
 } from "@Sk";
-import { objectToKwargs } from "@runtime/runner/py-util";
+import { jsObjToKws } from "@runtime/runner/py-util";
 
 function createKey() {
     return (Math.random() + 1).toString(36).substring(7);
@@ -341,7 +341,7 @@ export const History: HistoryConstructor = buildNativeClass("anvil.history.Histo
                     window.addEventListener(POP_STATE_EVENT, this.$handler);
                 }
                 const listener: Listener = (update) =>
-                    suspensionToPromise(() => pyCallOrSuspend(fn, [], objectToKwargs(update)));
+                    suspensionToPromise(() => pyCallOrSuspend(fn, [], jsObjToKws(update)));
 
                 this.$listeners.add(listener);
 

@@ -2,7 +2,7 @@
 
 const { getCssPrefix } = require("@runtime/runner/legacy-features");
 var PyDefUtils = require("PyDefUtils");
-const {setElementMargin, setElementPadding} = require("@runtime/runner/components-in-js/public-api/property-utils");
+const { setElementMargin, setElementPadding, getUnsetSpacing } = require("@runtime/runner/components-in-js/public-api/property-utils");
 const {
     misceval: { isTrue },
 } = Sk;
@@ -36,7 +36,7 @@ module.exports = (pyModule) => {
                     setElementPadding(s._anvil.elements.text, v?.padding);
                 },
                 getUnset(s, e, currentValue) {
-                    return PyDefUtils.getUnsetSpacing(e[0], s._anvil.elements.text, currentValue);
+                    return getUnsetSpacing(e[0], s._anvil.elements.text, currentValue);
                 }
             },
         }),

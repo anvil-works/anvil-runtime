@@ -1,7 +1,7 @@
 "use strict";
 import { getCssPrefix } from "@runtime/runner/legacy-features";
 import { setHandled, isHandled } from "./events";
-import {setElementMargin, setElementPadding} from "@runtime/runner/components-in-js/public-api/property-utils";
+import { getUnsetPadding, setElementPadding } from "@runtime/runner/components-in-js/public-api/property-utils";
 var PyDefUtils = require("PyDefUtils");
 const { isTrue } = Sk.misceval;
 
@@ -104,7 +104,7 @@ module.exports = (pyModule) => {
                     setElementPadding(s._anvil.elements.holder, v);
                 },
                 getUnset(s, e, v) {
-                    return PyDefUtils.getUnsetPadding(s._anvil.elements.holder, v);
+                    return getUnsetPadding(s._anvil.elements.holder, v);
                 },
             }
         }),

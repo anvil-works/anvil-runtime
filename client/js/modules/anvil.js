@@ -1,15 +1,28 @@
 "use strict";
 
 import { validateChild } from "@runtime/components/Container";
-import {getClientConfig, topLevelForms} from "@runtime/runner/data";
+import { pluggableUI } from "@runtime/modules/_anvil/pluggable-ui";
+import { getClientConfig, topLevelForms } from "@runtime/runner/data";
 import { getCssPrefix } from "@runtime/runner/legacy-features";
 import { warn } from "@runtime/runner/warnings";
-import { chainOrSuspend, promiseToSuspension, pyCallOrSuspend, pyFunc, pyInt, pyNone, pyStr, pyValueError, toJs, toPy } from "@Sk";
+import {
+    chainOrSuspend,
+    promiseToSuspension,
+    pyCall,
+    pyCallOrSuspend,
+    pyFunc,
+    pyInt,
+    pyNone,
+    pyStr,
+    pyValueError,
+    toJs,
+    toPy,
+} from "@Sk";
+import { asyncToPromise } from "PyDefUtils";
 import { notifyComponentMounted, notifyComponentUnmounted } from "../components/Component";
-import {anvilServerMod, kwToObj, s_clear, s_slots} from "../runner/py-util";
+import { anvilServerMod, kwsToObj, pyPropertyFromGetSet, s_clear, s_slots } from "../runner/py-util";
 import { defer, getRandomStr } from "../utils";
 import Modal, { BOOTSTRAP_MODAL_BG } from "./modal";
-import { pluggableUI } from "@runtime/modules/_anvil/pluggable-ui";
 
 module.exports = function(appOrigin, uncaughtExceptions) {
 
@@ -233,13 +246,17 @@ module.exports = function(appOrigin, uncaughtExceptions) {
             throw new Sk.builtin.AttributeError("This object is read-only");
         });
         /*!defAttr()!1*/ ({name: "theme_colors", type: "mapping", description: "Theme colors for this app as a readonly dict."});
-        $loc["theme_colors"] = new Sk.builtin.property(new Sk.builtin.func(function(self) {
+        $loc["theme_colors"] = pyPropertyFromGetSet((self) => {
             return _themeColorsInstance ?? (_themeColorsInstance = new _ThemeColors());
-        }));
-        /*!defAttr()!1*/ ({name: "environment", type: "anvil.AppEnvironment instance", description: "The environment in which the current app is being run."});
-        $loc["environment"] = new Sk.builtin.property(new Sk.builtin.func(function(self) {
+        });
+        /*!defAttr()!1*/ ({
+            name: "environment",
+            type: "anvil.AppEnvironment instance",
+            description: "The environment in which the current app is being run.",
+        });
+        $loc["environment"] = new pyPropertyFromGetSet((self) => {
             return self._environment || (self._environment = new _environmentClass());
-        }));
+        });
         $loc["get_client_config"] = new Sk.builtin.func(function(self, pyPackageName) {
             const packageName = toJs(pyPackageName);
             try {
@@ -329,7 +346,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
                         // Set properties of the layout from the new form's kwargs, clearing any that were set by the old form.
                         ...(function* () {
                             const {kwargs} = pyForm._withLayout;
-                            const oldFormKwargs = kwToObj(oldForm._withLayout.kwargs);
+                            const oldFormKwargs = kwsToObj(oldForm._withLayout.kwargs);
                             for (let i=0; i < kwargs.length; i += 2) {
                                 const k = kwargs[i], v = kwargs[i+1];
                                 yield () => Sk.abstr.sattr(pyLayout, new pyStr(k), v, true);
@@ -444,13 +461,16 @@ module.exports = function(appOrigin, uncaughtExceptions) {
 
     pyModule["Media"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
 
-        for (let prop of ["url", "content_type", "length", "name"]) {
-            const str_get_prop = new Sk.builtin.str("get_"+prop)
-            const getter = new Sk.builtin.func((self) => PyDefUtils.pyCallOrSuspend(self.tp$getattr(str_get_prop)));
-            const setter = new Sk.builtin.func(() => {
-                throw new Sk.builtin.AttributeError(`Cannot change the ${prop} of a Media object; create a new Media object instead`);
-            })
-            $loc[prop] = new Sk.builtin.property(getter, setter);
+        for (const prop of ["url", "content_type", "length", "name"]) {
+            const str_get_prop = new Sk.builtin.str("get_"+prop);
+            $loc[prop] = pyPropertyFromGetSet(
+                (self) => pyCallOrSuspend(self.tp$getattr(str_get_prop)),
+                () => {
+                    throw new Sk.builtin.AttributeError(
+                        `Cannot change the ${prop} of a Media object; create a new Media object instead`
+                    );
+                }
+            );
         }
 
         // The following should be implemented by the child class
@@ -985,8 +1005,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
 
     let activeModalLength = 0;
 
-
-    function modal(kwargs) {
+    async function modal(kwargs) {
         let pyForm,
             returnValue = Sk.builtin.none.none$;
         let { large, title, content, buttons, dismissible, role } = kwargs;
@@ -1007,9 +1026,8 @@ module.exports = function(appOrigin, uncaughtExceptions) {
             body = content.toString();
         }
 
-
         buttons = buttons.map((pyBtnArg) => {
-            let jsBtnArg = pyBtnArg?.valueOf();
+            const jsBtnArg = pyBtnArg?.valueOf();
             let text = "";
             let val = Sk.builtin.none.none$;
             let style = "";
@@ -1028,15 +1046,13 @@ module.exports = function(appOrigin, uncaughtExceptions) {
 
             const onClick = () => {
                 returnValue = val;
-                a.hide();
             };
 
             return { text, style, onClick };
         });
 
 
-
-        const a = new Modal({
+        const a = await Modal.create({
             id: activeModalLength++,
             large,
             title,
@@ -1047,13 +1063,32 @@ module.exports = function(appOrigin, uncaughtExceptions) {
             keyboard: dismissible,
         });
 
-
         if (role) {
             PyDefUtils.applyRole(role, a.elements.modalDialog);
         }
 
-        const { promise: deferredReturnPromise, resolve: resolveReturn } = defer();
+        const { promise: promiseReturnValue, resolve: resolveReturnValue } = defer();
 
+
+        const hideFns = [];
+        const showFns = [];
+
+        if (pyForm) {
+            const formElement = await pyForm.anvil$hooks.setupDom();
+            a.elements.modalBody.append(formElement);
+            // use set_event_handler - we want to reset this event if the same form
+            // is added to a modal multiple times
+            pyCall(pyForm.tp$getattr(new Sk.builtin.str("set_event_handler")), [
+                new Sk.builtin.str("x-close-alert"),
+                PyDefUtils.funcWithRawKwargsDict((kws) => {
+                    returnValue = kws.value ?? pyNone;
+                    a.hide();
+                }),
+            ]);
+
+            hideFns.push(() => notifyComponentUnmounted(pyForm, true));
+            showFns.push(() => notifyComponentMounted(pyForm, true));
+        }
 
         let hideFired = false;
         a.once("hide", () => {
@@ -1065,50 +1100,25 @@ module.exports = function(appOrigin, uncaughtExceptions) {
             if (pyForm) {
                 $(pyForm.anvil$hooks.domElement).detach();
                 topLevelForms.alertForms.delete(pyForm);
-                PyDefUtils.asyncToPromise(() => notifyComponentUnmounted(pyForm, true)).then(() =>
-                    resolveReturn(returnValue)
-                );
-            } else {
-                resolveReturn(returnValue);
             }
+            asyncToPromise(() => chainOrSuspend(null, ...hideFns)).then(() => resolveReturnValue(returnValue));
         });
 
-        const {promise: loadPromise, resolve: loadResolve} = defer();
+        a.once("show", async () => {
+            if (hideFired) {
+                return;
+            }
+            if (pyForm) {
+                // do this synchronously
+                // it's possible for hide to be called before shown
+                topLevelForms.alertForms.add(pyForm);
+            }
+            await asyncToPromise(() => chainOrSuspend(null, ...showFns));
+        });
 
-        return Sk.misceval.chain(
-            pyForm && pyForm.anvil$hooks.setupDom(),
-            formElement => {
-                if (pyForm) {
-                    a.elements.modalBody.append(formElement);
-                    // use set_event_handler - we want to reset this event if the same form
-                    // is added to a modal multiple times
-                    PyDefUtils.pyCall(pyForm.tp$getattr(new Sk.builtin.str("set_event_handler")), [
-                        new Sk.builtin.str("x-close-alert"),
-                        PyDefUtils.funcWithRawKwargsDict((kws) => {
-                            returnValue = kws.value ?? Sk.builtin.none.none$;
-                            a.hide();
-                        }),
-                    ]);
-                    a.once("show", () => {
-                        // do this synchronously
-                        // it's possible for hide to be called before shown
-                        topLevelForms.alertForms.add(pyForm);
-                        if (hideFired) {
-                            loadResolve();
-                        } else {
-                            loadResolve(PyDefUtils.asyncToPromise(() => notifyComponentMounted(pyForm, true)));
-                        }
-                    });
-                } else {
-                    a.once("show", () => {
-                        loadResolve();
-                    });
-                }
+        await a.show();
+        return promiseReturnValue;
 
-                a.show();
-
-                return PyDefUtils.suspensionFromPromise(loadPromise.then(() => deferredReturnPromise));
-            });
     }
 
     /*#
@@ -1202,7 +1212,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
             ["OK", true, "success"],
         ]);
 
-        return modal(kwargs);
+        return PyDefUtils.suspensionFromPromise(modal(kwargs));
     }));
 
     /*!defFunction(anvil,_,content,[title=""],[buttons=],[large=False],[dismissible=False], [role=])!2*/ "Pop up a confirmation box. By default, it will have \"Yes\" and \"No\" buttons which will return True and False respectively when clicked."
@@ -1215,7 +1225,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         ]);
         kwargs.dismissible ??= false;
 
-        return modal(kwargs);
+        return PyDefUtils.suspensionFromPromise(modal(kwargs));
     }));
 
 

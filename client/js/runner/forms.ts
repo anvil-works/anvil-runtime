@@ -60,9 +60,10 @@ import { getAnvilComponentClass, getFormClassObject, resolveFormSpec } from "./i
 import {
     PyModMap,
     funcFastCall,
-    kwToObj,
-    objToKw,
-    objectToKwargs,
+    jsObjToKws,
+    kwsToObj,
+    objToKws,
+    pyPropertyFromGetSet,
     s_add_component,
     s_add_event_handler,
     s_anvil_events,
@@ -95,52 +96,45 @@ const walkComponents = (
     }
 };
 
+const propNameMap = [
+    ["name", "name"],
+    ["type", "type"],
+    ["default_value", "defaultValue"],
+    ["description", "description"],
+    ["important", "important"],
+    ["group", "group"],
+    ["options", "options"],
+    ["accept", "accept"],
+    ["multiline", "multiline"],
+    ["allow_binding_writeback", "supportsWriteback"],
+    ["include_none_option", "includeNoneOption"],
+    ["none_option_label", "noneOptionLabel"],
+    ["priority", "priority"],
+    ["designer_hint", "designerHint"],
+    ["default_binding_prop", "defaultBindingProp"],
+    ["show_in_designer_when", "showInDesignerWhen"],
+    ["iconsets", "iconsets"],
+] as const;
+
+function cleanPropertyDescription(property: NonNullable<FormYaml["properties"]>[number]): PropertyDescription {
+    const cleaned = {} as PropertyDescription;
+    for (const [yamlName, designerName] of propNameMap) {
+        if (yamlName in property) {
+            // @ts-ignore
+            cleaned[designerName] = property[yamlName];
+        }
+    }
+    if (cleaned.priority == null) {
+        delete cleaned.priority; // prefer undefined when treating as a number
+    } else {
+        /* In case it's a string in the YAML */
+        cleaned.priority = parseFloat(cleaned.priority as unknown as string);
+    }
+    return cleaned;
+}
+
 function cleanPropertyDescriptions(properties: FormYaml["properties"]): PropertyDescription[] {
-    return (
-        properties?.map(
-            ({
-                name,
-                type,
-                default_value,
-                description,
-                important,
-                group,
-                options,
-                accept,
-                multiline,
-                allow_binding_writeback,
-                include_none_option,
-                none_option_label,
-                priority,
-                designer_hint,
-                default_binding_prop,
-                show_in_designer_when,
-                iconsets,
-            }) =>
-                ({
-                    name,
-                    type,
-                    defaultValue: default_value,
-                    description,
-                    important,
-                    options,
-                    accept,
-                    multiline,
-                    group,
-                    supportsWriteback: allow_binding_writeback,
-                    includeNoneOption: include_none_option,
-                    noneOptionLabel: none_option_label,
-                    priority:
-                        priority != null
-                            ? parseFloat(priority as unknown as string /* In case it's a string in the YAML */)
-                            : undefined,
-                    designerHint: designer_hint,
-                    defaultBindingProp: default_binding_prop,
-                    showInDesignerWhen: show_in_designer_when,
-                    iconsets,
-                } as PropertyDescription)
-        ) ?? []
-    );
+    return properties?.map(cleanPropertyDescription) ?? [];
 }
 
 function cleanEventDescriptions(events: FormYaml["events"]): EventDescription[] {
@@ -565,12 +559,12 @@ const MetaCustomComponent: pyNewableType<FormTemplateConstructor> = buildNativeC
         tp$call(args, kws) {
             const customProps = this.prototype.anvil$customPropsDefaults;
             if (customProps) {
-                const asMap = kwToObj(kws);
+                const asMap = kwsToObj(kws);
                 for (const propName in customProps) {
                     if (propName in asMap) continue;
                     asMap[propName] = customProps[propName];
                 }
-                kws = objToKw(asMap);
+                kws = objToKws(asMap);
             }
             return pyType.prototype.tp$call.call(this, args, kws);
         },
@@ -654,7 +648,7 @@ export const createFormTemplateClass = (
                 baseConstructionArgs.push(onAssociateLayout, onDissociateLayout);
             }
             const subYaml = yaml.container || (yaml.layout as FormContainerYaml | FormLayoutYaml);
-            const baseConstructionKwargs: Kws = objectToKwargs({
+            const baseConstructionKwargs: Kws = jsObjToKws({
                 __ignore_property_exceptions: true,
                 ...(subYaml.properties || {}),
             });
@@ -811,17 +805,14 @@ export const createFormTemplateClass = (
             });
 
             // Kept for backwards compatibility.
-            $loc["init_components"] = $loc["__init__"] = PyDefUtils.funcFastCall(function __init__(
-                args: Args,
-                pyKwargs?: Kws
-            ) {
+            $loc["init_components"] = $loc["__init__"] = funcFastCall(function __init__(args: Args, pyKwargs?: Kws) {
                 checkOneArg("init_components", args);
                 const self = args[0] as FormTemplate;
                 const baseInit = pyBase.tp$getattr(pyStr.$init) as pyCallable;
                 // Sort out property attrs.
                 const validKwargs = new Set(["item"]);
 
-                const propMap = kwToObj(pyKwargs);
+                const propMap = kwsToObj(pyKwargs);
 
                 if (yaml.custom_component || yaml.slots) {
                     for (const { name } of yaml.properties ?? []) {
@@ -862,10 +853,7 @@ export const createFormTemplateClass = (
                     },
                     () =>
                         Sk.misceval.tryCatch(
-                            () =>
-                                PyDefUtils.pyCallOrSuspend(
-                                    self.tp$getattr(new Sk.builtin.str("refresh_data_bindings"))
-                                ),
+                            () => pyCallOrSuspend(self.tp$getattr(new Sk.builtin.str("refresh_data_bindings"))),
                             (e) => {
                                 if (e instanceof Sk.builtin.BaseException && e.args.v[0] instanceof Sk.builtin.str) {
                                     e.args.v[0] = new Sk.builtin.str(
@@ -882,7 +870,7 @@ export const createFormTemplateClass = (
             if (yaml.custom_component || yaml.slots) {
                 // Create property descriptors for custom properties.
                 (yaml.properties || []).forEach((pt) => {
-                    $loc[pt.name] = PyDefUtils.pyCall(anvilModule["CustomComponentProperty"], [
+                    $loc[pt.name] = pyCall(anvilModule["CustomComponentProperty"], [
                         new pyStr(pt.name),
                         toPy(pt.default_value || null),
                     ]);
@@ -890,14 +878,12 @@ export const createFormTemplateClass = (
             }
 
             if (yaml.slots) {
-                $loc["slots"] = new Sk.builtin.property(
-                    new Sk.builtin.func((self: FormTemplate) => {
-                        return self.anvil$formState.slotDict;
-                    })
-                );
+                $loc["slots"] = pyPropertyFromGetSet((self: FormTemplate) => {
+                    return self.anvil$formState.slotDict;
+                });
             }
 
-            $loc["raise_event"] = PyDefUtils.funcFastCall((args: Args<[FormTemplate, pyStr]>, kws?: Kws) => {
+            $loc["raise_event"] = funcFastCall((args: Args<[FormTemplate, pyStr]>, kws?: Kws) => {
                 const [self, pyEventName] = args;
                 checkArgsLen("raise_event", args, 2, 2);
                 const eventName = String(pyEventName);
@@ -990,7 +976,7 @@ export const createFormTemplateClass = (
                 }
                 // use object.__getattribute__ because it will throw an attribute error
                 // unlike Sk.generic.getAttr which returns undefined
-                return PyDefUtils.pyCallOrSuspend(object_getattribute, [self, pyName]);
+                return pyCallOrSuspend(object_getattribute, [self, pyName]);
             });
 
             $loc[s_anvil_get_interactions.toString()] = funcFastCall(() => new pyList([]));

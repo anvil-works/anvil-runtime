@@ -37,12 +37,7 @@ import {
     raiseWritebackEventOrSuspend,
 } from "@runtime/components/Component";
 import { Container, validateChild } from "@runtime/components/Container";
-import {
-    initNativeSubclass,
-    kwargsToJsObject,
-    s_add_event_handler,
-    s_remove_event_handler,
-} from "@runtime/runner/py-util";
+import { initNativeSubclass, kwsToJsObj, s_add_event_handler, s_remove_event_handler } from "@runtime/runner/py-util";
 import { DropModeFlags } from "@runtime/runner/python-objects";
 import PyDefUtils, { asyncToPromise, pyCall } from "PyDefUtils";
 import { addJsModuleHook, customToolboxSections, jsCustomComponents } from "../common";
@@ -150,7 +145,7 @@ export type Unsubscribe = () => void;
 
 export function subscribeAnvilEvent(self: JsComponent, eventName: string, callback: EventCallback): Unsubscribe {
     const pyListener = PyDefUtils.funcFastCall((_args: Args, kws: Kws = []) => {
-        const eventArgs = kwargsToJsObject(kws) as EventArgs;
+        const eventArgs = kwsToJsObj(kws) as EventArgs;
         eventArgs.sender = self;
         return returnToPy(callback(eventArgs));
     });
@@ -369,7 +364,7 @@ function pyComponentFromClass(cls: JsComponentConstructor, spec: CustomComponent
                       add_component: {
                           $meth([component]: [Component], kws: Kws) {
                               validateChild(component);
-                              const layoutProperties = kwargsToJsObject(kws);
+                              const layoutProperties = kwsToJsObj(kws);
                               const jsContainer = this[JS_COMPONENT] as JsContainer;
 
                               const doAddComponent = async () => {

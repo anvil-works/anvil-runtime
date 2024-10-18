@@ -113,31 +113,3 @@ class WrappedList(list):
         return self.__class__(deepcopy(list(self)))
 
 
-# Pluggable UI
-class TextBoxWithLabel(anvil.LinearPanel):
-    def __init__(self, label="", text="", **properties):
-        self.spacing_above = self.spacing_below = "none"
-        self.label = anvil.Label(text=label)
-        self.box = anvil.pluggable_ui['anvil.TextBox'](text=text, **properties)
-        self.add_component(self.label)
-        self.add_component(self.box)
-
-    @property
-    def text(self):
-        return self.box.text
-
-    @text.setter
-    def text(self, value):
-        self.box.text = value
-
-    def add_event_handler(self, event, fn):
-        return self.box.add_event_handler(event, fn)
-
-    def set_event_handler(self, event, fn):
-        return self.box.set_event_handler(event, fn)
-
-    def remove_event_handler(self, event, fn):
-        return self.box.remove_event_handler(event, fn)
-
-    def focus(self):
-        self.box.focus()

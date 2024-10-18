@@ -1,6 +1,6 @@
 import { buildNativeClass, checkArgsLen, pyCall, pyCallOrSuspend, pyNewableType, pyNone, pyObject, toJs } from "@Sk";
 import { SpinnerLoader, appendSvgSpinner, getBodySpinner } from "@runtime/runner/loading-spinner";
-import { anvilJsMod, kwargsToJsObject } from "@runtime/runner/py-util";
+import { anvilJsMod, kwsToJsObj } from "@runtime/runner/py-util";
 import { globalSuppressLoading } from "@runtime/utils";
 import { cssLength } from "PyDefUtils";
 
@@ -67,7 +67,7 @@ export const LoadingIndicator: pyNewableType<LoadingIndicator> = buildNativeClas
             checkArgsLen("loading_indicator", args, 0, 1);
             // In the future we can support kws
             // checkNoKwargs("loading_indicator", kws);
-            this._opts = kwargsToJsObject(kws);
+            this._opts = kwsToJsObj(kws);
             // if (this._opts.min_height === undefined) {
             //     this._opts.min_height = 220;
             // }

@@ -61,7 +61,7 @@
                  [org.apache.xmlgraphics/batik-dom "1.16"]  ; 1.15 required by one-time is vulnerable.
                  [one-time "0.8.0"]
                  [me.grison/cljwebauthn "0.1.2"]
-                 [com.webauthn4j/webauthn4j-core "0.11.1.RELEASE" :exclusions [org.slf4j/slf4j-api]]
+                 [com.webauthn4j/webauthn4j-core "0.11.1.RELEASE" :exclusions [org.slf4j/slf4j-api org.bouncycastle/bcprov-jdk15on org.bouncycastle/bcpkix-jdk15on]]
 
                  [org.subethamail/subethasmtp "3.1.7"]
                  [dnsjava/dnsjava "3.6.0"]  ; 3.4.1 required by apache-jdkim is vulnerable.
@@ -69,7 +69,8 @@
                  ;  Can't use v0.3 as it removes mailets, which we use in email_server.clj
                  [org.apache.james.jdkim/apache-jdkim "0.2" :extension "pom" :exclusions [log4j org.apache.geronimo.javamail/geronimo-javamail_1.4_mail]]
 
-                 [org.bouncycastle/bcprov-jdk15on "1.65"]
+                 [org.bouncycastle/bcprov-jdk18on "1.78.1"]
+                 [org.bouncycastle/bcpkix-jdk18on "1.78.1"]
                  [buddy/buddy-core "1.6.0" :exclusions [org.bouncycastle/bcprov-jdk15on org.bouncycastle/bcpkix-jdk15on]]
                  [buddy/buddy-sign "3.1.0"]
 
@@ -97,8 +98,10 @@
   :aot :order
   :auto-clean false
   :omit-source true
-  :profiles {:provided {:dependencies [[org.bouncycastle/bcprov-jdk18on "1.78.1"]]}
-             :uberjar {:exclusions [org.bouncycastle/bcprov-jdk18on]}
+  :profiles {:provided {:dependencies [[org.bouncycastle/bcprov-jdk18on "1.78.1"]
+                                       [org.bouncycastle/bcpkix-jdk18on "1.78.1"]]}
+             :uberjar {:exclusions [org.bouncycastle/bcprov-jdk18on
+                                    org.bouncycastle/bcpkix-jdk18on]}
              :dev {:jvm-opts ["-Dclojure.compiler.disable-locals-clearing=true"
                               ;"-Djavax.net.debug=all" ; Useful for debugging SSL issues
                               ]}}

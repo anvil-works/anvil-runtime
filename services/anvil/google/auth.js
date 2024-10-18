@@ -53,14 +53,14 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
         'https://www.googleapis.com/auth/userinfo.profile',
     ];
 
-    var displayLogInModal = function(additionalScopes) {
+    async function displayLogInModal(additionalScopes) {
 
         var anvil = PyDefUtils.getModule("anvil");
         var appPath = Sk.ffi.remapToJs(anvil.tp$getattr(new Sk.builtin.str("app_path")));
 
         var scopesToRequest = scopes.concat(additionalScopes || []).join(' ');
 
-        var doLogin = function() {
+        function doLogin() {
 
             var authParams = {
                 scope: scopesToRequest,
@@ -98,7 +98,7 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
             doLogin();
         } else {
             loadGoogleSignInButton();
-            const modal = new window.anvilModal({
+            const modal = await window.anvilModal.create({
                 id: "google-login-modal",
                 backdrop: "static",
                 keyboard: false,
@@ -120,7 +120,7 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
             modalBody.appendChild(btn);
             btn.addEventListener("click", doLogin);
             modalBody.style.textAlign = "center";
-            modal.show();
+            await modal.show();
             return modal;
         }
     };
@@ -167,31 +167,35 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
     mod["user_id"] = Sk.builtin.none.none$;
     mod["email"] = Sk.builtin.none.none$;
 
-    /*!defFunction(anvil.google.auth,!_,[additional_scopes])!2*/ "Prompt the user to log in with their Google account.\n\nIf you have specified your own client ID in the Google Service configuration, you can specify additional OAuth scopes for use with the Google REST API."
-    mod["login"] = new Sk.builtin.func(function(pyAdditionalScopes) {
+    async function login(pyAdditionalScopes) {
 
         // TODO: Try immediate auth before we do anything else. If that fails, then...
 
         loginCallbackResolve = PyDefUtils.defer();
 
-        const modal = displayLogInModal(Sk.ffi.remapToJs(pyAdditionalScopes || []));
+        const modal = await displayLogInModal(Sk.ffi.remapToJs(pyAdditionalScopes || []));
 
         // TODO: Should probably have a timeout on this promise.
 
-        return PyDefUtils.suspensionPromise(function(resolve, reject) {
-            loginCallbackResolve.promise.then(function(idToken) {
-                mod["user_id"] = Sk.ffi.remapToPy(idToken.user_id);
-                mod["email"] = Sk.ffi.remapToPy(idToken.email);
-                resolve(mod["email"]);
-            }).catch(function(e) {
-                if (e == "MODAL_CANCEL") {
-                    resolve(Sk.builtin.none.none$);
-                } else {
-                    reject(e);
-                }
-            }).then(function() { modal && modal.hide(); });;
-        });
-    });
+        try {
+            const idToken = await loginCallbackResolve.promise;
+            mod["user_id"] = Sk.ffi.remapToPy(idToken.user_id);
+            mod["email"] = Sk.ffi.remapToPy(idToken.email);
+            return mod["email"];
+        } catch (e) {
+            if (e === "MODAL_CANCEL") {
+                return Sk.builtin.none.none$;
+            } else {
+                throw e;
+            }
+        } finally {
+            modal && modal.hide();
+        }
+    }
+
+
+    /*!defFunction(anvil.google.auth,!_,[additional_scopes])!2*/ "Prompt the user to log in with their Google account.\n\nIf you have specified your own client ID in the Google Service configuration, you can specify additional OAuth scopes for use with the Google REST API."
+    mod["login"] = new Sk.builtin.func((pyAdditionalScopes) => PyDefUtils.suspensionFromPromise(login(pyAdditionalScopes)));
 
     registerCallbackHandlers(window.messages);
 

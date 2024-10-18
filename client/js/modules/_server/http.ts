@@ -85,7 +85,7 @@ async function trySend(jsonData: any, blobData: BlobContent[] = []) {
         });
     });
 
-    const resp = await fetch(`${window.anvilAppOrigin}/_/server-call-http`, {
+    const resp = await fetch(`${window.anvilAppOrigin}/_/server-call-http?_anvil_session=${window.anvilSessionToken}`, {
         method: "POST",
         body: formData,
     });

@@ -15,14 +15,15 @@ import {
 } from "../../@Sk";
 import {
     Component,
-    ComponentConstructor, CustomComponentSpec,
+    ComponentConstructor,
+    CustomComponentSpec,
     EventDescription,
     PropertyDescription,
 } from "../../components/Component";
 import { Container } from "../../components/Container";
 import { suspensionFromPromise } from "../../PyDefUtils";
 import { designerApi } from "../component-designer-api";
-import { initNativeSubclass, kwargsToJsObject, s_raise_event } from "../py-util";
+import { initNativeSubclass, kwsToJsObj, s_raise_event } from "../py-util";
 import { registerModule } from "./common";
 
 const solid: any = {};
@@ -77,7 +78,6 @@ function mkComponentClass({
     const SolidComponent: SolidComponentConstructor = buildNativeClass(name + "." + leafName, {
         base: container ? Container : Component,
         constructor: function SolidComponent() {
-
             const dropZones: { [id: string | number]: any } = {};
             // let getInteractions = null;
 
@@ -96,7 +96,6 @@ function mkComponentClass({
                 },
                 configurable: true,
             });
-
         },
         slots: {
             tp$new(args, kws = []) {
@@ -123,10 +122,12 @@ function mkComponentClass({
                         );
                     }
                     const component = args[0];
-                    component.anvilComponent$setParent(this, {onRemove: () => {
-                        this.setComponents(this.components.filter((entry: any) => entry.component !== component));
-                    }});
-                    const layoutProperties = kwargsToJsObject(kws);
+                    component.anvilComponent$setParent(this, {
+                        onRemove: () => {
+                            this.setComponents(this.components.filter((entry: any) => entry.component !== component));
+                        },
+                    });
+                    const layoutProperties = kwsToJsObj(kws);
                     return chainOrSuspend(component.anvil$hooks.setupDom(), (element) => {
                         this.setComponents(this.components.length, { component, element, layoutProperties });
                         return pyNone;
@@ -199,15 +200,21 @@ function mkComponentClass({
                     this.dropZones = {};
                 },
             },
-        }
+        },
     });
 
     initNativeSubclass(SolidComponent);
     return SolidComponent;
 }
 
-const solidComponentToSpec = ({name, events, container, layoutProperties, properties, showInToolbox}: SolidComponentDefinition) =>
-    ({name, events, container, layoutProperties, properties, showInToolbox});
+const solidComponentToSpec = ({
+    name,
+    events,
+    container,
+    layoutProperties,
+    properties,
+    showInToolbox,
+}: SolidComponentDefinition) => ({ name, events, container, layoutProperties, properties, showInToolbox });
 
 export const registerSolidComponent = (component: SolidComponentDefinition) => {
     const leafName = component.name.replace(/^.*\./, "");

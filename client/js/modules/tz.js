@@ -12,7 +12,7 @@ const {
     checkOneArg,
     buildPyClass,
 } = require("../@Sk");
-const { datetimeMod, kwToObj } = require("../runner/py-util");
+const { datetimeMod, kwsToObj } = require("../runner/py-util");
 
 /*#
 id: tz_module
@@ -38,7 +38,7 @@ module.exports = function () {
     const init = (args, kws = []) => {
         checkOneArg("tzoffset", args);
         const self = args[0];
-        const kwObj = kwToObj(kws);
+        const kwObj = kwsToObj(kws);
         const kwLen = kws.length / 2;
 
         if (kwLen > 1 || !(kwLen === 0 || "hours" in kwObj || "minutes" in kwObj || "seconds" in kwObj)) {

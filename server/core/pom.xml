@@ -22,7 +22,7 @@
       </testResource>
     </testResources>
     <directory>target</directory>
-    <outputDirectory>target/classes</outputDirectory>
+    <outputDirectory>target\classes</outputDirectory>
     <plugins/>
   </build>
   <repositories>
@@ -439,6 +439,14 @@
           <artifactId>slf4j-api</artifactId>
           <groupId>org.slf4j</groupId>
         </exclusion>
+        <exclusion>
+          <artifactId>bcprov-jdk15on</artifactId>
+          <groupId>org.bouncycastle</groupId>
+        </exclusion>
+        <exclusion>
+          <artifactId>bcpkix-jdk15on</artifactId>
+          <groupId>org.bouncycastle</groupId>
+        </exclusion>
       </exclusions>
     </dependency>
     <dependency>
@@ -474,8 +482,15 @@
     </dependency>
     <dependency>
       <groupId>org.bouncycastle</groupId>
-      <artifactId>bcprov-jdk15on</artifactId>
-      <version>1.65</version>
+      <artifactId>bcprov-jdk18on</artifactId>
+      <version>1.78.1</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.bouncycastle</groupId>
+      <artifactId>bcpkix-jdk18on</artifactId>
+      <version>1.78.1</version>
+      <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>buddy</groupId>
@@ -566,12 +581,6 @@
     <dependency>
       <groupId>io.opentelemetry</groupId>
       <artifactId>opentelemetry-sdk</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>org.bouncycastle</groupId>
-      <artifactId>bcprov-jdk18on</artifactId>
-      <version>1.78.1</version>
-      <scope>provided</scope>
     </dependency>
   </dependencies>
 </project>

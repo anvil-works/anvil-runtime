@@ -1,12 +1,12 @@
 "use strict";
 
-import {pyCall, pyDict, pyFunc, pyMappingProxy, pyNone, pyProperty, pyStr, remapToJsOrWrap, toPy} from "@Sk";
-import { s_add_component, s_clear } from "../runner/py-util";
-import { Slot } from "../runner/python-objects";
-import { isInvisibleComponent } from "./helpers";
-import { validateChild } from "./Container";
 import { getCssPrefix } from "@runtime/runner/legacy-features";
 import { warn } from "@runtime/runner/warnings";
+import { pyCall, pyDict, pyMappingProxy, pyStr, remapToJsOrWrap, toPy } from "@Sk";
+import { pyPropertyFromGetSet, s_add_component, s_clear } from "../runner/py-util";
+import { Slot } from "../runner/python-objects";
+import { validateChild } from "./Container";
+import { isInvisibleComponent } from "./helpers";
 
 var PyDefUtils = require("PyDefUtils");
 
@@ -260,19 +260,14 @@ module.exports = (pyModule) => {
 
             });
 
-            $loc["slots"] = new Sk.builtin.property(
-                new Sk.builtin.func((self) => {
-                    return self._anvil.pyLayoutSlots;
-                })
-            );
+            $loc["slots"] = pyPropertyFromGetSet((self) => self._anvil.pyLayoutSlots);
 
             /*!defAttr()!1*/ ({name: "dom_nodes", type: "dict", description: "A read-only dictionary allowing you to look up the DOM node by name for any HTML tag in this component's HTML that has an anvil-name= attribute."});
-            $loc["dom_nodes"] = new pyProperty(
-                new pyFunc(self => self._anvil.pyElementsOverwrite ?? self._anvil.pyElements),
-                new pyFunc((self, value) => {
+            $loc["dom_nodes"] = pyPropertyFromGetSet(
+                (self) => self._anvil.pyElementsOverwrite ?? self._anvil.pyElements,
+                (self, value) => {
                     self._anvil.pyElementsOverwrite = value;
-                    return pyNone;
-                })
+                }
             );
 
             /*!defMethod(_,component,[slot="default"])!2*/ "Add a component to the named slot of this HTML templated panel. If no slot is specified, the 'default' slot will be used."

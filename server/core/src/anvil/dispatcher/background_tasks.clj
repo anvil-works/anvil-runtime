@@ -219,8 +219,8 @@
                                                                                                                           ;; TODO: Once BG tasks are sensible Portable Classes, we won't need this DB lookup, we can include the session ID in the wire format for the object.
                                                                                                                           (when-let [response-id (get-in resp [:response :id])]
                                                                                                                             (let [task-id (json/read-str response-id)
-                                                                                                                                session-id (:session_id (first (jdbc/query util/db ["SELECT session_id FROM background_tasks WHERE id = ?" task-id])))]
-                                                                                                                            (tracing/merge-span-attrs tracing-span {:task_id         task-id
+                                                                                                                                  session-id (:session_id (first (jdbc/query util/db ["SELECT session_id FROM background_tasks WHERE id = ?" task-id])))]
+                                                                                                                              (tracing/merge-span-attrs tracing-span {:task_id         task-id
                                                                                                                                                                       :task_session_id session-id})))
                                                                                                                           (dispatcher/respond! return-path resp)))]
                                                                            (when (= :client origin)
@@ -236,13 +236,14 @@
                                                                            (let [do-dispatch! (fn [] (dispatcher/dispatch! (-> request
                                                                                                                                (assoc-in [:call :func] (str "task:" task-fn))
                                                                                                                                (update-in [:call :args] rest)
-                                                                                                                               (assoc :background? true)
-                                                                                                                               (assoc :scheduled? (boolean (:scheduled-task-id request)))
-                                                                                                                               (assoc :bg-task-timeout (if restrict?
+                                                                                                                               (dissoc :thread-id)
+                                                                                                                               (assoc :background? true
+                                                                                                                                      :scheduled? (boolean (:scheduled-task-id request))
+                                                                                                                                      :bg-task-timeout (if restrict?
                                                                                                                                                          (min 300 (or bg-task-timeout 300))
-                                                                                                                                                         bg-task-timeout))
-                                                                                                                               ;; It's useful to use the existing span here, because then we get all the task's executor info on *this* span, which has custom rendering anyway.
-                                                                                                                               (assoc :use-existing-tracing-span? true))
+                                                                                                                                                         bg-task-timeout)
+                                                                                                                                      ;; It's useful to use the existing span here, because then we get all the task's executor info on *this* span, which has custom rendering anyway.
+                                                                                                                                      :use-existing-tracing-span? true))
                                                                                                                            return-path))]
 
                                                                              (if-not restrict?

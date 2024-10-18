@@ -32,8 +32,8 @@ import {
 import { ComponentYaml, FormLayoutYaml } from "../runner/data";
 import {
     funcFastCall,
-    kwToObj,
-    objToKw,
+    kwsToObj,
+    objToKws,
     s_add_event_handler,
     s_anvil_events,
     s_get_components,
@@ -1091,10 +1091,10 @@ const isWithLayout = (c: Component): c is WithLayout => {
 /** Be careful - you should rarely call this directly - it's almost always better to call component.raise_event(event) */
 export function getListenerCallbacks(c: Component, eventName: string, kws?: Kws) {
     const listeners = c._Component.eventHandlers[eventName] ?? [];
-    const eventArgs = kwToObj(kws);
+    const eventArgs = kwsToObj(kws);
     eventArgs["sender"] = c;
     eventArgs["event_name"] = new pyStr(eventName);
-    return listeners.map((pyFn) => () => pyCallOrSuspend(pyFn, [], objToKw(eventArgs)));
+    return listeners.map((pyFn) => () => pyCallOrSuspend(pyFn, [], objToKws(eventArgs)));
 }
 
 function shouldFirePageAdded(c: Component) {

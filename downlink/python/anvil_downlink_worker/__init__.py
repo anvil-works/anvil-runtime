@@ -1,5 +1,5 @@
 from __future__ import absolute_import
-import ast, sys, imp, importlib, time
+import ast, sys, importlib, time
 
 # The downlink may need to coexist with the Uplink (for example in the standalone App Server).
 # In these deployments, the downlink's version of the 'anvil' module is shipped as
@@ -19,6 +19,8 @@ else:
 
 _server._do_call = _threaded_server.do_call
 _serialise.holding_reqresps = True # Don't do anything until we've loaded apps
+
+ModuleType = type(sys)
 
 
 def find(lst, f):
@@ -60,7 +62,7 @@ class SimpleLoader(object):
             sys.modules[name] = sys.modules[real_name]
             return sys.modules[name]
 
-        mod = self._module.get("module_object") or imp.new_module(real_name)
+        mod = self._module.get("module_object") or ModuleType(real_name)
         sys.modules[real_name] = mod
         # Grungy horrid double-loading hack for Python 3
         if name != real_name:
@@ -121,7 +123,7 @@ class AppModuleFinder(object):
                 if modname in self._modules:
                     template_mod = self._modules[modname]['module_object']
                 else:
-                    template_mod = imp.new_module(modname)
+                    template_mod = ModuleType(modname)
                     self._modules[modname] = {'module_object': template_mod}
 
             leaf_name = form['class_name'].split(".")[-1]
@@ -162,6 +164,12 @@ class AppModuleFinder(object):
         mod = self._modules.get(self._main_package+"."+name)
         if mod is not None:
             return SimpleLoader(mod, self._main_package+"."+name)
+    
+    def find_spec(self, name, path=None, target=None):
+        from importlib.util import spec_from_loader
+        loader = self.find_module(name, path)
+        if loader is not None:
+            return spec_from_loader(name, loader)
 
     def app_is_loaded(self):
         return self._app is not None

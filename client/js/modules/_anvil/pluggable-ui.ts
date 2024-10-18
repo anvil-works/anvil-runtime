@@ -1,7 +1,22 @@
-import {pyLazyMod, s_setdefault, s_update} from "@runtime/runner/py-util";
+import { Component } from "@runtime/components/Component";
+import { getCssPrefix } from "@runtime/runner/legacy-features";
+import {
+    funcFastCall,
+    kwsToObj,
+    objToKws,
+    pyPropertyFromGetSet,
+    s_add_component,
+    s_add_event_handler,
+    s_remove_event_handler,
+    s_set_event_handler,
+    s_setdefault,
+    s_update,
+} from "@runtime/runner/py-util";
 import {
     buildNativeClass,
+    buildPyClass,
     chainOrSuspend,
+    checkOneArg,
     Kws,
     objectRepr,
     pyCall,
@@ -10,13 +25,23 @@ import {
     pyDict,
     pyFunc,
     pyMappingProxy,
+    pyNewableType,
     pyNone,
     pyObject,
     pyStr,
-    pyTypeError, setUpModuleMethods,
+    pyTypeError,
+    toJs,
+    toPy,
 } from "@Sk";
 
 const hooks = new pyDict<pyStr, pyObject>();
+
+const s_focus = new pyStr("focus");
+const s_spacing_above = new pyStr("spacing_above");
+const s_spacing_below = new pyStr("spacing_below");
+const s_none = new pyStr("none");
+const s_text = new pyStr("text");
+const s_anvil_TextBox = new pyStr("anvil.TextBox");
 
 interface HookListener {
     key: string;
@@ -147,24 +172,101 @@ export const pluggableUI = new PluggableUI();
 
 // Anvil built-in defaults
 
-export const setupDefaultAnvilPluggableUI = (anvilModule: {[name: string]: pyObject}) => {
-    const setDefault = hooks.tp$getattr<pyCallable>(s_setdefault);
+export const setupDefaultAnvilPluggableUI = (anvilModule: { [name: string]: pyObject }) => {
+    const builtinComposites = { __name__: new pyStr("_builtin_composites") };
 
     for (const name of ["TextBox", "TextArea", "Button", "CheckBox", "RadioButton"]) {
-        hooks.mp$ass_subscript(new pyStr("anvil."+name), anvilModule[name]!);
+        hooks.mp$ass_subscript(new pyStr("anvil." + name), anvilModule[name]);
     }
 
-    const util = pyLazyMod("anvil.util");
+    const LinearPanel = anvilModule.LinearPanel as pyNewableType;
 
-    const builtinComposites = {__name__: new pyStr("_builtin_composites")} as {[name:string]: pyObject};
-    setUpModuleMethods("_builtin_composites", builtinComposites, {
-        TextBoxWithLabel: {
-            $meth(args, kwargs) {
-                return util.TextBoxWithLabel.tp$call(args, kwargs);
-            },
-            $flags: { FastCall: true },
-        }
+    const TextBoxWithLabel = buildPyClass(
+        builtinComposites,
+        ($gbl, $loc) => {
+            const tbEvents = ["focus", "lost_focus", "pressed_enter"];
+
+            $loc._anvil_events_ = toPy(tbEvents.map((name) => ({ name })));
+
+            $loc.__init__ = funcFastCall((args, kws) => {
+                checkOneArg("TextBoxWithLabel", args);
+
+                const kwObject = kwsToObj(kws);
+                const { label = pyStr.$empty, text = pyStr.$empty } = kwObject;
+                delete kwObject.label;
+                kwObject.text = text;
+
+                const [self] = args;
+
+                self.tp$setattr(s_spacing_above, s_none);
+                self.tp$setattr(s_spacing_below, s_none);
+
+                const add_component = self.tp$getattr<pyCallable>(s_add_component);
+
+                return chainOrSuspend(
+                    pyCallOrSuspend<Component>(anvilModule.Label, [], ["text", label]),
+                    (label) => {
+                        self.$label = label;
+                        return pyCallOrSuspend(add_component, [label]);
+                    },
+                    () => pyCallOrSuspend<Component>(pluggableUI.mp$subscript(s_anvil_TextBox), [], objToKws(kwObject)),
+                    (box) => {
+                        self.$box = box;
+                        return pyCallOrSuspend(add_component, [box]);
+                    },
+                    () => {
+                        return pyNone;
+                    }
+                );
+            });
+
+            for (const prop of ["text", "placeholder"]) {
+                $loc[prop] = pyPropertyFromGetSet(
+                    (self) => self.$box.tp$getattr(new pyStr(prop), true),
+                    (self, value) => self.$box.tp$setattr(new pyStr(prop), value, true)
+                );
+            }
+            $loc.label = pyPropertyFromGetSet(
+                (self) => self.$label.tp$getattr(s_text, true),
+                (self, value) => self.$label.tp$setattr(s_text, value, true)
+            );
+
+            $loc.focus = new pyFunc((self) => {
+                return pyCallOrSuspend(self.$box.tp$getattr(s_focus));
+            });
+
+            for (const eventHandlerMethod of [s_add_event_handler, s_set_event_handler, s_remove_event_handler]) {
+                $loc[eventHandlerMethod.toString()] = new pyFunc((self, ...args) => {
+                    const [event] = args;
+                    if (tbEvents.includes(event?.toString())) {
+                        return pyCallOrSuspend(self.$box.tp$getattr(eventHandlerMethod), args);
+                    }
+                    return pyCallOrSuspend(LinearPanel.tp$getattr(eventHandlerMethod), [self, ...args]);
+                });
+            }
+        },
+        "TextBoxWithLabel",
+        [LinearPanel]
+    );
+
+    const FooterButton = funcFastCall((args, kws) => {
+        const kwObj = kwsToObj(kws);
+        const buttonType = toJs(kwObj.button_type);
+        delete kwObj.button_type;
+        kwObj.spacing_above ??= s_none;
+        kwObj.spacing_below ??= s_none;
+
+        return chainOrSuspend(pyCallOrSuspend<Component>(anvilModule["Button"], args, objToKws(kwObj)), (button) =>
+            chainOrSuspend(button.anvil$hooks.setupDom(), (buttonElement) => {
+                const btnEl = buttonElement.querySelector("button");
+                const prefix = getCssPrefix();
+                btnEl?.classList.remove(`${prefix}btn-default`);
+                btnEl?.classList.add(`${prefix}btn-${buttonType || "default"}`);
+                return button;
+            })
+        );
     });
 
-    hooks.mp$ass_subscript(new pyStr("anvil.TextBoxWithLabel"), builtinComposites.TextBoxWithLabel);
+    hooks.mp$ass_subscript(new pyStr("anvil.TextBoxWithLabel"), TextBoxWithLabel);
+    hooks.mp$ass_subscript(new pyStr("anvil.alerts.FooterButton"), FooterButton);
 };

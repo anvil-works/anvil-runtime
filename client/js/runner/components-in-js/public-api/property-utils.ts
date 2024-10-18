@@ -1,5 +1,11 @@
 import { MarginPropertyValue, PaddingPropertyValue, SpacingPropertyValue } from "@runtime/components/Component";
-import { getSpacingObject } from "@runtime/runner/component-property-utils-api";
+import {
+    getSpacingObject,
+    getUnsetMargin,
+    getUnsetPadding,
+    getUnsetSpacing,
+    getUnsetValue,
+} from "@runtime/runner/component-property-utils-api";
 
 export const getMarginStyles = (margin: MarginPropertyValue) => getSpacingObject(margin, "margin");
 export const getPaddingStyles = (padding: PaddingPropertyValue) => getSpacingObject(padding, "padding");
@@ -9,7 +15,9 @@ export const getSpacingStyles = (spacing: SpacingPropertyValue) => ({
 });
 
 export const styleObjectToString = (style: any) => {
-    const s = Object.entries(style).map(([key, value]) => `${key.replace(/([A-Z])/g, "-$1").toLowerCase()}: ${value}`).join("; ");
+    const s = Object.entries(style)
+        .map(([key, value]) => `${key.replace(/([A-Z])/g, "-$1").toLowerCase()}: ${value}`)
+        .join("; ");
     return s ? s + ";" : "";
 };
 
@@ -27,3 +35,5 @@ export function setElementVisibility(element: HTMLElement, visible: boolean) {
         element.removeAttribute("anvil-visible-false");
     }
 }
+
+export { getUnsetMargin, getUnsetPadding, getUnsetSpacing, getUnsetValue };

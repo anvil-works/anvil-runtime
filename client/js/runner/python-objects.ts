@@ -46,9 +46,8 @@ import {
     getModule,
     importFrom,
     initNativeSubclass,
-    kwToObj,
-    kwargsToPyMap,
-    objToKw,
+    kwsToObj,
+    objToKws,
     s_add_component,
     s_hide,
     s_init_subclass,
@@ -269,7 +268,7 @@ export const Slot: SlotConstructor = Sk.abstr.buildNativeClass("anvil.Slot", {
             if (pyTemplateSpec && !(pyTemplateSpec instanceof Sk.builtin.dict) && pyTemplateSpec !== pyNone) {
                 throw new Sk.builtin.TypeError("the third argument (template spec) should be a dict or None");
             }
-            const { one_component } = kwToObj(kwargs);
+            const { one_component } = kwsToObj(kwargs);
             this._slotState = mkSlotState(
                 () => pyContainer,
                 insertionIndex,
@@ -284,7 +283,7 @@ export const Slot: SlotConstructor = Sk.abstr.buildNativeClass("anvil.Slot", {
             $meth(args, kwargs) {
                 Sk.abstr.checkArgsLen("add_component", args, 1, 1);
                 const [pyComponent] = args;
-                const layoutProps = kwToObj(kwargs);
+                const layoutProps = kwsToObj(kwargs);
 
                 const { _slotState } = this;
 
@@ -303,7 +302,7 @@ export const Slot: SlotConstructor = Sk.abstr.buildNativeClass("anvil.Slot", {
 
                 //console.log("Inserting", pyComponent, "into slot at index", layoutProps["index"].v, "because this slot has insertion index", _slotState.insertionIndex, "and offset", offset);
 
-                const nextKws = objToKw(layoutProps);
+                const nextKws = objToKws(layoutProps);
                 if (!_slotState.canAddComponent()) {
                     throw new Sk.builtin.ValueError("There is already a component in this slot");
                 }
@@ -563,7 +562,7 @@ export const WithLayout: WithLayoutConstructor = Sk.abstr.buildNativeClass("anvi
     classmethods: {
         __init_subclass__: {
             $meth(args: Args, kws?: Kws) {
-                const kwMap = kwargsToPyMap(kws);
+                const kwMap = kwsToObj(kws);
                 type LayoutFromYaml = { type: string; defaultDepId: string };
                 type Layout = ComponentConstructor | LayoutFromYaml | undefined;
 

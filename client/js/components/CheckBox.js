@@ -1,6 +1,6 @@
 "use strict";
 
-import {setElementMargin, setElementPadding} from "@runtime/runner/components-in-js/public-api/property-utils";
+import { getUnsetSpacing, setElementMargin, setElementPadding } from "@runtime/runner/components-in-js/public-api/property-utils";
 
 var PyDefUtils = require("PyDefUtils");
 import { getCssPrefix, getInlineStyles } from "@runtime/runner/legacy-features";
@@ -103,7 +103,7 @@ module.exports = (pyModule) => {
                     setElementPadding(s._anvil.elements.label, v?.padding);
                 },
                 getUnset(s, e, currentValue) {
-                    return PyDefUtils.getUnsetSpacing(e[0], s._anvil.elements.label, currentValue);
+                    return getUnsetSpacing(e[0], s._anvil.elements.label, currentValue);
                 }
             },
         }),

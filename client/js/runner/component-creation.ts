@@ -26,7 +26,7 @@ import {
 } from "./instantiation";
 import {
     anvilMod,
-    objectToKwargs,
+    jsObjToKws,
     s_add_component,
     s_add_event_handler,
     s_layout,
@@ -157,12 +157,12 @@ export const instantiateComponentFromYamlSpec = (
             // properties it knows how to look them up
             setDefaultDepIdForNextComponent(context.defaultDepId);
             nextCreationStack = {formSpec, prev: yamlStack};
-            return instantiate(objectToKwargs(properties), name);
+            return instantiate(jsObjToKws(properties), name);
         });
     } else {
         const instantiate = getAnvilComponentInstantiator(context, yamlSpec);
         setDefaultDepIdForNextComponent(context.defaultDepId);
-        return instantiate(objectToKwargs(properties), name);
+        return instantiate(jsObjToKws(properties), name);
     }
 };
 
@@ -372,7 +372,7 @@ export function addFormComponentsToLayout(formYaml: FormYaml, pyForm: Component,
                             pyCallOrSuspend(
                                 pyAddToSlot,
                                 [pyFormDict.mp$subscript(new pyStr(name))],
-                                objectToKwargs(layout_properties)
+                                jsObjToKws(layout_properties)
                             )
                 )
             );

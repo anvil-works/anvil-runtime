@@ -27,7 +27,8 @@
 
                  [anvil/embedded-traefik "0.3.0"]
 
-                 [org.bouncycastle/bcprov-jdk15on "1.65"]
+                 [org.bouncycastle/bcprov-jdk18on "1.78.1"]
+                 [org.bouncycastle/bcpkix-jdk18on "1.78.1"]
 
                  ;; Hacks for Java 11 (#2334) - we shouldn't need this
                  [javax.xml.bind/jaxb-api "2.3.1"]
@@ -41,6 +42,8 @@
   :uberjar-name "anvil-app-server.jar"
   :aot :all
   :omit-source true
-  :profiles {:provided {:dependencies [[org.bouncycastle/bcprov-jdk18on "1.78.1"]]}
-             :uberjar  {:exclusions [org.bouncycastle/bcprov-jdk18on]}}
+  :profiles {:provided {:dependencies [[org.bouncycastle/bcprov-jdk18on "1.78.1"]
+                                       [org.bouncycastle/bcpkix-jdk18on "1.78.1"]]}
+             :uberjar {:exclusions [org.bouncycastle/bcprov-jdk18on
+                                    org.bouncycastle/bcpkix-jdk18on]}}
   )

@@ -1,11 +1,12 @@
 "use strict";
 
+import { data } from "@runtime/runner/data";
 import { hasLegacyDict } from "@runtime/runner/legacy-features";
 import { chainOrSuspend, isTrue, pyCallOrSuspend, pyDict, pyNone, pyStr, pySuper } from "../@Sk";
 import { designerApi } from "../runner/component-designer-api";
 import {
     initNativeSubclass,
-    kwToObj,
+    kwsToObj,
     s_init_subclass,
     s_x_anvil_classic_hide,
     s_x_anvil_classic_show,
@@ -14,7 +15,6 @@ import {
     s_x_anvil_page_shown,
 } from "../runner/py-util";
 import { Component, getListenerCallbacks, raiseWritebackEventOrSuspend } from "./Component";
-import {data} from "@runtime/runner/data";
 
 var PyDefUtils = require("PyDefUtils");
 
@@ -34,52 +34,43 @@ module.exports = (pyModule) => {
         []
     );
 
+    const propNameMap = [
+        ["name", "name"],
+        ["type", "type"],
+        ["group", "group"],
+        ["description", "description"],
+        ["important", "important"],
+        ["hidden", "hidden"],
+        ["options", "options"],
+        ["accept", "accept"],
+        ["iconsets", "iconsets"],
+        ["allowCustomValue", "allowCustomValue"],
+        ["designerHint", "designerHint"],
+        ["multiline", "multiline"],
+        ["deprecated", "deprecated"],
+        ["allowBindingWriteback", "supportsWriteback"],
+        ["includeNoneOption", "includeNoneOption"],
+        ["noneOptionLabel", "noneOptionLabel"],
+        ["defaultBindingProp", "defaultBindingProp"],
+        ["priority", "priority"],
+        ["showInDesignerWhen", "showInDesignerWhen"],
+    ];
+
+    function propertyDescriptionMapper(property) {
+        const rv = {};
+        for (const [sourceCodeName, designerName] of propNameMap) {
+            if (sourceCodeName in property) {
+                rv[designerName] = property[sourceCodeName];
+            }
+        }
+        if (property.deprecateFromRuntimeV3 && data.app.runtime_options.version >= 3) {
+            rv.deprecated = true;
+        }
+        return rv;
+    }
+
     function getPropertyDescriptions(rawPropDescriptions) {
-        return rawPropDescriptions
-            .filter(({type}) => data.app.runtime_options.version >= 3 || !["margin", "padding", "spacing"].includes(type))
-            .map(({
-                name,
-                type,
-                group,
-                description,
-                important,
-                hidden,
-                options,
-                accept,
-                iconsets,
-                allowCustomValue,
-                designerHint,
-                multiline,
-                deprecated,
-                allowBindingWriteback,
-                includeNoneOption,
-                noneOptionLabel,
-                defaultBindingProp,
-                priority,
-                showInDesignerWhen,
-                deprecateFromRuntimeV3
-            }) => ({
-                name,
-                type,
-                group,
-                description,
-                important,
-                hidden,
-                options,
-                accept,
-                iconsets,
-                allowCustomValue,
-                designerHint,
-                multiline,
-                deprecated: deprecated || (deprecateFromRuntimeV3 && data.app.runtime_options.version >= 3),
-                supportsWriteback: allowBindingWriteback,
-                includeNoneOption,
-                noneOptionLabel,
-                defaultBindingProp,
-                priority,
-                showInDesignerWhen,
-            })
-        );
+        return rawPropDescriptions.map(propertyDescriptionMapper);
     }
 
     const universalEvents = PyDefUtils.assembleGroupEvents("ClassicComponent", ["universal"]);
@@ -165,8 +156,11 @@ module.exports = (pyModule) => {
                 getUnsetPropertyValues() {
                     return Object.fromEntries(
                         Object.entries(this._anvil.propMap)
-                        .map(([name, {getUnset}]) => [name, getUnset?.(this, this._anvil.element, this._anvil.props[name])])
-                        .filter(([_, unset]) => unset)
+                            .map(([name, { getUnset }]) => [
+                                name,
+                                getUnset?.(this, this._anvil.element, this._anvil.props[name]),
+                            ])
+                            .filter(([_, unset]) => unset)
                     );
                 },
                 getProperties() {
@@ -375,7 +369,7 @@ module.exports = (pyModule) => {
         classmethods: {
             __init_subclass__: {
                 $meth(args, kws) {
-                    const kwObj = kwToObj(kws);
+                    const kwObj = kwsToObj(kws);
                     PyDefUtils.initClassicComponentClassPrototype(this, kwObj._anvil_classic ?? {});
                     if (kwObj._anvil_classic && !hasOwnProperty.call(this, "anvil$hookSpec")) {
                         createHookSpec(this);

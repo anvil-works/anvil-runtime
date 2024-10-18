@@ -193,14 +193,14 @@
     "*")
   #'runtime/runtime-common-routes
 
-  (ring-util/wrap-async
-    (wrap-constant-app
+  (wrap-constant-app
+    (ring-util/wrap-async
       (routes
         runtime/app-routes
         #(serve-app/serve-request-to-app-url % {:consoleMessage (when-not @i-have-a-non-agpl-licence-to-this-software
                                                                   (format "***********\nThis application is served with the Anvil App Server, which is open-source software.\nYou can find the source code at:\n%s\n**********"
-                                                                          @source-link))} identity)))
-    [(runtime-sessions/with-app-session (constantly "anvil-session"))])
+                                                                          @source-link))} identity))
+      [(runtime-sessions/with-app-session (constantly "anvil-session"))]))
   runtime/app-404)
 
 ;; This is seriously gross. The http-kit server just trusts X-Forwarded-For headers,

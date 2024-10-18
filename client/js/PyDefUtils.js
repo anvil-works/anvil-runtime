@@ -1,29 +1,39 @@
 "use strict";
 
-const {
-    pyTypeError,
+import {
+    Args,
+    Kws,
+    Suspension,
+    pyCall,
+    pyCallOrSuspend,
+    pyCallable,
+    pyDict,
+    pyList,
     pyObject,
+    pyStaticMethod,
+    pyStr,
+    pyTuple,
+    pyTypeError,
+    remapToJsOrWrap,
     toJs,
     toPy,
-    Suspension,
-    pyFunc,
-    pyList,
-    pyDict,
-    pyStr,
-    pyCallOrSuspend,
-    pyTuple,
-    Kws,
-    Args,
-    pyCallable,
-} = require("./@Sk");
-const { notifyVisibilityChange } = require("./components/Component");
-const { getCssPrefix, hasLegacyDict } = require("./runner/legacy-features");
-const { objectToKwargs, s_raise_event, pyTryFinally } = require("./runner/py-util");
-const { defer } = require("./utils");
-const { setElementSpacing, setElementMargin, setElementPadding, getSpacingStyles, getMarginStyles, getPaddingStyles,
-    styleObjectToString
-} = require("@runtime/runner/components-in-js/public-api/property-utils");
-const {getSpacingObject} = require("@runtime/runner/component-property-utils-api");
+} from "@Sk";
+import { notifyVisibilityChange } from "./components/Component";
+import {
+    getMarginStyles,
+    getPaddingStyles,
+    getUnsetMargin,
+    getUnsetPadding,
+    getUnsetSpacing,
+    getUnsetValue,
+    setElementMargin,
+    setElementPadding,
+    setElementSpacing,
+    styleObjectToString,
+} from "./runner/components-in-js/public-api/property-utils";
+import { getCssPrefix, hasLegacyDict } from "./runner/legacy-features";
+import { funcFastCall, getImportedModule, kwsToObj, objToKws, pyTryFinally, s_raise_event } from "./runner/py-util";
+import { defer } from "./utils";
 
 var PyDefUtils = {};
 
@@ -52,76 +62,57 @@ PyDefUtils.loadModule = function(name, modvars) {
 };
 
 // Get a previously-loaded module. Throws exception if not already loaded.
-PyDefUtils.getModule = function(name) {
-    return Sk.sysmodules.mp$subscript(new Sk.builtin.str(name));
-}
+PyDefUtils.getModule = getImportedModule;
 
-PyDefUtils.staticmethod = function(pyFunc) {
-    return new Sk.builtin.staticmethod(pyFunc);
-}
+PyDefUtils.staticmethod = (pyFunc) => new pyStaticMethod(pyFunc);
 
-PyDefUtils.keywordArrayToHashMap = function (pyKwarray) {
-    const kwargs = {};
-    for (let i = 0; i < pyKwarray.length; i += 2) {
-        kwargs[pyKwarray[i].toString()] = pyKwarray[i + 1];
-    }
-    return kwargs;
-};
+PyDefUtils.keywordArrayToHashMap = kwsToObj; 
 
 // Skulpt functions that take keyword arguments must be marked with the
 // co_kwargs property, and will receive an array of alternating keys and values
 // as their first argument. withKwargs() takes a Javascript function that
 // expects a Javascript object of keyword keys/values as its first argument,
 // and turns it into the sort of function Skulpt will accept.
-PyDefUtils.withKwargs = function(f) {
-    var rf = function(pyKwarray, more_function_args) {
-        var kwargs = {}
-        for(var i = 0; i < pyKwarray.length - 1; i+=2)
-            kwargs[pyKwarray[i].v] = Sk.ffi.remapToJs(pyKwarray[i+1]);
+PyDefUtils.withKwargs = function (f) {
+    var rf = function (pyKwarray, more_function_args) {
+        var kwargs = {};
+        for (var i = 0; i < pyKwarray.length - 1; i += 2) kwargs[pyKwarray[i].v] = Sk.ffi.remapToJs(pyKwarray[i + 1]);
 
         return f.apply(this, [kwargs].concat(Array.prototype.slice.call(arguments, 1)));
     };
     rf.co_kwargs = true;
     return rf;
-}
+};
 
-PyDefUtils.funcWithKwargs = function(f) {
+PyDefUtils.funcWithKwargs = function (f) {
     return new Sk.builtin.func(PyDefUtils.withKwargs(f));
-}
+};
 
 // Sometimes, you don't want the kwargs transformed into Javascript.
 // Just mark the function as taking kwargs.
-PyDefUtils.withRawKwargs = function(f) {
+PyDefUtils.withRawKwargs = function (f) {
     f.co_kwargs = true;
     return f;
-}
+};
 
-PyDefUtils.funcWithRawKwargsDict = function(f) {
-    var rf = function(pyKwarray, more_function_args) {
+PyDefUtils.funcWithRawKwargsDict = function (f) {
+    var rf = function (pyKwarray, more_function_args) {
         const kwargs = PyDefUtils.keywordArrayToHashMap(pyKwarray);
         return f.apply(this, [kwargs].concat(Array.prototype.slice.call(arguments, 1)));
     };
     rf.co_kwargs = true;
     return new Sk.builtin.func(rf);
-}
-
-
-/**
- * @template {pyObject | Suspension} T 
- * @param {(args: Args, kws?: Kws) => T} f 
- * @returns {pyFunc<T>}
- */
-PyDefUtils.funcFastCall = (f) => {
-    f.co_fastcall = 1;
-    return new Sk.builtin.func(f);
 };
 
 
+/** @deprecated use funcFastCall from py-util */
+PyDefUtils.funcFastCall = funcFastCall;
+
 /** @deprecated use pyCall from Sk module */
-PyDefUtils.pyCall = Sk.misceval.callsimArray;
+PyDefUtils.pyCall = pyCall;
 
 /** @deprecated use pyCallOrSuspend from Sk module */
-PyDefUtils.pyCallOrSuspend = Sk.misceval.callsimOrSuspendArray;
+PyDefUtils.pyCallOrSuspend = pyCallOrSuspend;
 
 
 // Remap Python to JS, with special handlers for certain types
@@ -147,7 +138,7 @@ var remapToJSWithWrapper = function(obj, keySeq, unknownTypeWrapper, firstLookWr
             if (!(k instanceof Sk.builtin.str)) {
                 throw new Sk.builtin.TypeError("Cannot use '" + k.tp$name + "' objects as the key in a dict when sending to a server-side module; only string keys are allowed (arguments"+pythonifyPath(keySeq)+")");
             }
-            var jsk = Sk.ffi.remapToJs(k);
+            var jsk = Sk.ffi.toJs(k);
             keySeq.push(jsk);
             ret[jsk] = remapToJSWithWrapper(obj.mp$subscript(k), keySeq, unknownTypeWrapper, firstLookWrapper);
             keySeq.pop();
@@ -541,7 +532,7 @@ PyDefUtils.asyncToPromise = (fn) => {
 // (expects a Javascript object as first parameter, keys are JS, vals are Python if pyVal is true, otherwise JS.
 /** @deprecated */
 PyDefUtils.raiseEventOrSuspend = function(eventArgs, self, eventName) {
-    return pyCallOrSuspend(self.tp$getattr(s_raise_event), [new pyStr(eventName)], objectToKwargs(eventArgs));
+    return pyCallOrSuspend(self.tp$getattr(s_raise_event), [new pyStr(eventName)], objToKws(eventArgs));
 };
 
 PyDefUtils.raiseEventAsync = function(eventArgs, self, eventName) {
@@ -936,64 +927,6 @@ PyDefUtils.OuterElement = ({refName, includePadding=true, style, className, ...p
 
 };
 
-const styleToCssVal = (m) => m ? `${m.value}${m.unit}` : null;
-const styleToVal = (m) => m ? (m.unit === "px" ? m.value : styleToCssVal(m)) : null;
-
-const getUnsetMargin = PyDefUtils.getUnsetMargin = (e, currentValue) => {
-    if (!e.computedStyleMap) {
-        return undefined; // Not supported in Firefox
-    }
-    const currentSpacingObject = getSpacingObject(toJs(currentValue), "");
-
-    const styleMap = e.computedStyleMap();
-    const styles = [
-        currentSpacingObject['Top'] === "" ? styleMap.get("margin-top") : null,
-        currentSpacingObject['Right'] === "" ? styleMap.get("margin-right") : null,
-        currentSpacingObject['Bottom'] === "" ? styleMap.get("margin-bottom") : null,
-        currentSpacingObject['Left'] === "" ? styleMap.get("margin-left") : null,
-    ];
-    return {
-        value: styles.map(styleToVal),
-        css: styles.map(styleToCssVal),
-    };
-};
-
-const getUnsetPadding = PyDefUtils.getUnsetPadding = (e, currentValue) => {
-    if (!e.computedStyleMap) {
-        return undefined; // Not supported in Firefox
-    }
-    const currentSpacingObject = getSpacingObject(toJs(currentValue), "");
-    const styleMap = e.computedStyleMap();
-    const styles = [
-        currentSpacingObject['Top'] === "" ? styleMap.get("padding-top") : null,
-        currentSpacingObject['Right'] === "" ? styleMap.get("padding-right") : null,
-        currentSpacingObject['Bottom'] === "" ? styleMap.get("padding-bottom") : null,
-        currentSpacingObject['Left'] === "" ? styleMap.get("padding-left") : null,
-    ];
-    return {
-        value: styles.map(styleToVal),
-        css: styles.map(styleToCssVal),
-    };
-};
-
-const getUnsetSpacing = PyDefUtils.getUnsetSpacing = (marginElement, paddingElement, currentValue) => {
-    const margin = getUnsetMargin(marginElement, toPy(toJs(currentValue)?.margin));
-    const padding = getUnsetPadding(paddingElement, toPy(toJs(currentValue)?.padding));
-    // firefox support
-    if (margin === undefined || padding === undefined) {
-        return undefined;
-    }
-    return {
-        value: {
-            margin: margin.value,
-            padding: padding.value,
-        },
-        css: {
-            margin: margin.css,
-            padding: padding.css,
-        }
-    };
-};
 
 
 /*!propGroups()!1*/
@@ -1048,16 +981,10 @@ var propertyGroups = {
                 e.css("font-size", typeof v === "number" ? v + "px" : "");
             },
             getUnset(s, e, currentValue) {
-                if (!e[0].computedStyleMap) {
-                    return undefined; // Not supported in Firefox
-                }
+                const el = e[0];
                 const jsVal = toJs(currentValue);
                 if (jsVal === null || jsVal === undefined || jsVal === "") {
-                    const v = e[0].computedStyleMap().get("font-size");
-                    return {
-                        value: styleToVal(v),
-                        css: styleToCssVal(v),
-                    };
+                    return getUnsetValue(el, "font-size");
                 }
             },
         },
@@ -2195,9 +2122,9 @@ PyDefUtils.repaginateChildren = (self, skip, startAfter, remainingRowQuota) => {
 };
 
 /** @deprecated */
-PyDefUtils.remapToJsOrWrap = Sk.ffi.remapToJsOrWrap;
+PyDefUtils.remapToJsOrWrap = remapToJsOrWrap;
 /** @deprecated */
-PyDefUtils.unwrapOrRemapToPy = Sk.ffi.toPy; // keep this around even though it is just an alias
+PyDefUtils.unwrapOrRemapToPy = toPy; // keep this around even though it is just an alias
 
 PyDefUtils.callJs = (pyComponent, pyFnName, ...pyArgs) => {
 
@@ -2230,9 +2157,9 @@ PyDefUtils.callJs = (pyComponent, pyFnName, ...pyArgs) => {
 
     let rv = fn.apply(jqueryWrapped, pyArgs.map(PyDefUtils.remapToJsOrWrap));
     if (rv instanceof Promise) {
-        rv = PyDefUtils.suspensionFromPromise(rv.then(Sk.ffi.toPy));
+        rv = PyDefUtils.suspensionFromPromise(rv.then(toPy));
     } else {
-        rv = Sk.ffi.toPy(rv);
+        rv = toPy(rv);
     }
     return rv;
 };

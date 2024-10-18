@@ -88,7 +88,7 @@ const getSpacingValueStyleString = (value: SpacingLength) =>
         ? value
         : ""; // set to empty string - i.e. don't set this value
 
-export const getSpacingObject = (value: MarginPropertyValue, keyPrefix: string) => {
+export const getSpacingObject = (value: MarginPropertyValue | undefined, keyPrefix: string) => {
     const [top, right, bottom, left] =
         typeof value === "number" || typeof value === "string"
             ? [value, value, value, value]
@@ -107,6 +107,74 @@ export const getSpacingObject = (value: MarginPropertyValue, keyPrefix: string) 
         [`${keyPrefix}Left`]: getSpacingValueStyleString(left),
     };
 };
+
+const styleToCssVal = (m: string | null) => m || null;
+const styleToVal = (m: string | null) => {
+    if (!m) return null;
+    if (m.endsWith("px")) {
+        return parseFloat(m);
+    }
+    return m;
+};
+
+export function getUnsetValue(element: HTMLElement, key: keyof CSSStyleDeclaration, currentValue: any) {
+    if (currentValue !== "" && currentValue !== null && currentValue !== undefined) {
+        return { value: null, css: null }; // this is probably right
+    }
+    const value = window.getComputedStyle(element)[key] as string | null;
+    return {
+        value: styleToVal(value),
+        css: styleToCssVal(value),
+    };
+}
+
+const DIRS = ["Top", "Right", "Bottom", "Left"];
+
+function getUnsetMarginOrPadding(
+    e: HTMLElement,
+    key: "margin" | "padding",
+    currentValue?: MarginPropertyValue | PaddingPropertyValue
+) {
+    const currentSpacingObject = getSpacingObject(currentValue, "");
+
+    const computedStyle = window.getComputedStyle(e);
+
+    const styles = DIRS.map((dir) =>
+        currentSpacingObject[dir] === "" ? (computedStyle[(key + dir) as keyof CSSStyleDeclaration] as string) : null
+    );
+
+    return {
+        value: styles.map(styleToVal),
+        css: styles.map(styleToCssVal),
+    };
+}
+
+export function getUnsetMargin(e: HTMLElement, currentValue?: MarginPropertyValue) {
+    return getUnsetMarginOrPadding(e, "margin", currentValue);
+}
+
+export function getUnsetPadding(e: HTMLElement, currentValue?: PaddingPropertyValue) {
+    return getUnsetMarginOrPadding(e, "padding", currentValue);
+}
+
+export function getUnsetSpacing(
+    marginElement: HTMLElement,
+    paddingElement: HTMLElement,
+    currentValue?: SpacingPropertyValue
+) {
+    const margin = getUnsetMargin(marginElement, currentValue?.margin);
+    const padding = getUnsetPadding(paddingElement, currentValue?.padding);
+    return {
+        value: {
+            margin: margin.value,
+            padding: padding.value,
+        },
+        css: {
+            margin: margin.css,
+            padding: padding.css,
+        },
+    };
+}
 
 setUpModuleMethods("property_utils", pyPropertyUtilsApi, {
     get_form_constructor: {
@@ -185,5 +253,41 @@ setUpModuleMethods("property_utils", pyPropertyUtilsApi, {
             return pyNone;
         },
         $flags: { NamedArgs: ["element", "visible"] },
+    },
+    get_unset_margin: {
+        $meth(e: pyObject, currentValue: pyObject) {
+            return toPy(getUnsetMargin(toJs(e) as HTMLElement, toJs(currentValue) as MarginPropertyValue));
+        },
+        $flags: { NamedArgs: ["element", "current_value"], Defaults: [pyNone] },
+    },
+    get_unset_padding: {
+        $meth(e: pyObject, currentValue: pyObject) {
+            return toPy(getUnsetPadding(toJs(e) as HTMLElement, toJs(currentValue) as PaddingPropertyValue));
+        },
+        $flags: { NamedArgs: ["element", "current_value"], Defaults: [pyNone] },
+    },
+    get_unset_spacing: {
+        $meth(marginElement: pyObject, paddingElement: pyObject, currentValue: pyObject) {
+            return toPy(
+                getUnsetSpacing(
+                    toJs(marginElement) as HTMLElement,
+                    toJs(paddingElement) as HTMLElement,
+                    toJs(currentValue) as SpacingPropertyValue
+                )
+            );
+        },
+        $flags: { NamedArgs: ["margin_element", "padding_element", "current_value"], Defaults: [pyNone] },
+    },
+    get_unset_value: {
+        $meth(element: pyObject, key: pyStr, currentValue: pyObject) {
+            return toPy(
+                getUnsetValue(
+                    toJs(element) as HTMLElement,
+                    toJs(key) as keyof CSSStyleDeclaration,
+                    toJs(currentValue) as string | null
+                )
+            );
+        },
+        $flags: { NamedArgs: ["element", "key", "current_value"], Defaults: [pyNone] },
     },
 });
