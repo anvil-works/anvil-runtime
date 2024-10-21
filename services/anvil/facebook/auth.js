@@ -16,7 +16,7 @@ var $builtinmodule = window.memoise('anvil.facebook.auth', function() {
 
             var authParams = {
                 scopes: scopesToRequest,
-                s: window.anvilSessionToken,
+                _anvil_session: window.anvilSessionToken,
             };
 
             var authUrl = appPath + "/_/facebook_auth_redirect?" + $.param(authParams);
@@ -57,11 +57,17 @@ var $builtinmodule = window.memoise('anvil.facebook.auth', function() {
                 title: "Log in with Facebook",
                 body: "You are about to log in to this app with Facebook",
                 buttons: [
-                    { text: "Cancel", onClick: () => loginCallbackResolve.reject("MODAL_CANCEL") },
+                    {
+                        text: "Cancel",
+                        onClick: () => {
+                            modal.once("hidden", () => loginCallbackResolve.reject("MODAL_CANCEL"));
+                        },
+                    },
                     { text: "Log in", style: "success", onClick: doLogin },
                 ],
             });
-            modal.once("hidden", () => loginCallbackResolve.reject("MODAL_CANCEL"));
+            // facebook doesn't always come back with a rejection, so if we don't timeout we just hang
+            modal.once("hidden", () => setTimeout(() => loginCallbackResolve.reject("MODAL_CANCEL"), 3000));
             await modal.show();
         }
     }

@@ -16,7 +16,7 @@ var $builtinmodule = window.memoise('anvil.microsoft.auth', function() {
 
             var authParams = {
                 scopes: scopesToRequest,
-                s: window.anvilSessionToken,
+                _anvil_session: window.anvilSessionToken,
             };
 
             var authUrl = appPath + "/_/microsoft_auth_redirect?" + $.param(authParams);

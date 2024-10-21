@@ -64,7 +64,7 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
 
             var authParams = {
                 scope: scopesToRequest,
-                s: window.anvilSessionToken,
+                _anvil_session: window.anvilSessionToken,
             };
 
             var authUrl = appPath + "/_/client_auth_redirect?" + $.param(authParams);

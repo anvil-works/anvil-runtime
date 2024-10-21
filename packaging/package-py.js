@@ -5,6 +5,7 @@ module.exports = function(grunt) {
     var output = ""
     for(var i in files) {
         var f = grunt.file.read(files[i]);
+        f = f.replace(/\r\n?/g, "\n");
 
         output += "Sk.builtinFiles.files['" + files[i].replace(/^.*runtime\/client\/py\//, "src/lib/") + "']=";
         output += JSON.stringify(f);

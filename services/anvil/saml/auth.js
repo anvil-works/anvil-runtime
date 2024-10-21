@@ -13,7 +13,7 @@ var $builtinmodule = window.memoise('anvil.saml.auth', function() {
         function doLogin() {
 
             var authParams = {
-                s: window.anvilSessionToken,
+                _anvil_session: window.anvilSessionToken,
             };
 
             var authUrl = appPath + "/_/saml_auth_redirect?" + $.param(authParams);

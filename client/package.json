@@ -48,6 +48,7 @@
   "scripts": {
     "watch": "webpack --mode development --watch --config js/webpack.config.js",
     "build-dev": "webpack --mode development --config js/webpack.config.js",
-    "build": "webpack --mode production --config js/webpack.config.js"
+    "build": "webpack --mode production --config js/webpack.config.js && npm run package-py",
+    "package-py": "node ./scripts/package-py.js"
   }
 }

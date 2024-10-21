@@ -215,6 +215,9 @@ else:
     _label_style = {}
 
     def _email_token_login_with_form(initial_email=""):
+
+
+        TextBox = pluggable_ui['anvil.TextBox']
         panel = LinearPanel()
 
         email_box = TextBox(placeholder="Email address", text=initial_email)
@@ -238,6 +241,10 @@ else:
     def signup_with_form(_link_back_to_login_on_already_exists=False,remember_by_default=True, allow_cancel=False, initial_email="", initial_password=""):
         if not get_client_config().get("allow_signup"):
             raise Exception("New user signup is not enabled")
+
+        TextBoxWithLabel = pluggable_ui['anvil.TextBoxWithLabel']
+        Button = pluggable_ui['anvil.Button']
+        CheckBox = pluggable_ui['anvil.CheckBox']
 
         lp = LinearPanel()
         email_box = None
@@ -265,7 +272,7 @@ else:
 
         if get_client_config().get("use_email", False):
             some_method_available = True
-            passwd_box = [TextBoxWithLabel(hide_text=True, placeholder=p) for p in [("Password:", "password"), ("Retype password:", "repeat password")]]
+            passwd_box = [TextBoxWithLabel(hide_text=True, label=p[0], placeholder=p[1]) for p in [("Password:", "password"), ("Retype password:", "repeat password")]]
             passwd_box[0].set_event_handler("pressed_enter", passwd_1_pressed_enter)
             passwd_box[0].text = initial_password
             lp.add_component(passwd_box[0])
