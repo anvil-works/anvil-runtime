@@ -159,6 +159,13 @@ class Worker(BaseWorker):
                         if "response" in msg and self.enable_profiling.get(id):
                             self.fill_out_profiling(msg)
 
+                        if "debugger" in msg:
+                            dbg = msg["debugger"]
+                            if dbg["state"] == "PAUSED":
+                                self.clear_timeout(msg["id"])
+                            elif dbg["state"] == "RUNNING":
+                                self.set_timeout(msg["id"])
+
                         if "response" in msg and msg['id'] == 'pre-kill-task-state':
                             # Special case handling for a "clean" kill (where we manage to recover the state)
 
@@ -239,7 +246,7 @@ class Worker(BaseWorker):
 
     def send(self, msg, bindata=None):
         id = msg.get("id")
-        if msg.get("type") in ["CALL", "GET_TASK_STATE", "LAUNCH_REPL", "REPL_COMMAND", "TERMINATE_REPL"]:
+        if msg.get("type") in ["CALL", "GET_TASK_STATE", "LAUNCH_REPL", "REPL_COMMAND", "TERMINATE_REPL", "DEBUG_REQUEST"]:
             # It's a new request! Start the timeout
             #print ("Setting timeout and routing for new request ID %s" % id)
             self.record_inbound_call_started(msg)
@@ -247,6 +254,7 @@ class Worker(BaseWorker):
                 self.enable_profiling[id] = True
             if msg["type"] != "REPL_COMMAND":
                 self.set_timeout(id)
+            # TODO pause timeouts while debugging in progress
 
         elif msg.get("type") == "REPL_KEEPALIVE":
             self.clear_timeout(msg["repl"])
@@ -265,6 +273,9 @@ class Worker(BaseWorker):
             self.on_media_complete(msg, lambda: self.record_outbound_call_complete(id))
 
     def get_task_state(self, msg):
+        self.send(msg)
+
+    def handle_debug_request(self, msg):
         self.send(msg)
 
     def handle_inbound_message(self, msg, bindata=None):

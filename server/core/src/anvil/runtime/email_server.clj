@@ -7,7 +7,8 @@
             [crypto.random :as random]
             [clojure.tools.logging :as log]
             [anvil.util :as util]
-            [anvil.runtime.sessions :as sessions])
+            [anvil.runtime.sessions :as sessions]
+            [anvil.runtime.debugger :as debugger])
   (:import (org.subethamail.smtp.helper SimpleMessageListener SimpleMessageListenerAdapter)
            (javax.mail Session Header Part Multipart)
            (java.util Properties Timer TimerTask)
@@ -77,7 +78,9 @@
                          (try (.cancel timer-task) (catch Exception e))))
         trace-id nil                                        ;; TODO NEW TRACE API
         return-path {:update!
-                     (fn [{:keys [output]}]
+                     (fn [{:keys [output debuggers]}]
+                       (when debuggers
+                         (debugger/handle-debugger-update! environment {:type "email"} debuggers nil))
                        (when (string? output)
                          (app-log/record-event! app-session trace-id "print" output nil)))
 

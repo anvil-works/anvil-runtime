@@ -1,6 +1,6 @@
 "use strict";
 
-import {
+const {
     Args,
     Kws,
     Suspension,
@@ -17,9 +17,9 @@ import {
     remapToJsOrWrap,
     toJs,
     toPy,
-} from "@Sk";
-import { notifyVisibilityChange } from "./components/Component";
-import {
+} = require("@Sk");
+const { notifyVisibilityChange } = require("./components/Component");
+const {
     getMarginStyles,
     getPaddingStyles,
     getUnsetMargin,
@@ -30,10 +30,10 @@ import {
     setElementPadding,
     setElementSpacing,
     styleObjectToString,
-} from "./runner/components-in-js/public-api/property-utils";
-import { getCssPrefix, hasLegacyDict } from "./runner/legacy-features";
-import { funcFastCall, getImportedModule, kwsToObj, objToKws, pyTryFinally, s_raise_event } from "./runner/py-util";
-import { defer } from "./utils";
+} = require("./runner/components-in-js/public-api/property-utils");
+const { getCssPrefix, hasLegacyDict } = require("./runner/legacy-features");
+const { funcFastCall, getImportedModule, kwsToObj, pyTryFinally, s_raise_event, jsObjToKws } = require("./runner/py-util");
+const { defer } = require("./utils");
 
 var PyDefUtils = {};
 
@@ -507,7 +507,8 @@ PyDefUtils.callAsync = (func, kwDict, varargseq, kws, ...args) =>
 // but since the next optional suspension we hit
 // will be the result of long running code we only ignore the first one.
 function ignoreFirstOptionalSuspension(susp) {
-    if (susp instanceof Sk.misceval.Suspension && susp.optional) {
+    // TODO: Work out whether this will affect optional debug suspensions
+    if (susp instanceof Sk.misceval.Suspension && susp.optional && susp.data.type !== "Sk.debug") {
         susp = susp.resume();
     }
     return susp;
@@ -521,7 +522,7 @@ function ignoreFirstOptionalSuspension(susp) {
  */
 PyDefUtils.asyncToPromise = (fn) => {
     const suspendablefn = () => ignoreFirstOptionalSuspension(fn());
-    return Sk.misceval.asyncToPromise(suspendablefn).catch((e) => {
+    return Sk.misceval.asyncToPromise(suspendablefn, PyDefUtils.suspensionHandlers).catch((e) => {
         // unhandled errors are caught by window.onunhandledrejection
         throw e;
     });
@@ -532,7 +533,7 @@ PyDefUtils.asyncToPromise = (fn) => {
 // (expects a Javascript object as first parameter, keys are JS, vals are Python if pyVal is true, otherwise JS.
 /** @deprecated */
 PyDefUtils.raiseEventOrSuspend = function(eventArgs, self, eventName) {
-    return pyCallOrSuspend(self.tp$getattr(s_raise_event), [new pyStr(eventName)], objToKws(eventArgs));
+    return pyCallOrSuspend(self.tp$getattr(s_raise_event), [new pyStr(eventName)], jsObjToKws(eventArgs));
 };
 
 PyDefUtils.raiseEventAsync = function(eventArgs, self, eventName) {
@@ -1279,7 +1280,7 @@ var propertyGroups = {
             options: ["none", "small", "medium", "large"],
             defaultValue: new Sk.builtin.str("small"),
             pyVal: true,
-            deprecateFromRuntimeV3: localStorage.previewSpacingProperties === 'true', // Once you have margins, this is no longer needed. But we can't remove it entirely, because people might have used it. Hide from designer, allow override via margin property.
+            deprecateFromRuntimeV3: true, // Once you have margins, this is no longer needed. But we can't remove it entirely, because people might have used it. Hide from designer, allow override via margin property.
             description: "The vertical space above this component.",
             set(s, e, v) {
                 v = v.toString();
@@ -1300,7 +1301,7 @@ var propertyGroups = {
             options: ["none", "small", "medium", "large"],
             defaultValue: new Sk.builtin.str("small"),
             pyVal: true,
-            deprecateFromRuntimeV3: localStorage.previewSpacingProperties === 'true', // Once you have margins, this is no longer needed. But we can't remove it entirely, because people might have used it. Hide from designer, allow override via margin property.
+            deprecateFromRuntimeV3: true, // Once you have margins, this is no longer needed. But we can't remove it entirely, because people might have used it. Hide from designer, allow override via margin property.
             description: "The vertical space below this component.",
             set(s, e, v) {
                 v = v.toString();
@@ -1322,8 +1323,6 @@ var propertyGroups = {
             group: "layout", // Override group for this property
             name: "spacing",
             type: "spacing",
-            noDoc: true, // Exclude from API docs
-            hidden: localStorage.previewSpacingProperties !== 'true',
             description: "Margin and padding for this container. Only available in apps that have been migrated to use Layouts.",
             defaultValue: Sk.builtin.none.none$,
             important: true,
@@ -1342,8 +1341,6 @@ var propertyGroups = {
             group: "layout", // Override group for this property
             name: "margin",
             type: "margin",
-            noDoc: true, // Exclude from API docs
-            hidden: localStorage.previewSpacingProperties !== 'true',
             description: "Margin for this component. Only available in apps that have been migrated to use Layouts.",
             defaultValue: Sk.builtin.none.none$,
             important: true,
@@ -1362,8 +1359,6 @@ var propertyGroups = {
             group: "layout", // Override group for this property
             name: "padding",
             type: "padding",
-            noDoc: true,// Exclude from API docs
-            hidden: localStorage.previewSpacingProperties !== 'true',
             description: "Padding for this component. Only available in apps that have been migrated to use Layouts.",
             defaultValue: Sk.builtin.none.none$,
             important: true,

@@ -1,0 +1,15 @@
+- description: ''
+  form:
+    class_name: Form
+    code: "from ._anvil_designer import $NAME$Template\nfrom anvil import *\n\nclass $NAME$($NAME$Template):\n\n  def __init__(self, **properties):\n    # Set Form properties and Data Bindings.\n    self.init_components(**properties)\n\n    # Any code you write here will run before the form opens.\n    \n"
+    components:
+    - layout_properties: {slot: default}
+      name: content_panel
+      properties: {}
+      type: ColumnPanel
+    container:
+      properties: {html: '@theme:standard-page.html'}
+      type: HtmlTemplate
+    is_package: true
+  img: null
+  name: Standard Page

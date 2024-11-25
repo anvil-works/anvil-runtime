@@ -1,10 +1,12 @@
 // Stubs for components' interactions with a drag-n-drop UI designer
 
-import PyDefUtils from "PyDefUtils";
 import {
     chainOrSuspend,
+    checkArgsLen,
     checkString,
+    copyKeywordsToNamedArgs,
     promiseToSuspension,
+    proxy,
     pyCallable,
     pyDict,
     pyFalse,
@@ -12,10 +14,12 @@ import {
     pyObject,
     pyStr,
     pyTrue,
+    remapToJsOrWrap,
     setUpModuleMethods,
     toJs,
     toPy,
 } from "@Sk";
+import PyDefUtils from "PyDefUtils";
 import type { Component, ComponentConstructor, Section, StringPropertyDescription } from "../components/Component";
 
 const NOT_AVAILABLE = (...args: any[]) => {
@@ -91,6 +95,13 @@ setUpModuleMethods("designer", pyDesignerApi, {
     get_design_name: {
         $meth(pyComponent) {
             return toPy(designerApi.getDesignName(pyComponent));
+        },
+        $flags: { OneArg: true },
+    },
+    get_designer_state: {
+        $meth(pyComponent) {
+            // this turns the Map into a python dict like object
+            return proxy(designerApi.getDesignerState(pyComponent));
         },
         $flags: { OneArg: true },
     },
@@ -178,20 +189,31 @@ setUpModuleMethods("designer", pyDesignerApi, {
         $flags: { NamedArgs: ["requesting_component", "form", "property_name", "property_value"] },
     },
     start_inline_editing: {
-        $meth(pyComponent: Component, propertyName: any, domElement: pyObject) {
+        $meth(args, kws = []) {
+            // TODO - we should probably add multiline support
+            const [pyComponent, propertyName, domElement, on_finished] = copyKeywordsToNamedArgs(
+                "start_inline_editing",
+                ["component", "property_name", "dom_element", "on_finished"],
+                args,
+                kws,
+                [pyNone, pyNone]
+            );
+            // on_finished is keyword only
+            checkArgsLen("start_inline_editing", args, 2, 3);
+
             if (!checkString(propertyName)) return pyNone;
+
+            const onFinished: any = remapToJsOrWrap(on_finished) ?? undefined;
+
             return chainOrSuspend(toJs(domElement) || pyComponent.anvil$hooks.setupDom(), (element: HTMLElement) => {
                 return wrapMaybePromise(
-                    designerApi.startInlineEditing(
-                        pyComponent,
-                        { name: toJs(propertyName), type: "string" },
-                        element,
-                        {}
-                    )
+                    designerApi.startInlineEditing(pyComponent, { name: toJs(propertyName), type: "string" }, element, {
+                        onFinished,
+                    })
                 );
             });
         },
-        $flags: { NamedArgs: ["component", "property_name", "dom_element"], Defaults: [pyNone] },
+        $flags: { FastCall: true },
     },
 });
 

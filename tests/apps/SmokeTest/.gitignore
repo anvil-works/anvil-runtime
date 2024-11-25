@@ -1,0 +1,4 @@
+*.pyc
+*.pyo
+__pycache__
+.anvil-data

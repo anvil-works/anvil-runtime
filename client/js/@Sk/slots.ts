@@ -97,7 +97,7 @@ export interface seqMapSlots {
     mp$subscript(item: pyObject): pyObject;
     /** a value of undefined signals deleting an item */
     mp$ass_subscript(item: pyObject, val?: pyObject): pyObject;
-    sq$lenth(): number;
+    sq$length(): number;
     sq$concat(other: pyObject): pyObject;
     sq$inplace_concat(other: pyObject): pyObject;
     sq$repeat(other: pyObject): pyObject;

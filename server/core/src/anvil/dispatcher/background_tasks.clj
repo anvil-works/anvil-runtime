@@ -15,7 +15,8 @@
             [anvil.core.worker-pool :as worker-pool]
             [anvil.runtime.sessions :as sessions]
             [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks]
-            [anvil.core.tracing :as tracing])
+            [anvil.core.tracing :as tracing]
+            [anvil.runtime.debugger :as debugger])
   (:use     [slingshot.slingshot :only [throw+ try+]])
   (:import (anvil.dispatcher.types DateTime)
            (java.sql Timestamp)
@@ -357,7 +358,9 @@
         task (create-background-task-record environment impl func (sessions/get-id new-session))
         _ (swap! new-session assoc-in [:client :background-task-id] (:id task))
 
-        return-path {:update!  (fn [{:keys [output]}]
+        return-path {:update!  (fn [{:keys [output debuggers]}]
+                                 (when debuggers
+                                   (debugger/handle-debugger-update! environment {:type "background_task"} debuggers nil))
                                  (when output
                                    (app-log/record-event! new-session (tracing/get-trace-id tracing-span) "print" output nil)))
                      :respond! (fn [{:keys [error] :as resp}]

@@ -11,6 +11,10 @@ sys.path = old_path
 
 import anvil.server
 from anvil import _server, _serialise, _threaded_server, _form_templating
+try:
+    from anvil import _debugger
+except ImportError:
+    _debugger = None
 
 if sys.version_info[0] < 3:
     from .exec2 import do_exec
@@ -62,7 +66,8 @@ class SimpleLoader(object):
             sys.modules[name] = sys.modules[real_name]
             return sys.modules[name]
 
-        mod = self._module.get("module_object") or ModuleType(real_name)
+        # convert to str here to avoid unicode error in python 2
+        mod = self._module.get("module_object") or ModuleType(str(real_name))
         sys.modules[real_name] = mod
         # Grungy horrid double-loading hack for Python 3
         if name != real_name:
@@ -123,7 +128,8 @@ class AppModuleFinder(object):
                 if modname in self._modules:
                     template_mod = self._modules[modname]['module_object']
                 else:
-                    template_mod = ModuleType(modname)
+                    # convert to str here to avoid unicode error in python 2
+                    template_mod = ModuleType(str(modname))
                     self._modules[modname] = {'module_object': template_mod}
 
             leaf_name = form['class_name'].split(".")[-1]
@@ -283,8 +289,19 @@ def handle_incoming_call(msg, send_to_host):
         send_to_host({"id": msg['id'], "response": None})
         return
 
+    elif msg['type'] == "DEBUG_REQUEST":
+        if _debugger:
+            response = _debugger.handle_debug_request(msg, file_prefix=module_finder.get_main_package()+"/")
+        else:
+            response = {"error": "Debugger not found"}
+
+        response["id"] = msg['id']
+        send_to_host(response)
+        return
+
     try:
         _threaded_server.IncomingRequest(msg, load_app_modules,
+                                         get_file_prefix=lambda: module_finder.get_main_package()+"/",
                                          run_fn=run_fn,
                                          dump_task_state=(msg['type'].startswith("LAUNCH_BACKGROUND")))
     except:

@@ -1,14 +1,21 @@
 (defproject anvil-runtime "latest"
   :min-lein-version "2.8.1"
   :repositories {"anvil" "file:../maven_repository"}
-  :dependencies [[org.clojure/clojure "1.11.3"]
-                 [compojure "1.6.1"]
+  :managed-dependencies [[org.clojure/clojure "1.12.0"]
 
-                 ; Everything depends on different versions of Jackson. Force this one.
-                 [com.fasterxml.jackson.core/jackson-core "2.16.0"]
-                 [com.fasterxml.jackson.core/jackson-databind "2.16.0"]
-                 [com.fasterxml.jackson.dataformat/jackson-dataformat-cbor "2.16.0"]
-                 [com.fasterxml.jackson.dataformat/jackson-dataformat-smile "2.16.0"]
+                         [com.fasterxml.jackson.core/jackson-core "2.18.0"]
+                         [com.fasterxml.jackson.core/jackson-databind "2.18.0"]
+                         [com.fasterxml.jackson.dataformat/jackson-dataformat-cbor "2.18.0"]
+                         [com.fasterxml.jackson.dataformat/jackson-dataformat-smile "2.18.0"]
+
+                         [dnsjava/dnsjava "3.6.0"]  ; 3.4.1 required by apache-jdkim is vulnerable.
+                         [org.apache.james/apache-mime4j-core "0.8.10"]  ; 0.8.3 required by apache-jdkim is vulnerable.
+
+                         [commons-io/commons-io "2.17.0"]]
+
+  :exclusions [[log4j]]
+  :dependencies [[org.clojure/clojure "1.12.0"]
+                 [compojure "1.6.1"]
 
                  [commons-fileupload "1.5"] ; 1.4, used by ring-core, is vulnerable
                  [ring/ring-core "1.12.1"]
@@ -41,7 +48,7 @@
                  [org.clojure/tools.logging "0.4.1"]
                  [org.slf4j/slf4j-reload4j "1.7.36"]
                  [ch.qos.reload4j/reload4j "1.2.19" :exclusions [javax.mail/mail javax.jms/jms com.sun.jdmk/jmxtools com.sun.jmx/jmxri]]
-                 [clj-logging-config "1.9.12" :exclusions [log4j]]
+                 [clj-logging-config "1.9.12"]
 
                  [slingshot "0.12.2"]
 
@@ -64,10 +71,8 @@
                  [com.webauthn4j/webauthn4j-core "0.11.1.RELEASE" :exclusions [org.slf4j/slf4j-api org.bouncycastle/bcprov-jdk15on org.bouncycastle/bcpkix-jdk15on]]
 
                  [org.subethamail/subethasmtp "3.1.7"]
-                 [dnsjava/dnsjava "3.6.0"]  ; 3.4.1 required by apache-jdkim is vulnerable.
-                 [org.apache.james/apache-mime4j-core "0.8.10"]  ; 0.8.3 required by apache-jdkim is vulnerable.
                  ;  Can't use v0.3 as it removes mailets, which we use in email_server.clj
-                 [org.apache.james.jdkim/apache-jdkim "0.2" :extension "pom" :exclusions [log4j org.apache.geronimo.javamail/geronimo-javamail_1.4_mail]]
+                 [org.apache.james.jdkim/apache-jdkim "0.2" :extension "pom" :exclusions [org.apache.geronimo.javamail/geronimo-javamail_1.4_mail]]
 
                  [org.bouncycastle/bcprov-jdk18on "1.78.1"]
                  [org.bouncycastle/bcpkix-jdk18on "1.78.1"]
@@ -86,15 +91,15 @@
                  [medley "1.4.0"]
                  [olical/crawlers "0.2.0"]
 
-                 [org.apache.commons/commons-compress "1.26.2"]
+                 [org.apache.commons/commons-compress "1.27.1"]
                  [org.apache.commons/commons-lang3 "3.14.0"]
                  [commons-codec/commons-codec "1.17.0"]     ; Override the very old version in cemerick/friend, which isn't compatible with java-saml
 
                  [io.opentelemetry/opentelemetry-sdk]]
   :bom {:import [[io.opentelemetry/opentelemetry-bom "1.7.0"]]}
   :jvm-opts ["-Dfile.encoding=UTF-8"]
-  :plugins [[lein-aot-order "0.1.0"]
-            [lein-bom "0.2.0-SNAPSHOT"]]
+  :plugins [[com.github.anvil-works/lein-aot-order "0.1.1-anvil"]
+             [lein-bom "0.2.0-SNAPSHOT"]]
   :aot :order
   :auto-clean false
   :omit-source true

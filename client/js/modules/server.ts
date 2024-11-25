@@ -1,6 +1,9 @@
 "use strict";
 
-import { anvilMod } from "@runtime/runner/py-util";
+import { setOnDebuggerMessage } from "@runtime/modules/_server/handlers";
+import { registerServerCallSuspension } from "@runtime/modules/_server/rpc";
+import { data } from "@runtime/runner/data";
+import { anvilMod, s__get__, s__module__, s__name__ } from "@runtime/runner/py-util";
 import {
     Args,
     buildNativeClass,
@@ -56,7 +59,6 @@ import {
     websocket,
 } from "./_server";
 import type { Capability } from "./_server/types";
-import { data } from "@runtime/runner/data";
 
 //@ts-ignore
 module.exports = function (appId: string, appOrigin: string) {
@@ -466,10 +468,12 @@ module.exports = function (appId: string, appOrigin: string) {
         anvil$helplink: "/docs/client",
         $doc: "By default, a loading indicator is displayed when your app is retrieving data. This stops users from being able to interact with your app while the server returns data. `loading_indicator` is a context manager which allows you to create loading indicators manually.",
         anvil$args: {
-            component_name: "Optionally give the component or container that the loading indicator should overlay. This will block any user interaction with the given component, and any child components they have.",
-            min_height: "Optionally set the minimum height of the loading indicator. If no minimum height is given and no `component_name` is given, it defaults to the size of the image or SVG being used. If no minimum height is given but a `component_name` _is_ given, then the indicator scales to fit the component or container."
+            component_name:
+                "Optionally give the component or container that the loading indicator should overlay. This will block any user interaction with the given component, and any child components they have.",
+            min_height:
+                "Optionally set the minimum height of the loading indicator. If no minimum height is given and no `component_name` is given, it defaults to the size of the image or SVG being used. If no minimum height is given but a `component_name` _is_ given, then the indicator scales to fit the component or container.",
         },
-    }); 
+    });
     ["loading_indicator"];
 
     const _NoLoadingIndicator = buildPyClass(
@@ -487,9 +491,9 @@ module.exports = function (appId: string, appOrigin: string) {
         "no_loading_indicator",
         []
     );
-    
+
     /*!defModuleAttr(anvil.server)!1*/
-    ({ 
+    ({
         name: "!no_loading_indicator",
         description:
             "Use `with anvil.server.no_loading_indicator:` to suppress the loading indicator when making server calls",
@@ -704,6 +708,37 @@ module.exports = function (appId: string, appOrigin: string) {
         }),
     });
 
+    pyMod["server_side_method"] = buildNativeClass("server_side_method", {
+        constructor: function server_side_method() {},
+        slots: {
+            tp$init(args, kws) {
+                if (args.length != 1 || kws?.length) {
+                    throw new TypeError("@server_side_method takes no arguments, just a function");
+                }
+            },
+            tp$descr_get(obj, type) {
+                return pyCallOrSuspend(this._get_fn, [obj, type]);
+            },
+        },
+        methods: {
+            __set_name__: {
+                $meth(owner, name) {
+                    const cname = `anvil.server_side/${Sk.abstr.gattr(owner, s__module__)}.${Sk.abstr.gattr(
+                        owner,
+                        s__name__
+                    )}.${name}`;
+                    this._get_fn = new pyFunc(
+                        PyDefUtils.withRawKwargs(function (pyKwargs: Kws, ...args: Args) {
+                            return doServerCall(pyKwargs, args, cname);
+                        })
+                    ).tp$getattr(s__get__);
+                    return pyNone;
+                },
+                $flags: { MaxArgs: 2, MinArgs: 2 },
+            },
+        },
+    });
+
     // Register the component types (and ComponentTag) as serializable
     const components = [
         "Button",
@@ -746,7 +781,7 @@ module.exports = function (appId: string, appOrigin: string) {
         pyValueTypes["anvil." + componentName] = pyClass;
     }
 
-    return { pyMod, log: sendLog };
+    return { pyMod, log: sendLog, registerServerCallSuspension, setOnDebuggerMessage };
 };
 
 /*#

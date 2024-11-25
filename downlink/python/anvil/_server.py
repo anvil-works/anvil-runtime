@@ -179,7 +179,7 @@ class _CapAny(object):
 
 def _check_valid_scope(scope, name="scope"):
     if type(scope) is not list:
-            raise TypeError("The {} of a Capabilty must be a list".format(name))
+            raise TypeError("The {} of a Capability must be a list".format(name))
     try:
         return json.loads(json.dumps(scope))
     except TypeError as e:
@@ -275,7 +275,7 @@ def unwrap_capability(cap, scope_pattern):
         raise ValueError("Capability is too narrow: required %s; got %s" % (scope_pattern, scope))
 
     for i in range(len(scope)):
-        if scope_pattern[i] is Capability.ANY or scope[i] == scope_pattern[i]:
+        if scope_pattern[i] is Capability.ANY or scope[i] == scope_pattern[i] or type(scope_pattern[i]) is tuple and scope[i] == list(scope_pattern[i]):
             ret[i] = scope[i]
         else:
             raise ValueError("Incorrect Capability: required %s; got %s" % (scope_pattern, cap.scope))
@@ -709,6 +709,7 @@ def _report_exception(request_id=None):
     trace.reverse()
 
     # Last element of trace is where we called into user code. Remove it.
+    # TODO account for debugger here
     trace.pop()
 
     if isinstance(exc_value, AnvilWrappedError):
@@ -1697,3 +1698,26 @@ def plotly_serialization_helper(class_fullname):
 
 
 _serialization_helpers["plotly.graph_objs"] = plotly_serialization_helper
+
+
+class server_side_method:
+    """Decorator to wrap functions that should be executed on the server-side only"""
+    def __init__(self, func):
+        if func is not None and not hasattr(func, "__get__"):
+            raise TypeError("@server_side must be called with a function")
+        self._func = func
+
+    def __set_name__(self, owner, name):
+        import anvil.server, functools
+        cname = "anvil.server_side/" + owner.__module__ + "." + owner.__name__ + "." + name
+        func = self._func
+
+        @anvil.server.callable(cname)
+        @functools.wraps(self._func)
+        def server_func(*args, **kwargs):
+            if not args or not isinstance(args[0], owner):
+                raise TypeError("'self' argument to method must be " + owner)
+            return func(*args, **kwargs)
+
+    def __get__(self, instance, owner):
+        return self._func.__get__(instance, owner)

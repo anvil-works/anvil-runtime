@@ -147,7 +147,21 @@ class Row(BaseRow):
         if table_id is None or val is UNCACHED or val is None:
             # not a linked row, or UNCACHED linked row (serialize cache dispute), or linked row is None
             return val
-        col_type, view_key = col["type"], col["view_key"]
+
+        # This line is failing for baker tilly - wrap in a try except
+        try:
+            col_type, view_key = col["type"], col["view_key"]
+        except KeyError:
+            import json
+            msg = 'Failed to get "view_key" or "type" from col {}'.format(col)
+            try:
+                _data = json.dumps(table_data, indent=2, default=lambda o: str(type(o)))
+                msg += '\n\nTable data:\n{}'.format(_data)
+            except Exception:
+                pass
+
+            raise KeyError(msg)
+
         if col_type == SINGLE:
             row_id = val
             return Row._create_from_trusted(view_key, table_id, row_id, table_data)

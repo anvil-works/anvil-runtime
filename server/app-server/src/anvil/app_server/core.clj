@@ -144,7 +144,7 @@
                                                                  (str "\n  " path ":" line "\n"))))
 
                                              #{"print" "client_print"}
-                                             (log/debug (if (= "client_print" type)
+                                             (log/info (if (= "client_print" type)
                                                           "[CLIENT]" "[SERVER]") (.replaceAll ^String log-text "\n$" ""))
 
                                              ;; :else

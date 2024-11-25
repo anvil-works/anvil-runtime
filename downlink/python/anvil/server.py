@@ -46,7 +46,8 @@ from ._server import (register,
                       unsubscribe,
                       get_subscriptions,
                       invalidate_client_objects,
-                      _on_invalidate_client_objects)
+                      _on_invalidate_client_objects,
+                      server_side_method)
 
 from . import _threaded_server, _server
 

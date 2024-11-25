@@ -16,7 +16,7 @@ import {
     tryCatchOrSuspend,
 } from "@Sk";
 import { Component, LayoutProperties, setDefaultDepIdForNextComponent, ToolboxItem } from "../components/Component";
-import {ComponentYaml, EventBindingYaml, FormContainerYaml, FormYaml} from "./data";
+import { ComponentYaml, EventBindingYaml, FormContainerYaml, FormYaml } from "./data";
 import {
     getAnvilComponentInstantiator,
     getNamedFormInstantiator,
@@ -32,7 +32,7 @@ import {
     s_layout,
     s_remove_event_handler,
     s_slots,
-    strError
+    strError,
 } from "./py-util";
 import { Slot } from "./python-objects";
 import { warn } from "./warnings";
@@ -47,7 +47,9 @@ export type YamlCreationStack =
     | undefined;
 
 let nextCreationStack: YamlCreationStack;
-export const setNextCreationStack = (ncs: YamlCreationStack) => { nextCreationStack = ncs; };
+export const setNextCreationStack = (ncs: YamlCreationStack) => {
+    nextCreationStack = ncs;
+};
 export const getAndCheckNextCreationStack = (formName: string, depAppId: string | null) => {
     let yamlStack = nextCreationStack;
     nextCreationStack = undefined;
@@ -73,13 +75,25 @@ export function mkInvalidComponent(message: string) {
 }
 
 export interface SetupResult {
-    components: {[name:string]: {component: Component, layoutProperties: LayoutProperties, index: number, targetSlot?: string, ancestors: Component[]}};
+    components: {
+        [name: string]: {
+            component: Component;
+            layoutProperties: LayoutProperties;
+            index: number;
+            targetSlot?: string;
+            ancestors: Component[];
+        };
+    };
     orphanedComponents: string[];
-    slots?: {[name:string]: Slot};
+    slots?: { [name: string]: Slot };
     form: Component;
 }
 
-export function removeEventHandlers(pyComponent: Component, pyForm: Component, yaml: ComponentYaml | FormContainerYaml) {
+export function removeEventHandlers(
+    pyComponent: Component,
+    pyForm: Component,
+    yaml: ComponentYaml | FormContainerYaml
+) {
     let pyRemoveEventHandler;
     const bindingsYaml = yaml.event_bindings || {};
     for (const [eventName, methodName] of Object.entries(bindingsYaml)) {
@@ -91,7 +105,12 @@ export function removeEventHandlers(pyComponent: Component, pyForm: Component, y
 
 // TODO: This code will need some sort of loop prevention
 
-export function addEventHandlers(pyComponent: Component, pyForm: Component, componentName: string, eventBindings: EventBindingYaml | undefined) {
+export function addEventHandlers(
+    pyComponent: Component,
+    pyForm: Component,
+    componentName: string,
+    eventBindings: EventBindingYaml | undefined
+) {
     let pyAddEventHandler = null;
     const bindingsYaml = eventBindings || {};
     for (const [eventName, methodName] of Object.entries(bindingsYaml)) {
@@ -124,9 +143,7 @@ export function addEventHandlers(pyComponent: Component, pyForm: Component, comp
         if (pyHandler === undefined) {
             warningMsg = `Warning: No method "${methodName}" in form ${
                 pyForm.tp$name
-            }: cannot set the '${eventName}' event handler of self${
-                componentName ? "." + componentName : ""
-            }.`;
+            }: cannot set the '${eventName}' event handler of self${componentName ? "." + componentName : ""}.`;
         } else {
             // Trying to set the event handler to an attribute - ignore but give a warning - e.g. Form1.tooltip
             warningMsg = `Warning: "${methodName}" in form ${
@@ -156,7 +173,7 @@ export const instantiateComponentFromYamlSpec = (
             // Tell this component it was created by YAML from this app, so if it has any form
             // properties it knows how to look them up
             setDefaultDepIdForNextComponent(context.defaultDepId);
-            nextCreationStack = {formSpec, prev: yamlStack};
+            nextCreationStack = { formSpec, prev: yamlStack };
             return instantiate(jsObjToKws(properties), name);
         });
     } else {
@@ -166,15 +183,47 @@ export const instantiateComponentFromYamlSpec = (
     }
 };
 
-function createComponents(formYaml: FormYaml, pyForm: Component, defaultDepId: string | null, setupHandlers: boolean, yamlStack: YamlCreationStack, rootComponent?: Component) {
-    const instantiationContext: YamlInstantiationContext = {requestingComponent: pyForm, fromYaml: true, defaultDepId};
-    const setupResult : SetupResult = {components: {}, orphanedComponents: [], form: pyForm};
-    const setupComponent = (yaml: ComponentYaml, pyAddToParent: pyObject | null, ancestors: Component[], index: number, targetSlot?: string): Suspension | null | pyNoneType =>
+function createComponents(
+    formYaml: FormYaml,
+    pyForm: Component,
+    defaultDepId: string | null,
+    setupHandlers: boolean,
+    yamlStack: YamlCreationStack,
+    rootComponent?: Component
+) {
+    const instantiationContext: YamlInstantiationContext = {
+        requestingComponent: pyForm,
+        fromYaml: true,
+        defaultDepId,
+    };
+    const setupResult: SetupResult = { components: {}, orphanedComponents: [], form: pyForm };
+    const setupComponent = (
+        yaml: ComponentYaml,
+        pyAddToParent: pyObject | null,
+        ancestors: Component[],
+        index: number,
+        targetSlot?: string
+    ): Suspension | null | pyNoneType =>
         chainOrSuspend(
             tryCatchOrSuspend(
-                () => instantiateComponentFromYamlSpec(instantiationContext, yaml.type, {__ignore_property_exceptions: true, ...yaml.properties}, yamlStack, yaml.name),
+                () =>
+                    instantiateComponentFromYamlSpec(
+                        instantiationContext,
+                        yaml.type,
+                        { __ignore_property_exceptions: true, ...yaml.properties },
+                        yamlStack,
+                        yaml.name
+                    ),
                 (exception) => {
-                    console.error(`Error instantiating ${yaml?.name}`, ": ", exception, "YAML:", yaml, "\n", strError(exception));
+                    console.error(
+                        `Error instantiating ${yaml?.name}`,
+                        ": ",
+                        exception,
+                        "YAML:",
+                        yaml,
+                        "\n",
+                        strError(exception)
+                    );
                     window.onerror(null, null, null, null, exception);
                     return mkInvalidComponent(`Error instantiating "${yaml?.name}": ${strError(exception)}`);
                 }
@@ -184,16 +233,27 @@ function createComponents(formYaml: FormYaml, pyForm: Component, defaultDepId: s
                     () => {
                         if (yaml.name) {
                             if (yaml.name in setupResult.components) {
-                                warn(`Warning: detected ${formYaml.class_name} has two components named "${yaml.name}". This shouldn't happen.`);
+                                warn(
+                                    `Warning: detected ${formYaml.class_name} has two components named "${yaml.name}". This shouldn't happen.`
+                                );
                             }
-                            setupResult.components[yaml.name] = {component: pyComponent, layoutProperties: yaml.layout_properties || {}, index, ancestors, targetSlot};
+                            setupResult.components[yaml.name] = {
+                                component: pyComponent,
+                                layoutProperties: yaml.layout_properties || {},
+                                index,
+                                ancestors,
+                                targetSlot,
+                            };
                         }
 
                         if (setupHandlers) {
                             addEventHandlers(pyComponent, pyForm, yaml.name, yaml.event_bindings);
                         }
 
-                        if (yaml.components && !isTrue(pyIsInstance(pyComponent, anvilMod.InvalidComponent as pyNewableType<Component>))) {
+                        if (
+                            yaml.components &&
+                            !isTrue(pyIsInstance(pyComponent, anvilMod.InvalidComponent as pyNewableType<Component>))
+                        ) {
                             let pyAddComponent = pyAlwaysThrow;
                             try {
                                 pyAddComponent = Sk.abstr.gattr(pyComponent, s_add_component);
@@ -202,7 +262,10 @@ function createComponents(formYaml: FormYaml, pyForm: Component, defaultDepId: s
                             }
                             return chainOrSuspend(
                                 null,
-                                ...yaml.components.map((subYaml, index) => () => setupComponent(subYaml, pyAddComponent, [pyComponent, ...ancestors], index)),
+                                ...yaml.components.map(
+                                    (subYaml, index) => () =>
+                                        setupComponent(subYaml, pyAddComponent, [pyComponent, ...ancestors], index)
+                                ),
                                 () => pyComponent
                             );
                         } else {
@@ -210,7 +273,14 @@ function createComponents(formYaml: FormYaml, pyForm: Component, defaultDepId: s
                         }
                     },
                     (exception) => {
-                        console.error(`Error setting up component '${yaml?.name}' on ${pyForm?.tp$name}:`, exception, "\nYAML: ", yaml, "Python err: ", strError(exception));
+                        console.error(
+                            `Error setting up component '${yaml?.name}' on ${pyForm?.tp$name}:`,
+                            exception,
+                            "\nYAML: ",
+                            yaml,
+                            "Python err: ",
+                            strError(exception)
+                        );
                         // This exception is almost certainly user code, so we should produce helpful stack traces here
                         window.onerror(null, null, null, null, exception);
                         return mkInvalidComponent(`Error setting up component "${yaml?.name}": ${strError(exception)}`);
@@ -223,26 +293,37 @@ function createComponents(formYaml: FormYaml, pyForm: Component, defaultDepId: s
                         layoutArgs.push(new pyStr(k), toPy(v));
                     }
                 }
-                return pyAddToParent && tryCatchOrSuspend(() => pyCallOrSuspend<pyNoneType>(pyAddToParent, [pyComponent], layoutArgs), (exception) => {
-                    setupResult.orphanedComponents.push(yaml.name);
-                    return pyNone;
-                });
+                return (
+                    pyAddToParent &&
+                    tryCatchOrSuspend(
+                        () => pyCallOrSuspend<pyNoneType>(pyAddToParent, [pyComponent], layoutArgs),
+                        (exception) => {
+                            reportError(exception);
+                            setupResult.orphanedComponents.push(yaml.name);
+                            return pyNone;
+                        }
+                    )
+                );
             }
         );
 
     // A bit late to be setting this, really, but it's mostly used for loop detection within this module, so ~\o/~
-    window.anvilCurrentlyConstructingForms.push({name: formYaml.class_name, pyForm});
+    window.anvilCurrentlyConstructingForms.push({ name: formYaml.class_name, pyForm });
 
     // Delay slot setup because we need the components.
     const setupSlotsAndCleanUp = () => {
         if (formYaml.slots) {
             setupResult.slots = {};
-            const slotsByTarget: { container: {[containerName: string]: Slot[]}, slot: {[slotName: string]: Slot[]} } = {
+            const slotsByTarget: {
+                container: { [containerName: string]: Slot[] };
+                slot: { [slotName: string]: Slot[] };
+            } = {
                 container: {},
                 slot: {},
             };
-            const sortedSlots = Object.entries(formYaml.slots).sort(([nameA, {index: indexA}],[nameB, {index: indexB}]) =>
-                indexA === indexB ? nameA.localeCompare(nameB, "en") : indexA - indexB
+            const sortedSlots = Object.entries(formYaml.slots).sort(
+                ([nameA, { index: indexA }], [nameB, { index: indexB }]) =>
+                    indexA === indexB ? nameA.localeCompare(nameB, "en") : indexA - indexB
             );
             for (const [name, { set_layout_properties, one_component, template, target, index }] of sortedSlots) {
                 let getContainer: () => Suspension | pyObject;
@@ -254,23 +335,38 @@ function createComponents(formYaml: FormYaml, pyForm: Component, defaultDepId: s
                     }
                     getContainer = () => pyContainer;
                 } else {
-                    getContainer = () => chainOrSuspend(
-                        Sk.abstr.gattr(pyForm, s_layout, true),
-                        pyLayout => Sk.abstr.gattr(pyLayout, s_slots, true),
-                        (slots: pyDict<pyStr,Slot>) => {
-                            const slot = slots.quick$lookup(new pyStr(target.name));
-                            if (!slot) { throw `No such target slot ${target.name} for slot ${name}`; }
-                            return slot;
-                        });
+                    getContainer = () =>
+                        chainOrSuspend(
+                            Sk.abstr.gattr(pyForm, s_layout, true),
+                            (pyLayout) => Sk.abstr.gattr(pyLayout, s_slots, true),
+                            (slots: pyDict<pyStr, Slot>) => {
+                                const slot = slots.quick$lookup(new pyStr(target.name));
+                                if (!slot) {
+                                    throw `No such target slot ${target.name} for slot ${name}`;
+                                }
+                                return slot;
+                            }
+                        );
                 }
                 let templateToolboxItem: ToolboxItem | undefined;
                 if (template) {
                     templateToolboxItem = {
-                        component: {...template, type: template.type.startsWith("form:") ? resolveFormSpec(template.type.substring(5), defaultDepId).qualifiedClassName : `anvil.${template.type}`},
+                        component: {
+                            ...template,
+                            type: template.type.startsWith("form:")
+                                ? resolveFormSpec(template.type.substring(5), defaultDepId).qualifiedClassName
+                                : `anvil.${template.type}`,
+                        },
                         title: "Template",
                     };
                 }
-                const slot = new Slot(getContainer, index || 0, set_layout_properties, !!one_component, templateToolboxItem);
+                const slot = new Slot(
+                    getContainer,
+                    index || 0,
+                    set_layout_properties,
+                    !!one_component,
+                    templateToolboxItem
+                );
                 setupResult.slots[name] = slot;
 
                 // Make sure slots in the same container coexist happily (earlier slots affect insertion index of later slots)
@@ -293,7 +389,10 @@ function createComponents(formYaml: FormYaml, pyForm: Component, defaultDepId: s
         return chainOrSuspend(
             undefined,
             ...Object.entries(formYaml.components_by_slot ?? []).map(([slotName, components], index) => () => {
-                return chainOrSuspend(null, ...components.map((yaml) => () => setupComponent(yaml, null, [rootComponent!], index, slotName)));
+                return chainOrSuspend(
+                    null,
+                    ...components.map((yaml) => () => setupComponent(yaml, null, [rootComponent!], index, slotName))
+                );
             }),
             setupSlotsAndCleanUp
         );
@@ -311,32 +410,43 @@ function createComponents(formYaml: FormYaml, pyForm: Component, defaultDepId: s
         }
         return chainOrSuspend(
             null,
-            ...(formYaml.components ?? []).map((yaml, index) => () => setupComponent(yaml, pyAddToForm, [rootComponent!], index)),
+            ...(formYaml.components ?? []).map(
+                (yaml, index) => () => setupComponent(yaml, pyAddToForm, [rootComponent!], index)
+            ),
             setupSlotsAndCleanUp
         );
     }
 }
 
-
-export function setupFormComponents(formYaml: FormYaml, pyForm: Component, defaultDepId: string | null, yamlStack: YamlCreationStack, setupHandlers=true, rootComponent?: Component) {
+export function setupFormComponents(
+    formYaml: FormYaml,
+    pyForm: Component,
+    defaultDepId: string | null,
+    yamlStack: YamlCreationStack,
+    setupHandlers = true,
+    rootComponent?: Component
+) {
     const pyFormDict = Sk.abstr.lookupSpecial(pyForm, pyStr.$dict) as pyDict;
-    return chainOrSuspend(createComponents(formYaml, pyForm, defaultDepId, setupHandlers, yamlStack, rootComponent), (setupResult: SetupResult) => {
-        for (const [name, {component}] of Object.entries(setupResult.components)) {
-            const pyName = new pyStr(name);
-            if (isTrue(pyHasAttr(pyForm, pyName))) {
-                Sk.builtin.print([
-                    new pyStr(
-                        `Warning: ${pyForm.tp$name} has a method or attribute '${name}' and a component called '${name}'. The method or attribute will be inaccessible. This is probably not what you want.`
-                    ),
-                ]);
+    return chainOrSuspend(
+        createComponents(formYaml, pyForm, defaultDepId, setupHandlers, yamlStack, rootComponent),
+        (setupResult: SetupResult) => {
+            for (const [name, { component }] of Object.entries(setupResult.components)) {
+                const pyName = new pyStr(name);
+                if (isTrue(pyHasAttr(pyForm, pyName))) {
+                    Sk.builtin.print([
+                        new pyStr(
+                            `Warning: ${pyForm.tp$name} has a method or attribute '${name}' and a component called '${name}'. The method or attribute will be inaccessible. This is probably not what you want.`
+                        ),
+                    ]);
+                }
+                // add it to the dunder dict IF we have one. If pyForm was created by a YAML carrier, it might not have one.
+                if (pyFormDict) {
+                    pyFormDict.mp$ass_subscript(pyName, component);
+                }
             }
-            // add it to the dunder dict IF we have one. If pyForm was created by a YAML carrier, it might not have one.
-            if (pyFormDict) {
-                pyFormDict.mp$ass_subscript(pyName, component);
-            }
+            return setupResult;
         }
-        return setupResult;
-    });
+    );
 }
 
 // Returns a list of names of orphaned components (those that couldn't be added to their desired slot)
@@ -355,8 +465,8 @@ export function addFormComponentsToLayout(formYaml: FormYaml, pyForm: Component,
                 pySlot = pySlots.mp$subscript(new pyStr(slotName));
             } catch (e: any) {
                 if (e instanceof Sk.builtin.KeyError) {
-                    window.onerror(null, null, null, null, new pyException(`Could not add components to slot '${slotName}': Slot not found`));
-                    orphanedComponents.push(...components.map(({name}) => name));
+                    reportError(new pyException(`Could not add components to slot '${slotName}': Slot not found`));
+                    orphanedComponents.push(...components.map(({ name }) => name));
                     // Carry on, because there may just be one bad slot.
                     return;
                 } else {
@@ -377,6 +487,6 @@ export function addFormComponentsToLayout(formYaml: FormYaml, pyForm: Component,
                 )
             );
         }),
-        () => orphanedComponents,
+        () => orphanedComponents
     );
 }

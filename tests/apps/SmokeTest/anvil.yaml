@@ -1,0 +1,24 @@
+allow_embedding: false
+db_schema:
+    table_1:
+        client: none
+        columns:
+            - admin_ui: { order: 0, width: 200 }
+              name: Column1
+              type: string
+        server: full
+        title: Table 1
+name: SmokeTestApp
+package_name: SmokeTestApp
+runtime_options:
+    client_version: "3"
+    server_spec: { base: python310-standard }
+    server_version: python3-sandbox
+    version: 2
+services:
+    - client_config: {}
+      server_config: {}
+      source: /runtime/services/tables.yml
+startup: null
+startup_form: Form1
+uplink_visible: true

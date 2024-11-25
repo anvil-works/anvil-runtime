@@ -1,0 +1,30 @@
+## This is an example of what an anvil.conf.yaml file could look like.
+## You might want to tidy yours up a little.
+
+# auto-migrate: false
+# ignore-invalid-schema: true
+
+# database: "jdbc:postgresql://localhost:5434/anvil?user=postgres&password=xeiquok8euv6ohZa"
+# downlink-key: "ZeXiedeaceimahm1ePhaguvu5Ush9E"
+
+uplink-key: "Gaa9ahnai3shoo3Aegh7"
+client-uplink-key: "Oesoo7phah7Kev8gai8e"
+
+# TODO might want to update this
+data-dir: /anvil-data
+
+app: ./apps/SmokeTest
+# to do app app above ^
+
+# google-client-id: "[CLIENT KEY HERE]"
+# google-client-secret: "[CLIENT SECRET HERE]"
+
+# # Common optional config
+origin: http://localhost:1234 # Use an https:// origin to automatically obtain certificates
+port: 3030 # Specify a custom port to serve on - use this if you're port-forwarding to an unprivileged internal port.
+# disable-tls: True # Don't terminate TLS, even if an https:// origin is provided.
+
+# dep-id:
+#   26AB29457: MyDepPackage
+# secret:
+#   foo: bar

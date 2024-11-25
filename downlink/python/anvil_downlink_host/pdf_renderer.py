@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from anvil_downlink_host import send_with_header as send_to_server
 import anvil_downlink_host
@@ -25,16 +26,32 @@ else:
     import urllib.parse
     _urlencode = lambda s: urllib.parse.quote(s,safe='')
 
+DISABLE_SANDBOX = os.environ.get("DISABLE_SANDBOX", False)
+DISABLE_DEV_SHM = os.environ.get("DISABLE_DEV_SHM", False)
+DISABLE_CERTIFICATE_CHECK = os.environ.get("DISABLE_CERTIFICATE_CHECK", False)
+CUSTOM_CERTIFICATE_PATH = os.environ.get("CUSTOM_CERTIFICATE_PATH")
+
 if os.getuid() == 0:
-    CHROME_SANDBOX_ARGS = ["sudo", "-u", "nobody"]
+    CHROME_SUDO_PREFIX = ["sudo", "-u", "nobody"]
 else:
-    CHROME_SANDBOX_ARGS = []
+    CHROME_SUDO_PREFIX = []
+
+
+def init():
+    if CUSTOM_CERTIFICATE_PATH:
+        Path("/tmp/.pki/nssdb").mkdir(parents=True, exist_ok=True)
+        subprocess.run(["certutil", "-d", "sql:/tmp/.pki/nssdb", "-N", "--empty-password"])
+
+        for cert_file in Path(CUSTOM_CERTIFICATE_PATH).glob("*.crt"):
+            cmd = ["certutil", "-d", "sql:/tmp/.pki/nssdb", "-A", "-t", "P,,", "-n", str(cert_file), "-i", str(cert_file)]
+            print("Running " + " ".join(cmd))
+            subprocess.run(cmd)
 
 
 # Sandboxing args for PS2PDF
 def run_ps2pdf(quality, infile, outfile):
     with TemporaryDirectory() as tmpdir:
-        if os.getuid() != 0:
+        if os.getuid() != 0 or DISABLE_SANDBOX:
             args = ["/usr/bin/ps2pdf", f"-dPDFSETTINGS=/{quality}", infile, outfile]
         else:
             os.mkdir(tmpdir+"/tmp")
@@ -131,10 +148,27 @@ class Browser:
         print(f"Booting browser on port {port}...")
         # Chrome starts lots of processes. Use os.setsid to start all of them in a new process group, so we can kill them all later.
         tmp_dir = "".join(random.choices(string.ascii_uppercase + string.digits, k=10))
-        with subprocess.Popen(CHROME_SANDBOX_ARGS + ["bash", "-c", f"XDG_CACHE_HOME=/tmp/{tmp_dir} XDG_CONFIG_HOME=/tmp/{tmp_dir} google-chrome --headless --disable-gpu --remote-debugging-port={port}"], stderr=subprocess.PIPE, stdout=subprocess.PIPE, preexec_fn=os.setsid) as process:
+        os.mkdir(f"/tmp/{tmp_dir}")
 
+        if CUSTOM_CERTIFICATE_PATH:
+            shutil.copytree("/tmp/.pki", f"/tmp/{tmp_dir}/.pki")
+
+        if CHROME_SUDO_PREFIX:
+            subprocess.run(["chown", "-R", "nobody", f"/tmp/{tmp_dir}"])
+
+        cmd = " ".join([
+            f"HOME=/tmp/{tmp_dir}",
+            "google-chrome",
+             "--headless",
+             "--disable-gpu",
+             f"--remote-debugging-port={port}",
+             ("--disable-dev-shm-usage" if DISABLE_DEV_SHM else ""),
+             ("--no-sandbox" if DISABLE_SANDBOX else ""),
+             ("--ignore-certificate-errors" if DISABLE_CERTIFICATE_CHECK else ""),
+        ])
+        print(cmd)
+        with subprocess.Popen(CHROME_SUDO_PREFIX + ["bash", "-c", cmd], stderr=subprocess.PIPE, stdout=subprocess.PIPE, preexec_fn=os.setsid) as process:
             try:
-
                 # Wait for Chrome to boot, and devtools to initialise. Only wait ten seconds, otherwise fail.
                 for line in non_blocking_readlines(process.stderr, 10):
                     print(f"Chrome: {line}")

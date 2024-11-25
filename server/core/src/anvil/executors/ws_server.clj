@@ -79,6 +79,10 @@
                                             return-path))
                            (throw+ {:anvil/server-error "No such background task found" :type "anvil.server.NotRunningTask"}))))}))
 
+(defn gen-call-id [serialisable-request]
+  (str (if (= (:origin serialisable-request) :client) "client-" "server-")
+       (random/base64 10)))
+
 (defn setup-request-handlers [{:keys [link-name disconnection-error]} channel]
   (let [pending-responses (atom {})
         closed? (atom false)]
@@ -89,9 +93,7 @@
                                {:id id})                    ;; fake it!
      :is-closed?            (fn [] @closed?)
      :send-request!         (fn send-request! [context {:keys [type id] :as _envelope} serialisable-request return-path]
-                              (let [call-id (or id
-                                                (str (if (= (:origin serialisable-request) :client) "client-" "server-")
-                                                     (random/base64 10)))]
+                              (let [call-id (or id (gen-call-id serialisable-request))]
                                 (log/trace "Sending" link-name "request" call-id ":" serialisable-request)
 
                                 (when-not (ws/open? channel)
@@ -144,6 +146,6 @@
 
      :handle-update!        (fn handle-update! [update]
                               (when-let [p (@pending-responses (:id update))]
-                                (ws-calls/process-update-from-ws (:return-path p) update)))}))
+                                (dispatcher/update! (:return-path p) update)))}))
 
 

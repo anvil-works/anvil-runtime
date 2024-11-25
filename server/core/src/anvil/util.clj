@@ -249,7 +249,9 @@
                                    :serializable)
           [recur? r]
           (try+
-            (jdbc/with-db-transaction [db-c db-spec {:isolation actual-isolation-level}]
+            (jdbc/with-db-transaction [db-c db-spec (if (= actual-isolation-level :read-only)
+                                                      {:isolation :read-committed :read-only? true}
+                                                      {:isolation actual-isolation-level})]
                                       (let [db-c (if rollback-state (assoc db-c :anvil-quota-rollback-state rollback-state
                                                                                 :anvil-txn-isolation-level actual-isolation-level) db-c)]
                                         [false (f db-c)]))

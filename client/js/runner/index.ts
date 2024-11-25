@@ -1,4 +1,4 @@
-import { AppYaml, data, DependencyYaml, setData, SetDataParams } from "./data";
+import { data, setData, SetDataParams } from "./data";
 
 console.log("Loading runner v2");
 
@@ -22,30 +22,21 @@ window.PyDefUtils = PyDefUtils;
 window.anvilCurrentlyConstructingForms = [];
 
 import { reconstructSerializedMapWithMedia } from "@runtime/modules/_server/deserialize";
-import {
-    Args,
-    Kws,
-    pyCallable,
-    pyCallOrSuspend,
-    pyDict,
-    pyNone,
-    pyRuntimeError,
-    pyStr,
-    pyTuple,
-    toJs,
-    toPy,
-} from "../@Sk";
+import { pyCallable, pyCallOrSuspend, pyDict, pyNone, pyRuntimeError, pyStr, pyTuple, toJs, toPy } from "../@Sk";
 import * as PyDefUtils from "../PyDefUtils";
 import { registerSolidComponent, solidComponents } from "./components-in-js/component-from-solid";
 import * as _jsComponentApi from "./components-in-js/public-api";
 import { isCustomAnvilError } from "./error-handling";
 import { setLegacyOptions } from "./legacy-features";
 import { setLoading } from "./loading-spinner";
-import { anvilMod, anvilServerMod } from "./py-util";
+import { anvilMod, anvilServerMod, jsObjToKws } from "./py-util";
 import { setupPythonEnvironment } from "./python-environment";
 import { warn } from "./warnings";
 
-let hooks: { onLoadedApp?: () => void } = {};
+export let hooks: {
+    onLoadedApp?: () => void;
+    getSkulptOptions?: () => any;
+} = {};
 
 export function setHooks(h: typeof hooks) {
     hooks = h;
@@ -142,28 +133,20 @@ async function loadApp() {
     setLoading(false);
 }
 
-async function openForm(formName: string | null, serialisedArgs?: any) {
+async function openForm(formName: string | null) {
     if (!formName) {
         throw new pyRuntimeError("This app has no startup form or module. To run this app you need to set one.");
     }
 
-    let formArgs: Args = [],
-        formKwargs: Kws = [];
-
-    if (serialisedArgs) {
-        const { args = [], kwargs = {} } = await reconstructSerializedMapWithMedia(serialisedArgs);
-        formArgs = args.map(toPy);
-        for (const [k, v] of Object.entries(kwargs)) {
-            formKwargs.push(k, toPy(v));
-        }
-    }
+    const formArgs = data.deserializedFormArgs?.map?.(toPy) ?? [];
+    const formKwargs = jsObjToKws(data.deserializedFormKwargs);
 
     return await PyDefUtils.callAsync(
         anvilMod.open_form,
         undefined,
         undefined,
         formKwargs,
-        new Sk.builtin.str(formName),
+        new pyStr(formName),
         ...formArgs
     );
 }
@@ -233,8 +216,10 @@ let appLoaded = false;
 
 async function deserializeStartupData(startupData: any) {
     if (startupData) {
-        const { data: deserializedStartupData } = await reconstructSerializedMapWithMedia(startupData);
+        const { data: deserializedStartupData, args, kwargs } = await reconstructSerializedMapWithMedia(startupData);
         data.appStartupData = toPy(deserializedStartupData);
+        data.deserializedFormArgs = args;
+        data.deserializedFormKwargs = kwargs;
     } else {
         data.appStartupData = pyNone;
     }

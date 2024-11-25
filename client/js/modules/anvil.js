@@ -1074,7 +1074,7 @@ module.exports = function(appOrigin, uncaughtExceptions) {
         const showFns = [];
 
         if (pyForm) {
-            const formElement = await pyForm.anvil$hooks.setupDom();
+            const formElement = await asyncToPromise(() => pyForm.anvil$hooks.setupDom());
             a.elements.modalBody.append(formElement);
             // use set_event_handler - we want to reset this event if the same form
             // is added to a modal multiple times

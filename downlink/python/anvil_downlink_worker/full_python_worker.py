@@ -55,7 +55,7 @@ def run():
     while True:
         msg, bindata = PIPE_IN.receive()
         type = msg.get("type", None)
-        if type in ["CALL", "LAUNCH_BACKGROUND", "LAUNCH_REPL", "REPL_COMMAND", "TERMINATE_REPL"]:
+        if type in ["CALL", "LAUNCH_BACKGROUND", "LAUNCH_REPL", "REPL_COMMAND", "TERMINATE_REPL", "DEBUG_REQUEST"]:
             handle_incoming_call(msg, write_pipe)
 
         elif type == "PROVIDE_APP":

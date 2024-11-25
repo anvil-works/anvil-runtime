@@ -248,6 +248,8 @@ interface Data {
     logicalDepIds: { [logicalDepId: string]: string };
     appOrigin: string;
     appStartupData?: any;
+    deserializedFormArgs?: any[];
+    deserializedFormKwargs?: any;
     serverParams: ServerParams;
 }
 

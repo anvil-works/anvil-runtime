@@ -17,10 +17,11 @@ description: |
 var PyDefUtils = require("PyDefUtils");
 
 import { Remarkable } from "remarkable";
-import { isTrue } from "../@Sk";
+import { chainOrSuspend, isTrue, pyCallOrSuspend, tryCatchOrSuspend } from "../@Sk";
 import { isInvisibleComponent } from "./helpers";
 import { validateChild } from "./Container";
 import { getCssPrefix } from "@runtime/runner/legacy-features";
+import { Component } from "./Component";
 // import { linkify } from "remarkable/linkify"
 
 // Approach taken from bootstrap/src/js/util/sanitizer.js
@@ -313,59 +314,85 @@ module.exports = (pyModule) => {
 
         const slotsToClearOrReplace = self._anvil.populatedDataSlots || [];
         self._anvil.populatedDataSlots = [];
+        const populatedSlots = [];
         const fns = [];
 
         // Add new components to correct slots.
-        if (data instanceof Sk.builtin.dict) {
-            for (let [slotName, val] of data.$items()) {
-                // Only add values that have valid slot names
-                let slot = self._anvil.slots[slotName];
-                if (slot) {
-                    if (!(val instanceof pyModule["Component"])) {
-                        let formatted = Sk.builtin.str.$empty;
-                        const reprFlag = slot.flag;
-                        try {
-                            formatted = Sk.builtin.format(
-                                reprFlag === "!r"
-                                    ? Sk.builtin.repr(val)
-                                    : reprFlag === "!s"
-                                    ? new Sk.builtin.str(val)
-                                    : val,
-                                new Sk.builtin.str(slot.format || "")
-                            );
-                        } catch (e) {
-                            // For now display empty string and print a warning when formatting fails.
-                            Sk.builtin.print([
-                                `Warning: Could not format RichText slot value '${val.toString()}' in slot ${slotName} with format string '${
-                                    slot.format
-                                }': ${
-                                    e instanceof Sk.builtin.Exception
-                                        ? new Sk.builtin.str(e).toString() // use the str representation
-                                        : e?.message || "Internal error"
-                                }`,
-                            ]);
-                        }
-                        val = PyDefUtils.pyCall(pyModule["Label"], [], ["text", formatted]);
-                    }
-                    self._anvil.populatedDataSlots.push(slotName);
-                    // Clear might suspend
-                    slotName = new Sk.builtin.str(slotName);
-                    fns.push(() => PyDefUtils.pyCallOrSuspend(clear, [], ["slot", slotName]));
-                    fns.push(() => PyDefUtils.pyCallOrSuspend(add_component, [val], ["slot", slotName]));
-                }
+        const updateSlot = (slotName, val) => {
+            const slot = self._anvil.slots[slotName];
+            if (!slot) {
+                return;
             }
-        } else if (!(Sk.builtin.checkNone(data))) {
-            self._anvil.populatedDataSlots = slotsToClearOrReplace; // we didn't clear any slots so put the populated slots back on ._anvil
-            throw new Sk.builtin.TypeError(`data must be a dict or None, not '${Sk.abstr.typeName(data)}'`);
-        }
+            if (!(val instanceof Component)) {
+                let formatted = Sk.builtin.str.$empty;
+                const reprFlag = slot.flag;
+                try {
+                    formatted = Sk.builtin.format(
+                        reprFlag === "!r" ? Sk.builtin.repr(val) : reprFlag === "!s" ? new Sk.builtin.str(val) : val,
+                        new Sk.builtin.str(slot.format || "")
+                    );
+                } catch (e) {
+                    // For now display empty string and print a warning when formatting fails.
+                    Sk.builtin.print([
+                        `Warning: Could not format RichText slot value '${val.toString()}' in slot ${slotName} with format string '${
+                            slot.format
+                        }': ${
+                            e instanceof Sk.builtin.Exception
+                                ? new Sk.builtin.str(e).toString() // use the str representation
+                                : e?.message || "Internal error"
+                        }`,
+                    ]);
+                }
+                val = PyDefUtils.pyCall(pyModule["Label"], [], ["text", formatted]);
+            }
+            populatedSlots.push(slotName);
+            // Clear might suspend
+            slotName = new Sk.builtin.str(slotName);
+            return chainOrSuspend(PyDefUtils.pyCallOrSuspend(clear, [], ["slot", slotName]), () =>
+                PyDefUtils.pyCallOrSuspend(add_component, [val], ["slot", slotName])
+            );
+        };
 
-        // Clear all slots we previously filled, but haven't replaced this time.
-        for (let slotName of slotsToClearOrReplace) {
-            if (self._anvil.populatedDataSlots.indexOf(slotName) === -1) {
+        const NO_VAL = new Object();
+
+        if (data.tp$getattr(Sk.builtin.str.$keys) && data.mp$subscript) {
+            for (const slotName of Object.keys(self._anvil.slots)) {
+                // ignore errors from getting the slot
+                fns.push(
+                    () =>
+                        tryCatchOrSuspend(
+                            () => Sk.abstr.objectGetItem(data, new Sk.builtin.str(slotName), true),
+                            () => {
+                                const fns = [];
+                                if (slotsToClearOrReplace.includes(slotName)) {
+                                    fns.push(() => pyCallOrSuspend(clear, [], ["slot", new Sk.builtin.str(slotName)]));
+                                }
+                                fns.push(() => NO_VAL);
+                                return chainOrSuspend(null, ...fns);
+                            }
+                        ),
+                    (val) => {
+                        if (val !== NO_VAL) {
+                            return updateSlot(slotName, val);
+                        }
+                    }
+                );
+            }
+            fns.push(() => {
+                // since everything in this function can suspend, only re-assign the populated slots after everything is done
+                self._anvil.populatedDataSlots = populatedSlots;
+            });
+        } else if (Sk.builtin.checkNone(data)) {
+            // Clear all slots we previously filled
+            for (const slotName of slotsToClearOrReplace) {
                 fns.push(() => PyDefUtils.pyCallOrSuspend(clear, [], ["slot", new Sk.builtin.str(slotName)]));
             }
+        } else {
+            self._anvil.populatedDataSlots = slotsToClearOrReplace; // we didn't clear any slots so put the populated slots back on ._anvil
+            throw new Sk.builtin.TypeError(`data must be a mapping or None, not '${Sk.abstr.typeName(data)}'`);
         }
-        return Sk.misceval.chain(null, ...fns);              
+
+        return Sk.misceval.chain(null, ...fns);
     };
 
     pyModule["RichText"] = PyDefUtils.mkComponentCls(pyModule, "RichText", {
@@ -420,7 +447,7 @@ module.exports = (pyModule) => {
             data: /*!componentProp(RichText)!1*/ {
                 name: "data",
                 type: "object",
-                description: "A dict of data or Components to populate the named content {slots}.",
+                description: "A dict of data or Components to populate the named content {slots}. Can also be a dict-like object.",
                 dataBindingProp: true,
                 defaultValue: Sk.builtin.none.none$,
                 initialize: true,

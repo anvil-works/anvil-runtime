@@ -40,10 +40,10 @@
             [anvil.core.worker-pool :as worker-pool]
             [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]
             [anvil.runtime.sessions :as sessions]
-
             [anvil.runtime.util :as runtime-util]
             [anvil.runtime.serve-app :as serve-app]
-            [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks])
+            [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks]
+            [anvil.runtime.debugger :as debugger])
   (:import (java.io ByteArrayInputStream)
            (anvil.dispatcher.types Media MediaDescriptor InputStreamMedia ChunkedStream)
            (org.apache.commons.codec.binary Base64)

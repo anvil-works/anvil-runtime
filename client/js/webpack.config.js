@@ -127,7 +127,8 @@ module.exports = (env, argv) => {
                 PyDefUtils: path.resolve(__dirname, "PyDefUtils.js"),
                 "@Sk": path.resolve(__dirname, "@Sk"),
                 "@runtime": path.resolve(__dirname),
-                "@designer": path.resolve(__dirname, "../../../platform/runtime-client/js"),
+                "@designer": path.resolve(__dirname, "../../../platform/runtime-client/js/designer"),
+                "@platform-runner": path.resolve(__dirname, "../../../platform/runtime-client/js/runner"),
             },
         },
 

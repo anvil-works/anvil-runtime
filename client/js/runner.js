@@ -482,12 +482,12 @@ function loadApp(app, appId, appOrigin) {
             .animate({ "padding-left": 20, "padding-right": 20, right: 20 }, 1000); //.css("opacity", "1").animate({opacity: 0.7}, 1000);
     };
 
-    const showRefreshSessionModal = () => {
+    const showRefreshSessionModal = async () => {
         if (document.getElementById("session-expired-modal")) {
             // we're already on the screen
             return;
         }
-        const modal = new Modal({
+        const modal = await Modal.create({
             id: "session-expired-modal",
             large: false,
             title: "Session Expired",

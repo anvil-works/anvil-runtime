@@ -20,7 +20,8 @@
     [anvil.runtime.ws-util :as ws-util]
     [anvil.runtime.sessions :as sessions]
     [anvil.runtime.app-log :as app-log]
-    [anvil.core.tracing :as tracing])
+    [anvil.core.tracing :as tracing]
+    [anvil.runtime.debugger :as debugger])
   (:import (java.util.regex PatternSyntaxException)))
 
 
@@ -240,7 +241,16 @@
                                                 (let [{:keys [app-info environment default-session]} @connection]
                                                   (ws-calls/new-call-context :uplink-call app-info environment nil nil default-session)))
                                     call-stack-info (STACK-FRAME-INFO (:uplink-type @connection))
-                                    return-path {:update!  #(send! channel (util/write-json-str (assoc % :id call-id)))
+                                    return-path {:update!  (fn [{:keys [debuggers] :as update}]
+                                                             ;; catch top-level debug events (if this wasn't the root
+                                                             ;; call of this stack, they're diverted upstream already
+                                                             ;; by ws-calls/dispatch-request!)
+                                                             (if debuggers
+                                                               (when-not pending-response
+                                                                 (debugger/handle-debugger-update! (:environment @connection)
+                                                                                                   {:type (:stack-frame-type (STACK-FRAME-INFO (:uplink-type @connection)))}
+                                                                                                   debuggers nil))
+                                                               (send! channel (util/write-json-str (assoc update :id call-id)))))
                                                  :respond! #(do (serialisation/serialise-to-websocket! (assoc % :id call-id) channel true nil)
                                                                 (swap! outstanding-incoming-call-ids disj call-id)
                                                                 (maybe-disconnect-if-idle!))}

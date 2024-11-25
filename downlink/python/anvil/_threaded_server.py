@@ -44,6 +44,7 @@ string_type = str if sys.version_info >= (3,) else basestring
 
 console_output = sys.stdout
 
+
 class HttpRequest(ThreadLocal):
 
     def __init__(self):
@@ -155,12 +156,26 @@ class SendNoResponse(Exception):
     pass
 
 
+def wrap_debugger(f, *args, **kwargs):
+    try:
+        from anvil import _debugger
+    except ImportError:
+        pass
+    else:
+        if _debugger.global_debugger:
+            result = _debugger.global_debugger.runcall(f, *args, **kwargs)
+            step_out = _debugger.global_debugger.step_to_level is not None
+            return result, step_out
+    return f(*args, **kwargs), False
+
+
 class IncomingRequest(_serialise.IncomingReqResp):
-    def __init__(self, json, import_modules=None, run_fn=None, dump_task_state=False, setup_task_state=None):
+    def __init__(self, json, import_modules=None, run_fn=None, dump_task_state=False, setup_task_state=None, get_file_prefix=None):
         self.import_modules = import_modules
         self.run_fn = run_fn
         self.dump_task_state = dump_task_state
         self.setup_task_state = setup_task_state
+        self.get_file_prefix = get_file_prefix
         remote_is_trusted = _server.CallContext.StackFrame(json.get('call-stack', [{}])[0]).is_trusted
         _serialise.IncomingReqResp.__init__(self, json, remote_is_trusted=remote_is_trusted)
 
@@ -169,6 +184,15 @@ class IncomingRequest(_serialise.IncomingReqResp):
             call_info.call_id = self.json.get('id')
             call_info.stack_id = self.json.get('call-stack-id', None)
             call_info.session_id = self.json.get('session-id')
+
+            breakpoints = self.json.get('breakpoints')
+            if breakpoints:
+                file_prefix = self.get_file_prefix() if self.get_file_prefix else ""
+                try:
+                    from anvil import _debugger
+                    _debugger.start_debugging(call_info.call_id, breakpoints, file_prefix, self.json.get("step-in", False))
+                except ImportError:
+                    print("Could not start debugger. Ignoring breakpoints.")
             sjson = self.json.get('sessionData', {'session': None, 'objects': []})
             call_info.session = None
             call_info.enable_profiling = self.json.get('enable-profiling', False)
@@ -197,7 +221,7 @@ class IncomingRequest(_serialise.IncomingReqResp):
                 call_info.session = _server._reconstruct_objects(sjson, None, remote_is_trusted=self.remote_is_trusted).get("session", {})
 
                 if self.run_fn is not None:
-                    response = self.run_fn()
+                    response, step_out = wrap_debugger(self.run_fn)
                 elif 'liveObjectCall' in self.json:
                     loc = self.json['liveObjectCall']
                     spec = dict(loc)
@@ -218,13 +242,13 @@ class IncomingRequest(_serialise.IncomingReqResp):
 
                     call_info.cache_filter.setdefault(backend, set()).add(spec['id'])
 
-                    response = method(*self.json['args'], **self.json['kwargs'])
+                    response, step_out = wrap_debugger(method, *self.json['args'], **self.json['kwargs'])
                 else:
                     command = self.json['command']
                     for reg in registrations:
                         m = re.match(reg, command)
                         if m and len(m.group(0)) == len(command):
-                            response = registrations[reg](*self.json["args"], **self.json["kwargs"])
+                            response, step_out = wrap_debugger(registrations[reg], *self.json["args"], **self.json["kwargs"])
                             break
                     else:
                         if self.json.get('stale-uplink?'):
@@ -251,6 +275,9 @@ class IncomingRequest(_serialise.IncomingReqResp):
                 if call_info.enable_profiling:
                     call_info.profile["end-time"] = time.time()*1000
                     resp["profile"] = call_info.profile
+
+                if step_out:
+                    resp["stepOut"] = True
 
                 _server.fill_out_cap_updates(resp, self.capabilities)
 
@@ -298,6 +325,9 @@ class IncomingRequest(_serialise.IncomingReqResp):
             finally:
                 if self.setup_task_state:
                     self.setup_task_state(call_info.call_id, False)
+                if breakpoints:
+                    from anvil import _debugger
+                    _debugger.stop_debugging(call_info.call_id)
                 self.complete()
 
         if MULTITHREADED:
@@ -365,12 +395,26 @@ def do_call(args, kwargs, fn_name=None, live_object=None): # Yes, I do mean args
             "start-time": time.time()*1000
         }
 
+    try:
+        from anvil import _debugger
+    except ImportError:
+        global_debugger = None
+    else:
+        global_debugger = _debugger.global_debugger
+
     def send_call():
         # print("Call stack ID = " + repr(_call_info.stack_id))
         if call_info.stack_id is None:
             call_info.stack_id = "outbound-" + gen_id()
+
+        if global_debugger and global_debugger.step_to_level == "IN":
+            step_in = True
+            global_debugger.step_to_level = None
+        else:
+            step_in = False
+
         req = {'type': 'CALL', 'id': id, 'args': args, 'kwargs': kwargs,
-               'call-stack-id': call_info.stack_id, 'originating-call': call_info.call_id}
+               'call-stack-id': call_info.stack_id, 'originating-call': call_info.call_id, 'step-in': step_in}
 
         if live_object:
             req["liveObjectCall"] = { k: live_object._spec[k] for k in ["id", "backend", "mac", "permissions"] }
@@ -430,6 +474,8 @@ def do_call(args, kwargs, fn_name=None, live_object=None): # Yes, I do mean args
             call_info.profile["children"].append(profile)
 
     if 'response' in r:
+        if global_debugger and r.get('stepOut'):
+            global_debugger.step_to_level = "IN"
         return r['response']
     if 'error' in r:
         error_from_server = _server._deserialise_exception(r["error"])

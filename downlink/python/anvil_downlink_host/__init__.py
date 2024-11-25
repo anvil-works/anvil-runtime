@@ -257,6 +257,16 @@ class Connection(WebSocketClient):
                         {'error': {'type': 'anvil.server.NotRunningTask', 'message': 'No such task running'},
                          'id': data['id']})
 
+            elif type == "DEBUG_REQUEST":
+                worker = workers_by_id.get(data['debugger-id'])
+                if worker is not None:
+                    worker.handle_debug_request(data)
+                else:
+                    connection.send_with_header(
+                        {'error': {'type': 'anvil.server.NoSuchDebugger', 'message': 'No such debugger running'},
+                         'id': data['id']})
+
+
             elif type == "SET_IDLE_TIMEOUT":
                 global IDLE_TIMEOUT_SECONDS
                 IDLE_TIMEOUT_SECONDS = data['timeout']
@@ -299,6 +309,12 @@ class Connection(WebSocketClient):
     def send(self, payload, binary=False):
         with self._sending_lock:
             return WebSocketClient.send(self, payload, binary)
+
+    def get_task_state(self, msg):
+        raise NotImplemented
+
+    def handle_debug_request(self, msg):
+        raise NotImplemented
 
     def send_with_header(self, json_data, blob=None):
         if (not json_data.get("id","").startswith("downlink-keepalive")) and json_data.get("type") != "STATS":
@@ -456,6 +472,7 @@ def init_pdf_worker():
         print("Warning: PDF Rendering not supported on Windows. Renderer not initialised")
     else:
         from . import pdf_renderer
+        pdf_renderer.init()
         launch_pdf_worker = pdf_renderer.launch
 
 

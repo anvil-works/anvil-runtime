@@ -874,6 +874,13 @@ export interface pyExternalError extends pyValueError {
 
 export interface Suspension {
     $isSuspension: true;
+    child?: Suspension;
+    resume(): any;
+    $loc?: any;
+    $gbl?: any;
+    $filename?: string;
+    $lineno?: number;
+    $colno?: number;
 }
 export interface SuspensionConstructor {
     new (): Suspension;

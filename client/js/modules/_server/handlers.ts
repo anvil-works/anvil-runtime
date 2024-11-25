@@ -15,7 +15,13 @@ import { pyNamedExceptions, pyServerEventHandlers } from "./constants";
 import {getOutstandingMedia, reconstructObjects} from "./deserialize";
 import { diagnosticRequest } from "./diagnostics";
 import { ServerProfile } from "./profile";
-import { OutstandingRequest, deleteOutstandingRequest, outstandingRequests } from "./rpc";
+import {
+    OutstandingRequest,
+    deleteOutstandingRequest,
+    outstandingRequests,
+    requestSuspensions,
+    onServerCallResponse
+} from "./rpc";
 import { VtGlobals } from "./types";
 import { updateReplState } from "../../runner/logging";
 
@@ -40,6 +46,7 @@ export interface ResponseData {
     cacheUpdates?: any;
     importDuration?: number;    
     capUpdates?: any;
+    stepOut?: boolean;
 }
 
 export interface ErrorData {
@@ -180,6 +187,8 @@ export async function maybeHandleResponse(id: string) {
             applyCacheUpdates(req);
             await applyCapUpdates(req);
 
+            onServerCallResponse?.(req.response);
+
             //console.log("Response came back for RPC request " + id + ": ", req.response);
             const pyResponse = toPy(req.response.response);
 
@@ -221,6 +230,19 @@ export function handleResponse(d: ResponseData) {
     maybeHandleResponse(id);
 }
 
+let onDebuggerMessage = null;
+
+export const setOnDebuggerMessage = (handler) => {
+    onDebuggerMessage = handler;
+}
+
+
+function handleDebuggerMessage(d: any) {
+    const req = outstandingRequests[d.id];
+    const susp = requestSuspensions[d.id];
+    onDebuggerMessage?.(req, d.debuggers, susp);
+}
+
 
 export function handleMessage(data: any) {
     if (data instanceof Blob || data instanceof ArrayBuffer) {
@@ -234,6 +256,8 @@ export function handleMessage(data: any) {
             return handleResponse(d);
         case !!d.event:
             return handleEvent(d);
+        case !!d.debuggers:
+            return handleDebuggerMessage(d);
         case !!d.output:
             return handleOutput(d);
         case !!d["invalidate-macs"]:

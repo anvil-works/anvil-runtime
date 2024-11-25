@@ -61,3 +61,16 @@ getrandom: 1
 openat: 1
 prlimit64: 1
 getdents64: 1
+
+# Added for Ubuntu 24.04
+setresgid: 1
+capget: 1
+capset: 1
+prctl: 1
+ioctl: 1
+statx: 1
+newfstatat: 1
+pipe2: 1
+pread64: 1
+rseq: 1
+faccessat2: 1

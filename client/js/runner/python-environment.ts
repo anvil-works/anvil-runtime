@@ -1,63 +1,27 @@
 //import * as $ from "jquery";
-import { promiseToSuspension } from "@Sk";
+import { chainOrSuspend, Suspension, suspensionToPromise } from "@Sk";
 import { Container } from "@runtime/components/Container";
+import { setupDefaultAnvilPluggableUI } from "@runtime/modules/_anvil/pluggable-ui";
 import { pyPropertyUtilsApi } from "@runtime/runner/component-property-utils-api";
-import { wait } from "@runtime/utils";
+import { hooks } from "@runtime/runner/index";
 import * as PyDefUtils from "../PyDefUtils";
 import * as componentModule from "../components";
 import { Component } from "../components/Component";
 import { pyDesignerApi } from "./component-designer-api";
 import { registerJsPythonModules } from "./components-in-js/common";
-import { AppYaml, DependencyYaml, data } from "./data";
+import { AppYaml, data, DependencyYaml } from "./data";
 import { uncaughtExceptions } from "./error-handling";
 import { createFormTemplateClass } from "./forms";
 import { setupLegacyV1AnvilModule } from "./legacy-python-environment";
 import { provideLoggingImpl, stdout } from "./logging";
 import { PyModMap } from "./py-util";
 import { Slot, WithLayout } from "./python-objects";
+import { readBuiltinFiles } from "./read-builtin-files";
 import { warn } from "./warnings";
-import {setupDefaultAnvilPluggableUI} from "@runtime/modules/_anvil/pluggable-ui";
 
 export const skulptFiles: { [filename: string]: string } = {};
 
-export async function fetchBuiltinFile(path: string, fileNum: number, retries = 0): Promise<any> {
-    try {
-        const fetchUrl = window.anvilSkulptLib[fileNum];
-        const body = await fetch(fetchUrl);
-        return body.json();
-    } catch (e: any) {
-        const sessionToken = window.anvilSessionToken;
-        $.post(data.appOrigin + "/_/log?_anvil_session=" + sessionToken, {
-            eventType: "skulptLazyImportError",
-            event: { path, retries, error: e?.toString() ?? "" },
-        });
-
-        // sometimes this fetch seems to fail occasionally, so try again
-        if (retries < 3) {
-            retries++;
-            return wait(300 * retries).then(() => fetchBuiltinFile(path, fileNum, retries));
-        } else {
-            throw e;
-        }
-    }
-}
-
-export function readBuiltinFiles(path: string) {
-    const file = Sk.builtinFiles?.files[path];
-    if (file === undefined) {
-        throw "File not found: '" + path + "'";
-    } else if (typeof file === "number") {
-        // slow path we need to do a fetch
-        return promiseToSuspension(
-            fetchBuiltinFile(path, file).then((newFiles) => {
-                Object.assign(Sk.builtinFiles.files, newFiles);
-                return newFiles[path];
-            })
-        );
-    } else {
-        return file;
-    }
-}
+let registerServerCallSuspension: any = null;
 
 function builtinRead(path: string) {
     if (path in skulptFiles) {
@@ -93,6 +57,7 @@ function loadOrdinaryModulesReturningAnvilModule() {
 
     const serverModuleAndLog = require("../modules/server")(data.appId, data.appOrigin);
     provideLoggingImpl(serverModuleAndLog.log);
+    registerServerCallSuspension = serverModuleAndLog.registerServerCallSuspension;
     PyDefUtils.loadModule("anvil.server", serverModuleAndLog.pyMod);
 
     const httpModule = require("../modules/http")();
@@ -234,12 +199,31 @@ function setupAppTemplates(
     }
 }
 
+PyDefUtils.suspensionHandlers["Sk.promise"] = (s: Suspension) =>
+    new Promise((resolve, reject) => {
+        if (s.data.serverRequestId) {
+            registerServerCallSuspension?.(s);
+        }
+        s.data.promise.then(
+            (resp) => {
+                s.data["result"] = resp;
+                resolve(s.resume());
+            },
+            (err) => {
+                s.data["error"] = err;
+                resolve(s.resume());
+            }
+        );
+    });
+
 export async function setupPythonEnvironment() {
+    const extraOptions = hooks.getSkulptOptions?.() || {};
     Sk.configure({
         output: stdout,
         read: builtinRead,
         syspath: ["app", "anvil-services"],
         __future__: data.app.runtime_options?.client_version == "3" ? Sk.python3 : Sk.python2,
+        ...extraOptions,
     });
     Sk.importSetUpPath(); // This is hack - normally happens automatically on first import
 
@@ -256,19 +240,28 @@ export async function setupPythonEnvironment() {
 
     registerJsPythonModules();
 
+    const clientInitModules: string[] = [];
+
     for (const depAppId of data.app.dependency_order) {
         const depApp = data.app.dependency_code[depAppId];
         if (!depApp.package_name) continue;
         setupAppTemplates(depApp, depAppId, depApp.package_name, anvilModule);
 
         if (depApp.client_init_module) {
-            await Sk.misceval.asyncToPromise(() => Sk.importModule(`${depApp.package_name}.${depApp.client_init_module}`, false, true));
+            clientInitModules.push(`${depApp.package_name}.${depApp.client_init_module}`);
         }
     }
 
     setupAppTemplates(data.app, null, data.appPackage, anvilModule);
 
     if (data.app.client_init_module) {
-        await Sk.misceval.asyncToPromise(() => Sk.importModule(`${data.appPackage}.${data.app.client_init_module}`, false, true));
+        clientInitModules.push(`${data.appPackage}.${data.app.client_init_module}`);
+    }
+
+    if (clientInitModules.length > 0) {
+        // do this after setupAppTemplates so that _anvil_designer modules are available
+        await suspensionToPromise(() =>
+            chainOrSuspend(null, ...clientInitModules.map((m) => () => Sk.importModule(m, false, true)))
+        );
     }
 }

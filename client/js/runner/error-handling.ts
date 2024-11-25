@@ -1,11 +1,27 @@
-import { pyBaseException, pyCallable, pyException, pyExceptionConstructor, pyExternalError, pyNone, pyNoneType, pyStr, toJs } from "../@Sk";
+import {
+    pyBaseException,
+    pyCallable,
+    pyException,
+    pyExceptionConstructor,
+    pyExternalError,
+    pyNone,
+    pyNoneType,
+    pyStr,
+    toJs,
+} from "../@Sk";
 import Modal from "../modules/modal";
 import * as PyDefUtils from "../PyDefUtils";
-import {logEvent} from "./logging";
+import { logEvent } from "./logging";
 
 // overrides the dom-lib OnErrorEventHandlerNonNull
 interface OnErrorEventHandlerNonNull {
-    (event?: Event | string | null, source?: string | null, lineno?: number | null, colno?: number | null, error?: Error | any): any;
+    (
+        event?: Event | string | null,
+        source?: string | null,
+        lineno?: number | null,
+        colno?: number | null,
+        error?: Error | any
+    ): any;
 }
 
 declare global {
@@ -13,7 +29,6 @@ declare global {
         onerror: OnErrorEventHandlerNonNull;
     }
 }
-
 
 // We add some information to python exceptions
 export interface CustomAnvilError extends pyBaseException {
@@ -40,13 +55,11 @@ export const isCustomAnvilError = (e: any): e is CustomAnvilError => {
     return e._anvil && e._anvil.errorObj;
 };
 
-
 window.onunhandledrejection = (event) => {
     window.onerror(null, null, null, null, event.reason);
 };
 
 export const uncaughtExceptions: { pyHandler: pyNoneType | pyCallable } = { pyHandler: pyNone };
-
 
 interface ErrorHooks {
     onPythonException?(err: {
@@ -85,7 +98,10 @@ window.onerror = function (errormsg, url, line, col, errorObj) {
         // This is a Chrome-on-iOS bug. Only happens when autofill=off in settings. Ignore.
         return true;
     }
-    if (typeof errormsg === "string" && errormsg.includes("ResizeObserver loop completed with undelivered notifications")) {
+    if (
+        typeof errormsg === "string" &&
+        errormsg.includes("ResizeObserver loop completed with undelivered notifications")
+    ) {
         console.warn(errormsg);
         return true;
     }
@@ -213,27 +229,33 @@ const showErrorPopup = () => {
         .animate({ "padding-left": 20, "padding-right": 20, right: 20 }, 1000); //.css("opacity", "1").animate({opacity: 0.7}, 1000);
 };
 
-const showRefreshSessionModal = () => {
-    if (document.getElementById("session-expired-modal")) {
+let showingRefreshModal = false;
+const showRefreshSessionModal = async () => {
+    if (showingRefreshModal || document.getElementById("session-expired-modal")) {
         // we're already on the screen
         return;
     }
-    const modal = new Modal({
-        id: "session-expired-modal",
-        large: false,
-        title: "Session Expired",
-        body: "Your session has timed out. Please refresh the page to continue.",
-        buttons: [
-            {
-                text: "Refresh now",
-                style: "danger",
-                onClick: () => {
-                    window.location.reload();
+    try {
+        showingRefreshModal = true;
+        const modal = await Modal.create({
+            id: "session-expired-modal",
+            large: false,
+            title: "Session Expired",
+            body: "Your session has timed out. Please refresh the page to continue.",
+            buttons: [
+                {
+                    text: "Refresh now",
+                    style: "danger",
+                    onClick: () => {
+                        window.location.reload();
+                    },
                 },
-            },
-        ],
-    });
-    modal.show();
+            ],
+        });
+        await modal.show();
+    } finally {
+        showingRefreshModal = false;
+    }
 };
 
 function hasCustomHandler() {
@@ -259,4 +281,3 @@ function customHandlerHandler(errorObj: pyBaseException, reRaiseRenderer = showE
         }
     });
 }
-

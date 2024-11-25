@@ -1,5 +1,6 @@
 (ns anvil.runtime.serve-app
   (:require [anvil.runtime.accounting :as accounting]
+            [anvil.runtime.debugger :as debugger]
             [anvil.util :as utils]
             [slingshot.slingshot :refer [try+ throw+]]
             [anvil.runtime.app-data :as app-data]
@@ -248,7 +249,7 @@
                                                                 (str "window.openMainModule(" (util/write-json-str (:module startup)) ");")
                                                                 (str "window.openForm(" (util/write-json-str (:module startup)) ");")))
                                                    :open-module (str "window.openMainModule(" (util/write-json-str module-name) ");")
-                                                   :open-form (str "window.openForm(" (util/write-json-str form-name) "," (util/write-json-str form-arg-json) ");")
+                                                   :open-form (str "window.openForm(" (util/write-json-str form-name) ");")
                                                    :print (str "window.printComponents(" (util/write-json-str print-id) "," (util/write-json-str print-key) ");"))
                                                  "});"
                                                  "});"
@@ -391,10 +392,13 @@
 
             trace-id nil                                    ;; TODO NEW TRACE API
             return-path {:update!
-                         (fn [{:keys [output set-cookie] :as r}]
+                         (fn [{:keys [output set-cookie debuggers] :as r}]
                            (cond
                              set-cookie
                              (reset! anvil-cookies-updated? true)
+
+                             debuggers
+                             (debugger/handle-debugger-update! (:environment request) {:type "http"} debuggers nil)
 
                              (string? output)
                              ;; TODO which session do we log this into?!
@@ -446,24 +450,24 @@
                                  (worker-pool/run-task! {:type :task
                                                          :name ::serve-api-lazy-media
                                                          :tags (worker-pool/get-task-tags-for-http-request request)}
-                                   (try+
-                                     (send! channel (-> {:body   (blocking-hacks/?->InputStream @dispatcher-request body)
-                                                         :status status}
-                                                        (cond->
-                                                          (.getName ^MediaDescriptor body)
-                                                          (resp/header "Content-Disposition"
-                                                                       (str "inline; filename=\""
-                                                                         (util/real-actual-genuine-url-encoder
-                                                                           (clojure.string/replace (str (.getName ^MediaDescriptor body)) "\"" "_"))
-                                                                         "\"")))
-                                                        (resp/content-type (.getContentType ^MediaDescriptor body))
-                                                        (with-safe-anvil-cookies request headers anvil-cookies-updated?)))
-                                     (catch Object e
-                                       (let [error-id (random/hex 6)]
-                                         (log/error e "Error in app API Lazy Media response:" error-id)
-                                         (send! channel (-> {:body (str "Internal server error serving Lazy Media: " error-id)}
-                                                            (resp/status 500)
-                                                            (resp/content-type "text/plain")))))))
+                                                        (try+
+                                                          (send! channel (-> {:body   (blocking-hacks/?->InputStream @dispatcher-request body)
+                                                                              :status status}
+                                                                             (cond->
+                                                                               (.getName ^MediaDescriptor body)
+                                                                               (resp/header "Content-Disposition"
+                                                                                            (str "inline; filename=\""
+                                                                                                 (util/real-actual-genuine-url-encoder
+                                                                                                   (clojure.string/replace (str (.getName ^MediaDescriptor body)) "\"" "_"))
+                                                                                                 "\"")))
+                                                                             (resp/content-type (.getContentType ^MediaDescriptor body))
+                                                                             (with-safe-anvil-cookies request headers anvil-cookies-updated?)))
+                                                          (catch Object e
+                                                            (let [error-id (random/hex 6)]
+                                                              (log/error e "Error in app API Lazy Media response:" error-id)
+                                                              (send! channel (-> {:body (str "Internal server error serving Lazy Media: " error-id)}
+                                                                                 (resp/status 500)
+                                                                                 (resp/content-type "text/plain")))))))
 
                                  (instance? ChunkedStream body)
                                  (do
@@ -483,11 +487,11 @@
                                  :else
                                  (do
                                    ((fn check-json [value path]
-                                      (let [fail! #(throw+ {:anvil/server-error (format "Cannot send a %s object over HTTP as response%s.\nYou must return either Media, a string, or a JSON-compatible object (lists/dicts/strings/numbers/None).\n"
+                                      (let [fail! #(throw+ {:anvil/server-error (format "Cannot send a %s object over HTTP as response%s.\nYou must return either Media, a string, or a JSON-compatible object (lists/dicts/strings/numbers/bools/None).\n"
                                                                                         (.getSimpleName (.getClass value))
                                                                                         (apply str (for [p (reverse path)] (str "[" (pr-str p) "]"))))})]
                                         (cond
-                                          (or (string? value) (number? value) (nil? value))
+                                          (or (string? value) (number? value) (nil? value) (boolean? value))
                                           :ok
 
                                           (and (map? value) (not (record? value)))

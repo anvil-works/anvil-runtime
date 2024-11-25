@@ -45,30 +45,41 @@
                        :bg-impl-id :downlink,
                        :disconnection-error "anvil.server.RuntimeUnavailableError"})
 
-(defn launch-bg-task! [connection {:keys [app-info environment] :as request} return-path]
+(defn launch-bg-task! [connection get-debugger-coordinates {:keys [app-info environment] :as request} return-path]
   ;; This could be called in contexts where we don't have the app:
   (let [get-app (fn []
                   (log/trace "Getting app for" app-info "env:" environment)
                   (or (:app request)
                       (:content (app-data/get-app app-info (app-data/get-version-spec-for-environment environment)))))]
-    (ws-server/launch-bg-task! WS-SERVER-PARAMS {::get-app get-app} connection request return-path)))
+    (ws-server/launch-bg-task! WS-SERVER-PARAMS {::get-app                  get-app
+                                                 ::get-debugger-coordinates (when get-debugger-coordinates
+                                                                              (partial get-debugger-coordinates environment))}
+                               connection request return-path)))
 
-(defn wrap-as-executor [{:keys [send-request!] :as connection}]
-  {:fn    (fn execute-on-downlink! [{{:keys [func]} :call, :keys [app app-info environment tracing-span] :as request} return-path]
-            (let [profiling-info {:origin      "Server (Downlink executor)"
-                                  :description (format "Downlink execute (%s)" func)}
+(defn wrap-as-executor
+  ([connection] (wrap-as-executor connection nil))
+  ([{:keys [send-request!] :as connection} get-debugger-coordinates]
+   {:fn    (fn execute-on-downlink! [{{:keys [func]} :call, :keys [app app-info environment tracing-span] :as request} return-path]
+             (let [profiling-info {:origin      "Server (Downlink executor)"
+                                   :description (format "Downlink execute (%s)" func)}
 
-                  tracing-span (tracing/start-span (str "Downlink call: " (:short (dispatcher/request-task-description request))) {:internal true} tracing-span)
-                  request (assoc request :tracing-span tracing-span)
-                  return-path (dispatcher/return-path-with-closing-span return-path tracing-span)
+                   tracing-span (tracing/start-span (str "Downlink call: " (:short (dispatcher/request-task-description request))) {:internal true} tracing-span)
+                   request (assoc request :tracing-span tracing-span)
+                   return-path (dispatcher/return-path-with-closing-span return-path tracing-span)
 
-                  {:keys [call-context request return-path]} (ws-calls/stateful-request-to-serialisable-request request return-path profiling-info)
+                   {:keys [call-context request return-path]} (ws-calls/stateful-request-to-serialisable-request request return-path profiling-info)
 
-                  request (assoc request :serialised-tracing-span nil)] ;; TODO: Work out how to serialise the tracing span here, so the downlink can add spans of its own. See dispatch-downlink-call!
+                   request (assoc request :serialised-tracing-span nil) ;; TODO: Work out how to serialise the tracing span here, so the downlink can add spans of its own. See dispatch-downlink-call!
 
-              (send-request! (assoc call-context ::get-app (constantly app)) {:type "CALL"} request return-path)))
+                   call-id (ws-server/gen-call-id request)
+                   call-context (assoc call-context
+                                  ::get-app (constantly app)
+                                  ::get-debugger-coordinates (when get-debugger-coordinates
+                                                               (partial get-debugger-coordinates environment)))]
 
-   :bg-fn (partial launch-bg-task! connection)})
+               (send-request! call-context {:type "CALL" :id call-id} request return-path)))
+
+    :bg-fn (partial launch-bg-task! connection get-debugger-coordinates)}))
 
 (ws-server/setup-bg-task-impl! WS-SERVER-PARAMS)
 
@@ -182,6 +193,22 @@
                             (do (handle-response! (serialisation/deserialise ds raw-data))
                                 (when (and @disconnect-on-idle? (is-idle?))
                                   (close channel)))
+
+                            (contains? raw-data :debugger)
+                            (let [call-id (:id raw-data)
+                                  {:keys [::get-debugger-coordinates]} (:context (get-pending-response call-id))]
+                              (when get-debugger-coordinates
+                                (handle-update! (-> raw-data
+                                                    (dissoc :debugger)
+                                                    (assoc :debuggers
+                                                           [(merge (:debugger raw-data)
+                                                                   (get-debugger-coordinates call-id))])))))
+
+                            (contains? raw-data :debuggers)
+                            (let [call-id (:id raw-data)
+                                  {:keys [::get-debugger-coordinates]} (:context (get-pending-response call-id))]
+                              (handle-update! (cond-> raw-data
+                                                      get-debugger-coordinates (update :debuggers cons (get-debugger-coordinates call-id)))))
 
                             (or (contains? raw-data :output) (contains? raw-data :invalidate-macs))
                             (handle-update! raw-data))))

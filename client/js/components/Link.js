@@ -95,7 +95,6 @@ module.exports = (pyModule) => {
                 group: "layout",
                 name: "text_padding",
                 type: "padding",
-                noDoc: true, // Exclude from API docs
                 hidden: localStorage.previewSpacingProperties !== 'true',
                 description: "Padding for the link text. Only available in apps that have been migrated to use Layouts.",
                 defaultValue: Sk.builtin.none.none$,

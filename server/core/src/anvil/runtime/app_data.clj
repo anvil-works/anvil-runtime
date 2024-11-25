@@ -163,11 +163,11 @@
                                              [(assoc seen-dep-ids dep_id dep-app-id) all-dep-ids]
                                              [(assoc seen-dep-ids dep_id dep_id) (assoc all-dep-ids dep_id dep_id)]))
               app-id (get seen-dep-ids dep_id)
+              git-version-spec (version-spec->git-map version)
+              dep-info (get-app-info-with-can-depend depending-app app-id git-version-spec)
               git-version-spec (if-let [commit-id (get-in version-spec [:dependency-commit-ids app-id])]
                                  {:commit-id commit-id}
-                                 (version-spec->git-map version))
-              git-map (version-spec->git-map git-version-spec)
-              dep-info (get-app-info-with-can-depend depending-app app-id git-map)
+                                 git-version-spec)
               already-loaded-dep (get loaded-deps app-id)]
           (when-not (get dep-info :can_depend)
             (log/warn (str "Cannot depend on dependency before other checks " depending-app " " app-id " " git-version-spec ": " dep-info)))

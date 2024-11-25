@@ -34,7 +34,7 @@
   ;;  - a serialisable request
   ;;  - a return path that understands :update-python-session
   ;;  - a precise specification of the app+dependencies version for (retrieve-exact-app) (currently the app itself, but we can make this more efficient)
-  (let [{:keys [app-id app session-state environment call-stack stale-uplink? tracing-span vt_global scheduled-task-id bg-task-timeout]} request
+  (let [{:keys [app-id app session-state environment call-stack stale-uplink? tracing-span vt_global scheduled-task-id bg-task-timeout step-in]} request
         persistence-key (get-persistence-key environment app)
         n-responses (atom 0)
         current-session (atom session-state)
@@ -87,6 +87,7 @@
                      :app-version      persistence-key
                      :persist-key      (when (get-in app [:runtime_options :server_persist])
                                          (str (:env_id environment)))
+                     :breakpoints      (:breakpoints (:debugger environment))
                      :stale-uplink?    stale-uplink?
                      :args             args
                      :kwargs           kwargs
@@ -99,7 +100,9 @@
                       (when scheduled-task-id
                         {:scheduled-task-id scheduled-task-id})
                       (when bg-task-timeout
-                        {:bg-task-timeout  bg-task-timeout})))
+                        {:bg-task-timeout  bg-task-timeout})
+                      (when step-in
+                        {:step-in true})))
         ]
     {:request request, :return-path return-path, :call-context call-context}))
 
@@ -118,13 +121,9 @@
      ::change-session!      #(reset! current-session %)
      ::upstream-return-path nil}))
 
-(defn retrieve-app [call-context]
-  ;; cheat for now
-  (:app (::request call-context)))
-
 (defn reinflate-request [call-context {:keys [origin stack-frame-type] :as call-stack-info} deserialiser-config serialisable-request]
   (let [{:keys [call-stack environment]} (::request call-context)
-        {:keys [args kwargs command liveObjectCall vt_global scheduled-task-id]} serialisable-request
+        {:keys [args kwargs command liveObjectCall vt_global scheduled-task-id step-in]} serialisable-request
         liveObjectCall (serialisation/loadLiveObject (serialisation/mk-Deserialiser deserialiser-config) liveObjectCall)]
     (-> (select-keys (::request call-context) [:app-id :app-info :app :environment :tracing-span])
         (assoc :call {:func        (or (:method liveObjectCall)
@@ -142,7 +141,9 @@
                :call-stack (cons {:type (keyword stack-frame-type)} call-stack)
                :thread-id (:thread-id (::request call-context)))
         (merge (when scheduled-task-id
-                 {:scheduled-task-id scheduled-task-id})))))
+                 {:scheduled-task-id scheduled-task-id}))
+        (merge (when step-in
+                 {:step-in true})))))
 
 
 (defn dispatch-request! [call-context call-stack-info extra-request-params
@@ -155,11 +156,14 @@
           return-path (if-let [upstream (::upstream-return-path call-context)]
                         {:update!  #(do
                                       ;; Short circuit some updates straight to upstream, but also let downstream know.
-                                      ;; (This is so Python executors don't need to waste time round-tripping these updates)
+                                      ;; (This is so Python executors don't need to waste time round-tripping these updates,
+                                      ;; and we don't leak downlink debug information to uplinks)
                                       (when (or (contains? % :update-python-session)
-                                                (contains? % :set-cookie))
+                                                (contains? % :set-cookie)
+                                                (contains? % :debuggers))
                                         (dispatcher/update! upstream %))
-                                      (when-not (contains? % :set-cookie)
+                                      (when-not (or (contains? % :set-cookie)
+                                                    (contains? % :debuggers))
                                         (dispatcher/update! return-path %)))
 
                          :respond! #(when (= 1 (swap! n-responses inc))
@@ -168,52 +172,5 @@
                         return-path)]
 
       (dispatcher/dispatch! request return-path))))
-
-#_(defn process-call-from-ws [channel deserialiser raw-data
-                            {:keys [app-id app session-state environment app-origin thread-id origin call-stack use-quota?] :as req-template}
-                            {:keys [extra-liveobject-key update-bypass!] :as options}]
-  (let [n-responses (atom 0)
-        return-path {:respond!
-                     (fn [response]
-                       (when (= 1 (swap! n-responses inc))
-                         (serialisation/serialise-to-websocket! (assoc response :id (:id raw-data)) channel true extra-liveobject-key)))
-
-                     :update!
-                     (fn [obj]
-                       (cond
-                         (and (contains? obj :set-cookie) update-bypass!)
-                         (update-bypass! obj)
-
-                         :else
-                         (ws/send! channel (util/write-json-str (assoc obj :id (:id raw-data))))))}
-
-        data (serialisation/deserialise deserialiser raw-data)]
-
-    (log/debug "Received server call:" (:command data))
-    (log/trace "Raw request:" (pr-str raw-data))
-    (log/trace "Deserialised request:" (pr-str raw-data))
-
-    (dispatcher/report-exceptions-to-return-path return-path
-      (dispatcher/dispatch! (assoc req-template
-                              :call {:func        (or (:method (:liveObjectCall data))
-                                                      (:command data))
-                                     :args        (:args data)
-                                     :kwargs      (:kwargs data)
-                                     :live-object (serialisation/loadLiveObject deserialiser (:liveObjectCall data))
-                                     :vt_global   (:vt_global data)})
-                            return-path))))
-
-#_(defn process-response-from-ws [deserialiser return-path raw-data]
-  (let [data (serialisation/deserialise deserialiser raw-data)]
-    (log/debug "Responding to server call")
-    (log/trace "Raw response:" (pr-str raw-data))
-    (log/trace "Deserialised response:" (pr-str data))
-    (dispatcher/respond! return-path data)))
-
-(defn process-update-from-ws [return-path raw-data]
-  ;; N.B. We do not deserialise output for now.
-  (log/debug "Update from server call")
-  (log/trace "Update:" (pr-str raw-data))
-  (dispatcher/update! return-path raw-data))
 
 (def set-ws-calls-hooks! (util/hook-setter [get-accounting-info]))

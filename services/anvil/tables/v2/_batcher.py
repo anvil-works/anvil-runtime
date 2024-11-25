@@ -1,3 +1,4 @@
+import anvil
 import anvil.server
 
 from ._constants import SERVER_PREFIX, NOT_FOUND
@@ -5,14 +6,22 @@ from ._constants import SERVER_PREFIX, NOT_FOUND
 PREFIX = SERVER_PREFIX + "row."
 _make_refs = None  # Circular import
 
+ThreadLocal = object
 
-class _Batcher:
+if anvil.is_server_side():
+    try:
+        from anvil._threaded_server import ThreadLocal
+    except ImportError:
+        pass
+
+
+class _Batcher(ThreadLocal):
     _name = ""
     _instance = None
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = object.__new__(cls)
+            cls._instance = ThreadLocal.__new__(cls)
         return cls._instance
 
     def __init__(self):
