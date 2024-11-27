@@ -465,6 +465,7 @@ PyDefUtils.suspensionPromise = function(fn) {
     return PyDefUtils.suspensionFromPromise(p);
 }
 
+/** @type {{[suspensionType: string]: (s: Suspension) => (Promise<any> | null | undefined | void)}} */
 PyDefUtils.suspensionHandlers = {
     timer: function(r) {
         return new Promise(function(resolve, reject) {

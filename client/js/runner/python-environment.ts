@@ -21,7 +21,7 @@ import { warn } from "./warnings";
 
 export const skulptFiles: { [filename: string]: string } = {};
 
-let registerServerCallSuspension: any = null;
+let registerServerCallSuspension: null | ((s: Suspension<{ serverRequestId: string }>) => void) = null;
 
 function builtinRead(path: string) {
     if (path in skulptFiles) {
@@ -199,22 +199,15 @@ function setupAppTemplates(
     }
 }
 
-PyDefUtils.suspensionHandlers["Sk.promise"] = (s: Suspension) =>
-    new Promise((resolve, reject) => {
-        if (s.data.serverRequestId) {
-            registerServerCallSuspension?.(s);
-        }
-        s.data.promise.then(
-            (resp) => {
-                s.data["result"] = resp;
-                resolve(s.resume());
-            },
-            (err) => {
-                s.data["error"] = err;
-                resolve(s.resume());
-            }
-        );
-    });
+const isServerRequestSuspension = (s: Suspension): s is Suspension<{ serverRequestId: string }> =>
+    s.data !== null && typeof s.data === "object" && "serverRequestId" in s.data;
+
+PyDefUtils.suspensionHandlers["Sk.promise"] = (s: Suspension) => {
+    if (isServerRequestSuspension(s)) {
+        registerServerCallSuspension?.(s);
+    }
+    // Now fall through to the default Sk.promise suspension handler
+};
 
 export async function setupPythonEnvironment() {
     const extraOptions = hooks.getSkulptOptions?.() || {};

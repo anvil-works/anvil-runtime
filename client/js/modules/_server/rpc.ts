@@ -1,6 +1,6 @@
 import { defer, Deferred, generateUUID, globalSuppressLoading } from "@runtime/utils";
 import { anvilServerMod } from "@runtime/runner/py-util";
-import { Args, Kws, promiseToSuspension, pyStr } from "@Sk";
+import { Args, Kws, promiseToSuspension, pyStr, Suspension } from "@Sk";
 import PyDefUtils from "PyDefUtils";
 import { diagnosticData, diagnosticRequest } from "./diagnostics";
 import { ErrorData, ResponseData } from "./handlers";
@@ -48,28 +48,30 @@ type OutstandingRequests = {
 };
 
 export const outstandingRequests: OutstandingRequests = {};
-export const requestSuspensions = {};
+export const requestSuspensions: Record<string, Suspension> = {};
 export let onServerCallResponse: ((resp: ResponseData) => void) | null = null;
-export let modifyOutgoingServerCall : ((call: any) => void) | null = null;
+export let modifyOutgoingServerCall: ((call: any) => void) | null = null;
 export const getNumOutstandingRequests = () => Object.keys(outstandingRequests).length;
 
 let requestReloadEnvOnNextCall = false;
 
-export const reloadEnvOnNextCall = () => { requestReloadEnvOnNextCall = true; };
+export const reloadEnvOnNextCall = () => {
+    requestReloadEnvOnNextCall = true;
+};
 
 let heartbeatTimeout: number | undefined;
 let heartbeatCount = 0;
 
-export const registerServerCallSuspension = (s) => {
+export const registerServerCallSuspension = (s: Suspension<{ serverRequestId: string }>) => {
     requestSuspensions[s.data.serverRequestId] = s;
-}
+};
 
 export const setOnServerCallResponse = (handler: (resp: ResponseData) => void) => {
     onServerCallResponse = handler;
 };
 export const setModifyOutgoingServerCall = (handler: (call: any) => void) => {
     modifyOutgoingServerCall = handler;
-}
+};
 
 async function heartbeat() {
     try {

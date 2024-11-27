@@ -153,10 +153,11 @@ class Row(BaseRow):
             col_type, view_key = col["type"], col["view_key"]
         except KeyError:
             import json
+
             msg = 'Failed to get "view_key" or "type" from col {}'.format(col)
             try:
                 _data = json.dumps(table_data, indent=2, default=lambda o: str(type(o)))
-                msg += '\n\nTable data:\n{}'.format(_data)
+                msg += "\n\nTable data:\n{}".format(_data)
             except Exception:
                 pass
 

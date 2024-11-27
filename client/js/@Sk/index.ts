@@ -872,9 +872,10 @@ export interface pyExternalError extends pyValueError {
     nativeError: any;
 }
 
-export interface Suspension {
+export interface Suspension<T=unknown> {
     $isSuspension: true;
-    child?: Suspension;
+    data: T;
+    child?: Suspension<T>;
     resume(): any;
     $loc?: any;
     $gbl?: any;
@@ -883,7 +884,7 @@ export interface Suspension {
     $colno?: number;
 }
 export interface SuspensionConstructor {
-    new (): Suspension;
+    new <T>(): Suspension<T>;
 }
 
 export interface BreakConstructor {
