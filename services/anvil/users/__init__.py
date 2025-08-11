@@ -446,7 +446,7 @@ else:
             return _to_user_row(user)
 
     #!defFunction(anvil.users,!,[show_signup_option=True],[remember_by_default=True],[allow_remembered=True],[allow_cancel=False])!2: "Display a login form and allow user to log in. Returns user object if logged in, or None if cancelled.\n\nshow_signup_option: if True, the form will also show the option to sign up for a new account.\n\nremember_by_default: if True, the 'remember me' checkbox will be enabled by default.\n\nallow_remembered: if False, users with remembered login status will still be required to log in.\n\nallow_cancel: if True, the login form has a Cancel button that the user can use to dismiss the form." ["login_with_form"]
-    def login_with_form(show_signup_option=True,remember_by_default=True, allow_remembered=True, allow_cancel=False):
+    def login_with_form(show_signup_option=True,remember_by_default=True, allow_remembered=True, allow_cancel=False, initial_email=""):
         
         if allow_remembered:
            u = get_user()
@@ -477,10 +477,10 @@ else:
         some_method_available = False
         if get_client_config().get("use_email", False):
             some_method_available = True
+            
+            initial_email = initial_email or anvil.server.call("anvil.private.users.get_last_login_email")
 
-            last_email = anvil.server.call("anvil.private.users.get_last_login_email")
-
-            email_box = TextBoxWithLabel(label="Email:", placeholder="email@address.com", text=last_email)
+            email_box = TextBoxWithLabel(label="Email:", placeholder="email@address.com", text=initial_email)
             passwd_box = TextBoxWithLabel(label="Password:", placeholder="password", hide_text=True, spacing_below="none")
 
             email_box.set_event_handler("pressed_enter", focus_password)
