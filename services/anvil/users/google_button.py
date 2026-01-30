@@ -8,9 +8,10 @@ origin = anvil.server.get_app_origin() or ""
 
 class GoogleSignInButton(anvil.HtmlTemplate):
     _loaded = False
+    # if you update this sha, then also update runtime/services/anvil/google/auth.js
     _path = (
         origin
-        + "/_/static/runtime/img/google-signin-buttons/btn.js?sha=277762afd28c6a94830"
+        + "/_/static/runtime/img/google-signin-buttons/btn.js?sha=cbda80a0e4af33321dc1"
     )
 
     @classmethod

@@ -1,6 +1,6 @@
 (ns anvil.dispatcher.native-rpc-handlers.email
   (:use [anvil.dispatcher.native-rpc-handlers.util]
-        [slingshot.slingshot])
+        [clj-commons.slingshot])
   (:require [clojure.tools.logging :as log]
             [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]
             [anvil.runtime.conf :as conf]
@@ -10,7 +10,8 @@
             [anvil.dispatcher.core :as dispatcher]
             [anvil.util :as util]
             [crypto.random :as random]
-            [anvil.core.worker-pool :as worker-pool])
+            [anvil.core.worker-pool :as worker-pool]
+            [anvil.runtime.achievements :as achievements])
   (:import (javax.mail.internet MimeBodyPart InternetAddress AddressException MimeMessage MimeMultipart)
            (javax.mail.util ByteArrayDataSource)
            (javax.activation DataHandler)
@@ -268,6 +269,7 @@
                                   :references         references
                                   :app-id             rpc-util/*app-id*})]
 
+          (achievements/claim-runtime-achievement rpc-util/*session-state* "sentEmail")
           (SerializedPythonObject. "anvil.email.SendReport" {:message_id (.getMessageID msg)}))
         (catch MessagingException e
           (throw+ (email-send-error (str (.getMessage e) " (" (.getSimpleName (.getClass e)) ")" (when custom_smtp (str ". You have enabled Custom SMTP for email sending - did you configure it correctly? You may need to provide a valid from_address."))))))))))

@@ -1,10 +1,9 @@
 (ns anvil.runtime.serve-app
   (:require [anvil.runtime.accounting :as accounting]
             [anvil.runtime.debugger :as debugger]
-            [anvil.util :as utils]
-            [slingshot.slingshot :refer [try+ throw+]]
-            [anvil.runtime.app-data :as app-data]
             [anvil.util :as util]
+            [clj-commons.slingshot :refer [try+ throw+]]
+            [anvil.runtime.app-data :as app-data]
             [ring.util.response :as resp]
             [clojure.tools.logging :as log]
             [anvil.runtime.util :as runtime-util]
@@ -172,7 +171,7 @@
 ;; The meat of this logic
 
 (defn serve-app [{:keys [app-id environment environment-from-url app-session] :as req} client-params {:keys [action print-id print-key form-name module-name form-arg-json replace-url app-startup-data-json] :as what-to-do}]
-  (utils/timeit "Serve app" [checkpoint!]
+  (util/timeit "Serve app" [checkpoint!]
     (let [environment (or environment-from-url environment) ;; Ignore overrides from the session on reload
           [app-info app-map style head-html commit-id]
           (app-data/sanitised-app-and-style-for-client app-id
@@ -188,8 +187,8 @@
           app-services (:services app-map)
           get-service (fn [url] (first (filter #(= (:source %) url) app-services)))
           google-service (get-service "/runtime/services/google.yml")
-          google-api-key (utils/or-str (-> google-service :client_config :api_key)
-                                       (:maps-api-key conf/google-client-config))
+          google-api-key (util/or-str (-> google-service :client_config :api_key)
+                                      (:maps-api-key conf/google-client-config))
           _ (checkpoint! "Google configured")
           {:keys [body-class]} (app-data/get-extra-rendering-info app-id app-session {})
           runnerVersion (get-in app-map [:runtime_options :version] 0)
@@ -238,6 +237,7 @@
                    "{{social-image}}"        (image-from-metadata-asset-or-url app-origin (:logo_img app-meta-data) "/img/logo-square-padded.png")
                    "{{description}}"         (render-app-description (:description app-meta-data))
                    "{{canonical-url}}"       (hiccup-util/escape-html app-origin)
+                   "{{runtime-common-url}}"  (hiccup-util/escape-html conf/runtime-common-url)
                    "{{environment-origin}}"  (hiccup.util/escape-html (app-data/get-app-origin environment))
                    "{{anvil-version}}"       conf/anvil-version
                    "{{google-api-key}}"      (or google-api-key "")
@@ -254,6 +254,7 @@
                    "{{head-html}}"           head-html
                    "{{extra-snippets}}"      (get-service-snippets app-map)
                    "{{app-info-object}}"     (util/write-json-str (runtime-util/get-runtime-app-info environment))
+                   "{{oauth-info}}"          (runtime-util/get-oauth-info app-origin environment app-session)
                    "{{load-app-code}}"       (str "\n$(function() {"
                                                   (when replace-url
                                                     (str "window.history.replaceState(window.history.state, \"\", " (util/write-json-str replace-url) ");"))
@@ -376,7 +377,7 @@
     {:extra-liveobject-key (browser-ws/get-session-liveobject-secret app-session)}))
 
 
-(defn serve-http-endpoint [{:keys [uri app-id app-origin environment environment-from-url request-method body cross-origin app-session new-session]
+(defn serve-http-endpoint [{:keys [uri app-id app-info app-origin environment environment-from-url request-method body cross-origin app-session new-session]
                             :as   request}
                            client-params wrap-response request-category]
   ;; Send this HTTP request to an app's server modules. The server will either return an HTTP response or (for
@@ -573,25 +574,27 @@
                                                                                                                   #(not ((set (vals conf/app-cookie-names)) (first (string/split % #"="))))
                                                                                                                   (string/split cookies-header #"; ")))))))]
 
-        (deliver dispatcher-request {:call                               {:func (str (name request-category) ":" uri),
-                                                                          :args [] :kwargs {:method                    method
-                                                                                            :path                      uri
-                                                                                            :origin                    (get headers-without-app-cookies "origin")
-                                                                                            :query_params              (:query-params request)
-                                                                                            :form_params               (:form-params request)
-                                                                                            :headers                   headers-without-app-cookies
-                                                                                            :remote_address            (:remote-addr request)
-                                                                                            :body                      body-media
-                                                                                            :username                  username
-                                                                                            :password                  password
-                                                                                            :same_app_alternate_origin (:alternate-app-origin request)}}
-                                     :app-id                             app-id, :app-origin app-origin
-                                     :environment                        (or environment-from-url environment)
-                                     :session-state                      session
-                                     :origin                             :http_endpoint
-                                     :call-stack                         (list {:type :http})
-                                     :thread-id                          (str "endpoint-" app-id "-" (random/hex 16))
-                                     :use-quota?                         true
+        (deliver dispatcher-request {:call          {:func (str (name request-category) ":" uri),
+                                                     :args [] :kwargs {:method                    method
+                                                                       :path                      uri
+                                                                       :origin                    (get headers-without-app-cookies "origin")
+                                                                       :query_params              (:query-params request)
+                                                                       :form_params               (:form-params request)
+                                                                       :headers                   headers-without-app-cookies
+                                                                       :remote_address            (:remote-addr request)
+                                                                       :body                      body-media
+                                                                       :username                  username
+                                                                       :password                  password
+                                                                       :same_app_alternate_origin (:alternate-app-origin request)}}
+                                     :app-id        app-id
+                                     :app-info      app-info
+                                     :app-origin    app-origin
+                                     :environment   (or environment-from-url environment)
+                                     :session-state session
+                                     :origin        :http_endpoint
+                                     :call-stack    (list {:type :http})
+                                     :thread-id     (str "endpoint-" app-id "-" (random/hex 16))
+                                     :use-quota?    true
                                      :anvil.dispatcher/alternate-session alternate-session})
         (metrics/inc! :api/runtime-serve-api-total)
         (dispatcher/dispatch! @dispatcher-request

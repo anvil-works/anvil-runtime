@@ -19,7 +19,7 @@
       query)))
 
 (defn log-slow-queries [func db query-and-args]
-  (tracing/with-span [(str "Query " (ellipsise query-and-args))]
+  (tracing/with-span [(str "Query " (ellipsise query-and-args)) {:internal true}]
     (let [start-time (System/currentTimeMillis)]
       (try
         (func db query-and-args)
@@ -43,7 +43,9 @@
 
 (defn- unpack-query-and-args [query-and-args]
   (if (string? query-and-args)
-    (util/read-json-str query-and-args)
+    (if-let [[_ json-from-log-msg] (re-matches #"(?s)\[TRACE anvil.runtime.tables.v2.jdbc-trace\].*?:(.*)" query-and-args)]
+      (util/read-json-str json-from-log-msg)
+      (util/read-json-str query-and-args))
     query-and-args))
 
 (defn attempt-to-reconstruct-query [query-and-args]

@@ -39,6 +39,7 @@ export const {
         method: pyMethod,
 
         dir: pyDir,
+        eval: pyEval,
 
         BaseException: pyBaseException,
         SystemExit: pySystemExit,
@@ -91,6 +92,8 @@ export const {
         checkIterable,
         checkNone,
         pyCheckType,
+        pyCheckArgs,
+        pyCheckArgsLen,
 
         issubclass: pyIsSubclass,
         isinstance: pyIsInstance,
@@ -196,6 +199,10 @@ export interface pyObject {
 
     // temporary
     [attr: string]: any;
+}
+
+export interface pyObjectWithDict extends pyObject {
+    $d: pyDict;
 }
 
 export interface pyTypeConstructor extends pyType<pyType> {
@@ -515,11 +522,14 @@ export interface pyMethod extends pyCallable {
     readonly ob$type: pyMethodConstructor;
 }
 
+export type FuncParameters<T extends Function> = T extends (...args: infer P) => any ? P : never;
+export type FuncReturnType<T extends Function> = T extends (...args: any) => infer R ? R : any;
+
 export interface pyFuncConstructor extends pyType<pyFunc> {
-    new (callable: (...args: any) => pyObject | Suspension): pyFunc;
+    new <T extends Function>(callable: T): pyFunc<FuncReturnType<T>>;
 }
 
-export interface pyFunc extends pyCallable {
+export interface pyFunc<R = pyObject> extends pyCallable<R> {
     constructor: pyFuncConstructor;
     readonly ob$type: pyFuncConstructor;
 }
@@ -900,9 +910,10 @@ export interface Suspension<T = unknown> {
     $filename?: string;
     $lineno?: number;
     $colno?: number;
+    optional?: boolean;
 }
 export interface SuspensionConstructor {
-    new <T>(): Suspension<T>;
+    new <T>(resume?: () => any, child?: Suspension<T>, data?: T): Suspension<T>;
 }
 
 export interface BreakConstructor {

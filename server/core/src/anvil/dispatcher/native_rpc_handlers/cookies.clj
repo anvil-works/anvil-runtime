@@ -1,6 +1,6 @@
 (ns anvil.dispatcher.native-rpc-handlers.cookies
   (:use [anvil.dispatcher.native-rpc-handlers.util]
-        [slingshot.slingshot])
+        [clj-commons.slingshot])
   (:require [clojure.data.json :as json]
             [clojure.tools.logging :as log]
             [anvil.dispatcher.serialisation.core :as serialiser]

@@ -11,7 +11,7 @@ pushd "$1" > /dev/null
 DEST="$(pwd)"
 popd > /dev/null
 
-cd "$(dirname "$0")/templates"
+cd "$(dirname "${BASH_SOURCE[0]}")/templates"
 
 for TEMPLATE in *; do
     if [ -d "$TEMPLATE" ]; then

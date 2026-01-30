@@ -253,4 +253,3 @@ class Files(object):
 
 #!defModuleAttr(anvil.files)!1: {name: "data_files", pyType: "anvil.files.Files instance", description: "Access Data Files from the <a href='https://docs.python.org/3/library/contextlib.html#contextlib.contextmanager' target='_blank'>Data Files Service</a>. To access a file stored in the Data Files Service use square brackets containing the path of the desired file - `data_files['<file_path>']`."}
 data_files = Files()
-

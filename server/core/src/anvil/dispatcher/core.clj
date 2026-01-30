@@ -1,5 +1,5 @@
 (ns anvil.dispatcher.core
-  (:use [slingshot.slingshot :only [throw+ try+]]
+  (:use [clj-commons.slingshot :only [throw+ try+]]
         [clojure.pprint])
   (:require [anvil.runtime.conf :as conf]
             clojure.core.async.impl.protocols
@@ -14,7 +14,8 @@
             [anvil.metrics :as metrics]
             [anvil.core.tracing :as tracing]
             [clojure.string :as str]
-            [anvil.runtime.sessions :as sessions])
+            [anvil.runtime.sessions :as sessions]
+            [anvil.runtime.achievements :as runtime-achievements])
   (:import (io.opentelemetry.api.trace Span StatusCode)
            (java.time Instant)))
 
@@ -67,6 +68,21 @@
 
 (defn respond! [return-path response]
   (route-response! :respond! return-path response))
+
+(defn respond-with-error! [return-path error]
+  (respond! return-path {:error (-> error
+                                    (assoc :type (or (:type error) "anvil.server.InternalError")
+                                           :message (:anvil/server-error error)
+                                           :trace [["<rpc>", 0]])
+                                    (dissoc :anvil/server-error))}))
+
+(defn respond-with-internal-server-error!
+  ([return-path error] (respond-with-internal-server-error! return-path error nil))
+  ([return-path error call-site]
+   (let [error-id (random/hex 6)]
+     (log/error error (str "Internal server error: " error-id (when call-site (str " at " call-site))))
+     (respond! return-path
+               {:error {:type "anvil.server.InternalError" :message (str "Internal server error: " error-id)}}))))
 
 ;; A utility macro
 (defn -synchronous-return-path [return-path return? f]
@@ -141,6 +157,7 @@
       (let [task-description (request-task-description request)
             child-span (tracing/start-span (str "Dispatch: " (:long task-description))
                                            {:task (:short task-description)
+                                            :internal false
                                             :session-id (sessions/get-id session-state)}
                                            tracing-span)
             return-path (return-path-with-closing-span return-path child-span)
@@ -157,7 +174,7 @@
 
 (defn dispatch!
   [{{:keys [live-object args kwargs func] :as call} :call
-    :keys [app app-id app-info environment app-origin session-state call-stack origin thread-id use-quota? background? scheduled? tracing-span use-existing-tracing-span? bg-task-watch-key vt_global]
+    :keys [app app-id app-info environment app-origin session-state call-stack origin thread-id use-quota? background? scheduled? tracing-span use-existing-tracing-span? bg-task-watch-key vt_global script?]
     :as request}
    return-path]
 
@@ -224,8 +241,7 @@
 
               request (if app-info
                         request
-                        (assoc request :app-info (or (and session-state (:app-info @session-state))
-                                                     (app-data/get-app-info-insecure app-id))))
+                        (assoc request :app-info (app-data/get-app-info-insecure app-id)))
               app-info (:app-info request)
               request (if (or app (not app-id))
                         request
@@ -296,7 +312,10 @@
                       (reset! dispatch-end (System/nanoTime))
                       (executor-fn request return-path))
                     (let [background-launch-fn (or (:bg-fn executor) (partial @default-background-wrapper executor))]
-                      (background-launch-fn request return-path)))
+                      (background-launch-fn request return-path)
+                      (if script?
+                        (runtime-achievements/claim-runtime-achievement session-state "ranScript")
+                        (runtime-achievements/claim-runtime-achievement session-state "ranBackgroundTask"))))
 
                   (catch Object e
                     (let [error-id (random/hex 6)]

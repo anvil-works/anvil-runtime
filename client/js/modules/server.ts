@@ -517,8 +517,8 @@ function server(appId: string, appOrigin: string) {
         // Prevent the session from complaining about expiry.
         return chainOrSuspend(
             pyCallOrSuspend(pyMod["call_s"], [new pyStr("anvil.private.reset_session")]),
-            (token: pyStr) => {
-                window.anvilSessionToken = toJs(token);
+            (token: pyStr | pyNoneType) => {
+                window.anvilSessionToken = toJs(token) ?? "";
                 return invalidatedMacs();
             },
             () => pyNone
@@ -752,6 +752,9 @@ function server(appId: string, appOrigin: string) {
             this._is_class_method = false;
             this._check_register = () => {
                 if (this._server_name === null) {
+                    if (ANVIL_IN_DESIGNER) {
+                        throw new pyRuntimeError("@server_side method can't be used in the designer");
+                    }
                     throw new pyRuntimeError(
                         "@server_side method can only be used as the top-most decorator on a method defined in a portable class"
                     );

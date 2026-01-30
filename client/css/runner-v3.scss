@@ -14,6 +14,7 @@ but our css minifier doesn't support this syntax - if we upgrade to webpack 5 th
 @use "runner/banner.scss";
 @use "runner/error-indicator.scss";
 @use "runner/loading-spinner.scss";
+@use "./lib/daterangepicker.css";
 
 @font-face {
     font-family: "Glyphicons Halflings";
@@ -329,10 +330,10 @@ select.anvil-form-control {
     position: absolute;
     left: 0;
 }
-.anvil-has-text > .anvil-component-icon.anvil-left-icon {
+.anvil-has-text .anvil-component-icon.anvil-left-icon {
     margin-right: 0.75em;
 }
-.anvil-has-text > .anvil-component-icon.anvil-right-icon {
+.anvil-has-text .anvil-component-icon.anvil-right-icon {
     margin-left: 0.75em;
 }
 .anvil-component-icon.anvil-right.anvil-right_edge-icon {
@@ -529,4 +530,28 @@ input[type="number"]::-webkit-outer-spin-button {
 
 [x-anvil-slot] > code.anvil-slot-name {
     display: none;
+}
+
+/* Sign-in button container styles - see users/__init__.py */
+.anvil-signin-button-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    width: fit-content;
+    margin: 24px auto 0;
+}
+
+.anvil-signin-button-wrapper {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+}
+
+.anvil-signin-button-wrapper > * {
+    width: 100%;
+}
+
+anvil-dropzone {
+    display: contents;
 }

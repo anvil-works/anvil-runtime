@@ -1,5 +1,5 @@
 (ns anvil.dispatcher.serialisation.lazy-media
-  (:require [slingshot.slingshot :refer [throw+ try+]]
+  (:require [clj-commons.slingshot :refer [throw+ try+]]
             [anvil.util :as util]
             [crypto.random :as random]
             [anvil.dispatcher.types :refer [map->LazyMedia]]

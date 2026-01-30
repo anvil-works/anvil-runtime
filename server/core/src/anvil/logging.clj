@@ -8,7 +8,7 @@
 
 ;; ...however, a bunch of our libraries are *really* noisy, so we should turn them off.
 ;; Do something like this:
-;; (clj-logging-config.log4j/set-logger! "com.onelogin.saml2" :level :off)
+(clj-logging-config.log4j/set-logger! "com.onelogin.saml2" :level :off)
 
 ;; Configure console logging as early as possible on startup.
 (defn setup-logging! []

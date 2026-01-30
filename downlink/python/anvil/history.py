@@ -45,6 +45,8 @@ def _get_base_href():
     global _base_href
     if _base_href is None:
         _base_href = anvil.server.get_app_origin()
+        if _base_href is None:
+            raise RuntimeError("App origin is not set")
     return _base_href
 
 

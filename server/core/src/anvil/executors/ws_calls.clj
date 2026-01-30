@@ -1,5 +1,5 @@
 (ns anvil.executors.ws-calls
-  (:use [slingshot.slingshot :only [throw+ try+]])
+  (:use [clj-commons.slingshot :only [throw+ try+]])
   (:require anvil.dispatcher.core
             [anvil.dispatcher.serialisation.core :as serialisation]
             [clojure.data.json :as json]

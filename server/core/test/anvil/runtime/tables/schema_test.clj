@@ -95,40 +95,42 @@
                                                                  renamed-companies-table nil))))
 
     ;; First we get table renames... [These could actually happen in reverse. We may need to make this test cleverer.]
-    (is (= (:type rename-companies-table) :UPDATE_TABLE))
-    (is (= (:type rename-roles-table) :UPDATE_TABLE))
-    (is (= (:table rename-roles-table) "roles"))
-    (is (= (:new_python_name rename-roles-table) "permissions"))
+    (is (= :UPDATE_TABLE (:type rename-companies-table)))
+    (is (= :UPDATE_TABLE (:type rename-roles-table)))
+    (is (= "roles" (:table rename-roles-table)))
+    (is (= "permissions" (:new_python_name rename-roles-table)))
     ;; ... which include updates to renamed tables
-    (is (= (:client rename-roles-table) "read"))
+    (is (= "read" (:client rename-roles-table)))
 
     ;; Then we get table creation
-    (is (= (:type create-tables) :CREATE_TABLES))
-    (is (= (:tables create-tables) (select-keys tables ["users"])))
+    (is (= :CREATE_TABLES (:type create-tables)))
+    (is (= (select-keys tables ["users"]) (:tables create-tables)))
 
     ;; Then table deletion
-    (is (= (:type delete-dummy-table) :DELETE_TABLE))
-    (is (= (:table delete-dummy-table) "dummy"))
+    (is (= :DELETE_TABLE (:type delete-dummy-table)))
+    (is (= "dummy" (:table delete-dummy-table)))
 
     ;; Then we get batches of updates for each table, which go update -> rename cols -> add cols -> delete cols.
-    (is (= (get table-col-updates "people") [{:type   :UPDATE_TABLE
-                                              :table  "people"
-                                              :client "read"}
-                                             {:type            :RENAME_COLUMN
-                                              :table           "people"
-                                              :column_name     "age"
-                                              :new_column_name "how_old"}
-                                             {:type        :DELETE_COLUMN
-                                              :table       "people"
-                                              :column_name "to_remove"}
-                                             {:type   :ADD_COLUMN,
-                                              :table  "people",
-                                              :column people-column-to-add}]))
+    (is (= [{:type   :UPDATE_TABLE
+             :table  "people"
+             :client "read"}
+            {:type            :RENAME_COLUMN
+             :table           "people"
+             :column_name     "age"
+             :new_column_name "how_old"}
+            {:type        :DELETE_COLUMN
+             :table       "people"
+             :column_name "to_remove"}
+            {:type   :ADD_COLUMN,
+             :table  "people",
+             :column people-column-to-add}]
+           (get table-col-updates "people") ))
 
     ;; N.B. These updates are on the 'permissions' table, which was renamed from 'roles' in an action above.
-    (is (= (get table-col-updates "permissions") [{:type   :ADD_COLUMN,
-                                                   :table  "permissions",
-                                                   :column roles-column-to-add}]))
+    (is (= [{:type   :ADD_COLUMN,
+             :table  "permissions",
+             :column roles-column-to-add}]
+           (get table-col-updates "permissions")))
 
     ;; There should be no updates left.
     (is (empty? (dissoc table-col-updates "people" "permissions")))))

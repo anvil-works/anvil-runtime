@@ -381,7 +381,7 @@ class IncomingResponse(_serialise.IncomingReqResp):
             call_responses[id] = (self, self.json)
             if MULTITHREADED:
                 with waiting_for_calls:
-                    waiting_for_calls.notifyAll()
+                    waiting_for_calls.notify_all()
         else:
             print("Got a response for an unknown ID: " + repr(self.json))
 
@@ -395,7 +395,7 @@ def kill_outstanding_requests(msg):
         raise Exception("_threaded_server.kill_outstanding_requests() does not work in single-threaded mode")
 
     with waiting_for_calls:
-        waiting_for_calls.notifyAll()
+        waiting_for_calls.notify_all()
 
 
 def register_live_object_backend(cls):
@@ -440,7 +440,6 @@ def do_call(args, kwargs, fn_name=None, live_object=None): # Yes, I do mean args
 
         if global_debugger and global_debugger.step_to_level == "IN":
             step_in = True
-            global_debugger.step_to_level = None
         else:
             step_in = False
         

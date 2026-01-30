@@ -1,8 +1,9 @@
+import * as b64 from "@runtime/lib/b64";
 import { reconstructSerializedMapWithMedia } from "@runtime/modules/_server/deserialize";
+import PyDefUtils from "PyDefUtils";
 import { pyCallable, pyCallOrSuspend, pyDict, pyNone, pyRuntimeError, pyStr, pyTuple, toJs, toPy } from "../@Sk";
 import "../extra-python-modules";
 import "../messages";
-import PyDefUtils from "PyDefUtils";
 import { registerSolidComponent, solidComponents } from "./components-in-js/component-from-solid";
 import * as _jsComponentApi from "./components-in-js/public-api";
 import { data, setData, SetDataParams } from "./data";
@@ -14,6 +15,20 @@ import { logEvent } from "./logging";
 import { anvilMod, anvilServerMod, jsObjToKws, reportError } from "./py-util";
 import { setupPythonEnvironment } from "./python-environment";
 import { warn } from "./warnings";
+import { hooks } from "./data";
+
+// Reference BUILD_TIME (injected by rsbuild) to ensure bundle content changes per build
+// without affecting runtime behavior. This creates a hidden, non-enumerable marker.
+// The presence of BUILD_TIME here guarantees a new content hash on rebuilds.
+declare const BUILD_TIME: number;
+try {
+    Object.defineProperty(window as any, "__anvilRunnerBuild", {
+        value: BUILD_TIME,
+        configurable: false,
+        enumerable: false,
+        writable: false,
+    });
+} catch {}
 
 console.log("Loading runner v2");
 
@@ -28,19 +43,11 @@ const memos = {};
 window.memoise = (key, fn) => () => memos[key] || (memos[key] = fn());
 //@ts-ignore
 window.PyDefUtils = PyDefUtils;
+// used by webauth.js so needs to be on window
+// @ts-ignore
+window.b64 = b64;
 
 window.anvilCurrentlyConstructingForms = [];
-
-export let hooks: {
-    beforeLoadApp?: () => void | Promise<void>;
-    onLoadedApp?: () => void;
-    onOpenedForm?: () => void;
-    getSkulptOptions?: () => any;
-} = {};
-
-export function setHooks(h: typeof hooks) {
-    hooks = h;
-}
 
 //@ts-ignore - backwards compatibility
 window.setLoading = setLoading;
@@ -83,20 +90,6 @@ async function loadApp() {
 
     $(window).on("resize", onResize);
 
-    const modalObserver = new MutationObserver(onResize);
-
-    $(document)
-        .on("shown.bs.modal", ".modal", function () {
-            modalObserver.observe(this, { childList: true, subtree: true });
-            onResize();
-        })
-        .on("hidden.bs.modal", ".modal", () => {
-            if (!$(".modal:visible").length) {
-                modalObserver.disconnect();
-            }
-            onResize();
-        });
-
     // jQuery 3 migration
 
     const jQueryDeprecationWarned: { [msg: string]: true } = {};
@@ -104,15 +97,6 @@ async function loadApp() {
     $.migrateWarnings = {
         push: (msg: string) => {
             if (jQueryDeprecationWarned[msg]) return;
-
-            //@ts-ignore
-            $.migrateMute = false;
-            if (msg && msg.indexOf("jQuery.isFunction()") > -1) {
-                // Ignore this warning. Used by bootstrap-notify.
-                //@ts-ignore
-                $.migrateMute = true;
-                return;
-            }
 
             jQueryDeprecationWarned[msg] = true;
             warn(
@@ -149,7 +133,6 @@ async function openForm(formName: string | null) {
         new pyStr(formName),
         ...formArgs
     );
-    hooks.onOpenedForm?.();
     return r;
 }
 

@@ -1,5 +1,6 @@
 import { xxh64 } from "@node-rs/xxhash";
 import { defineConfig, RsbuildConfig, RsbuildPlugin, Rspack } from "@rsbuild/core";
+import { pluginCssMinimizer } from "@rsbuild/plugin-css-minimizer";
 import { pluginSass } from "@rsbuild/plugin-sass";
 import chalk from "chalk";
 import fs from "fs";
@@ -114,18 +115,12 @@ export function copyNodeModulesToLibPlugin(): RsbuildPlugin {
                         src: "node_modules/jquery-migrate/dist/jquery-migrate.min.js",
                         dest: "js/lib/jquery-migrate.min.js",
                     },
-                    {
-                        src: "node_modules/html5-boilerplate/dist/js/vendor/modernizr-3.8.0.min.js",
-                        dest: "js/lib/modernizr-3.8.0.min.js",
-                    },
                     { src: "node_modules/bootstrap/dist/js/bootstrap.min.js", dest: "js/lib/bootstrap.min.js" },
                     { src: "node_modules/moment/min/moment.min.js", dest: "js/lib/moment.min.js" },
                     {
                         src: "node_modules/moment-timezone/builds/moment-timezone-with-data-10-year-range.min.js",
                         dest: "js/lib/moment-timezone-with-data-10-year-range.min.js",
                     },
-                    { src: "node_modules/js-yaml/dist/js-yaml.min.js", dest: "js/lib/js-yaml.min.js" },
-                    { src: "node_modules/animate.css/animate.min.css", dest: "css/lib/animate.min.css" },
                 ];
 
                 // Ensure js/lib and css/lib directories exist
@@ -205,10 +200,10 @@ export const baseConfigObject: RsbuildConfig = {
             css: true,
         },
         polyfill: "usage",
-        /* 
+        /*
          * To change the browserlist see: https://rsbuild.rs/guide/advanced/browserslist#set-browserslist
          */
-        overrideBrowserslist: ["since 2019 and fully supports es6-module and not dead"]
+        overrideBrowserslist: ["since 2019 and fully supports es6-module and not dead"],
     },
     server: {
         base: "/",
@@ -220,12 +215,12 @@ export const baseConfigObject: RsbuildConfig = {
         hmr: false, // we probably don't need this, live reload is enough
         client: {
             port: "5172",
-        }
+        },
     },
     resolve: {
         extensions: [".ts", ".tsx", ".js", ".css"],
         alias: {
-            PyDefUtils: path.resolve(__dirname, "js/PyDefUtils.js"),
+            PyDefUtils: path.resolve(__dirname, "js/PyDefUtils"),
             "@Sk": path.resolve(__dirname, "js/@Sk"),
             "@runtime": path.resolve(__dirname, "js"),
             "@runtime-assets": path.resolve(__dirname),
@@ -251,6 +246,9 @@ export const baseConfigObject: RsbuildConfig = {
                 },
             },
         },
+        // because lightningcss eats precision, we need to use cssnano
+        // https://github.com/parcel-bundler/lightningcss/issues/949
+        lightningcssLoader: false,
     },
 
     plugins: [
@@ -261,6 +259,8 @@ export const baseConfigObject: RsbuildConfig = {
         }),
         buildTimeShaPlugin(),
         copyNodeModulesToLibPlugin(),
+        // use instead of lightningcssLoader
+        pluginCssMinimizer(),
     ],
 
     performance: {

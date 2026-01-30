@@ -8,8 +8,8 @@ import {
     copyKeywordsToNamedArgs,
     isTrue,
     pyCall,
-    pyCallable,
     pyCallOrSuspend,
+    pyCallable,
     pyFalse,
     pyList,
     pyNone,
@@ -75,7 +75,7 @@ export function indexInRange(index: number | null | undefined, container: Contai
     return index;
 }
 
-interface ContainerConstructor extends ComponentConstructor {
+export interface ContainerConstructor extends ComponentConstructor {
     new (): Container;
 }
 

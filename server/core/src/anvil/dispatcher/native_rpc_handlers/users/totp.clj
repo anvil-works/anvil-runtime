@@ -1,5 +1,5 @@
 (ns anvil.dispatcher.native-rpc-handlers.users.totp
-  (:use slingshot.slingshot)
+  (:use clj-commons.slingshot)
   (:require [one-time.core :as ot]
             [anvil.runtime.secrets :as secrets]
             [crypto.random :as random]

@@ -1,5 +1,5 @@
 (ns anvil.runtime.email-server
-  (:use [slingshot.slingshot :only [throw+ try+]])
+  (:use [clj-commons.slingshot :only [throw+ try+]])
   (:require [anvil.runtime.conf :as conf]
             [anvil.runtime.app-data :as app-data]
             [anvil.runtime.app-log :as app-log]
@@ -8,7 +8,8 @@
             [clojure.tools.logging :as log]
             [anvil.util :as util]
             [anvil.runtime.sessions :as sessions]
-            [anvil.runtime.debugger :as debugger])
+            [anvil.runtime.debugger :as debugger]
+            [anvil.runtime.achievements :as runtime-achievements])
   (:import (org.subethamail.smtp.helper SimpleMessageListener SimpleMessageListenerAdapter)
            (javax.mail Session Header Part Multipart)
            (java.util Properties Timer TimerTask)
@@ -205,6 +206,7 @@
           (when-let [{:keys [code message]} (:error @response-promise)]
             (throw (RejectException. code message)))
 
+          (runtime-achievements/claim-runtime-achievement app-session "receivedEmail")
 
           (catch :anvil/server-error e
             (dispatcher/respond! return-path {:error e})

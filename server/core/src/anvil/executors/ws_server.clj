@@ -1,6 +1,6 @@
 (ns anvil.executors.ws-server
   (:require [org.httpkit.server :refer :all]
-            [slingshot.slingshot :refer [throw+ try+]]
+            [clj-commons.slingshot :refer [throw+ try+]]
             [anvil.dispatcher.core :as dispatcher]
             [anvil.dispatcher.background-tasks :as background-tasks]
             [anvil.executors.ws-calls :as ws-calls]
@@ -33,6 +33,7 @@
           task-name (str/replace (get-in request [:call :func]) #"^task:" "")
           bg-task-span (tracing/start-span (str "Background task: " task-name)
                                            (merge {:executor bg-impl-id
+                                                   :internal false
                                                    :launcher_session_id (sessions/get-id (:session-state launcher-request))}
                                                   (when-let [launch-span ^Span (:tracing-span request)]
                                                     {:launcher_trace_id (tracing/get-trace-id launch-span)})))

@@ -149,8 +149,21 @@ class AppModuleFinder(object):
 
             leaf_name = form['class_name'].split(".")[-1]
             if runtime_version < 3:
-                # TODO: Decide whether we want this in runtime V3. Right now it explodes on forms without containers.
                 setattr(template_mod, leaf_name+"Template", _form_templating.mk_template_class(form))
+            else:
+                # Runtime V3 doesn't support importing form templates on the server
+                # so far no one has complained, and importing forms is not something we want to encourage
+                # if we want to revise this we'll need to adjust mk_template_class to support arbitrary containers and layouts
+                # see #5924
+                self._make_template_error(template_mod, leaf_name)
+
+    def _make_template_error(self, template_mod, leaf_name):
+        def __getattr__(name):
+            if name == leaf_name + "Template":
+                raise RuntimeError("Cannot import Form templates on the server, trying to import {!r}".format(name))
+            raise AttributeError(name)
+
+        template_mod.__getattr__ = __getattr__
 
 
     def set_app(self, app_spec):

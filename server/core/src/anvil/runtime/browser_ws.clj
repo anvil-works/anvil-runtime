@@ -1,6 +1,6 @@
 (ns anvil.runtime.browser-ws
   (:use [org.httpkit.server]
-        [slingshot.slingshot :only [throw+ try+]]
+        [clj-commons.slingshot :only [throw+ try+]]
         [anvil.runtime.util])
   (:require [clojure.tools.logging :as log]
             [clojure.data.json :as json]
@@ -51,7 +51,7 @@
                        x)))
       (:liveobject-secret)))
 
-(defn ws-handler [{:keys [app-id app-session environment app-origin] :as request} app-yaml]
+(defn ws-handler [{:keys [app-id app-info app-session environment app-origin] :as request} app-yaml]
 
   (ws-util/with-opening-channel request channel on-open
 
@@ -72,7 +72,7 @@
                                 (maybe-disconnect-if-idle!))
 
           connection {:environment @environment
-                      :app-info (:app-info @app-session)
+                      :app-info app-info
                       ::disconnect-on-idle! disconnect-on-idle!
                       ::get-pending-responses (fn [] @outstanding-incoming-request-ids)}
 

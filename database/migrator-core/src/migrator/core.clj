@@ -1,6 +1,6 @@
 (ns migrator.core
   (:require [clojure.java.jdbc :as jdbc]
-            [slingshot.slingshot :refer :all]
+            [clj-commons.slingshot :refer :all]
             [migrator.pg-json-handler]
             [migrator.migrations :as migrations])
   (:gen-class)

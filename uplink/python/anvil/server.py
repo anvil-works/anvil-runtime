@@ -190,7 +190,7 @@ class _Connection(WebSocketClient):
     def _signal_ready(self):
         self._ready = True
         with self._ready_notify:
-            self._ready_notify.notifyAll()
+            self._ready_notify.notify_all()
 
     def _register_server_functions(self):
         for r in _threaded_server.registrations.keys():

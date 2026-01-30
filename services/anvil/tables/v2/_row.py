@@ -58,6 +58,29 @@ def _copy(so):
     return so
 
 
+# Version identifier for new cap update format - column names unlikely to start with $
+VERSION_KEY = "$_V"
+
+
+def _normalize_cap_update(cap_update):
+    """Normalize cap_update to new format for backwards compatibility.
+
+    Old format: False (deletion) or flat dict {col: value} (updates)
+    New format: {"$_V": 0, "D": True} or {"$_V": 0, "U": dict, "S": spec}
+
+    We use "$_V" as a version marker since column names can't start with $.
+    """
+    if cap_update is False:
+        return {"D": True}
+    if cap_update is None:
+        return None
+    if isinstance(cap_update, dict):
+        if VERSION_KEY not in cap_update:
+            # Old format: flat dict of updates
+            return {"U": cap_update}
+    return cap_update
+
+
 class _BufferedContext(object):
     def __init__(self, row):
         self._row = row
@@ -406,22 +429,33 @@ class Row(BaseRow):
         return int(row_id)
 
     # PRIVATE METHODS
-    def _anvil_cap_update_handler(self, updates):
-        if updates is False:
-            # We've been deleted clear_cache so that
+    def _anvil_cap_update_handler(self, cap_update):
+        # Normalize old format to new format for backwards compatibility
+        cap_update = _normalize_cap_update(cap_update)
+        if cap_update is None:
+            return
+
+        D = cap_update.get("D")
+        U = cap_update.get("U")
+
+        if D:
+            # We've been deleted - clear cache so that
             # server calls are required for data access
             self._anvil_clear_cache()
             self._anvil.mode = _MODE.NORMAL
             self._anvil.buffer.clear()
             self._anvil.exists = False
             return
-        elif self._anvil.spec is None:
+
+        if self._anvil.spec is None:
             return
-        clean_items = self._anvil_walk_local_items(updates)
-        self._anvil.cache.update(clean_items)
-        for key in clean_items:
-            self._anvil.buffer.pop(key, None)
-        self._anvil_check_has_cached()
+
+        if U:
+            clean_items = self._anvil_walk_local_items(U)
+            self._anvil.cache.update(clean_items)
+            for key in clean_items:
+                self._anvil.buffer.pop(key, None)
+            self._anvil_check_has_cached()
 
     def _anvil_check_has_cached(self):
         if self._anvil.spec is None:

@@ -5,6 +5,6 @@
                  [org.clojure/java.jdbc "0.7.10"]
                  [org.postgresql/postgresql "42.7.5"]
                  [digest "1.4.4"]
-                 [slingshot "0.12.2"]]
+                 [org.clj-commons/slingshot "0.13.0"]]
   :aot :all
   :omit-source true)

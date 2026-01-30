@@ -55,7 +55,7 @@
 
 (def max-websocket-payload 16777216)
 
-(def max-http-body 268435456) ;; 256 MB
+(def max-http-body (* 256 1024 1024))
 
 (def anvil-version "<unknown>")
 

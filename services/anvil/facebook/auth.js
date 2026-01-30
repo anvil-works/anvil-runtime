@@ -4,22 +4,25 @@ var $builtinmodule = window.memoise('anvil.facebook.auth', function() {
     var mod = {};
 
     var loginCallbackResolve = null;
+    let facebookButtonLoaded = false;
+    function loadFacebookSignInButton() {
+        if (facebookButtonLoaded) return;
+        facebookButtonLoaded = true;
+        PyDefUtils.loadScript(window.anvilAppOrigin + "/_/static/runtime/img/facebook-signin-buttons/btn.js?sha=e0f560cd9d9b7bca9214")
+    }
 
     async function displayLogInModal(additionalScopes) {
-
-        var anvil = PyDefUtils.getModule("anvil");
-        var appPath = Sk.ffi.remapToJs(anvil.tp$getattr(new Sk.builtin.str("app_path")));
 
         var scopesToRequest = (additionalScopes || []).join(',');
 
         function doLogin() {
 
             var authParams = {
-                scopes: scopesToRequest,
-                _anvil_session: window.anvilSessionToken,
+                scope: scopesToRequest,
+                oauth_info: window.anvilOAuthInfo,
             };
 
-            var authUrl = appPath + "/_/facebook_auth_redirect?" + $.param(authParams);
+            var authUrl = window.anvilRuntimeCommonUrl + "/_/facebook_auth_redirect?" + $.param(authParams);
 
             var windowFeatures = {
                 width: 450,
@@ -43,19 +46,21 @@ var $builtinmodule = window.memoise('anvil.facebook.auth', function() {
                 strWindowFeatures+= "=" + v;
             }
 
-            var popup = window.open(authUrl, null, strWindowFeatures);
+            window.open(authUrl, null, strWindowFeatures);
         };
 
         if (PyDefUtils.isPopupOK()) {
             doLogin();
         } else {
+            loadFacebookSignInButton();
             const modal = await window.anvilModal.create({
                 id: "facebook-login-modal",
                 backdrop: "static",
+                large: false,
                 keyboard: false,
                 dismissible: false,
-                title: "Log in with Facebook",
-                body: "You are about to log in to this app with Facebook",
+                title: "Log in",
+                body: true,
                 buttons: [
                     {
                         text: "Cancel",
@@ -63,20 +68,24 @@ var $builtinmodule = window.memoise('anvil.facebook.auth', function() {
                             modal.once("hidden", () => loginCallbackResolve.reject("MODAL_CANCEL"));
                         },
                     },
-                    { text: "Log in", style: "success", onClick: doLogin },
                 ],
             });
-            // facebook doesn't always come back with a rejection, so if we don't timeout we just hang
-            modal.once("hidden", () => setTimeout(() => loginCallbackResolve.reject("MODAL_CANCEL"), 3000));
+            const { modalBody } = modal.elements;
+            const btn = document.createElement("facebook-signin-button");
+            btn.textContent = "Sign in with Facebook"; // not necessary - but if the web component were to fail - this would still render
+            btn.style.cursor = "pointer";
+            btn.addEventListener("click", doLogin);
+            modalBody.appendChild(btn);
+            modalBody.style.textAlign = "center";
             await modal.show();
+            return modal;
         }
     }
 
     var registerCallbackHandlers = function(messageFns) {
 
         messageFns.facebookAuthErrorCallback = function(params) {
-            console.error("Client auth ERROR", params);
-
+            console.error("Facebook auth ERROR: ", params.message);
             if (loginCallbackResolve) {
                 if (params.message == "SESSION_EXPIRED") {
                     var server = PyDefUtils.getModule("anvil.server");
@@ -87,14 +96,32 @@ var $builtinmodule = window.memoise('anvil.facebook.auth', function() {
             }
         }
 
-        messageFns.facebookAuthSuccessCallback = function(params) {
+        messageFns.facebookAuthSuccessCallback = async function(args) {
+            // The origin of this message is validated in the messages.js file, so we don't need to recheck it here.
 
-            PyDefUtils.callAsync(mod["get_user_email"]).then(function(c) {
-                loginCallbackResolve.resolve(Sk.ffi.remapToJs(c));
-            }).catch(function(e) {
-                loginCallbackResolve.reject(e);
+            const anvil = PyDefUtils.getModule("anvil");
+            const appPath = Sk.ffi.remapToJs(anvil.tp$getattr(new Sk.builtin.str("app_path")));
+
+            const resp = await fetch(appPath + "/_/facebook_auth_complete?_anvil_session=" + window.anvilSessionToken, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(args),
             });
 
+            const data = await resp.json().catch(() => null);
+            if (!resp.ok) {
+                const error = data?.error || resp.statusText;
+                console.error("Error getting user info: " + error);
+                if (loginCallbackResolve) {
+                    loginCallbackResolve.reject("Error getting user info: " + error);
+                }
+                return;
+            }
+
+            const email = data.email;
+            if (loginCallbackResolve) {
+                loginCallbackResolve.resolve(email);
+            }
         }
     }
 
@@ -104,7 +131,7 @@ var $builtinmodule = window.memoise('anvil.facebook.auth', function() {
 
         loginCallbackResolve = PyDefUtils.defer();
 
-        await displayLogInModal(Sk.ffi.remapToJs(pyAdditionalScopes || []));
+        const modal = await displayLogInModal(Sk.ffi.remapToJs(pyAdditionalScopes || []));
 
         // TODO: Should probably have a timeout on this promise.
         try {
@@ -116,8 +143,9 @@ var $builtinmodule = window.memoise('anvil.facebook.auth', function() {
             } else {
                 throw e;
             }
+        } finally {
+            modal && modal.hide();
         }
-
     }
 
     /*!defFunction(anvil.facebook.auth,!_)!2*/ "Prompt the user to log in with their Facebook account";

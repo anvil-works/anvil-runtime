@@ -52,6 +52,7 @@ interface DesignerApi {
         callback: (e: MouseEvent) => void
     ): void;
     notifyInteractionsChanged(pyComponent: Component): void;
+    /** @deprecated */
     notifyDomNodeChanged(pyComponent: Component): void;
     getDesignerState(pyComponent: Component): Map<string, any>;
     getDesignComponent(componentClass: ComponentConstructor): ComponentConstructor;

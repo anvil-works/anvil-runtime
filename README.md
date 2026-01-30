@@ -349,7 +349,7 @@ If your app uses Anvil's [Microsoft Service](https://anvil.works/docs/integratio
 
 #### microsoft-tenant-id
 
-If your app uses Anvil's [Microsoft Service](https://anvil.works/docs/integrations/microsoft), for login or anything else, you may wish to restrict all logins to one Azure AD tenant. Specify it with this option.
+If your app uses Anvil's [Microsoft Service](https://anvil.works/docs/integrations/microsoft), for login or anything else, you may wish to restrict all logins to one Entra ID tenant. Specify it with this option.
 
 
 ## Troubleshooting and other notes

@@ -1,7 +1,7 @@
 (ns anvil.runtime.secrets
   (:require [anvil.util :as util]
             [crypto.random :as random]
-            [slingshot.slingshot :refer :all]
+            [clj-commons.slingshot :refer :all]
             [clojure.data.codec.base64 :as b64])
   (:import (javax.crypto SecretKey Cipher)
            (javax.crypto.spec GCMParameterSpec)

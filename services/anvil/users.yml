@@ -4,6 +4,8 @@ path_whitelist:
   - users/__init__.py
   - users/exceptions.py
   - users/google_button.py
+  - users/facebook_button.py
+  - users/microsoft_button.py
   - users/mfa/__init__.py
   - users/mfa/webauthn.js
   - users/config.py
@@ -33,9 +35,6 @@ client_config_properties:
   - name: use_microsoft
     type: boolean
     description: Allow users to authenticate with Microsoft
-  - name: use_raven
-    type: boolean
-    description: Allow users to authenticate with Raven
 server_config_properties:
   - name: user_table
     type: number

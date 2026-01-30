@@ -98,7 +98,7 @@ description: |
             'Bearer ' + access_token
         })
   ```
-  Once logged in, you can get an access token for the current user's session by calling `anvil.google.auth.get_access_token()`. This token is a string, and you can use it to make requests to the Google REST API. In this example, we are getting a list of threads in the user's inbox using the [GMail API](https://developers.google.com/gmail/api/).
+  Once logged in, you can get an access token for the current user's session by calling `anvil.google.auth.get_user_access_token()`. This token is a string, and you can use it to make requests to the Google REST API. In this example, we are getting a list of threads in the user's inbox using the [GMail API](https://developers.google.com/gmail/api/).
 
 
   ```python

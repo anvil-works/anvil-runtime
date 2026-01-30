@@ -1,7 +1,7 @@
 (ns anvil.dispatcher.native-rpc-handlers.google.drive
   (:use [anvil.dispatcher.native-rpc-handlers.util]
         [anvil.dispatcher.native-rpc-handlers.google.util]
-        [slingshot.slingshot])
+        [clj-commons.slingshot])
   (:require [org.httpkit.client :as http]
             [clojure.data.json :as json]
             [clojure.tools.logging :as log]

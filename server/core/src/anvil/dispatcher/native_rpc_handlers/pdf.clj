@@ -1,5 +1,5 @@
 (ns anvil.dispatcher.native-rpc-handlers.pdf
-  (:use [slingshot.slingshot])
+  (:use [clj-commons.slingshot])
   (:require [anvil.dispatcher.core :as dispatcher]
             [crypto.random :as random]
             [anvil.util :as util]

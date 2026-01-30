@@ -1,6 +1,6 @@
 (ns anvil.runtime.tables.util
   (:use [compojure.core]
-        [slingshot.slingshot])
+        [clj-commons.slingshot])
   (:require [anvil.runtime.tables.v2.jdbc-trace :as jdbc-t]
             [crypto.random :as random]
             [clojure.java.jdbc :as jdbc]
@@ -1036,9 +1036,9 @@
 
 ;; Useful for manually adding columns when it doesn't work through the UI because of timeouts.
 (defn add-col-no-init
-  ([app-id table-id name type] (add-col-no-init app-id table-id name type nil nil))
-  ([app-id table-id name type backend linked-table-id]
-   (binding [*environment-for-admin-call* {:app_id app-id}]
+  ([app-id table-mapping-id table-id name type] (add-col-no-init app-id table-mapping-id table-id name type nil nil))
+  ([app-id table-mapping-id table-id name type backend linked-table-id]
+   (binding [*environment-for-admin-call* {:app_id app-id :table_mapping_id table-mapping-id}]
      (with-table-transaction
        (let [cols (get-cols table-id)
              new-id (gen-new-id 8)

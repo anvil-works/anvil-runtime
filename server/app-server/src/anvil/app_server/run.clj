@@ -1,5 +1,5 @@
 (ns anvil.app-server.run
-  (:require [slingshot.slingshot :refer [try+ throw+]]
+  (:require [clj-commons.slingshot :refer [try+ throw+]]
             [ring.middleware.defaults :refer [wrap-defaults site-defaults]]
             [clojure.pprint :refer :all]
             [anvil.app-server.conf :as conf]
@@ -14,6 +14,7 @@
             [clojure.tools.logging :as log]
             [anvil.runtime.tables.util :as tables-util]
             [anvil.runtime.sessions :as runtime-sessions]
+            [anvil.runtime.util :as runtime-util]
             [anvil.util :as util]
             [anvil.core.server :as anvil-server]
             [anvil.app-server.secrets]
@@ -355,15 +356,15 @@
                                                                :deny))
                         (assoc-in [:responses :absolute-redirects] false))
 
-        handler #(handle! % (wrap-defaults
-                              (absolute-redirects/wrap-absolute-redirects
-                                (ring-json/wrap-json-response
-                                  (core/wrap-provide-source
-                                    (core/wrap-with-origin-scheme-and-port
-                                      #'core/http-routes
-                                      (.getScheme origin-uri)
-                                      (or (get-port (:origin config)) (if https-origin? 443 80))))))
-                              ring-config))]
+        handler #(handle! % (-> #'core/http-routes
+                                 (core/wrap-with-origin-scheme-and-port
+                                   (.getScheme origin-uri)
+                                   (or (get-port (:origin config)) (if https-origin? 443 80)))
+                                 (core/wrap-provide-source)
+                                 (runtime-util/wrap-json-body-except #"^/($|[^_]|_[^/]|_/api/).*" {:keywords? true})
+                                 (ring-json/wrap-json-response)
+                                 (absolute-redirects/wrap-absolute-redirects)
+                                 (wrap-defaults ring-config)))]
     (anvil-server/run-server (:ip config) (:http-port config)
                              (core/wrap-retrieve-original-remote-address ;; We'll deal with X-Forwarded-For headers ourselves.
                                (if (or (:use-reverse-proxy? config)

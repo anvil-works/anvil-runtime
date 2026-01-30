@@ -14,7 +14,7 @@
             [anvil.core.sloppy-timeouts :as sloppy-timeouts])
   (:use [clojure.core.async :only [<! <!! >! >!! go go-loop chan close!]]
         [clojure.pprint]
-        [slingshot.slingshot])
+        [clj-commons.slingshot])
   (:import (java.util LinkedList Arrays)
            (clojure.lang Counted)
            (anvil.dispatcher.types MediaDescriptor Media SerialisableForRpc ChunkedStream Date DateTime SerializedPythonObject SerializedPythonClass)

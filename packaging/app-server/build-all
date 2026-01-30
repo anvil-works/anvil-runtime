@@ -2,7 +2,7 @@
 
 set -e
 
-cd "$(dirname "$0")/../.."
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 DIR="$(pwd)"
 
 echo ; echo "*** Building front-end JS *********************************"

@@ -135,6 +135,22 @@ If you want to get to the basics as quickly as possible, each section of this do
 (defn gen-item-uid []
   (random/base32 20))
 
+(defn parse-html-with-frontmatter
+  "Parse HTML file with optional YAML frontmatter.
+   Returns map with form configuration.
+   Format: ---\\n<yaml>\\n---\\n<html>"
+  [^bytes html-bytes]
+  (let [html-str (String. html-bytes)
+        ;; Regex to match frontmatter: ---\n<yaml>\n---\n<html>
+        frontmatter-pattern #"(?s)^---\s*\n(.*?)\n---\s*\n(.*)$"
+        [_ yaml-str html-content] (re-matches frontmatter-pattern html-str)
+        frontmatter (when yaml-str (yaml/parse-string yaml-str))
+        ;; If regex matched, use html-content (even if empty), otherwise use full html-str
+        html (if yaml-str html-content html-str)]
+    (-> frontmatter
+        (assoc :serialized_html html)
+        (assoc :save_as_html true))))
+
 (defmulti resource-directory-to-map #(keyword (.getProtocol %)))
 
 (defmethod resource-directory-to-map :file [^URL path]
@@ -190,8 +206,13 @@ If you want to get to the basics as quickly as possible, each section of this do
           ;; It's a directory
           (let [package-pyb (get content "__init__.py")
                 package-py (when package-pyb (String. ^bytes package-pyb))
-                form-yamlb (get content "form_template.yaml")
-                form-yaml (util/parse-yaml-bytes form-yamlb)
+                ;; Try .html first, fallback to .yaml
+                template-b (or (get content "form_template.html")
+                               (get content "form_template.yaml"))
+                form-yaml (when template-b
+                            (if (get content "form_template.html")
+                              (parse-html-with-frontmatter template-b)
+                              (util/parse-yaml-bytes template-b)))
                 yaml (cond
                        (and client? package-py form-yaml)
                        (update-in yaml [:forms] concat
@@ -209,15 +230,20 @@ If you want to get to the basics as quickly as possible, each section of this do
                        :else
                        yaml)]
             (add-subtree-to-yaml yaml (concat package-path [name])
-                                 (dissoc content "__init__.py" "form_template.yaml")
+                                 (dissoc content "__init__.py" "form_template.yaml" "form_template.html")
                                  client? get-unique-id))
 
           (.endsWith name ".py")
           ;; Is it a module or a module-style form?
           (let [module-py (String. ^bytes content)
                 [_ module-name] (re-matches #"(.*)\.py" name)
-                form-yamlb (get tree (str module-name ".yaml"))
-                form-yaml (util/parse-yaml-bytes form-yamlb)]
+                ;; Try .html first, fallback to .yaml
+                template-b (or (get tree (str module-name ".html"))
+                               (get tree (str module-name ".yaml")))
+                form-yaml (when template-b
+                            (if (get tree (str module-name ".html"))
+                              (parse-html-with-frontmatter template-b)
+                              (util/parse-yaml-bytes template-b)))]
             (if (and client? form-yaml)
               (update-in yaml [:forms] concat
                          [(assoc form-yaml
@@ -239,6 +265,7 @@ If you want to get to the basics as quickly as possible, each section of this do
   (reduce (fn [yaml [^String name subtree]]
             (cond
               (or (and ignore-yaml? (.endsWith name ".yaml"))
+                  (and ignore-yaml? (.endsWith name ".html"))  ;; Also ignore .html files in forms/client_code
                   (and ignore-py? (.endsWith name ".py"))
                   (and top-level? (#{"anvil.yaml" ".anvil_editor.yaml" "theme" "CONFLICTS.yaml" "anvil-server-requirements.txt"} name))
                   (and (= path [:extra_files "server_code"]) (= name "requirements.txt"))
@@ -285,10 +312,17 @@ If you want to get to the basics as quickly as possible, each section of this do
                             (->>
                               (for [[src-name, src] (get tm "forms")
                                     :let [[_ form-name] (re-matches #"(.+)\.py" src-name)
-                                          ^bytes yamlb (when form-name (get-in tm ["forms" (str form-name ".yaml")]))]
-                                    :when yamlb]
-                                (assoc (util/parse-yaml-bytes yamlb) :class_name form-name :code (String. ^bytes (deref src))
-                                                                    :id (get-id :forms form-name)))
+                                          ;; Try .html first, fallback to .yaml
+                                          template-b (when form-name
+                                                       (or (get-in tm ["forms" (str form-name ".html")])
+                                                           (get-in tm ["forms" (str form-name ".yaml")])))
+                                          form-yaml (when template-b
+                                                      (if (get-in tm ["forms" (str form-name ".html")])
+                                                        (parse-html-with-frontmatter template-b)
+                                                        (util/parse-yaml-bytes template-b)))]
+                                    :when form-yaml]
+                                (assoc form-yaml :class_name form-name :code (String. ^bytes (deref src))
+                                                 :id (get-id :forms form-name)))
                               (sort-by :class_name))
 
                             :modules

@@ -1,5 +1,5 @@
 (ns anvil.app-server.secrets
-  (:require [slingshot.slingshot :refer :all]
+  (:require [clj-commons.slingshot :refer :all]
             [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]
             [anvil.runtime.secrets :as runtime-secrets]
             [anvil.dispatcher.core :as dispatcher]

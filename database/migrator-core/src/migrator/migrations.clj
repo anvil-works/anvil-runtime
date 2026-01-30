@@ -1,5 +1,5 @@
 (ns migrator.migrations
-  (:require [slingshot.slingshot :refer :all]
+  (:require [clj-commons.slingshot :refer :all]
             [clojure.java.jdbc :as jdbc]
             [clojure.java.io :as io]
             [clojure.string :as str]

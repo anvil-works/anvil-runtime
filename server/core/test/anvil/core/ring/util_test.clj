@@ -43,9 +43,9 @@
 (def async-stack (wrap-async test-async-handler test-stack))
 
 (deftest test-sync-stack
-  (is (= (sync-stack {})
-         {:respond-to-request {:in-order [:qux :baz :bar :foo]}
-          :out-order [:foo :bar :baz :qux]})))
+  (is (= {:respond-to-request {:in-order [:qux :baz :bar :foo]}
+          :out-order [:foo :bar :baz :qux]}
+         (sync-stack {}))))
 
 (deftest test-async-stack
   (let [response-promise (promise)
@@ -53,7 +53,7 @@
                (send! [_this data close?]
                  (deliver response-promise data)))]
     (is (instance? Channel (:body (async-stack {:async-channel chan}))))
-    (is (= @response-promise
-           {:respond-to-request {:in-order [:qux :baz :bar :foo]}
-            :out-order          [:foo :bar :baz :qux]}))))
+    (is (= {:respond-to-request {:in-order [:qux :baz :bar :foo]}
+            :out-order          [:foo :bar :baz :qux]}
+           @response-promise))))
 

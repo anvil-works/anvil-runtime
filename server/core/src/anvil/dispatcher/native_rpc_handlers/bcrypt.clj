@@ -1,5 +1,5 @@
 (ns anvil.dispatcher.native-rpc-handlers.bcrypt
-  (:use slingshot.slingshot)
+  (:use clj-commons.slingshot)
   (:require [anvil.dispatcher.native-rpc-handlers.util :as native-util])
   (:import org.mindrot.jbcrypt.BCrypt))
 

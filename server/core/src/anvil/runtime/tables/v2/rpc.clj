@@ -14,7 +14,7 @@
     [clojure.pprint :as pprint]
     [clojure.string :as string]
     [clojure.tools.logging :as log]
-    [slingshot.slingshot :refer :all]
+    [clj-commons.slingshot :refer :all]
     [anvil.dispatcher.serialisation.lazy-media :as lazy-media]
     [clojure.data.json :as json]
     [anvil.util :as util]

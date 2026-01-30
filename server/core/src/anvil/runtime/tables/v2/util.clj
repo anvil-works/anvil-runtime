@@ -1,7 +1,7 @@
 (ns anvil.runtime.tables.v2.util
   (:require [anvil.core.tracing :as tracing]
             [clojure.tools.logging :as log]
-            [slingshot.slingshot :refer :all]
+            [clj-commons.slingshot :refer :all]
             [anvil.runtime.tables.util :as tables-util]
             [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]
             [anvil.dispatcher.types :as types]

@@ -1,6 +1,6 @@
 (ns anvil.executors.downlink
   (:use org.httpkit.server
-        [slingshot.slingshot :only [throw+ try+]])
+        [clj-commons.slingshot :only [throw+ try+]])
   (:require [anvil.core.sloppy-timeouts :as sloppy-timeouts]
             [anvil.metrics :as metrics]
             [digest]
@@ -51,8 +51,8 @@
   ;; This could be called in contexts where we don't have the app:
   (metrics/inc! :api/background-tasks-started-total)
   (let [return-path (dispatcher/wrap-return-path return-path
-                      #(metrics/inc! :api/background-tasks-succeeded-total)
-                      #(metrics/inc! :api/background-tasks-failed-total))
+                      #(metrics/inc! :api/background-tasks-responded-total {:succeeded true})
+                      #(metrics/inc! :api/background-tasks-responded-total {:succeeded false}))
         get-app (fn []
                   (log/trace "Getting app for" app-info "env:" environment)
                   (or (:app request)
@@ -74,8 +74,8 @@
                    return-path (-> return-path
                                    (dispatcher/return-path-with-closing-span tracing-span)
                                    (dispatcher/wrap-return-path
-                                     #(metrics/inc! :api/downlink-calls-succeeded-total)
-                                     #(metrics/inc! :api/downlink-calls-failed-total)))
+                                     #(metrics/inc! :api/downlink-calls-completed-total {:succeeded true})
+                                     #(metrics/inc! :api/downlink-calls-completed-total {:succeeded false})))
 
                    {:keys [call-context request return-path]} (ws-calls/stateful-request-to-serialisable-request request return-path profiling-info)
 

@@ -17,7 +17,7 @@
             [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks]
             [anvil.core.tracing :as tracing]
             [anvil.runtime.debugger :as debugger])
-  (:use     [slingshot.slingshot :only [throw+ try+]])
+  (:use     [clj-commons.slingshot :only [throw+ try+]])
   (:import (anvil.dispatcher.types DateTime)
            (java.sql Timestamp)
            (java.util Date)
@@ -74,12 +74,17 @@
                (map map->BackgroundTask)))))
 
 
-(defn present-background-task [bt]
-  (-> bt
-      (select-keys [:id :completion_status :task_name :debug :session_id])
-      (assoc :last_seen_alive (.getTime ^Timestamp (:last_seen_alive bt)))
-      (assoc :start_time (.getTime ^Timestamp (:start_time bt)))
-      (assoc :session_sha (util/sha-256 (str (:session bt))))))
+(defn present-background-task
+  ([bt mine-env-id]
+   (-> (present-background-task bt)
+       (assoc :mine (= (:env_id bt) mine-env-id))))
+  ([bt]
+   (-> bt
+       (select-keys [:id :completion_status :task_name :debug :session_id])
+       (assoc :last_seen_alive (when-let [ts (:last_seen_alive bt)]
+                                 (.getTime ^Timestamp ts)))
+       (assoc :start_time (.getTime ^Timestamp (:start_time bt)))
+       (assoc :session_sha (util/sha-256 (str (:session bt)))))))
 
 ;; Useful predicate for get-state
 (defn is-running? [completion-status _final-state]
@@ -315,7 +320,7 @@
                                                                                                                        :type    "anvil.server.BackgroundTaskKilled"}}
                                                                                                      (if error
                                                                                                        {:error error}
-                                                                                                       {:error {:message (str "The background task failed.")
+                                                                                                       {:error {:message (format "The background task failed (%s)." status)
                                                                                                                 :type    "anvil.server.InternalError"}}))))
 
                                                                        "is_running" (get-state is-running?)

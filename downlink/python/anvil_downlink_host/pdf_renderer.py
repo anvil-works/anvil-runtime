@@ -116,8 +116,10 @@ def non_blocking_readlines(f, timeout):
 
 # Returns True if we should wait for this network request to complete before printing.
 def is_interesting_network_request(request):
-    # This might be useful at some point, if we want to be cleverer about which requests to wait for
     # pprint({request['request']['url']: (request['initiator']['type'],request['initiator'].get('stack', None)))
+    if request.get('documentURL', "").startswith("blob:"):
+        return False
+
     return True
 
 

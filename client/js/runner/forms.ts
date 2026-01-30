@@ -11,6 +11,7 @@ import {
     iterForOrSuspend,
     lookupSpecial,
     promiseToSuspension,
+    proxy,
     pyBaseException,
     pyBuiltinFunctionOrMethod,
     pyCall,
@@ -22,6 +23,7 @@ import {
     pyIter,
     pyKeyError,
     pyList,
+    pyMappingProxy,
     pyNewableType,
     pyNone,
     pyStr,
@@ -48,17 +50,19 @@ import {
     removeEventHandlers,
     setupFormComponents,
 } from "./component-creation";
-import type {
-    ComponentYaml,
-    CustomComponentEvents,
-    DataBindingYaml,
-    FormContainerYaml,
-    FormLayoutYaml,
-    FormYaml,
+import {
+    hooks,
+    type ComponentYaml,
+    type CustomComponentEvents,
+    type DataBindingYaml,
+    type FormContainerYaml,
+    type FormLayoutYaml,
+    type FormYaml,
 } from "./data";
 import { BindingError, CustomAnvilError, isCustomAnvilError } from "./error-handling";
 import { getAnvilComponentClass, getFormClassObject, resolveFormSpec } from "./instantiation";
 // for type stub
+import { parseSerializedHtml } from "@runtime/html-form/parser";
 import {
     PyModMap,
     funcFastCall,
@@ -77,6 +81,127 @@ import {
     s_remove_event_handler,
 } from "./py-util";
 import { Slot, WithLayout } from "./python-objects";
+
+/**
+ * Creates a Map-like proxy that aggregates named DOM nodes from multiple source Maps.
+ * When a source Map is added, all its entries become accessible through this map.
+ * This allows multiple HtmlComponents to contribute to a form's dom_nodes without
+ * explicit per-node registration.
+ *
+ * Returns a Proxy wrapping a real Map so Skulpt can properly detect it as a Map type.
+ */
+function createProxyAggregateDomNodeMap(): Map<string, Element> & {
+    addSource: (map: Map<string, Element>) => void;
+    removeSource: (map: Map<string, Element>) => void;
+} {
+    const baseMap = new Map<string, Element>();
+    const sources = new Set<Map<string, Element>>();
+
+    const proxy = new Proxy(baseMap, {
+        get(target, prop, receiver) {
+            // Handle addSource and removeSource methods
+            if (prop === "addSource") {
+                return (map: Map<string, Element>) => {
+                    sources.add(map);
+                };
+            }
+            if (prop === "removeSource") {
+                return (map: Map<string, Element>) => {
+                    sources.delete(map);
+                };
+            }
+
+            // Intercept Map operations and delegate to aggregated sources
+            if (prop === "get") {
+                return (key: string) => {
+                    for (const source of sources) {
+                        const val = source.get(key);
+                        if (val !== undefined) return val;
+                    }
+                    return undefined;
+                };
+            }
+
+            if (prop === "has") {
+                return (key: string) => {
+                    for (const source of sources) {
+                        if (source.has(key)) return true;
+                    }
+                    return false;
+                };
+            }
+
+            if (prop === "size") {
+                // Deduplicate keys across sources
+                const seen = new Set<string>();
+                for (const source of sources) {
+                    for (const key of source.keys()) {
+                        seen.add(key);
+                    }
+                }
+                return seen.size;
+            }
+
+            if (prop === "entries" || prop === Symbol.iterator) {
+                return function* () {
+                    const seen = new Set<string>();
+                    for (const source of sources) {
+                        for (const [k, v] of source) {
+                            if (!seen.has(k)) {
+                                seen.add(k);
+                                yield [k, v] as [string, Element];
+                            }
+                        }
+                    }
+                };
+            }
+
+            if (prop === "keys") {
+                return () => {
+                    const temp = new Map<string, Element>(proxy.entries());
+                    return temp.keys();
+                };
+            }
+
+            if (prop === "values") {
+                return () => {
+                    const temp = new Map<string, Element>(proxy.entries());
+                    return temp.values();
+                };
+            }
+
+            if (prop === "forEach") {
+                return (
+                    callbackfn: (value: Element, key: string, map: Map<string, Element>) => void,
+                    thisArg?: any
+                ) => {
+                    for (const [k, v] of proxy.entries()) {
+                        callbackfn.call(thisArg, v, k, target);
+                    }
+                };
+            }
+
+            // Map methods that modify are not supported (this is read-only aggregation)
+            if (prop === "set" || prop === "delete" || prop === "clear") {
+                return () => {
+                    throw new Error("AggregatingDomNodeMap is read-only. Add/remove sources instead.");
+                };
+            }
+
+            // Delegate other properties to the underlying map
+            const value = Reflect.get(target, prop, receiver);
+            if (typeof value === "function") {
+                return value.bind(target);
+            }
+            return value;
+        },
+    });
+
+    return proxy as Map<string, Element> & {
+        addSource: (map: Map<string, Element>) => void;
+        removeSource: (map: Map<string, Element>) => void;
+    };
+}
 
 const walkComponents = (
     yaml: FormYaml,
@@ -119,6 +244,36 @@ const propNameMap = [
     ["hidden", "hidden"],
     ["deprecated", "deprecated"],
 ] as const;
+
+function ensureHtmlFormParsed(yaml: FormYaml) {
+    if (!ANVIL_IN_DESIGNER) {
+        if (!yaml.save_as_html) {
+            return;
+        }
+    } else {
+        // @ts-expect-error - edit_as_html is a designer only flag
+        if (!yaml.save_as_html && !yaml.edit_as_html) {
+            return;
+        }
+    }
+
+    const serializedHtml = yaml.serialized_html ?? "";
+    // Runtime rendering doesn’t need (and can’t afford) HTML normalization; leave whitespace untouched.
+    const parsed = parseSerializedHtml(serializedHtml, { normalizeHtml: false });
+
+    if (parsed.kind === "layout") {
+        yaml.layout = parsed.layout;
+        yaml.components_by_slot = parsed.components_by_slot;
+        delete yaml.container;
+        delete yaml.components;
+    } else {
+        yaml.container = parsed.container;
+        yaml.components = parsed.components;
+        delete yaml.layout;
+        delete yaml.components_by_slot;
+    }
+    yaml.slots = parsed.slots;
+}
 
 function cleanPropertyDescription(property: NonNullable<FormYaml["properties"]>[number]): PropertyDescription {
     const cleaned = {} as PropertyDescription;
@@ -247,14 +402,18 @@ const setupDataBindings = (yaml: FormYaml) => {
 const setupDataBindingWritebackListeners = (pyForm: FormTemplate, dataBindings: DataBindings, isLayout: boolean) => {
     const writeBackChildBoundData = async (binding: DataBinding, pyComponent: Component): Promise<pyObject> => {
         try {
-            return (await PyDefUtils.callAsyncWithoutDefaultError(
-                binding.pySave,
+            const ret = (await PyDefUtils.callAsyncWithoutDefaultError(
+                binding.pySave!, // if we're a binding.writeback we have a pySave
                 undefined,
                 undefined,
                 undefined,
                 pyForm,
                 pyComponent
             )) as pyObject;
+
+            hooks.onWroteBackDataBinding?.();
+
+            return ret;
         } catch (e) {
             if (e instanceof Sk.builtin.KeyError) {
                 return pyNone; // Unremarkable
@@ -346,7 +505,13 @@ const refreshDataBindings = (yaml: FormYaml, self: Component, dataBindings: Data
 
         const tryCatchBinding = ({ property, code, pyUpdate, pyClear }: DataBinding) => {
             const doUpdate = () => {
-                return pyUpdate && pyCallOrSuspend(pyUpdate, [self, pyComponent]);
+                return (
+                    pyUpdate &&
+                    chainOrSuspend(pyCallOrSuspend(pyUpdate, [self, pyComponent]), (ret) => {
+                        hooks.onUpdatedDataBinding?.();
+                        return ret;
+                    })
+                );
             };
 
             const handleErr = (e: any) => {
@@ -546,8 +711,14 @@ export interface FormTemplate extends Component {
     anvil$formState: {
         refreshOnItemSet: boolean;
         dataBindings: DataBinding[];
-        slotDict: pyDict;
+        slotDict: pyDict<pyStr, Slot>;
         removeDataBindingWritebackListeners?: () => void;
+        namedDomNodes: Map<string, Element> & {
+            addSource: (source: Map<string, Element>) => void;
+            removeSource: (source: Map<string, Element>) => void;
+        };
+        namedDomNodesProxy: pyMappingProxy;
+        namedDomNodesOverride: pyObject | null;
     };
     anvil$itemValue?: pyObject;
     // used by CustomComponentProperty
@@ -583,13 +754,14 @@ export const createFormTemplateClass = (
     anvilModule: PyModMap,
     moduleName: string
 ): FormTemplateConstructor | Suspension => {
+    ensureHtmlFormParsed(yaml);
     const pyBase = yaml.container
         ? getAnvilComponentClass(anvilModule, yaml.container.type) ||
           getFormClassObject(resolveFormSpec(yaml.container.type.substring(5), depAppId))
         : WithLayout;
 
     if (pyBase === undefined) {
-        throw new pyImportError("Failed to import form " + yaml.container.type.substring(5));
+        throw new pyImportError("Failed to import form " + yaml.container!.type.substring(5));
     }
 
     return chainOrSuspend(pyBase, (pyBase: ComponentConstructor) => {
@@ -630,7 +802,7 @@ export const createFormTemplateClass = (
                 if (!yaml.container) {
                     const onAssociateLayout = new pyBuiltinFunctionOrMethod({
                         $meth(pyLayout: Component, pyForm: FormTemplate) {
-                            addEventHandlers(pyLayout, pyForm, "", yaml.layout!.event_bindings);
+                            addEventHandlers(pyLayout, pyForm, "", Object.entries(yaml.layout!.event_bindings || {}));
                             const layoutBindings = { "": dataBindings[""] ?? [] };
                             pyForm.anvil$formState.removeDataBindingWritebackListeners =
                                 setupDataBindingWritebackListeners(pyForm, layoutBindings, true);
@@ -675,15 +847,22 @@ export const createFormTemplateClass = (
                         c._anvil.props["item"] = new Sk.builtin.dict([]);
                     }
 
+                    const namedDomNodes = createProxyAggregateDomNodeMap();
+                    const namedDomNodesProxy = new pyMappingProxy(proxy(namedDomNodes));
                     c.anvil$formState = {
                         refreshOnItemSet: true,
                         dataBindings: [],
                         slotDict: new pyDict(),
+                        namedDomNodes,
+                        namedDomNodesProxy,
+                        namedDomNodesOverride: null,
                     };
 
                     return chainOrSuspend(setupComponents(c), () => {
                         setupDataBindingWritebackListeners(c, dataBindings, !!yaml.layout);
-                        return c;
+                        return chainOrSuspend(c.anvilComponent$registerWithForm?.(c), () => {
+                            return c;
+                        });
                     });
                 };
 
@@ -919,6 +1098,17 @@ export const createFormTemplateClass = (
                     });
                 }
 
+                $loc["dom_nodes"] = pyPropertyFromGetSet(
+                    (self: FormTemplate) => {
+                        const state = self.anvil$formState;
+                        return state.namedDomNodesOverride ?? state.namedDomNodesProxy;
+                    },
+                    (self: FormTemplate, value: pyObject) => {
+                        const state = self.anvil$formState;
+                        state.namedDomNodesOverride = value;
+                    }
+                );
+
                 $loc["raise_event"] = funcFastCall((args: Args<[FormTemplate, pyStr]>, kws?: Kws) => {
                     const [self, pyEventName] = args;
                     checkArgsLen("raise_event", args, 2, 2);
@@ -934,7 +1124,7 @@ export const createFormTemplateClass = (
                     return chainOrSuspend(pyNone, ...chainedFns, () => pyCallOrSuspend(superRaise, [pyEventName], kws));
                 });
 
-                $loc["refresh_data_bindings"] = new Sk.builtin.func(function (self) {
+                $loc["refresh_data_bindings"] = new Sk.builtin.func(function (self: FormTemplate) {
                     // TODO: Confirm that we want to refresh even if 'item' is None - we don't necessarily just bind to item.
                     //var item = self.tp$getattr(new Sk.builtin.str("item"));
                     //if (!item || item === Sk.builtin.none.none$) { return Sk.builtin.none.none$; }
@@ -980,7 +1170,11 @@ export const createFormTemplateClass = (
                 });
                 $loc["item"] = new ItemDescriptor();
 
-                $loc["__setattr__"] = new Sk.builtin.func(function (self, pyName, pyValue) {
+                $loc["__setattr__"] = new Sk.builtin.func(function (
+                    self: FormTemplate,
+                    pyName: pyStr,
+                    pyValue: pyObject
+                ) {
                     const name = Sk.ffi.toJs(pyName);
                     if (componentNames.has(name)) {
                         throw new Sk.builtin.AttributeError(
@@ -999,7 +1193,7 @@ export const createFormTemplateClass = (
                     Sk.builtin.str.$getattribute
                 );
 
-                $loc["__getattribute__"] = new Sk.builtin.func(function (self, pyName) {
+                $loc["__getattribute__"] = new Sk.builtin.func(function (self: FormTemplate, pyName: pyStr) {
                     const name = Sk.ffi.toJs(pyName);
                     // we prioritise the component over descriptors
                     // i.e. we guarantee that if you name a component parent you will get the component and not the parent
@@ -1035,4 +1229,27 @@ export const createFormTemplateClass = (
 
         return FormTemplate;
     });
+};
+
+export const isTemplateForm = (instance: any): instance is FormTemplate => {
+    return !!instance?.anvil$formState;
+};
+
+export const addFormTemplateNamedDomNodeSource = (instance: FormTemplate, source: Map<string, Element>) => {
+    if (!isTemplateForm(instance)) {
+        // we're in the designer an part of an ActiveYamlCarrier - ignore
+        return;
+    }
+    const { namedDomNodes } = instance.anvil$formState;
+    namedDomNodes.addSource(source);
+};
+
+/** Currently unused - we determine that once a component is registered with a form, it will never be unregistered. */
+export const removeFormTemplateNamedDomNodeSource = (instance: FormTemplate, source: Map<string, Element>) => {
+    if (!isTemplateForm(instance)) {
+        // we're in the designer an part of an ActiveYamlCarrier - ignore
+        return;
+    }
+    const { namedDomNodes } = instance.anvil$formState;
+    namedDomNodes.removeSource(source);
 };

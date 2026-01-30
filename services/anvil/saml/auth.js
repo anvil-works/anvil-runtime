@@ -7,16 +7,13 @@ var $builtinmodule = window.memoise('anvil.saml.auth', function() {
 
     async function displayLogInModal() {
 
-        var anvil = PyDefUtils.getModule("anvil");
-        var appPath = Sk.ffi.remapToJs(anvil.tp$getattr(new Sk.builtin.str("app_path")));
-
         function doLogin() {
 
             var authParams = {
-                _anvil_session: window.anvilSessionToken,
+                oauth_info: window.anvilOAuthInfo,
             };
 
-            var authUrl = appPath + "/_/saml_auth_redirect?" + $.param(authParams);
+            var authUrl = window.anvilRuntimeCommonUrl + "/_/saml_auth_redirect?" + $.param(authParams);
 
             var windowFeatures = {
                 width: 450,
@@ -40,7 +37,7 @@ var $builtinmodule = window.memoise('anvil.saml.auth', function() {
                 strWindowFeatures+= "=" + v;
             }
 
-            var popup = window.open(authUrl, null, strWindowFeatures);
+            window.open(authUrl, null, strWindowFeatures);
         };
 
         if (PyDefUtils.isPopupOK()) {
@@ -49,10 +46,11 @@ var $builtinmodule = window.memoise('anvil.saml.auth', function() {
             const modal = await window.anvilModal.create({
                 id: "saml-login-modal",
                 backdrop: "static",
+                large: false,
                 keyboard: false,
                 dismissible: false,
-                title: "Log in with SAML",
-                body: "You are about to log in to this app with SAML",
+                title: "Log in",
+                body: true,
                 buttons: [
                     {
                         text: "Cancel",
@@ -60,9 +58,20 @@ var $builtinmodule = window.memoise('anvil.saml.auth', function() {
                             modal.once("hidden", () => loginCallbackResolve.reject("MODAL_CANCEL"));
                         },
                     },
-                    { text: "Log in", style: "success", onClick: doLogin },
                 ],
             });
+            const { modalBody } = modal.elements;
+
+            const anvilMod = PyDefUtils.getModule("anvil");
+            const pluggableUi = anvilMod.tp$getattr(new Sk.builtin.str("pluggable_ui"));
+            
+            const button = pluggableUi.mp$subscript(new Sk.builtin.str("anvil.Button"));
+            const anvilButton = Sk.misceval.callsimArray(button, [], ["text", new Sk.builtin.str("Log in via SAML"), "icon", new Sk.builtin.str("fa:lock")]); 
+            const element = Sk.misceval.retryOptionalSuspensionOrThrow(anvilButton.anvil$hooks.setupDom());
+            const buttonElement = element.querySelector("button");
+            (buttonElement || element).addEventListener("click", doLogin);
+
+            modalBody.appendChild(element);
             await modal.show();
             return modal;
         }
@@ -71,7 +80,7 @@ var $builtinmodule = window.memoise('anvil.saml.auth', function() {
     var registerCallbackHandlers = function(messageFns) {
 
         messageFns.samlAuthErrorCallback = function(params) {
-            console.error("SAML auth error", params);
+            console.error("SAML auth error: ", params.message);
 
             if (loginCallbackResolve) {
                 if (params.message == "SESSION_EXPIRED") {
@@ -83,14 +92,32 @@ var $builtinmodule = window.memoise('anvil.saml.auth', function() {
             }
         }
 
-        messageFns.samlAuthSuccessCallback = function(params) {
+        messageFns.samlAuthSuccessCallback = async function(args) {
+            // The origin of this message is validated in the messages.js file, so we don't need to recheck it here.
 
-            PyDefUtils.callAsync(mod["get_user_email"]).then(function(c) {
-                loginCallbackResolve.resolve(Sk.ffi.remapToJs(c));
-            }).catch(function(e) {
-                loginCallbackResolve.reject(e);
+            const anvil = PyDefUtils.getModule("anvil");
+            const appPath = Sk.ffi.remapToJs(anvil.tp$getattr(new Sk.builtin.str("app_path")));
+
+            const resp = await fetch(appPath + "/_/saml_auth_complete?_anvil_session=" + window.anvilSessionToken, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(args),
             });
 
+            const data = await resp.json().catch(() => null);
+            if (!resp.ok) {
+                const error = data?.error || resp.statusText;
+                console.error("Error getting user info: " + error);
+                if (loginCallbackResolve) {
+                    loginCallbackResolve.reject("Error getting user info: " + error);
+                }
+                return;
+            }
+
+            const email = data.email;
+            if (loginCallbackResolve) {
+                loginCallbackResolve.resolve(email);
+            }
         }
     }
 

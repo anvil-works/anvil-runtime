@@ -198,6 +198,13 @@ class _AppInfo:
 
     def get_server_config(self, package_name=None):
         return self._config_getter(package_name, "server")
+    
+    def get_asset(self, path):
+        import anvil.server
+        rv = anvil.server.call("anvil.private.get_app_asset", path)
+        if rv is None:
+            raise ValueError("Asset not found: {}".format(path))
+        return rv
 
 
 app = _AppInfo(None, None)

@@ -1,5 +1,5 @@
 (ns anvil.runtime.tables.v2.table-types
-  (:require [slingshot.slingshot :refer :all]
+  (:require [clj-commons.slingshot :refer :all]
             [anvil.dispatcher.types :as types]
             [clojure.tools.logging :as log]
             [anvil.util :as util]

@@ -118,7 +118,7 @@ const styleToVal = (m: string | null) => {
     return m;
 };
 
-export function getUnsetValue(element: HTMLElement, key: keyof CSSStyleDeclaration, currentValue: any) {
+export function getUnsetValue(element: HTMLElement, key: keyof CSSStyleDeclaration, currentValue?: any) {
     if (currentValue !== "" && currentValue !== null && currentValue !== undefined) {
         return { value: null, css: null }; // this is probably right
     }

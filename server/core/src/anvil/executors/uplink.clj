@@ -1,8 +1,9 @@
 (ns anvil.executors.uplink
   (:use org.httpkit.server
-        [slingshot.slingshot :only [throw+ try+]])
+        [clj-commons.slingshot :only [throw+ try+]])
   (:require
-    [slingshot.slingshot :refer [throw+ try+]]
+    [anvil.runtime.achievements :as runtime-achievements]
+    [clj-commons.slingshot :refer [throw+ try+]]
     [clojure.stacktrace]
     [digest]
     [anvil.util :as util]
@@ -207,7 +208,8 @@
                                                                                    :send-request! send-request!
                                                                                    ::ws-server/send-raw! #(send! channel %)
                                                                                    ::disconnect-on-idle! disconnect-on-idle!
-                                                                                   ::get-pending-responses get-pending-responses))))))
+                                                                                   ::get-pending-responses get-pending-responses)))
+                                    (runtime-achievements/claim-runtime-achievement default-session "connectedUplink"))))
 
                               (= (:type raw-data) "REGISTER")
                               (if-not (can-register-functions?)

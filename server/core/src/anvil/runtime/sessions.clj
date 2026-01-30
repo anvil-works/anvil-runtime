@@ -3,7 +3,7 @@
             [clojure.java.jdbc :as jdbc]
             [anvil.util :as util]
             [clojure.edn :as edn]
-            [slingshot.slingshot :refer [try+]]
+            [clj-commons.slingshot :refer [try+]]
             [clojure.tools.logging :as log]
             [anvil.core.cache :as cache]
             [anvil.runtime.conf :as conf]
@@ -360,7 +360,7 @@
    (apply merge
           {:app-origin           (:app-origin req)
            :app-id               (:app-id req)
-           :app-info             (:app-info req)
+           :app-info             (:app-info req)  ;; TODO: Don't cache full app-info in the session. It can change (e.g. dep_ids), causing explosions.
            :environment          (:environment req)
            :cookie-keys          {:local  (keyword (.substring (util/sha-256 (:app-id req)) 0 16))
                                   :shared (keyword (.substring (util/sha-256 (get-shared-cookie-key (:app-info req))) 0 16))}

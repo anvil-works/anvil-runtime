@@ -1,6 +1,6 @@
 (ns anvil.runtime.tables.rpc
   (:use [compojure.core]
-        [slingshot.slingshot]
+        [clj-commons.slingshot]
         [anvil.runtime.tables.util]
         [clojure.pprint])
   (:require [clojure.java.jdbc :as jdbc]

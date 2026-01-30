@@ -1,5 +1,7 @@
 (ns anvil.core.hrr-queue-test
   (:require [clojure.test :refer :all]
+            [clojure.tools.logging.test :refer [with-log the-log]]
+            [matcher-combinators.test]
             [anvil.core.hrr-queue :refer :all]
             [anvil.core.worker-pool :as worker-pool]))
 
@@ -16,9 +18,9 @@
   (let [q (-> (mk-round-robin-queue)
               (hrr-push :foo [])
               (hrr-push :bar []))]
-    (is (= (pop-all-hrr q)
-           [[:foo []]
-            [:bar []]])))
+    (is (= [[:foo []]
+            [:bar []]]
+           (pop-all-hrr q))))
 
   (let [q (-> (mk-round-robin-queue)
               (hrr-push 1 [])
@@ -30,8 +32,7 @@
               (hrr-push 7 [:x])
               (hrr-push 8 [])
               (hrr-push 9 [:z]))]
-    (is (= (pop-all-hrr q)
-           [[1 ()]
+    (is (= [[1 ()]
             [2 [:x]]
             [9 [:z]]
             [3 []]
@@ -39,7 +40,8 @@
             [8 []]
             [4 [:x]]
             [6 [:x :y]]
-            [7 [:x]]]))))
+            [7 [:x]]]
+           (pop-all-hrr q)))))
 
 (defn pop-n [q n]
   (loop [q q, n n, results #{}]
@@ -56,7 +58,7 @@
         _ (hrr-assert-queue-invariants q)
 
         [q results] (pop-n q 2)]
-    (is (= results #{:foo :bar}))
+    (is (= #{:foo :bar} results))
     (is (nil? (hrr-pop q))))
 
   (let [start-q (-> (->HierarchicalPenaltyQueue {} 0)
@@ -75,8 +77,8 @@
         q (hrr-penalise start-q [:x] 10)
         [q first-5] (pop-n q 5)
         [q second-5] (pop-n q 5)
-        _ (is (= first-5 #{2 4 6 8 10}))
-        _ (is (= second-5 #{1 3 5 7 9}))
+        _ (is (= #{2 4 6 8 10} first-5))
+        _ (is (= #{1 3 5 7 9} second-5))
 
         q (hrr-penalise start-q [:x] 10)
         [q first-2] (pop-n q 2)
@@ -107,7 +109,7 @@
         [q- first-1] (pop-n q 1)
         _ (is (= #{11} first-1))
         [q- next-5] (pop-n q- 5)
-        _ (is (= next-5 #{2 4 6 8 10}))
+        _ (is (= #{2 4 6 8 10} next-5))
         [q- next-2] (pop-n q- 2)
         _ (is (= #{7 9} next-2))
         [q- next-3] (pop-n q- 3)
@@ -138,16 +140,20 @@
         freqs (frequencies (repeatedly 1000 #(let [[_ _ [tag]] (hrr-pop q)] tag)))
         _ (is (nil? (:y freqs)))
         _ (is (and (:x freqs) (> (:x freqs) 0)))
-        _ (is (and (:z freqs) (> (:z freqs) 0)))
+        _ (is (and (:z freqs) (> (:z freqs) 0)))]
 
-        ;; Test pushing nil tags. Not blowing up is sufficient here.
-        start-q (-> (->HierarchicalPenaltyQueue {} 0)
-                    (hrr-push 1 [:x nil :w])
-                    (hrr-push 2 [:x :y :v])
-                    (hrr-push 3 [:z]))
+    ;; Test pushing nil tags. Not blowing up is sufficient here.
+    (with-log
+      (let [start-q (-> (->HierarchicalPenaltyQueue {} 0)
+                        (hrr-push 1 [:x nil :w])
+                        (hrr-push 2 [:x :y :v])
+                        (hrr-push 3 [:z]))
 
-        [q- next-3] (pop-n start-q 3)
-        _ (is (= next-3 #{1 2 3}))]))
+            [q- next-3] (pop-n start-q 3)
+            _ (is (= #{1 2 3} next-3))]
+
+        (is (match? [{:level :warn :message #"Got unexpected nil tag"}]
+                    (the-log)))))))
 
 
 ;; This is a test

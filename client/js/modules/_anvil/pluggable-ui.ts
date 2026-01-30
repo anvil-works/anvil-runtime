@@ -13,6 +13,7 @@ import {
     s_update,
 } from "@runtime/runner/py-util";
 import {
+    Args,
     buildNativeClass,
     buildPyClass,
     chainOrSuspend,
@@ -232,17 +233,17 @@ export const setupDefaultAnvilPluggableUI = (anvilModule: { [name: string]: pyOb
                 (self, value) => self.$label.tp$setattr(s_text, value, true)
             );
 
-            $loc.focus = new pyFunc((self) => {
+            $loc.focus = new pyFunc((self: Component) => {
                 return pyCallOrSuspend(self.$box.tp$getattr(s_focus));
             });
 
             for (const eventHandlerMethod of [s_add_event_handler, s_set_event_handler, s_remove_event_handler]) {
-                $loc[eventHandlerMethod.toString()] = new pyFunc((self, ...args) => {
+                $loc[eventHandlerMethod.toString()] = new pyFunc((self: Component, ...args: Args) => {
                     const [event] = args;
                     if (tbEvents.includes(event?.toString())) {
                         return pyCallOrSuspend(self.$box.tp$getattr(eventHandlerMethod), args);
                     }
-                    return pyCallOrSuspend(LinearPanel.tp$getattr(eventHandlerMethod), [self, ...args]);
+                    return pyCallOrSuspend(LinearPanel.tp$getattr<pyCallable>(eventHandlerMethod), [self, ...args]);
                 });
             }
         },

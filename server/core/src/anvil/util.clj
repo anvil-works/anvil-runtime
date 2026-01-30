@@ -1,6 +1,6 @@
 (ns anvil.util
   (:use [clojure.pprint]
-        [slingshot.slingshot])
+        [clj-commons.slingshot])
   (:require [clj-yaml.core :as yaml]
             [digest]
             [crawlers.detector :as crawlers]
@@ -17,16 +17,20 @@
             [compojure.core]
             [ring.middleware.gzip :as gzip]
             [clojure.java.io :as io])
-  (:import (java.sql SQLException)
+  (:import (java.security Key KeyPairGenerator)
+           (java.sql SQLException)
            (javax.crypto Mac)
            (javax.crypto.spec SecretKeySpec)
            (javax.net.ssl SSLContext)
+           (org.bouncycastle.openssl PEMParser)
+           (org.bouncycastle.openssl.jcajce JcaPEMKeyConverter)
+           (org.bouncycastle.util.io.pem PemObject PemWriter)
            (org.mindrot.jbcrypt BCrypt)
            (clojure.lang IPersistentMap Keyword)
            (java.net InetAddress)
            (com.maxmind.db CHMCache)
            (com.maxmind.geoip2 DatabaseReader$Builder DatabaseReader)
-           (java.io InputStream File ByteArrayOutputStream ByteArrayInputStream FileOutputStream)
+           (java.io InputStream File ByteArrayOutputStream ByteArrayInputStream FileOutputStream StringWriter)
            (com.maxmind.geoip2.exception GeoIp2Exception)
            (com.mchange.v2.c3p0 DataSources)
            (java.util LinkedHashMap Properties Map)
@@ -134,6 +138,11 @@
   (if (keyword? val)
     (.substring (.toString ^Keyword val) 1)
     val))
+
+(defn limit-to-512-characters [s]
+  (when (not-empty s)
+    (let [s (string/trim s)]
+      (subs s 0 (min (count s) 512)))))
 
 (defn string-keys [map]
   (into {} (for [[key value] map]
@@ -455,6 +464,34 @@
          ~@body
          (catch Throwable e#
            (log/error e# "TimerTask error" ~error-context))))))
+
+(defn generate-key-pair []
+  (-> (doto (KeyPairGenerator/getInstance "RSA")
+        (.initialize 4096))
+      (.generateKeyPair)))
+
+(defn ->pem [obj description]
+  (let [writer (StringWriter.)
+        pem-writer (PemWriter. writer)]
+    (.writeObject pem-writer (PemObject. description (.getEncoded obj)))
+    (.close pem-writer)
+    (.toString writer)))
+
+(defn pem->private-key [private-key-pem]
+  (->> private-key-pem
+       (char-array)
+       (io/reader)
+       (PEMParser.)
+       (.readObject)
+       (.getPrivateKey (JcaPEMKeyConverter.))))
+
+(defn pem->public-key [public-key-pem]
+  (->> public-key-pem
+       (char-array)
+       (io/reader)
+       (PEMParser.)
+       (.readObject)
+       (.getPublicKey (JcaPEMKeyConverter.))))
 
 (in-ns 'compojure.core)
 (let [old-context-request context-request]

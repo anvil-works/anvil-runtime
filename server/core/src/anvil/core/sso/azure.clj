@@ -5,20 +5,21 @@
             [crypto.random :as random]
             [org.httpkit.client :as http]
             [buddy.sign.jwt]
-            [buddy.core.keys]
-            [ring.util.response :as resp]))
+            [buddy.core.keys]))
 
-(defn get-login-url [state tenant-id application-id response-type scope redirect-uri]
-  (let [nonce (random/hex 60)] ;; No CSRF token needed - the nonce takes care of that for us.
+(defn get-login-url [tenant-id application-id response-type scope redirect-uri]
+  (let [nonce (random/hex 60)
+        csrf-token (random/hex 60)]
     [(str "https://login.microsoftonline.com/" (util/real-actual-genuine-url-encoder (util/or-str tenant-id "common")) "/oauth2/v2.0/authorize?"
-          "&client_id=" application-id
+          "client_id=" application-id
           "&response_type=" response-type
           "&redirect_uri=" (util/real-actual-genuine-url-encoder redirect-uri)
           "&response_mode=form_post"
-          "&state=" (util/real-actual-genuine-url-encoder state)
+          "&state=" csrf-token
           "&nonce=" nonce
           "&scope=" (util/real-actual-genuine-url-encoder scope))
-     ;; It is the responsibility of the caller to store the nonce somewhere suitable.
+     ;; It is the responsibility of the caller to store the csrf-token and nonce somewhere suitable.
+     csrf-token
      nonce]))
 
 (defn- load-id-token [nonce tenant-id id-token]
@@ -41,28 +42,29 @@
       (throw (Exception. "NONCE CHECK FAILED"))
       verified-claims)))
 
-(defn process-callback [req nonce tenant-id application-id application-secret redirect-uri]
-  (if-let [id-token (-> req :params :id_token)]
-    ; OpenID flow
-    {:id-token (load-id-token nonce tenant-id id-token)}
+(defn process-callback [code state id-token csrf-token nonce tenant-id application-id application-secret redirect-uri]
+  (if (not= state csrf-token)
+    (throw (Exception. "CSRF CHECK FAILED"))
 
-    ;; There was no ID token, so we must be using the full auth code flow.
-    (let [body-json (:body @(http/post (str "https://login.microsoftonline.com/" (util/real-actual-genuine-url-encoder (util/or-str tenant-id "common")) "/oauth2/v2.0/token")
-                                       {:keepalive   -1
-                                        :form-params {:code          (-> req :params :code)
-                                                      :client_id     application-id
-                                                      :client_secret application-secret
-                                                      :redirect_uri  redirect-uri
-                                                      :grant_type    "authorization_code"}}))
-          body (json/read-str body-json :key-fn keyword)]
+    (if id-token
+      ;; OpenID flow
+      {:id-token (load-id-token nonce tenant-id id-token)}
 
-      (if (:error body)
+      ;; There was no ID token, so we must be using the full auth code flow.
+      (let [body-json (:body @(http/post (str "https://login.microsoftonline.com/" (util/real-actual-genuine-url-encoder (util/or-str tenant-id "common")) "/oauth2/v2.0/token")
+                                         {:keepalive   -1
+                                          :form-params {:code          code
+                                                        :client_id     application-id
+                                                        :client_secret application-secret
+                                                        :redirect_uri  redirect-uri
+                                                        :grant_type    "authorization_code"}}))
+            body (json/read-str body-json :key-fn keyword)]
 
-        ;; Something went wrong.
-        (throw (Exception. (str "FAILED TO GET ACCESS TOKEN: " body-json)))
+        (if (:error body)
+          (throw (Exception. (str "FAILED TO GET ACCESS TOKEN: " (:error body) ": " (:error_description body))))
 
-        ;; There was no error, so we should be able to find the tokens
-        {:id-token (load-id-token nonce tenant-id (:id_token body))
-         :refresh-token  (:refresh_token body)
-         :access-token   (:access_token body)
-         :application-id application-id}))))
+          ;; There was no error, so we should be able to find the tokens
+          {:id-token       (load-id-token nonce tenant-id (:id_token body))
+           :refresh-token  (:refresh_token body)
+           :access-token   (:access_token body)
+           :application-id application-id})))))

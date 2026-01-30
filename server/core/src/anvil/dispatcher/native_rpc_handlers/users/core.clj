@@ -1,5 +1,5 @@
 (ns anvil.dispatcher.native-rpc-handlers.users.core
-  (:use slingshot.slingshot)
+  (:use clj-commons.slingshot)
   (:require [anvil.dispatcher.native-rpc-handlers.util :as util]
             [anvil.dispatcher.native-rpc-handlers.users.util :as users-util :refer [add-new-user
                                                                                     get-and-create-columns
@@ -22,7 +22,6 @@
             [anvil.dispatcher.native-rpc-handlers.facebook :as facebook-auth]
             [anvil.dispatcher.native-rpc-handlers.microsoft :as microsoft-auth]
             [anvil.dispatcher.native-rpc-handlers.saml :as saml-auth]
-            [anvil.dispatcher.native-rpc-handlers.raven :as raven-auth]
             [anvil.dispatcher.native-rpc-handlers.email :as email]
             [anvil.runtime.tables.util :as tables-util]
             [clojure.data.json :as json]
@@ -700,28 +699,6 @@
                    true :email remember)
     (throw+ {:anvil/server-error "User is not logged in via SAML"})))
 
-(defn login-with-raven [{:keys [remember] :as _kwargs}]
-  (binding [util/*client-request?* false]
-    (let [{:keys [user_table use_raven enable_automatically allow_signup]} (get-props-with-named-user-table)
-          current-raven-user (raven-auth/get-user-email {})
-          _ (when-not use_raven (throw+ {:anvil/server-error "Raven authentication is not enabled."}))
-          user-row (get-user-check-enabled-and-validate user_table {:email current-raven-user} :email)]
-      (if user-row
-        (login! user-row remember)
-        (if allow_signup
-          (signup-common :use_raven "Raven"
-                         {:email (.toLowerCase current-raven-user)} nil
-                         true :email remember)
-          (throw+ {:anvil/server-error "Not a registered user" :type "anvil.users.AuthenticationFailed"}))))))
-
-(defn signup-with-raven [{:keys [remember] :as _kwargs}]
-  (if-let [current-raven-user (raven-auth/get-user-email {})]
-    (signup-common :use_raven "Raven"
-                   {:email (.toLowerCase current-raven-user)} nil
-                   true :email remember)
-    (throw+ {:anvil/server-error "User is not logged in with Raven"})))
-
-
 (defn get-current-user [{:keys [allow_remembered _anvil_test_tell_me_if_reset_requested] :as _kwargs}]
   (let [really-client-request? util/*client-request?*]
     (binding [util/*client-request?* false]
@@ -782,7 +759,6 @@
         "anvil.private.users.login_with_facebook"       (util/wrap-native-fn login-with-facebook)
         "anvil.private.users.login_with_microsoft"      (util/wrap-native-fn login-with-microsoft)
         "anvil.private.users.login_with_saml"           (util/wrap-native-fn login-with-saml)
-        "anvil.private.users.login_with_raven"          (util/wrap-native-fn login-with-raven)
         "anvil.private.users.force_login"               (util/wrap-native-fn force-login)
         "anvil.private.users.signup_with_email"         (util/wrap-native-fn signup-with-email)
         "anvil.private.users.send_password_reset_email" (util/wrap-native-fn send-password-reset-email)
@@ -790,7 +766,6 @@
         "anvil.private.users.signup_with_facebook"      (util/wrap-native-fn signup-with-facebook)
         "anvil.private.users.signup_with_microsoft"     (util/wrap-native-fn signup-with-microsoft)
         "anvil.private.users.signup_with_saml"          (util/wrap-native-fn signup-with-saml)
-        "anvil.private.users.signup_with_raven"         (util/wrap-native-fn signup-with-raven)
         "anvil.private.users.reset_password"            (util/wrap-native-fn reset-password)
         "anvil.private.users.cancel_password_reset"     (util/wrap-native-fn cancel-password-reset)
 

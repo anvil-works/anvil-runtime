@@ -1,6 +1,6 @@
 (ns anvil.dispatcher.native-rpc-handlers.saml
   (:use [anvil.dispatcher.native-rpc-handlers.util]
-        [slingshot.slingshot])
+        [clj-commons.slingshot])
   (:require [anvil.dispatcher.core :as dispatcher]
             [anvil.runtime.conf :as conf]
             [anvil.util :as util]
@@ -8,9 +8,7 @@
             [clojure.tools.logging :as log])
   (:import (com.onelogin.saml2.settings SettingsBuilder)
            (com.onelogin.saml2.util Constants Util)
-           (java.security KeyPairGenerator)
-           (java.io StringWriter File)
-           (org.bouncycastle.util.io.pem PemObject PemWriter)
+           (java.io File)
            (org.bouncycastle.cert X509v3CertificateBuilder)
            (org.bouncycastle.asn1.x500 X500Name)
            (java.util Date Calendar)
@@ -20,11 +18,6 @@
            (org.bouncycastle.openssl.jcajce JcaPEMKeyConverter)))
 
 (clj-logging-config.log4j/set-logger! :level :info)
-
-(defn generate-key-pair []
-  (-> (doto (KeyPairGenerator/getInstance "RSA")
-        (.initialize 4096))
-      (.generateKeyPair)))
 
 (defn generate-x509-cert
   ([key-pair] (generate-x509-cert (.getPublic key-pair) (.getPrivate key-pair)))
@@ -45,12 +38,7 @@
                     (.build private-key))]
      (.build cert-builder signer))))
 
-(defn ->pem [obj description]
-  (let [writer (StringWriter.)
-        pem-writer (PemWriter. writer)]
-    (.writeObject pem-writer (PemObject. description (.getEncoded obj)))
-    (.close pem-writer)
-    (.toString writer)))
+
 
 (defn get-cert-and-key []
   (let [{:keys [private-key public-key]} (or (db-config/get-val ::keys)
@@ -58,10 +46,10 @@
                                                                              (log/info "Loading legacy SAML key pair into DB")
                                                                              {:private-key (slurp (:private-key conf/saml-paths))
                                                                               :public-key  (slurp (:public-key conf/saml-paths))})
-                                                                           (let [key-pair (generate-key-pair)]
+                                                                           (let [key-pair (util/generate-key-pair)]
                                                                              (log/info "Generated SAML key pair")
-                                                                             {:private-key (->pem (.getPrivate key-pair) "PRIVATE KEY")
-                                                                              :public-key  (->pem (.getPublic key-pair) "PUBLIC KEY")}))))
+                                                                             {:private-key (util/->pem (.getPrivate key-pair) "PRIVATE KEY")
+                                                                              :public-key  (util/->pem (.getPublic key-pair) "PUBLIC KEY")}))))
 
         certificate (or (db-config/get-val ::certificate)
                         (db-config/set-val ::certificate (or (when (.exists (File. ^String (:certificate conf/saml-paths)))
@@ -70,7 +58,7 @@
                                                              (let [private-key-info (.readObject (PEMParser. (clojure.java.io/reader (char-array private-key))))
                                                                    public-key-info (.readObject (PEMParser. (clojure.java.io/reader (char-array public-key))))
                                                                    certificate (generate-x509-cert public-key-info (.getPrivateKey (JcaPEMKeyConverter.) private-key-info))
-                                                                   cert-pem (->pem certificate "CERTIFICATE")]
+                                                                   cert-pem (util/->pem certificate "CERTIFICATE")]
                                                                (log/info "Generated SAML certificate")
                                                                cert-pem))))]
     [private-key certificate]))

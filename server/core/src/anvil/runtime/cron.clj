@@ -1,5 +1,5 @@
 (ns anvil.runtime.cron
-  (:use     [slingshot.slingshot :only [try+]])
+  (:use     [clj-commons.slingshot :only [try+]])
   (:import java.util.Date
            (java.util Calendar TimeZone))
   (:require [anvil.util :as util]

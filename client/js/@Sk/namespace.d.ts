@@ -325,13 +325,15 @@ export namespace Sk {
 
         function iterFor<T = pyObject, R = undefined>(
             iterator: pyIterator<T | Suspension>,
-            forFn: (currentValue: T, prevRet: R) => R | Suspension,
+            forFn: (currentValue: T, prevRet: R) => R | Suspension | Break,
             initial?: R
         ): R;
 
+        type ElementType<T extends Array<unknown>> = T extends Array<infer ElementType> ? ElementType : never;
+
         function iterArray<T extends any[], R = undefined>(
             args: T,
-            forFnforFn: (currentValue: T, prevRet: R) => R | Suspension,
+            forFn: (currentValue: ElementType<T>, prevRet: R) => R | Suspension,
             initial?: R
         ): R;
 

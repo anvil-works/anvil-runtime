@@ -16,7 +16,7 @@
     (serialiseForRpc [_this _extra-liveobject-key] x)))
 
 (defn json-is= [json obj]
-  (is (= (json/read-str json :key-fn keyword) obj)))
+  (is (= obj (json/read-str json :key-fn keyword))))
 
 (deftest test-serialise
   (expect-call (send! [x] (json-is= x {:id "x", :objects []}))
@@ -40,9 +40,9 @@
                                                                       :id   "XYZ", :mime-type "text/plain",
                                                                       :name nil}]}))
                   (send! [x b] (json-is= x {:type "CHUNK_HEADER", :requestId "x", :mediaId "XYZ", :chunkIndex 0, :lastChunk false})
-                         (is (= (alength b) 10)))
+                         (is (= 10 (alength b))))
                   (send! [x b] (json-is= x {:type "CHUNK_HEADER", :requestId "x", :mediaId "XYZ", :chunkIndex 1, :lastChunk true})
-                         (is (= (alength b) 10)))]
+                         (is (= 10 (alength b))))]
       (serialise! {:id "x" :baz cs} send! false)))
 
 
@@ -59,11 +59,11 @@
                                                                       :id   "XYZ", :mime-type "text/plain",
                                                                       :name nil}]}))
                   (send! [x b] (json-is= x {:type "CHUNK_HEADER", :requestId "x", :mediaId "XYZ", :chunkIndex 0, :lastChunk false})
-                         (is (= (alength b) 64000)))
+                         (is (= 64000 (alength b))))
                   (send! [x b] (json-is= x {:type "CHUNK_HEADER", :requestId "x", :mediaId "XYZ", :chunkIndex 1, :lastChunk false})
-                         (is (= (alength b) 1)))
+                         (is (= 1 (alength b))))
                   (send! [x b] (json-is= x {:type "CHUNK_HEADER", :requestId "x", :mediaId "XYZ", :chunkIndex 2, :lastChunk true})
-                         (is (= (alength b) 0)))]
+                         (is (= 0 (alength b))))]
       (serialise! {:id "x" :baz m} send! false))))
 
 (def f)

@@ -1,7 +1,7 @@
 (ns anvil.dispatcher.native-rpc-handlers.google.mail
   (:use [anvil.dispatcher.native-rpc-handlers.util]
         [anvil.dispatcher.native-rpc-handlers.google.util]
-        [slingshot.slingshot])
+        [clj-commons.slingshot])
   (:require [clojure.tools.logging :as log])
   (:import (javax.mail Address Session Message$RecipientType)
            (javax.mail.internet AddressException InternetAddress MimeMessage

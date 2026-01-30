@@ -3,38 +3,38 @@
 import { anvilMod } from "@runtime/runner/py-util";
 
 // Component imports
-import ClassicComponent from "./components/ClassicComponent";
-import Spacer from "./components/Spacer";
-import Label from "./components/Label";
-import Button from "./components/Button";
-import CheckBox from "./components/CheckBox";
-import RadioButton from "./components/RadioButton";
-import DropDown from "./components/DropDown";
-import DatePicker from "./components/DatePicker";
-import TextBox from "./components/TextBox";
-import TextArea from "./components/TextArea";
-import Timer from "./components/Timer";
-import Canvas from "./components/Canvas";
+import ClassicComponentFactory from "./components/ClassicComponent";
+import SpacerFactory from "./components/Spacer";
+import LabelFactory from "./components/Label";
+import ButtonFactory from "./components/Button";
+import CheckBoxFactory from "./components/CheckBox";
+import RadioButtonFactory from "./components/RadioButton";
+import DropDownFactory from "./components/DropDown";
+import DatePickerFactory from "./components/DatePicker";
+import TextBoxFactory from "./components/TextBox";
+import TextAreaFactory from "./components/TextArea";
+import TimerFactory from "./components/Timer";
+import CanvasFactory from "./components/Canvas";
 import SimpleCanvas from "./components/SimpleCanvas";
-import Image from "./components/Image";
-import YouTubeVideo from "./components/YouTubeVideo";
-import FileLoader from "./components/FileLoader";
-import ClassicContainer from "./components/ClassicContainer";
-import RichText from "./components/RichText";
+import ImageFactory from "./components/Image";
+import YouTubeVideoFactory from "./components/YouTubeVideo";
+import FileLoaderFactory from "./components/FileLoader";
+import ClassicContainerFactory from "./components/ClassicContainer";
+import RichTextFactory from "./components/RichText";
 import GoogleMap from "./components/GoogleMap";
-import Plot from "./components/Plot";
-import LinearPanel from "./components/LinearPanel";
-import RepeatingPanel from "./components/RepeatingPanel";
-import Paginator from "./components/Paginator";
-import DataGrid from "./components/DataGrid";
-import DataRowPanel from "./components/DataRowPanel";
-import XYPanel from "./components/XYPanel";
-import GridPanel from "./components/GridPanel";
-import ColumnPanel from "./components/ColumnPanel";
-import HtmlPanel from "./components/HtmlPanel";
-import FlowPanel from "./components/FlowPanel";
-import InvalidComponent from "./components/InvalidComponent";
-import Link from "./components/Link";
+import PlotFactory from "./components/Plot";
+import LinearPanelFactory from "./components/LinearPanel";
+import RepeatingPanelFactory from "./components/RepeatingPanel";
+import PaginatorFactory from "./components/Paginator";
+import DataGridFactory from "./components/DataGrid";
+import DataRowPanelFactory from "./components/DataRowPanel";
+import XYPanelFactory from "./components/XYPanel";
+import GridPanelFactory from "./components/GridPanel";
+import ColumnPanelFactory from "./components/ColumnPanel";
+import HtmlPanelFactory from "./components/HtmlPanel";
+import FlowPanelFactory from "./components/FlowPanel";
+import InvalidComponentFactory from "./components/InvalidComponent";
+import LinkFactory from "./components/Link";
 
 /* This file defines the system components available to apps, as Python classes.
    These are the runtime (non-designer) versions. */
@@ -68,7 +68,7 @@ export function defineSystemComponents(pyModule) {
         pyModule,
         ($gbl, $loc) => {
             $loc["__init__"] = new Sk.builtin.func((self, name) => {
-                self._anvil = { propName: name };
+                self._anvil = { propName: name.toString() };
             });
 
             $loc["__get__"] = new Sk.builtin.func((self, obj, type) => {
@@ -112,41 +112,41 @@ export function defineSystemComponents(pyModule) {
         []
     );
 
-ClassicComponent(pyModule);
+    ClassicComponentFactory(pyModule);
 
-    Spacer(pyModule);
+    SpacerFactory(pyModule);
 
-    Label(pyModule);
+    LabelFactory(pyModule);
 
-    Button(pyModule);
+    ButtonFactory(pyModule);
 
-    CheckBox(pyModule);
+    CheckBoxFactory(pyModule);
 
-    RadioButton(pyModule);
+    RadioButtonFactory(pyModule);
 
-    DropDown(pyModule);
+    DropDownFactory(pyModule);
 
-    DatePicker(pyModule);
+    DatePickerFactory(pyModule);
 
-    TextBox(pyModule);
+    TextBoxFactory(pyModule);
 
-    TextArea(pyModule);
+    TextAreaFactory(pyModule);
 
-    Timer(pyModule);
+    TimerFactory(pyModule);
 
-    Canvas(pyModule);
+    CanvasFactory(pyModule);
 
     SimpleCanvas(pyModule);
 
-    Image(pyModule);
+    ImageFactory(pyModule);
 
-    YouTubeVideo(pyModule);
+    YouTubeVideoFactory(pyModule);
 
-    FileLoader(pyModule);
+    FileLoaderFactory(pyModule);
 
-    ClassicContainer(pyModule);
+    ClassicContainerFactory(pyModule);
 
-    RichText(pyModule);
+    RichTextFactory(pyModule);
 
     if (!window.isIE) {
         GoogleMap(pyModule);
@@ -154,31 +154,31 @@ ClassicComponent(pyModule);
         console.warn("Google Maps is no longer supported in Internet Explorer");
     }
 
-    Plot(pyModule);
+    PlotFactory(pyModule);
 
-    LinearPanel(pyModule);
+    LinearPanelFactory(pyModule);
 
-    RepeatingPanel(pyModule, componentHelpers);
+    RepeatingPanelFactory(pyModule, componentHelpers);
 
-    Paginator(pyModule);
+    PaginatorFactory(pyModule);
 
-    DataGrid(pyModule, componentHelpers);
+    DataGridFactory(pyModule, componentHelpers);
 
-    DataRowPanel(pyModule, componentHelpers);
+    DataRowPanelFactory(pyModule, componentHelpers);
 
-    XYPanel(pyModule);
+    XYPanelFactory(pyModule);
 
-    GridPanel(pyModule);
+    GridPanelFactory(pyModule);
 
-    ColumnPanel(pyModule);
+    ColumnPanelFactory(pyModule);
 
-    HtmlPanel(pyModule);
+    HtmlPanelFactory(pyModule);
 
-    FlowPanel(pyModule);
+    FlowPanelFactory(pyModule);
 
-    InvalidComponent(pyModule);
+    InvalidComponentFactory(pyModule);
 
-    Link(pyModule);
+    LinkFactory(pyModule);
 }
 
 // Create helpers object for components that need legacy exports
@@ -186,7 +186,7 @@ const componentHelpers = {
     defineSystemComponents,
     withFormTrace,
     withDependencyTrace,
-    newPythonComponent
+    newPythonComponent,
 };
 
 var mkInvalidComponent = function (anvilMod, message) {
@@ -209,7 +209,7 @@ export function withFormTrace(formName, f) {
             throw e;
         }
     );
-};
+}
 
 export function withDependencyTrace(depId, f) {
     let depTrace = { depId: depId, prev: newPythonComponent.dependencyTrace };
@@ -227,7 +227,7 @@ export function withDependencyTrace(depId, f) {
             throw e;
         }
     );
-};
+}
 
 // Create the Python object representing a component from its YAML
 // definition. Registers all components by name in the
@@ -504,7 +504,7 @@ export function newPythonComponent(
         }
         return pyComponent;
     });
-};
+}
 
 /*
  * TO TEST:

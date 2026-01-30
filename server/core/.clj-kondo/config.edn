@@ -1,0 +1,24 @@
+{:linters {:aliased-namespace-symbol {:level :warning}
+           :condition-always-true {:level :warning}
+           :def-fn {:level :warning}
+           :dynamic-var-not-earmuffed {:level :warning}
+           :equals-expected-position {:level :warning :only-in-test-assertion true}
+           :equals-false {:level :warning}
+           :equals-float {:level :warning}
+           :equals-nil {:level :warning}
+           :equals-true {:level :warning}
+           :if-nil-return {:level :warning}
+           :keyword-binding {:level :warning}
+           :main-without-gen-class {:level :warning}
+           :reduce-without-init {:level :warning}
+           :redundant-call {:level :warning}
+           :redundant-fn-wrapper {:level :warning}
+           :redundant-let-binding {:level :warning}
+           :redundant-str-call {:level :warning}
+           :single-key-in {:level :warning}
+           :unused-alias {:level :warning}
+           :unused-import {:level :warning}
+           :unused-value {:level :warning}
+           :used-underscored-binding {:level :warning}
+
+           }}

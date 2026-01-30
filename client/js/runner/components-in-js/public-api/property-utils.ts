@@ -7,11 +7,11 @@ import {
     getUnsetValue,
 } from "@runtime/runner/component-property-utils-api";
 
-export const getMarginStyles = (margin: MarginPropertyValue) => getSpacingObject(margin, "margin");
-export const getPaddingStyles = (padding: PaddingPropertyValue) => getSpacingObject(padding, "padding");
-export const getSpacingStyles = (spacing: SpacingPropertyValue) => ({
-    ...getSpacingObject(spacing?.margin as MarginPropertyValue, "margin"),
-    ...getSpacingObject(spacing?.padding as PaddingPropertyValue, "padding"),
+export const getMarginStyles = (margin: MarginPropertyValue | undefined) => getSpacingObject(margin, "margin");
+export const getPaddingStyles = (padding: PaddingPropertyValue | undefined) => getSpacingObject(padding, "padding");
+export const getSpacingStyles = (spacing: SpacingPropertyValue | null | undefined) => ({
+    ...getSpacingObject(spacing?.margin, "margin"),
+    ...getSpacingObject(spacing?.padding, "padding"),
 });
 
 export const styleObjectToString = (style: any) => {
@@ -21,14 +21,14 @@ export const styleObjectToString = (style: any) => {
     return s ? s + ";" : "";
 };
 
-export const setElementMargin = (element: HTMLElement, margin: MarginPropertyValue) =>
+export const setElementMargin = (element: HTMLElement, margin: MarginPropertyValue | undefined) =>
     Object.assign(element.style, getMarginStyles(margin));
-export const setElementPadding = (element: HTMLElement, padding: PaddingPropertyValue) =>
+export const setElementPadding = (element: HTMLElement, padding: PaddingPropertyValue | undefined) =>
     Object.assign(element.style, getPaddingStyles(padding));
-export const setElementSpacing = (element: HTMLElement, spacing: SpacingPropertyValue) =>
+export const setElementSpacing = (element: HTMLElement, spacing: SpacingPropertyValue | null | undefined) =>
     Object.assign(element.style, getSpacingStyles(spacing));
 
-export function setElementVisibility(element: HTMLElement, visible: boolean) {
+export function setElementVisibility(element: Element, visible: boolean) {
     if (!visible) {
         element.setAttribute("anvil-visible-false", "");
     } else {

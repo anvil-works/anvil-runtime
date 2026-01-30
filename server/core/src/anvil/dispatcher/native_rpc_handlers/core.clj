@@ -1,5 +1,5 @@
 (ns anvil.dispatcher.native-rpc-handlers.core
-  (:use [slingshot.slingshot])
+  (:use [clj-commons.slingshot])
   (:require [anvil.dispatcher.native-rpc-handlers.http :as native-http]
             [anvil.dispatcher.native-rpc-handlers.google.drive :as native-google-drive]
             [anvil.dispatcher.native-rpc-handlers.google.sheets]
@@ -7,7 +7,6 @@
             [anvil.dispatcher.native-rpc-handlers.google.mail :as native-google-mail]
             [anvil.dispatcher.native-rpc-handlers.airtable :as native-airtable]
             [anvil.dispatcher.native-rpc-handlers.bcrypt :as native-bcrypt]
-            [anvil.dispatcher.native-rpc-handlers.raven :as native-raven]
             [anvil.dispatcher.native-rpc-handlers.facebook :as native-facebook]
             [anvil.dispatcher.native-rpc-handlers.microsoft :as native-microsoft]
             [anvil.dispatcher.native-rpc-handlers.saml :as native-saml]
@@ -34,7 +33,11 @@
             [anvil.runtime.tables.v2.rpc]
             [medley.core :refer [find-first map-vals]]
             [clojure.data.json :as json]
-            [crypto.random :as random]))
+            [crypto.random :as random]
+            [ring.util.mime-type :as mime-type]
+            [clojure.string :as str])
+  (:import (anvil.dispatcher.types BlobMedia)
+           (org.apache.commons.codec.binary Base64)))
 
 (defn- get-app-origin [{:keys [prefer_ephemeral_debug branch]} env-spec]
   (if (or (= env-spec "published") (= branch "published"))  ;; latter is vv legacy
@@ -143,6 +146,17 @@
 
    "anvil.private.get_dep_client_config"      (native-util/wrap-native-fn
                                                 (fn [_kws] (get-dep-config :client)))
+
+   "anvil.private.get_app_asset"             (native-util/wrap-native-fn
+                                                (fn [_kws path]
+                                                  (let [asset (app-data/get-asset native-util/*app* path)]
+                                                    (when asset
+                                                      (let [mime-type (mime-type/ext-mime-type path util/additional-mime-types)
+                                                            ;; Asset content is Base64-encoded string; decode to bytes
+                                                            ^bytes bytes (Base64/decodeBase64 ^String (:content asset))
+                                                            ;; Use only the filename (last segment of the path)
+                                                            name (last (str/split path #"/"))]
+                                                        (BlobMedia. mime-type bytes name))))))
 
    "anvil.private.enable_profiling"          (native-util/wrap-native-fn
                                                (fn [_kwargs]
@@ -294,7 +308,6 @@
        native-google-mail/handlers
        native-airtable/handlers
        native-bcrypt/handlers
-       native-raven/handlers
        native-facebook/handlers
        native-stripe/handlers
        native-time/handlers

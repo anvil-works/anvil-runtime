@@ -12,6 +12,8 @@ import anvil_downlink_host.full_python.worker_cache as cache
 from anvil_downlink_util.tracing import trace
 tracer = trace.get_tracer(__name__)
 
+REPL_TIMEOUT=30 # This must be more than the interval between heartbeat messages sent from worker-heartbeat in the IDE.
+
 class Worker(BaseWorker):
     def __init__(self, initial_msg, app_version=None, set_timeout=TIMEOUT, task_info=None):
         BaseWorker.__init__(self, initial_msg, task_info)
@@ -265,12 +267,17 @@ class Worker(BaseWorker):
                 }
             elif rt == -9:
                 err = {
-                    'message': "Server code execution process was killed. It may have run out of memory: %s" % (error_id),
+                    'message': "Server code execution process was killed. This is usually caused by running out of memory. (%s)" % (error_id),
+                    'type': "anvil.server.ExecutionTerminatedError"
+                }
+            elif rt is not None and rt < 0:
+                err = {
+                    'message': "Server code execution process was killed with signal %d. (%s)" % (-rt, error_id),
                     'type': "anvil.server.ExecutionTerminatedError"
                 }
             else:
                 err = {
-                    'message': "Server code exited unexpectedly: %s" % (error_id),
+                    'message': "Server code exited unexpectedly: %s (exit code %s)" % (error_id, rt),
                     'type': "anvil.server.ExecutionTerminatedError"
                 }
 
@@ -292,14 +299,20 @@ class Worker(BaseWorker):
             self.record_inbound_call_started(msg)
             if msg.get("enable-profiling"):
                 self.enable_profiling[id] = True
-            if msg["type"] != "REPL_COMMAND":
+            if msg["type"] == "LAUNCH_REPL":
+                # We don't want to use the configurable worker timeout here. REPLs time out
+                # if they don't receive keepalives, which arrive every 20s.
+                self.set_timeout(id, request_id=id, timeout_duration=REPL_TIMEOUT, timeout_msg="Server repl disconnected")
+            elif msg["type"] != "REPL_COMMAND":
                 timeout_msg = "Timeout getting task state, terminating task" \
                     if msg["type"] == "GET_TASK_STATE" else None
                 self.set_timeout(id, request_id=id, timeout_msg=timeout_msg)
 
+
         elif msg_type == "REPL_KEEPALIVE":
             self.clear_timeout(msg["repl"])
-            self.set_timeout(msg["repl"], timeout_msg="Server repl disconnected")
+            # REPL_KEEPALIVE messages arrive every 20s, so we want a fixed custom timeout of 30s here, regardless of the usual worker timeout.
+            self.set_timeout(msg["repl"], timeout_duration=REPL_TIMEOUT, timeout_msg="Server repl disconnected")
             send_with_header({"id": id, "response": None})
             return
 

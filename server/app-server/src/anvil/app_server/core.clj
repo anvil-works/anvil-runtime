@@ -7,7 +7,7 @@
             [clojure.tools.logging :as log]
             [anvil.runtime.read-app-storage :as read-app-storage]
             [anvil.app-server.conf :as conf]
-            [slingshot.slingshot :refer [try+ throw+]]
+            [clj-commons.slingshot :refer [try+ throw+]]
             [compojure.core :refer [defroutes routes GET POST ANY context]]
             [anvil.util :as util]
             [anvil.app-server.dispatch :as dispatch]
@@ -23,6 +23,7 @@
             [anvil.runtime.server :as runtime]
             [anvil.runtime.sessions :as runtime-sessions]
             [anvil.runtime.serve-app :as serve-app]
+            [anvil.runtime.util :as runtime-util]
             [anvil.core.ring.util :as ring-util])
   (:import (java.io File)))
 
@@ -128,6 +129,17 @@
    :get-app-origin                        (fn [_env] (conf/get-app-origin))
    :get-default-hostnames                 (fn [_env] [(conf/get-hostname)])
    :get-valid-origins                     (fn [_env] [(conf/get-app-origin)])})
+
+(defn get-oauth-info [_app-origin _environment _app-session] "")
+
+(defn get-app-details-from-oauth-info [_oauth-info]
+      {:app-origin  (conf/get-app-origin)
+       :app-info    (:info (load-app (conf/get-main-app-id)))
+       :environment (dispatch/get-default-environment)})
+
+(defn oauth-info-valid? [_oauth-info _app-origin _environment _app-session] true)
+
+(runtime-util/set-hooks! (util/hooks #{get-oauth-info get-app-details-from-oauth-info oauth-info-valid?}))
 
 
 (app-log/set-log-impl! {:record-session! (fn record-session! [session log-data]

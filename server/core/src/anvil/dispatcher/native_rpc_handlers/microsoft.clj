@@ -1,16 +1,25 @@
 (ns anvil.dispatcher.native-rpc-handlers.microsoft
   (:use [anvil.dispatcher.native-rpc-handlers.util]
-        [slingshot.slingshot])
+        [clj-commons.slingshot])
   (:require [anvil.runtime.secrets :as secrets]
             [clojure.data.json :as json]
+            [clojure.tools.logging :as log]
             [org.httpkit.client :as http]
             [anvil.dispatcher.core :as dispatcher]
-            [anvil.runtime.conf :as conf]
-            [anvil.util :as util])
+            [anvil.runtime.conf :as conf])
   (:import (java.net URLEncoder)))
 
-(defn get-microsoft-service-props []
-  (first (filter #(= (:source %) "/runtime/services/anvil/microsoft.yml") (:services *app*))))
+(defn get-app-application-id []
+  (let [microsoft-service (first (filter #(= (:source %) "/runtime/services/anvil/microsoft.yml") (:services *app*)))]
+    (or (get-in microsoft-service [:server_config :application_id])
+        (and (:custom? conf/microsoft-client-config) (:application-id conf/microsoft-client-config)))))
+
+(defn logout-on-application-id-mismatch! []
+  (when-let [app-application-id (get-app-application-id)]
+    (when-let [application-id (get-in @*session-state* [:microsoft :application-id])]
+      (when (not= application-id app-application-id)
+        (log/warn "MS Application ID '" application-id "' != App Application ID '" app-application-id "'. Logging out.")
+        (swap! *session-state* dissoc :microsoft)))))
 
 (defn throw-need-own-app-id! []
   (throw+ {:anvil/server-error "To get Microsoft API tokens, you need to supply your own Application ID and secret"
@@ -18,6 +27,7 @@
            :docLinkTitle       "Learn more about Microsoft API credentials"}))
 
 (defn get-ensuring-application-id [key]
+  (logout-on-application-id-mismatch!)
   (when-let [state (:microsoft @*session-state*)]
     (when (:id-token state)
       (when-not (get state :application-id)
@@ -31,9 +41,9 @@
   (get-ensuring-application-id :refresh-token))
 
 (defn refresh-access-token [_kwargs refresh-token]
+  (logout-on-application-id-mismatch!)
   (let [microsoft-service (first (filter #(= (:source %) "/runtime/services/anvil/microsoft.yml") (:services *app*)))
-        microsoft-application-id (or (get-in microsoft-service [:server_config :application_id])
-                                     (and (:custom? conf/microsoft-client-config) (:application-id conf/microsoft-client-config)))]
+        microsoft-application-id (get-app-application-id)]
     (when-not microsoft-application-id
       (throw-need-own-app-id!))
     (let [microsoft-application-secret (or (when-let [encrypted-app-secret (get-in microsoft-service [:server_config :application_secret_enc])]
@@ -44,7 +54,7 @@
           tenant-id (or (get-in microsoft-service [:server_config :tenant_id])
                         (and (:custom? conf/microsoft-client-config) (:tenant-id conf/microsoft-client-config)))
 
-          response @(http/post "https://login.microsoftonline.com/" (URLEncoder/encode tenant-id) "/oauth2/v2.0/token"
+          response @(http/post (str "https://login.microsoftonline.com/" (URLEncoder/encode tenant-id) "/oauth2/v2.0/token")
                                {:keepalive -1
                                 :form-params {:refresh_token refresh-token
                                               :client_id     microsoft-application-id
@@ -64,10 +74,12 @@
       (:access_token body))))
 
 (defn get-user-email [_kwargs]
+  (logout-on-application-id-mismatch!)
   (or (-> @*session-state* :microsoft :email)
       (-> @*session-state* :microsoft :id-token :preferred_username)))
 
 (defn get-user-id [_kwargs]
+  (logout-on-application-id-mismatch!)
   (-> @*session-state* :microsoft :id-token :sub))
 
 (swap! dispatcher/native-rpc-handlers merge

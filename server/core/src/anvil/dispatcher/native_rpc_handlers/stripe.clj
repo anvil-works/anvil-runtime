@@ -1,5 +1,5 @@
 (ns anvil.dispatcher.native-rpc-handlers.stripe
-  (:use [slingshot.slingshot])
+  (:use [clj-commons.slingshot])
   (:require [anvil.runtime.conf :as conf]
             [clojure.tools.logging :as log]
             [anvil.dispatcher.types :as types]

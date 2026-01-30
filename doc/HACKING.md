@@ -41,8 +41,8 @@ First, build the client component:
 
 ```bash
 $ cd client/
-$ npm install
-$ npm run build
+$ pnpm install
+$ pnpm run build
 ```
 
 Next, build the server components and produce a Python package ready for distribution:

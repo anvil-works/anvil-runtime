@@ -122,12 +122,20 @@ const portalElementCache = new WeakMap<JsComponent, { components: ReactComponent
 const ElementWrapper = ({ el, c }: { el: HTMLElement; c: JsComponent }) => {
     const ref = React.useRef<HTMLDivElement>(null!);
 
+    const [currentEl, setCurrentEl] = React.useState<HTMLElement>(el);
+
     React.useLayoutEffect(() => {
         ref.current.appendChild(el);
         return () => {
-            el.remove();
+            currentEl.remove();
         };
-    }, [el]);
+    }, [currentEl]);
+
+    React.useEffect(() => {
+        return subscribeAnvilEvent(c, "x-anvil-dom-node-changed", () => {
+            setCurrentEl(c._anvilDomElement!);
+        });
+    }, [c]);
 
     useNotifyMounted(c);
 
@@ -212,7 +220,11 @@ const errorStyle = {
 
 function ErrorFallback({ self, children }: ErrorProps) {
     React.useEffect(() => {
-        designerApi.inDesigner && designerApi.notifyDomNodeChanged(self);
+        if (self._.portalElement) {
+            // our dom node hasn't changed, so we don't need to notify the designer, since they have a reference to the portal element
+            return;
+        }
+        raiseAnvilEvent(self, "x-anvil-dom-node-changed");
     }, []);
 
     return (
@@ -633,9 +645,20 @@ function setupReactComponent(self: ReactComponent, spec: ReactComponentDefinitio
         }
 
         _.ref = React.useRef();
+        const previousDomNode = React.useRef<HTMLElement | null>(null);
 
         React.useEffect(() => {
-            designerApi.inDesigner && designerApi.notifyDomNodeChanged(self);
+            const next = _.ref.current;
+            const prev = previousDomNode.current;
+            previousDomNode.current = next;
+            if (!next || !prev || next === prev) {
+                return;
+            }
+            if (_.portalElement) {
+                // our dom node hasn't changed, so we don't need to notify the designer, since they have a reference to the portal element
+                return;
+            }
+            raiseAnvilEvent(self, "x-anvil-dom-node-changed");
         }, [_.ref.current]);
 
         useNotifyMounted(self, isRoot);
@@ -795,7 +818,7 @@ function mkComponentClass(spec: ReactComponentDefinition): JsComponentConstructo
             if (!(_.portalElement || _.ref?.current)) {
                 _.portalElement = document.createElement("div");
                 _.portalElement.setAttribute("data-anvil-react-portal", "");
-                designerApi.inDesigner && designerApi.notifyDomNodeChanged(this);
+                raiseAnvilEvent(this, "x-anvil-dom-node-changed");
             }
             return _.portalElement || _.ref?.current;
         }
@@ -813,11 +836,10 @@ function mkComponentClass(spec: ReactComponentDefinition): JsComponentConstructo
             this._.forceRender?.();
         }
 
-
         static _anvilEvents = [
             ...(events ?? []),
-            ...(!events?.some(e => e.name === "show") ? [{ name: "show" }] : []),
-            ...(!events?.some(e => e.name === "hide") ? [{ name: "hide" }] : []),
+            ...(!events?.some((e) => e.name === "show") ? [{ name: "show" }] : []),
+            ...(!events?.some((e) => e.name === "hide") ? [{ name: "hide" }] : []),
         ];
         static _anvilProperties = (properties ?? []).map((description) => ({ ...description }));
 

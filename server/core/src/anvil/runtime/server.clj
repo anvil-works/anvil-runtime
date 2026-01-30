@@ -2,62 +2,40 @@
   (:use org.httpkit.server
         compojure.core
         clojure.pprint
-        [slingshot.slingshot :only [throw+ try+]]
+        [clj-commons.slingshot :only [throw+ try+]]
         anvil.runtime.util)
   (:require [anvil.runtime.conf :as conf]
+            [anvil.util :as util]
             [anvil.runtime.browser-ws :as browser-ws]
             [anvil.runtime.browser-http :as browser-http]
+            [anvil.runtime.oauth :as oauth]
             [anvil.runtime.secrets :as secrets]
             [clojure.string :as str]
             [digest]
             [ring.util.response :as resp]
             [ring.util.mime-type :as mime-type]
-            [clojure.data.json :as json]
-            [anvil.core.sso.google :as google-sso]
-            [anvil.core.sso.azure :as azure-sso]
+            [anvil.core.sso.saml :as saml-sso]
             [hiccup.util :as hiccup-util]
             [anvil.runtime.app-data :as app-data]
-            [anvil.util :as utils]
             [crypto.random :as random]
-            [clojure.string :as string]
-            [clojure.data.codec.base64 :as b64]
             [clojure.tools.logging :as log]
-            [medley.core :refer [map-kv-vals]]
             [anvil.dispatcher.serialisation.lazy-media :as lazy-media]
-            [anvil.dispatcher.core :as dispatcher]
             [anvil.dispatcher.native-rpc-handlers.users.core :as user-service]
             [anvil.dispatcher.native-rpc-handlers.saml :as saml]
-            [org.httpkit.client :as http]
             [anvil.dispatcher.user-lazy-media]
-            [anvil.runtime.app-log :as app-log]
-            [anvil.dispatcher.types :as types]
             [ring.util.codec :as codec]
-            [anvil.dispatcher.native-rpc-handlers.cookies :as cookies]
             [ring.middleware.cookies]
-            [clj-yaml.core :as yaml]
-            [clojure.java.io :as io]
-            [anvil.util :as util]
-            [anvil.metrics :as metrics]
             [anvil.core.worker-pool :as worker-pool]
-            [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]
             [anvil.runtime.sessions :as sessions]
             [anvil.runtime.util :as runtime-util]
-            [anvil.runtime.serve-app :as serve-app]
-            [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks]
-            [anvil.runtime.debugger :as debugger])
+            [anvil.runtime.serve-app :as serve-app])
   (:import (java.io ByteArrayInputStream)
-           (anvil.dispatcher.types Media MediaDescriptor InputStreamMedia ChunkedStream)
-           (java.nio.charset Charset)
-           (java.util ArrayList Collection)
+           (anvil.dispatcher.types Media MediaDescriptor)
            (org.apache.commons.codec.binary Base64)
-           (java.net URLEncoder URLDecoder)
-           (com.onelogin.saml2.authn AuthnRequest SamlResponse)
-           (com.onelogin.saml2.settings SettingsBuilder Saml2Settings)
-           (com.onelogin.saml2.util Constants)
-           (org.apache.http.client.utils URLEncodedUtils)))
+           (com.onelogin.saml2.settings Saml2Settings)))
 
 (clj-logging-config.log4j/set-logger! :level :info)
-(clj-logging-config.log4j/set-logger! "com.onelogin.saml2" :level :debug)
+;;(clj-logging-config.log4j/set-logger! "com.onelogin.saml2" :level :debug)
 
 
 
@@ -202,9 +180,7 @@
             (resp/header "X-Anvil-Cacheable" true)
             (resp/header "ETag" version)
             (resp/header "Access-Control-Expose-Headers" "X-Anvil-Cacheable"))
-        (when-let [asset (->> (app-data/get-all-assets content)
-                              (filter #(= (:name %) asset-name))
-                              (first))]
+        (when-let [asset (app-data/get-asset content asset-name)]
           (log/trace "Serving an asset: " (:name asset))
           (let [mime-type (mime-type/ext-mime-type asset-name util/additional-mime-types)]
             (-> (Base64/decodeBase64 ^String (:content asset))
@@ -249,142 +225,50 @@
   (POST "/_/request_cookies" req
     (serve-app/with-anvil-cookies (resp/response "") (:app-session req)))
 
+  (POST "/_/google_auth_complete" {:keys [body app-session app-origin environment] :as _req}
+    (let [{:keys [tokens oauth_info]} (some-> (:encrypted_tokens body)
+                                              (#(secrets/decrypt-str-with-global-key ::oauth-tokens-google %))
+                                              util/read-json-str)]
+      (if-not (runtime-util/oauth-info-valid? oauth_info app-origin environment app-session)
+        (resp/status (resp/response {:error "Rejecting mismatched OAuth Info"}) 403)
+        (do
+          (swap! app-session assoc-in [:google :user-tokens] tokens)
+          (sessions/notify-session-update! app-session)
+          (resp/response {:id_token (:id-token tokens)})))))
 
-  (GET "/_/client_auth_redirect" request
-    (if (:anvil.runtime/replacement-session @(:app-session request))
-      (resp/redirect (str conf/static-root-url "/runtime-new/runtime/client_auth_error.html#" (codec/url-encode "SESSION_EXPIRED")))
-      (let [params (:params request)
-            app (:content (get-app-from-request request))
+  (POST "/_/facebook_auth_complete" {:keys [body app-session app-origin environment] :as _req}
+    (let [{:keys [tokens oauth_info]} (some-> (:encrypted_tokens body)
+                                              (#(secrets/decrypt-str-with-global-key ::oauth-tokens-facebook %))
+                                              util/read-json-str)]
+      (if-not (runtime-util/oauth-info-valid? oauth_info app-origin environment app-session)
+        (resp/status (resp/response {:error "Rejecting mismatched OAuth Info"}) 403)
+        (do
+          (swap! app-session update-in [:facebook] merge tokens)
+          (sessions/notify-session-update! app-session)
+          (resp/response (select-keys tokens [:email]))))))
 
-            ;; Can only use this if we have added and configured the google service for our app.
-            ;; Look up its config.
+  (POST "/_/microsoft_auth_complete" {:keys [body app-session app-origin environment] :as _req}
+    (let [{:keys [tokens oauth_info]} (some-> (:encrypted_tokens body)
+                                              (#(secrets/decrypt-str-with-global-key ::oauth-tokens-microsoft %))
+                                              util/read-json-str)]
+      (if-not (runtime-util/oauth-info-valid? oauth_info app-origin environment app-session)
+        (resp/status (resp/response {:error "Rejecting mismatched OAuth Info"}) 403)
+        (do
+          (swap! app-session update-in [:microsoft] merge tokens)
+          (sessions/notify-session-update! app-session)
+          (resp/response {:email (or (-> tokens :email)
+                                     (-> tokens :id-token :preferred_username))})))))
 
-            google-service (first (filter #(= (:source %) "/runtime/services/google.yml") (:services app)))
-            google-client-id (or (get-in google-service [:server_config :client_id]) (and (:custom? conf/google-client-config) (:client-id conf/google-client-config)))
-
-            custom-google-config? (not-empty google-client-id)
-
-            params (if custom-google-config?
-                     params
-                     (assoc params :scope "https://www.googleapis.com/auth/userinfo.email"))
-
-            offline-access (and (not= "" google-client-id) google-client-id)
-
-            google-client-id (if custom-google-config?
-                               google-client-id
-                               (:client-id conf/google-client-config))
-
-            redirect (str (if (and custom-google-config?
-                                   (not (get-in request [:environment :allow-debug?])) ;; When debugging, use the shared redirect regardless
-                                   (get-in google-service [:server_config :app_origin_redirect]))
-                            (:app-origin request)
-                            conf/runtime-common-url) "/_/client_auth_callback")]
-
-        (if (empty? google-client-id)
-
-          (resp/redirect (str conf/static-root-url "/runtime-new/runtime/client_auth_error.html#" (codec/url-encode "No client ID specified in Google API service config.")))
-
-          (let [[url csrf-token] (google-sso/get-login-url (sessions/get-id (:app-session request)) google-client-id redirect (:scope params) offline-access)]
-            ;; Store csrf-token in app-session rather than ring session.
-            (swap! (:app-session request) assoc
-                   ::google-csrf-token csrf-token
-                   ::google-redirect redirect)              ;; Saves working out the redirect again in the callback.
-            (sessions/notify-session-update! (:app-session request))
-            (resp/redirect url))))))
-
-  (GET "/_/client_auth_id_token" request
-    (resp/response (-> @(:app-session request) :google :user-tokens :id-token)))
-
-  (GET "/_/facebook_auth_redirect" request
-    (if (:anvil.runtime/replacement-session @(:app-session request))
-      (resp/redirect (str conf/static-root-url "/runtime-new/runtime/facebook_auth_error.html#" (codec/url-encode "SESSION_EXPIRED")))
-      (let [csrf-token (random/hex 60)
-
-            app (:content (get-app-from-request request))
-
-            facebook-service (first (filter #(= (:source %) "/runtime/services/facebook.yml") (:services app)))
-            facebook-client-id (or (get-in facebook-service [:server_config :app_id])
-                                   (and (:custom? conf/facebook-client-config) (:app-id conf/facebook-client-config)))
-
-            app-id-provided? (not (or (= "" facebook-client-id) (nil? facebook-client-id)))
-
-            facebook-client-id (if app-id-provided?
-                                 facebook-client-id
-                                 (:app-id conf/facebook-client-config))
-
-            requested-scopes (-> request :params :scopes)
-
-            scope (if app-id-provided?
-                    (str "email," requested-scopes)
-                    "email")]
-
-        (if (and requested-scopes
-                 (not= "" requested-scopes)
-                 (not app-id-provided?))
-          (resp/redirect (str conf/static-root-url "/runtime-new/runtime/facebook_auth_error.html#" (codec/url-encode "To specify custom permissions, you must provide an app ID in the Facebook service config.")))
-
-          (do (swap! (:app-session request) assoc ::facebook-csrf-token csrf-token)
-              (sessions/notify-session-update! (:app-session request))
-              (resp/redirect (str "https://www.facebook.com/v3.2/dialog/oauth?"
-                                  "&client_id=" facebook-client-id
-                                  "&redirect_uri=" (codec/url-encode (str conf/runtime-common-url "/_/facebook_auth_callback"))
-                                  "&state=" (sessions/get-id (:app-session request)) "G" (codec/url-encode csrf-token)
-                                  "&scope=" (codec/url-encode scope)
-                                  ;"&auth_type=reauthenticate" ; This causes Colette to land in an infinite loop being asked for her password.
-                                  "&display=popup")))))))
-
-  (GET "/_/microsoft_auth_redirect" request
-
-    ;; We implement OpenID Connect here: https://docs.microsoft.com/en-us/azure/active-directory/develop/active-directory-v2-protocols-oidc
-
-    ;; To register an app, visit https://apps.dev.microsoft.com/#/appList
-    ;; Set redirect_url to https://anvil.works/apps/_/microsoft_auth_callback
-    ;; No need for an Application Secret if just using login.
-    (if (:anvil.runtime/replacement-session @(:app-session request))
-      (resp/redirect (str conf/static-root-url "/runtime-new/runtime/microsoft_auth_error.html#" (codec/url-encode "SESSION_EXPIRED")))
-      (let [csrf-token (random/hex 60)
-            nonce (random/hex 60)
-
-            app (:content (get-app-from-request request))
-
-            microsoft-service (first (filter #(= (:source %) "/runtime/services/anvil/microsoft.yml") (:services app)))
-            application-id (or (get-in microsoft-service [:server_config :application_id])
-                               (and (:custom? conf/microsoft-client-config) (:application-id conf/microsoft-client-config)))
-            additional-scopes (get-in microsoft-service [:server_config :additional_oauth_scopes])
-            app-secret-provided? (or (get-in microsoft-service [:server_config :application_secret_enc])
-                                     (get-in microsoft-service [:server_config :application_secret])
-                                     (and (:custom? conf/microsoft-client-config) (:application-secret conf/microsoft-client-config)))
-
-            app-id-provided? (not (or (= "" application-id) (nil? application-id)))
-
-            tenant-id (if app-id-provided?
-                        (or (get-in microsoft-service [:server_config :tenant_id])
-                            (and (:custom? conf/microsoft-client-config) (:tenant-id conf/microsoft-client-config)))
-                        (:tenant-id conf/microsoft-client-config))
-
-            application-id (if app-id-provided?
-                             application-id
-                             (:application-id conf/microsoft-client-config))
-
-            requested-scopes (.trim (str (-> request :params :scopes) " " additional-scopes))
-
-            scope (if app-id-provided?
-                    (str "openid email profile offline_access " requested-scopes)
-                    "openid email profile")
-
-            ;_ (prn "Scope:" app-id-provided? application-id microsoft-service scope)
-            ]
-
-        (if (and requested-scopes
-                 (not-empty (-> request :params :scopes))
-                 (or (not app-id-provided?)
-                     (not app-secret-provided?)))
-          (resp/redirect (str conf/static-root-url "/runtime-new/runtime/microsoft_auth_error.html#" (codec/url-encode "To specify custom permissions (scopes), you must provide an Application ID and Application Secret in the Microsoft service config.")))
-
-          (let [[url nonce] (azure-sso/get-login-url (sessions/get-id (:app-session request)) tenant-id application-id (if app-id-provided? "code" "id_token") scope (str conf/runtime-common-url "/_/microsoft_auth_callback"))]
-            (swap! (:app-session request) assoc ::microsoft-nonce nonce)
-            (sessions/notify-session-update! (:app-session request))
-            (resp/redirect url))))))
+  (POST "/_/saml_auth_complete" {:keys [body app-session app-origin environment] :as _req}
+    (let [{:keys [tokens oauth_info]} (some-> (:encrypted_tokens body)
+                                              (#(secrets/decrypt-str-with-global-key ::oauth-tokens-saml %))
+                                              util/read-json-str)]
+      (if-not (runtime-util/oauth-info-valid? oauth_info app-origin environment app-session)
+        (resp/status (resp/response {:error "Rejecting mismatched OAuth Info"}) 403)
+        (do
+          (swap! app-session update-in [:saml] merge tokens)
+          (sessions/notify-session-update! app-session)
+          (resp/response (select-keys tokens [:email]))))))
 
   (GET "/_/saml-sp-metadata" request
     (let [app (:content (get-app-from-request request))
@@ -398,51 +282,6 @@
             (resp/content-type "application/xml")
             (resp/header "content-disposition" (str "attachment; filename=SAML Metadata - " (clojure.string/replace (str (:name app)) #"[^A-Za-z0-9\. ]" "") ".xml")))
         (resp/response {:errors errors}))))
-
-  (GET "/_/saml_auth_redirect" request
-    (try
-      (let [app (:content (get-app-from-request request))
-            saml-service (first (filter #(= (:source %) "/runtime/services/anvil/saml.yml") (:services app)))
-            server-config (:server_config saml-service)
-            settings (saml/get-settings server-config (:app-info request))
-
-            authn-request (AuthnRequest. settings (boolean (:force_authentication server-config)) false true)
-            sso-url (str (.getIdpSingleSignOnServiceUrl settings))
-
-            safe-sso-url-params (->> (URLEncodedUtils/parse sso-url (Charset/forName "UTF-8"))
-                                     (filter #(not (contains? #{"SAMLRequest" "RelayState" "SigAlg"} (.getName %)))))
-
-            sso-url (str (first (str/split sso-url #"\?"))
-                         (when (not-empty safe-sso-url-params)
-                           (str "?" (URLEncodedUtils/format (ArrayList. ^Collection safe-sso-url-params) "UTF-8"))))
-
-            saml-request (.getEncodedAuthnRequest authn-request)
-            csrf-token (random/hex 60)
-
-            relay-state (str (sessions/get-id (:app-session request)) "G" csrf-token)
-
-            query-string (str "SAMLRequest=" (util/real-actual-genuine-url-encoder saml-request)
-                              "&RelayState=" (util/real-actual-genuine-url-encoder relay-state)
-                              "&SigAlg=" (util/real-actual-genuine-url-encoder (.getSignatureAlgorithm settings)))
-
-            signature (saml/sign-request query-string settings)
-
-            redirect-target (str sso-url
-                                 (if (not-empty safe-sso-url-params) "&" "?")
-                                 query-string
-                                 "&Signature=" (util/real-actual-genuine-url-encoder signature))]
-        (swap! (:app-session request) assoc ::saml-csrf-token csrf-token)
-        (sessions/notify-session-update! (:app-session request))
-        (log/info "SAML auth redirect in session" (pr-str (sessions/get-id (:app-session request))) "with token" (pr-str csrf-token))
-        (resp/redirect redirect-target))
-      (catch Exception e
-        (-> (resp/response
-              (populate-template (runtime-client-resource request "/auth_result.html")
-                                 {"{{canonical-url}}" (hiccup-util/escape-html (:app-origin @(:app-session request)))
-                                  "{{callback-fn}}"   "samlAuthErrorCallback"
-                                  "{{args-json}}"     (json/write-str {:message (str "SAML Redirect failed: " (.getMessage e))})}))
-            (resp/content-type "text/html")
-            (resp/status 200)))))
 
   (POST "/_/log" request
     ;; Absorb this by default
@@ -480,226 +319,199 @@
 
 
 (defroutes runtime-common-routes
-
   ;; These routes are unusual - they are accessible at /runtime/... on all origins!
-  (GET "/_/client_auth_callback" req
-    ;; in the Google developer console, so we must redirect back to the same place for every app.
-    (let [session-id (clojure.string/replace (or (-> req :params :state) "") #"G[^G]*$" "")
-          app-session (sessions/load-session-by-id-without-authentication session-id)]
 
-      (if-not app-session
-        (resp/redirect (str conf/static-root-url "/runtime-new/runtime/client_auth_error.html#" (codec/url-encode "SESSION_EXPIRED")))
-        (let [session-state (sessions/deref-db app-session)
-              request (merge req {:app-session app-session} (select-keys session-state [:app-id :app-info :environment]))
-              app (:content (get-app-from-request request))
-              google-service (first (filter #(= (:source %) "/runtime/services/google.yml") (:services app)))
-              google-client-id (or (get-in google-service [:server_config :client_id])
-                                   (and (:custom? conf/google-client-config) (:client-id conf/google-client-config)))
+  (GET "/_/google_auth_redirect" {:keys [params] :as req}
+    (let [{:keys [oauth_info scope]} params
+          {:keys [app-origin app-info environment]} (runtime-util/get-app-details-from-oauth-info oauth_info)
+          app (app-data/get-app app-info (app-data/get-version-spec-for-environment environment))
+          allow-app-origin-redirect? (runtime-util/allow-oauth-app-origin-redirect? environment)]
+      (try+
+        (let [{:keys [google-url
+                      csrf-token
+                      redirect-uri]} (oauth/google-redirect app app-origin allow-app-origin-redirect? scope (:server-name req) "/_/client_auth_callback")
 
-              custom-google-config? (not-empty google-client-id)
+              cookie (secrets/encrypt-str-with-global-key
+                       ::oauth-redirect-google
+                       (util/write-json-str {:csrf_token   csrf-token
+                                             :oauth_info   oauth_info
+                                             :redirect_uri redirect-uri}))]
+          (-> (resp/redirect google-url)
+              (assoc :cookies {"oauth_redirect_google"
+                               {:value cookie :http-only true :max-age 600}})))
 
-              google-client-secret (if custom-google-config?
-                                     (or (when-let [encrypted-client-secret (get-in google-service [:server_config :client_secret_enc])]
-                                           (:value (secrets/get-global-app-secret-value (:app-info session-state) "google-service/client-secret" encrypted-client-secret)))
-                                         (get-in google-service [:server_config :client_secret])
-                                         (and (:custom? conf/google-client-config) (:client-secret conf/google-client-config)))
-                                     (:client-secret conf/google-client-config))
+        (catch ::oauth/restart-oauth-from-origin e
+          (println e)
+          (resp/redirect (str (:origin e) "/_/google_auth_redirect?" (:query-string req))))
+        (catch ::oauth/invalid-oauth-origin e
+          (oauth/respond-with-auth-error :google (str "Can't start OAuth from origin " (:origin e)) app-origin))
+        (catch ::oauth/no-client-id _
+          (oauth/respond-with-auth-error :google "No client ID specified in Google API service config" app-origin)))))
 
-              google-client-id (if custom-google-config?
-                                 google-client-id
-                                 (:client-id conf/google-client-config))]
+  ;; Historical name, should really be called "google_auth_callback"
+  ;; Configured in the Google developer console, so we must redirect back to the same endpoint for every app.
+  (GET "/_/client_auth_callback" {:keys [params cookies] :as _req}
+    ;; We don't have an app session here, since we might be in the common runtime (anvil.works) origin.
+    ;; Instead, we pass encrypted tokens back to the frontend, which forwards them to "/_/google_auth_complete"
+    ;; in the app origin, which decrypts and adds them to the app session.
+    (let [cookie (some-> (get-in cookies ["oauth_redirect_google" :value])
+                         (#(secrets/decrypt-str-with-global-key ::oauth-redirect-google %))
+                         util/read-json-str)]
+      (if (nil? cookie)
+        (oauth/respond-with-auth-error :google "OAuth cookie not found, make sure you have cookies enabled" "*")
 
-          (log/trace "Client auth callback in session" session-id (str "(app " (get request :app-id) ")"))
+        (let [oauth-info (:oauth_info cookie)
+              {:keys [app-origin app-info environment]} (runtime-util/get-app-details-from-oauth-info oauth-info)
+              app (app-data/get-app app-info (app-data/get-version-spec-for-environment environment))]
 
           (try
-            (let [tokens (google-sso/process-callback (-> req :params :code)
-                                                      (-> req :params :state)
-                                                      (::google-csrf-token session-state)
-                                                      nil ; Don't require all scopes to be granted - that's for the app developer to decide.
-                                                      google-client-id
-                                                      google-client-secret
-                                                      (::google-redirect session-state))]
+            (let [tokens (oauth/google-callback app (:code params) (:state params) (:csrf_token cookie) (:redirect_uri cookie))
+                  encrypted-tokens (secrets/encrypt-str-with-global-key
+                                     ::oauth-tokens-google
+                                     (util/write-json-str {:tokens tokens :oauth_info oauth-info}))]
 
-              (log/debug "CLIENT AUTH COMPLETE")
-              (log/trace (with-out-str (pprint tokens)))
-
-              (swap! app-session #(assoc-in % [:google :user-tokens] tokens))
-
-              (sessions/notify-session-update! app-session)
-
-              (-> (resp/response (-> (slurp (runtime-client-resource request "/client_auth_success.html"))
-                                     (.replace "{{canonical-url}}" ^String (hiccup-util/escape-html (:app-origin session-state)))))
-                  (resp/content-type "text/html")
-                  (resp/status 200)))
+              (oauth/respond-with-auth-tokens :google encrypted-tokens app-origin))
 
             (catch Exception e
               (log/error e "Error in Google auth callback")
-              (resp/redirect (str conf/static-root-url "/runtime-new/runtime/client_auth_error.html#" (codec/url-encode (.getMessage e))))))))))
+              (oauth/respond-with-auth-error :google (or (.getMessage e) (.toString e)) app-origin)))))))
 
-  (GET "/_/facebook_auth_callback" req
-    (let [redirect-uri (str conf/runtime-common-url "/_/facebook_auth_callback")
-          session-id (clojure.string/replace (or (-> req :params :state) "") #"G[^G]*$" "")
-          app-session (sessions/load-session-by-id-without-authentication session-id)]
-      (if-not app-session
-        (resp/redirect (str conf/static-root-url "/runtime-new/runtime/facebook_auth_error.html#" (codec/url-encode "SESSION_EXPIRED")))
-        (let [session-state (sessions/deref-db app-session)
-              request (merge req {:app-session app-session} (select-keys session-state [:app-id :app-info :environment]))
-              app (:content (get-app-from-request request))
-              facebook-service (first (filter #(= (:source %) "/runtime/services/facebook.yml") (:services app)))
-              facebook-client-id (or (get-in facebook-service [:server_config :app_id])
-                                     (and (:custom? conf/facebook-client-config) (:app-id conf/facebook-client-config)))
+  (GET "/_/facebook_auth_redirect" {:keys [params :as _req]}
+    (let [{:keys [oauth_info scope]} params
+          {:keys [app-origin app-info environment]} (runtime-util/get-app-details-from-oauth-info oauth_info)
+          app (app-data/get-app app-info (app-data/get-version-spec-for-environment environment))]
+      (try+
+        (let [{:keys [facebook-url csrf-token]} (oauth/facebook-redirect app scope "/_/facebook_auth_callback")
 
-              facebook-client-secret (if (or (= "" facebook-client-id) (nil? facebook-client-id))
-                                       (:app-secret conf/facebook-client-config)
-                                       (or (when-let [encrypted-app-secret (get-in facebook-service [:server_config :app_secret_enc])]
-                                             (:value (secrets/get-global-app-secret-value (:app-info session-state) "facebook-service/app-secret" encrypted-app-secret)))
-                                           (get-in facebook-service [:server_config :app_secret])
-                                           (and (:custom? conf/facebook-client-config) (:app-secret conf/facebook-client-config))))
+              cookie (secrets/encrypt-str-with-global-key
+                       ::oauth-redirect-facebook
+                       (util/write-json-str {:csrf_token csrf-token :oauth_info oauth_info}))]
+          (-> (resp/redirect facebook-url)
+              (assoc :cookies {"oauth_redirect_facebook"
+                               {:value cookie :http-only true :max-age 600}})))
 
-              facebook-client-id (if (or (= "" facebook-client-id) (nil? facebook-client-id))
-                                   (:app-id conf/facebook-client-config)
-                                   facebook-client-id)]
-          (try
-            (let [provided-csrf-token (last (.split ^String (-> req :params :state) "G"))]
+        (catch ::oauth/no-client-id _
+          (oauth/respond-with-auth-error :facebook "To specify custom permissions, you must provide an app ID in the Facebook service config." app-origin)))))
 
-              ;; First, check the CSRF token matches the one we put in the session
-              (if (not= provided-csrf-token (::facebook-csrf-token session-state))
+  (GET "/_/facebook_auth_callback" {:keys [params cookies] :as _req}
+    (let [cookie (some-> (get-in cookies ["oauth_redirect_facebook" :value])
+                         (#(secrets/decrypt-str-with-global-key ::oauth-redirect-facebook %))
+                         util/read-json-str)]
+      (if (nil? cookie)
+        (oauth/respond-with-auth-error :facebook "OAuth cookie not found, make sure you have cookies enabled" "*")
 
-                ;; CSRF does not match. Fail.
-                (throw (Exception. "CSRF CHECK FAILED"))
+        (let [oauth-info (:oauth_info cookie)
+              {:keys [app-origin app-info environment]} (runtime-util/get-app-details-from-oauth-info oauth-info)
+              app (app-data/get-app app-info (app-data/get-version-spec-for-environment environment))
+              redirect-uri (str conf/runtime-common-url "/_/facebook_auth_callback")]
 
-                ;; CSRF matches. Start by exchanging the auth code for an access token
-                (let [body-json (:body @(http/post "https://graph.facebook.com/v3.2/oauth/access_token"
-                                                   {:keepalive -1
-                                                    :form-params {:code          (-> req :params :code)
-                                                                  :client_id     facebook-client-id
-                                                                  :client_secret facebook-client-secret
-                                                                  :redirect_uri  redirect-uri
-                                                                  :grant_type    "authorization_code"}}))
-                      body (json/read-str body-json :key-fn keyword)]
+          (if (:error params)
+            (oauth/respond-with-auth-error :facebook (:error_description params) app-origin)
 
-                  (if (:error body)
+            (try
+              (let [tokens (oauth/facebook-callback app (:code params) (:state params) (:csrf_token cookie) redirect-uri)
+                    encrypted-tokens (secrets/encrypt-str-with-global-key
+                                       ::oauth-tokens-facebook
+                                       (util/write-json-str {:tokens tokens :oauth_info oauth-info}))]
 
-                    ;; Something went wrong.
-                    (throw (Exception. (str "FAILED TO GET ACCESS TOKEN: " body-json)))
+                (oauth/respond-with-auth-tokens :facebook encrypted-tokens app-origin))
 
-                    ;; There was no error, so we should be able to find the access token
-                    (let [access-token (:access_token body)
-                          body-json (:body @(http/post "https://graph.facebook.com/v2.9/me?fields=email"
-                                                       {:keepalive -1
-                                                        :form-params {:access_token access-token}}))
-                          body (json/read-str body-json :key-fn keyword)]
+              (catch Exception e
+                (log/error e "Error in Facebook auth callback")
+                (oauth/respond-with-auth-error :facebook (or (.getMessage e) (.toString e)) app-origin))))))))
 
-                      (swap! app-session assoc :facebook (merge body {:access-token access-token}))
-                      (sessions/notify-session-update! app-session)
+  (GET "/_/microsoft_auth_redirect" {:keys [params] :as _req}
+    (let [{:keys [oauth_info scope]} params
+          {:keys [app-origin app-info environment]} (runtime-util/get-app-details-from-oauth-info oauth_info)
+          app (app-data/get-app app-info (app-data/get-version-spec-for-environment environment))]
+      (try+
+        (let [{:keys [microsoft-url csrf-token nonce]} (oauth/microsoft-redirect app scope "/_/microsoft_auth_callback")
 
+              cookie (secrets/encrypt-str-with-global-key
+                       ::oauth-redirect-microsoft
+                       (util/write-json-str {:csrf_token csrf-token :nonce nonce :oauth_info oauth_info}))]
+          (-> (resp/redirect microsoft-url)
+              (assoc :cookies {"oauth_redirect_microsoft"
+                               {:value cookie :http-only true :max-age 600}})))
 
-                      (-> (resp/response (-> (slurp (runtime-client-resource request "/facebook_auth_success.html"))
-                                             (.replace "{{canonical-url}}" ^String (hiccup-util/escape-html (:app-origin session-state)))))
-                          (resp/content-type "text/html")
-                          (resp/status 200)))))))
+        (catch ::oauth/no-client-id _
+          (oauth/respond-with-auth-error :microsoft "To specify custom permissions (scopes), you must provide an Application ID and Application Secret in the Microsoft service config." app-origin)))))
 
-            (catch Exception e
-              (log/error e "Error in Facebook auth callback")
-              (resp/redirect (str conf/static-root-url "/runtime-new/runtime/facebook_auth_error.html#" (codec/url-encode (.getMessage e))))))
-          ))))
-
-  (POST "/_/microsoft_auth_callback" req
+  (POST "/_/microsoft_auth_callback" {:keys [params cookies] :as req}
     ;; Tokens reference: https://docs.microsoft.com/en-us/azure/active-directory/develop/active-directory-v2-tokens
-    (let [redirect-uri (str conf/runtime-common-url "/_/microsoft_auth_callback")
-          session-id (-> req :params :state)
-          app-session (sessions/load-session-by-id-without-authentication session-id)]
+    (let [cookie (some-> (get-in cookies ["oauth_redirect_microsoft" :value])
+                         (#(secrets/decrypt-str-with-global-key ::oauth-redirect-microsoft %))
+                         util/read-json-str)]
 
-      (if-not app-session
-        (resp/redirect (str conf/static-root-url "/runtime-new/runtime/microsoft_auth_error.html#" (codec/url-encode "SESSION_EXPIRED")))
-        (if-let [error (-> req :params :error)]
-          (resp/redirect (str conf/static-root-url "/runtime-new/runtime/microsoft_auth_error.html#" (codec/url-encode (str error ": " (-> req :params :error_description)))))
+      (if (nil? cookie)
+        (oauth/respond-with-auth-error :microsoft "OAuth cookie not found, make sure you have cookies enabled" "*")
 
+        (let [oauth-info (:oauth_info cookie)
+              {:keys [app-origin app-info environment]} (runtime-util/get-app-details-from-oauth-info oauth-info)
+              app (app-data/get-app app-info (app-data/get-version-spec-for-environment environment))
+              redirect-uri (str conf/runtime-common-url "/_/microsoft_auth_callback")]
+
+          (if-let [error (:error params)]
+            (oauth/respond-with-auth-error :microsoft (str error ": " (:error_description params)) app-origin)
+
+            (try
+              (let [tokens (oauth/microsoft-callback app (:code params) (:state params) (:id_token params) (:csrf_token cookie) (:nonce cookie) redirect-uri)
+                    encrypted-tokens (secrets/encrypt-str-with-global-key
+                                       ::oauth-tokens-microsoft
+                                       (util/write-json-str {:tokens tokens :oauth_info oauth-info}))]
+
+                (oauth/respond-with-auth-tokens :microsoft encrypted-tokens app-origin))
+
+              (catch Exception e
+                (log/error e "Error in Microsoft auth callback")
+                (oauth/respond-with-auth-error :microsoft (or (.getMessage e) (.toString e)) app-origin))))))))
+
+  (GET "/_/saml_auth_redirect" {:keys [params] :as _req}
+    (try
+      (let [{:keys [app-origin app-info environment]} (runtime-util/get-app-details-from-oauth-info (:oauth_info params))
+            app (app-data/get-app app-info (app-data/get-version-spec-for-environment environment))]
+        (try
+          (let [saml-service (first (filter #(= (:source %) "/runtime/services/anvil/saml.yml") (get-in app [:content :services])))
+                server-config (:server_config saml-service)
+                settings (saml/get-settings server-config (:info app))
+
+                [url csrf-token] (saml-sso/get-login-url settings
+                                                         (:force_authentication server-config))
+                cookie (secrets/encrypt-str-with-global-key
+                         ::oauth-redirect-saml
+                         (util/write-json-str {:csrf_token csrf-token
+                                               :oauth_info (:oauth_info params)}))]
+            (-> (resp/redirect url)
+                (assoc :cookies {"oauth_redirect_saml"
+                                 {:value cookie :http-only true :max-age 600}})))
+          (catch Exception e
+            (log/error e "Error in SAML auth redirect")
+            (oauth/respond-with-auth-error :saml "SAML Redirect failed" app-origin))))))
+
+  ;; Historical name, should really be called "saml_auth_callback"
+  (POST "/_/saml_auth_login" {:keys [cookies] :as req}
+    (let [cookie (some-> (get-in cookies ["oauth_redirect_saml" :value])
+                         (#(secrets/decrypt-str-with-global-key ::oauth-redirect-saml %))
+                         util/read-json-str)]
+      (if (nil? cookie)
+        (oauth/respond-with-auth-error :saml "OAuth cookie not found, make sure you have cookies enabled" "*")
+
+        (let [oauth-info (:oauth_info cookie)
+              {:keys [app-origin app-info environment]} (runtime-util/get-app-details-from-oauth-info oauth-info)
+              app (app-data/get-app app-info (app-data/get-version-spec-for-environment environment))]
           (try
-            (let [session-state (sessions/deref-db app-session)
-                  request (merge req {:app-session app-session} (select-keys session-state [:app-id :app-info :environment]))
-                  app (:content (get-app-from-request request))
-                  microsoft-service (first (filter #(= (:source %) "/runtime/services/anvil/microsoft.yml") (:services app)))
+            (let [saml-service (first (filter #(= (:source %) "/runtime/services/anvil/saml.yml") (get-in app [:content :services])))
+                  settings (saml/get-settings (:server_config saml-service) app-info)
+                  email-attribute (get-in saml-service [:server_config :email_attribute])
+                  redirect-uri (str conf/runtime-common-url "/_/saml_auth_login")
 
-                  application-id (or (get-in microsoft-service [:server_config :application_id])
-                                     (and (:custom? conf/microsoft-client-config) (:application-id conf/microsoft-client-config)))
-                  application-secret (or (when-let [encrypted-app-secret (get-in microsoft-service [:server_config :application_secret_enc])]
-                                           (:value (secrets/get-global-app-secret-value (:app-info session-state) "microsoft-service/application-secret" encrypted-app-secret)))
-                                         (get-in microsoft-service [:server_config :application_secret])
-                                         (and (:custom? conf/microsoft-client-config) (:application-secret conf/microsoft-client-config)))
-                  tenant-id (or (when (get-in microsoft-service [:server_config :application_id])
-                                  (get-in microsoft-service [:server_config :tenant_id]))
-                                (and (:custom? conf/microsoft-client-config) (:tenant-id conf/microsoft-client-config)))
-                  nonce (::microsoft-nonce session-state)
-
-                  tokens (azure-sso/process-callback req nonce tenant-id application-id application-secret redirect-uri)]
-
-              (swap! app-session update-in [:microsoft] merge tokens)
-              (sessions/notify-session-update! app-session)
-
-              (-> (resp/response (-> (slurp (runtime-client-resource req "/microsoft_auth_success.html"))
-                                     (.replace "{{canonical-url}}" ^String (hiccup-util/escape-html (:app-origin session-state)))))
-                  (resp/content-type "text/html")
-                  (resp/status 200)))
+                  tokens (saml-sso/process-callback req (:csrf_token cookie) settings email-attribute redirect-uri)
+                  encrypted-tokens (secrets/encrypt-str-with-global-key
+                                     ::oauth-tokens-saml
+                                     (util/write-json-str {:tokens     tokens
+                                                           :oauth_info oauth-info}))]
+              (oauth/respond-with-auth-tokens :saml encrypted-tokens app-origin))
 
             (catch Exception e
-              (log/error e "Error in Microsoft auth callback")
-              (resp/redirect (str conf/static-root-url "/runtime-new/runtime/microsoft_auth_error.html#" (codec/url-encode (or (.getMessage e) (.toString e)))))))))))
-
-  (POST "/_/saml_auth_login" req
-    (let [{relay-state :RelayState saml-response :SAMLResponse} (:params req)
-          [_ session-id provided-csrf-token] (re-matches #"^(.*)G([^G]*)$" (codec/url-decode relay-state))]
-
-      (log/info "SAML auth callback in session" (pr-str session-id) "with token" (pr-str provided-csrf-token))
-      (let [app-session (sessions/load-session-by-id-without-authentication session-id)
-
-            response-params {"{{canonical-url}}" (when app-session (hiccup-util/escape-html (:app-origin @app-session)))
-                             "{{callback-fn}}"   "samlAuthErrorCallback"}]
-        (when-not app-session
-          (throw (Exception. (str "Session not found: " session-id))))
-        (log/info "SAML CSRF token in session:" (pr-str (::saml-csrf-token @app-session)))
-
-        (-> (resp/response
-              (populate-template
-                (runtime-client-resource req "/auth_result.html")
-                (if-not (and app-session (= provided-csrf-token (::saml-csrf-token @app-session)))
-                  (assoc response-params "{{args-json}}" (json/write-str {:message "Login failed: Invalid CSRF token"}))
-
-                  ;; CSRF check passed
-                  (let [request (merge req (select-keys @app-session [:app-id :app-info :environment]))
-                        app (:content (get-app-from-request request))
-                        saml-service (first (filter #(= (:source %) "/runtime/services/anvil/saml.yml") (:services app)))
-                        settings (saml/get-settings (:server_config saml-service) (:app-info request))
-                        saml-response (SamlResponse. settings (str conf/runtime-common-url "/_/saml_auth_login") saml-response)]
-
-                    ;; Make sure we can't use this token again
-                    (swap! app-session dissoc ::saml-csrf-token)
-
-                    (if-not (.isValid saml-response)
-                      (assoc response-params "{{args-json}}" (json/write-str {:message "Login failed: Invalid SAML response"}))
-
-                      ;; SAML Response is valid
-                      (let [attributes (into {} (.getAttributes saml-response))
-                            name-id (.getNameId saml-response)
-                            name-id-format (.getNameIdFormat saml-response)
-
-                            email (first (or (get attributes (get-in saml-service [:server_config :email_attribute]))
-                                             (and (= name-id-format Constants/NAMEID_EMAIL_ADDRESS)
-                                                  [name-id])
-                                             (get attributes "urn:oid:0.9.2342.19200300.100.1.3")
-                                             (get attributes "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress")))]
-
-                        (if-not email
-                          (assoc response-params "{{args-json}}" (json/write-str {:message (str "Login failed: SAML response did not contain a valid email address. NameID format was \"" name-id-format "\". You may need to configure the Email Attribute setting in the SAML Service configuration.")}))
-                          (do
-                            ;; Useful reference for SAML attributes: https://edx.readthedocs.io/projects/edx-installing-configuring-and-running/en/named-release-dogwood.rc/configuration/tpa/tpa_SAML_IdP.html
-                            (swap! app-session update-in [:saml] merge {:attributes (json/read-str (json/write-str attributes)) ;; This is silly, but gets rid of pesky ArrayLists that won't serialise.
-                                                                        :email      email})
-                            (sessions/notify-session-update! app-session)
-                            (log/trace "Successful SAML Login:" (with-out-str (pprint attributes)))
-                            (merge response-params {"{{callback-fn}}" "samlAuthSuccessCallback"
-                                                    "{{args-json}}"   "null"})))))))))
-            (resp/content-type "text/html")
-            (resp/status 200)))))
-
-  )
+              (log/error e "Error in SAML auth callback")
+              (oauth/respond-with-auth-error :saml (or (.getMessage e) (.toString e)) app-origin))))))))

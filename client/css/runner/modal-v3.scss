@@ -334,12 +334,14 @@ $close-text-shadow: 0 1px 0 #fff;
     // iOS requires the button element instead of an anchor tag.
     // If you want the anchor version, it requires `href="#"`.
     // See https://developer.mozilla.org/en-US/docs/Web/Events/click#Safari_Mobile
-    button {
-        padding: 0;
-        cursor: pointer;
-        background: transparent;
-        border: 0;
-        -webkit-appearance: none;
-        appearance: none;
-    }
+}
+
+// Button variant of the close control
+button.#{variables.$prefix}close {
+    padding: 0;
+    cursor: pointer;
+    background: transparent;
+    border: 0;
+    -webkit-appearance: none;
+    appearance: none;
 }

@@ -71,7 +71,7 @@ if is_server_side():
             raise Exception("You can't use " + fname + "() on the server (do it in form code instead)")
         return f
 
-    for n in ["login_with_google", "signup_with_google", "login_with_facebook", "signup_with_facebook", "login_with_microsoft", "signup_with_microsoft", "login_with_saml", "signup_with_saml", "login_with_raven", "signup_with_raven", "login_with_form", "signup_with_form"]:
+    for n in ["login_with_google", "signup_with_google", "login_with_facebook", "signup_with_facebook", "login_with_microsoft", "signup_with_microsoft", "login_with_saml", "signup_with_saml", "login_with_form", "signup_with_form"]:
         globals()[n] = _fail(n)
 
 else:
@@ -187,30 +187,6 @@ else:
             u = anvil.server.call("anvil.private.users.signup_with_saml", remember=remember)
             return _to_user_row(u)
 
-    # Disable documentation for raven functions for now.
-    #defFunction(anvil.users,!,[remember=False])!2: "Log in with a Raven account. Prompts the user to authenticate with Raven, then logs in with their Raven account (if that user exists). Returns None if the login was cancelled or we have no record of this user. By default, login status is not remembered between sessions." ["login_with_raven"]
-    def login_with_raven(remember=False):
-        if not get_client_config().get("use_raven", False):
-            raise Exception("Raven login is not enabled")
-
-        import raven.auth
-        if raven.auth.login():
-            u = anvil.server.call("anvil.private.users.login_with_raven", remember=remember)
-            return _to_user_row(u)
-
-    #defFunction(anvil.users,!,[remember=False])!2: "Sign up for a new account with the email address associated with the user's Raven account. Prompts the user to authenticate with Raven, then registers a new user with that email address. Raises anvil.users.UserExists if this email address is already registered; returns new user or None if cancelled. By default, login status is not remembered between sessions." ["signup_with_raven"]
-    def signup_with_raven(remember=False):
-        if not get_client_config().get("use_raven", False):
-            raise Exception("Raven signup is not enabled")
-
-        if not get_client_config().get("allow_signup"):
-            raise Exception("New user signup is not enabled")
-
-        import raven.auth
-        if raven.auth.login():
-            u = anvil.server.call("anvil.private.users.signup_with_raven", remember=remember)
-            return _to_user_row(u)
-
 
     _label_style = {}
 
@@ -235,7 +211,13 @@ else:
             return email_box.text
 
 
-
+    def _make_signin_button_container():
+        """Create an HtmlPanel container for sign-in buttons that ensures all buttons have the same width."""
+        return HtmlPanel(html="""
+<div class='anvil-signin-button-container'>
+  <div class='anvil-signin-button-wrapper' anvil-slot-repeat='default'></div>
+</div>
+""")
 
     #!defFunction(anvil.users,!,[remember_by_default=True],[allow_cancel=False])!2: "Display a sign-up form allowing a user to create a new account. Returns the new user object, or None if cancelled.\n\nremember_by_default: if True, the 'remember me' checkbox will be enabled by default.\n\nallow_cancel: if True, the signup form has a Cancel button that the user can use to dismiss the form." ["signup_with_form"]
     def signup_with_form(_link_back_to_login_on_already_exists=False,remember_by_default=True, allow_cancel=False, initial_email="", initial_password=""):
@@ -247,9 +229,11 @@ else:
         CheckBox = pluggable_ui['anvil.CheckBox']
 
         lp = LinearPanel()
+        sb = _make_signin_button_container()
         email_box = None
         passwd_box = None
         remember_me_checkbox = None
+        sb_props = {"spacing_above": "none", "spacing_below": "none", "spacing": {"margin": 0}}
 
         def email_pressed_enter(**kws):
             if passwd_box and len(passwd_box) > 0:
@@ -290,14 +274,13 @@ else:
                 except Exception as e:
                     pass # On error, just return to the signup dialog.
             
-            fp = FlowPanel(align="center", spacing_above="large", spacing_below="none")
-            lnk = Link(spacing_above="none", spacing_below="none")
-            fp.add_component(lnk)
+            lnk = Link(**sb_props)
+            sb.add_component(lnk)
             lnk.add_component(GoogleSignInButton("Sign up with Google"))
             lnk.set_event_handler("click", google_login)
-            lp.add_component(fp)
 
         if get_client_config().get("use_facebook"):
+            from .facebook_button import FacebookSignInButton
             some_method_available = True
             def facebook_login(**evt):
                 import anvil.facebook.auth
@@ -307,11 +290,13 @@ else:
                 except Exception as e:
                     pass # On error, just return to the signup dialog.
 
-            b = Button(text="Sign up with Facebook", icon="fa:facebook", icon_align="left")
-            lp.add_component(b)
-            b.set_event_handler("click", facebook_login)
+            lnk = Link(**sb_props)
+            sb.add_component(lnk)
+            lnk.add_component(FacebookSignInButton("Sign up with Facebook"))
+            lnk.set_event_handler("click", facebook_login)
 
         if get_client_config().get("use_microsoft"):
+            from .microsoft_button import MicrosoftSignInButton
             some_method_available = True
             def microsoft_login(**evt):
                 import anvil.microsoft.auth
@@ -321,9 +306,10 @@ else:
                 except Exception as e:
                     pass # On error, just return to the signup dialog.
             
-            b = Button(text="Sign up with Microsoft", icon="fa:windows", icon_align="left")
-            lp.add_component(b)
-            b.set_event_handler("click", microsoft_login)
+            lnk = Link(**sb_props)
+            sb.add_component(lnk)
+            lnk.add_component(MicrosoftSignInButton("Sign up with Microsoft"))
+            lnk.set_event_handler("click", microsoft_login)
 
         if get_client_config().get("use_saml"):
             some_method_available = True
@@ -335,23 +321,12 @@ else:
                 except Exception as e:
                     pass # On error, just return to the signup dialog.
             
-            b = Button(text="Sign up via SAML", icon="fa:lock", icon_align="left")
-            lp.add_component(b)
+            b = Button(text="Sign up via SAML", icon="fa:lock", icon_align="left", align="full", **sb_props)
             b.set_event_handler("click", saml_login)
+            sb.add_component(b)
 
-        if get_client_config().get("use_raven", False):
-            some_method_available = True
-            import raven.auth
-            def raven_login(**evt):
-                try:
-                    if raven.auth.login():
-                        lp.raise_event('x-close-alert', value='raven')
-                except Exception as e:
-                    pass # On error, just return to the signup dialog.
-            
-            b = Button(text="Sign up with Raven", icon="fa:lock", icon_align="left")
-            lp.add_component(b)
-            b.set_event_handler("click", raven_login)
+        if sb.get_components():
+            lp.add_component(sb)
 
         if not some_method_available:
             raise Exception("This app has no supported sign-in methods. Please check settings in the Users Service configuration.")
@@ -406,8 +381,6 @@ else:
                     user = anvil.server.call("anvil.private.users.signup_with_microsoft", remember=remember)
                 elif ar == 'saml':
                     user = anvil.server.call("anvil.private.users.signup_with_saml", remember=remember)
-                elif ar == 'raven':
-                    user = anvil.server.call("anvil.private.users.signup_with_raven", remember=remember)
                 elif ar == 'sign-up' and passwd_box:
                     if len(email_box.text) < 5 or "@" not in email_box.text or "." not in email_box.text:
                         error_lbl.text = "Enter an email address"
@@ -445,8 +418,8 @@ else:
 
             return _to_user_row(user)
 
-    #!defFunction(anvil.users,!,[show_signup_option=True],[remember_by_default=True],[allow_remembered=True],[allow_cancel=False])!2: "Display a login form and allow user to log in. Returns user object if logged in, or None if cancelled.\n\nshow_signup_option: if True, the form will also show the option to sign up for a new account.\n\nremember_by_default: if True, the 'remember me' checkbox will be enabled by default.\n\nallow_remembered: if False, users with remembered login status will still be required to log in.\n\nallow_cancel: if True, the login form has a Cancel button that the user can use to dismiss the form." ["login_with_form"]
-    def login_with_form(show_signup_option=True,remember_by_default=True, allow_remembered=True, allow_cancel=False):
+    #!defFunction(anvil.users,!,[show_signup_option=True],[remember_by_default=True],[allow_remembered=True],[allow_cancel=False],[initial_email=None])!2: "Display a login form and allow user to log in. Returns user object if logged in, or None if cancelled.\n\nshow_signup_option: if True, the form will also show the option to sign up for a new account.\n\nremember_by_default: if True, the 'remember me' checkbox will be enabled by default.\n\nallow_remembered: if False, users with remembered login status will still be required to log in.\n\nallow_cancel: if True, the login form has a Cancel button that the user can use to dismiss the form.\n\ninitial_email: Optional email address to pre-fill the Email box with when email login is enabled." ["login_with_form"]
+    def login_with_form(show_signup_option=True,remember_by_default=True, allow_remembered=True, allow_cancel=False, initial_email=None):
         
         if allow_remembered:
            u = get_user()
@@ -459,9 +432,11 @@ else:
         CheckBox = pluggable_ui['anvil.CheckBox']
 
         lp = LinearPanel()
+        sb = _make_signin_button_container()
         email_box = None
         passwd_box = None
         remember_me_checkbox = None
+        sb_props = {"spacing_above": "none", "spacing_below": "none", "spacing": {"margin": 0}}
 
         def focus_email(**kws):
             if email_box:
@@ -478,15 +453,16 @@ else:
         if get_client_config().get("use_email", False):
             some_method_available = True
 
-            last_email = anvil.server.call("anvil.private.users.get_last_login_email")
+            # Explicitly setting initial_email kwarg to the empty string will override get_last_login_email
+            initial_email = anvil.server.call("anvil.private.users.get_last_login_email") if initial_email is None else initial_email
 
-            email_box = TextBoxWithLabel(label="Email:", placeholder="email@address.com", text=last_email)
+            email_box = TextBoxWithLabel(label="Email:", placeholder="email@address.com", text=initial_email)
             passwd_box = TextBoxWithLabel(label="Password:", placeholder="password", hide_text=True, spacing_below="none")
 
             email_box.set_event_handler("pressed_enter", focus_password)
             passwd_box.set_event_handler("pressed_enter", close_alert)
 
-            if last_email is None:
+            if not initial_email: # Deliberately match empty string or None.
                 lp.set_event_handler("show", focus_email)
             else:
                 lp.set_event_handler("show", focus_password)
@@ -508,14 +484,13 @@ else:
                 except Exception as e:
                     pass # On error, just return to the login dialog.
             
-            fp = FlowPanel(align="center", spacing_above="large", spacing_below="none")
-            lnk = Link(spacing_above="none", spacing_below="none")
-            fp.add_component(lnk)
+            lnk = Link(**sb_props)
+            sb.add_component(lnk)
             lnk.add_component(GoogleSignInButton())
             lnk.set_event_handler("click", google_login)
-            lp.add_component(fp)
 
         if get_client_config().get("use_facebook"):
+            from .facebook_button import FacebookSignInButton
             some_method_available = True
             def facebook_login(**evt):
                 import anvil.facebook.auth
@@ -525,11 +500,13 @@ else:
                 except Exception as e:
                     pass # On error, just return to the login dialog.
             
-            b = Button(text="Log in with Facebook", icon="fa:facebook", icon_align="left")
-            b.set_event_handler('click', facebook_login)
-            lp.add_component(b)
+            lnk = Link(**sb_props)
+            sb.add_component(lnk)
+            lnk.add_component(FacebookSignInButton())
+            lnk.set_event_handler("click", facebook_login)
 
         if get_client_config().get("use_microsoft"):
+            from .microsoft_button import MicrosoftSignInButton
             some_method_available = True
             def microsoft_login(**evt):
                 import anvil.microsoft.auth
@@ -539,9 +516,10 @@ else:
                 except Exception as e:
                     pass # On error, just return to the login dialog.
             
-            b = Button(text="Log in with Microsoft", icon="fa:windows", icon_align="left")
-            b.set_event_handler('click', microsoft_login)
-            lp.add_component(b)
+            lnk = Link(**sb_props)
+            sb.add_component(lnk)
+            lnk.add_component(MicrosoftSignInButton())
+            lnk.set_event_handler("click", microsoft_login)
 
         if get_client_config().get("use_saml"):
             some_method_available = True
@@ -553,29 +531,19 @@ else:
                 except Exception as e:
                     pass # On error, just return to the login dialog.
             
-            b = Button(text="Log in via SAML", icon="fa:lock", icon_align="left")
+            b = Button(text="Log in via SAML", icon="fa:lock", icon_align="left", align="full", **sb_props)
             b.set_event_handler('click', saml_login)
-            lp.add_component(b)
-
-        if get_client_config().get("use_raven", False):
-            some_method_available = True
-            def raven_login(**evt):
-                import raven.auth
-                try:
-                    if raven.auth.login():
-                        lp.raise_event('x-close-alert', value='raven')
-                except Exception as e:
-                    pass # On error, just return to the login dialog.
-            
-            b = Button(text="Log in with Raven", icon="fa:lock", icon_align="left")
-            b.set_event_handler('click', raven_login)
-            lp.add_component(b)
+            sb.add_component(b)
 
         if get_client_config().get("use_token", False):
             some_method_available = True
-            b = Link(text="Send a login link by email", icon="fa:envelope", icon_align="left", align="center")
+            # don't change this to a button, else it breaks browser password managers
+            b = Link(text="Send a login link by email", icon="fa:envelope", icon_align="left", align="center", **sb_props)
             b.set_event_handler('click', lambda **e: lp.raise_event('x-close-alert', value='email_token'))
-            lp.add_component(b)
+            sb.add_component(b)
+
+        if sb.get_components():
+            lp.add_component(sb)
 
         if not some_method_available:
             raise Exception("This app has no supported sign-in methods. Please check settings in the Users Service configuration.")
@@ -621,10 +589,6 @@ else:
                         return _to_user_row(user)
                 elif ar == 'saml':
                     user = anvil.server.call("anvil.private.users.login_with_saml", remember=remember)
-                    if user or allow_cancel:
-                        return _to_user_row(user)
-                elif ar == 'raven':
-                    user = anvil.server.call("anvil.private.users.login_with_raven", remember=remember)
                     if user or allow_cancel:
                         return _to_user_row(user)
                 elif ar == 'email_token':

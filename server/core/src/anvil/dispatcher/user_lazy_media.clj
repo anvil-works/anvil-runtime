@@ -1,5 +1,5 @@
 (ns anvil.dispatcher.user-lazy-media
-  (:use [slingshot.slingshot :only [throw+ try+]])
+  (:use [clj-commons.slingshot :only [throw+ try+]])
   (:require [anvil.dispatcher.serialisation.lazy-media :as lazy-media]
             [clojure.data.json :as json]
             [anvil.dispatcher.native-rpc-handlers.util :as nrpc-util]

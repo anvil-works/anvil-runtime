@@ -7,7 +7,7 @@
             [crypto.random :as random]
             [medley.core :refer [deep-merge map-kv-vals]]
             [clojure.string :as str])
-  (:use slingshot.slingshot)
+  (:use clj-commons.slingshot)
   (:import (org.apache.commons.codec.binary Base64)))
 
 (clj-logging-config.log4j/set-logger! :level :debug)
@@ -113,6 +113,11 @@
          (for [id (reverse (:dependency_order app-content))]
            (->> (get-in app-content [:dependency_code id :assets])
                 (map #(assoc % :dep-app-id id))))))
+
+(defn get-asset [app-content asset-name]
+  (->> (get-all-assets app-content)
+       (filter #(= (:name %) asset-name))
+       (first)))
 
 ;; Takes an app YAML config_schema and a list of config override maps, and returns a final config
 (defn- calculate-config [schema config-overrides]

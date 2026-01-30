@@ -17,7 +17,9 @@
                          [org.apache.commons/commons-fileupload2-core "2.0.0-M4"]
                          [commons-codec "1.19.0"]
                          [commons-io/commons-io "2.17.0"]
-                         [org.apache.commons/commons-compress "1.28.0"]]
+                         [org.apache.commons/commons-compress "1.28.0"]
+                         [org.apache.commons/commons-lang3 "3.18.0"]  ; commons-compress-1.28.0 requires lang3-3.18.0
+                         ]
 
   :exclusions [[log4j]]
   :dependencies [[org.clojure/clojure "1.12.0"]
@@ -38,7 +40,7 @@
                  [org.clojure/data.xml "0.0.8"]
                  [org.clojure/data.zip "0.1.1"]
                  [org.senatehouse/http-kit "2.5.0-httpsfix-1.2"]
-                 [crypto-random "1.1.0"]
+                 [crypto-random "1.2.1"]
                  [clj-commons/clj-yaml "1.0.27"]
                  [digest "1.4.4"]
 
@@ -51,17 +53,15 @@
 
                  [com.stripe/stripe-java "22.5.0"]
 
-                 [org.clojure/tools.logging "0.4.1"]
+                 [org.clojure/tools.logging "1.2.4"]
                  [org.slf4j/slf4j-reload4j "1.7.36"]
                  [ch.qos.reload4j/reload4j "1.2.19" :exclusions [javax.mail/mail javax.jms/jms com.sun.jdmk/jmxtools com.sun.jmx/jmxri]]
                  [clj-logging-config "1.9.12"]
 
-                 [slingshot "0.12.2"]
+                 [org.clj-commons/slingshot "0.13.0"]
 
                  [org.clojure/core.async "1.5.648"]
                  [org.clojure/core.cache "0.8.2"]
-
-                 [org.senatehouse/expect-call "0.3.0"]
 
                  [nrepl "0.8.3"]
 
@@ -82,8 +82,8 @@
 
                  [org.bouncycastle/bcprov-jdk18on "1.78.1"]
                  [org.bouncycastle/bcpkix-jdk18on "1.78.1"]
-                 [buddy/buddy-core "1.6.0" :exclusions [org.bouncycastle/bcprov-jdk15on org.bouncycastle/bcpkix-jdk15on]]
-                 [buddy/buddy-sign "3.1.0"]
+                 [buddy/buddy-core "1.12.0-430"]
+                 [buddy/buddy-sign "3.6.1-359"]
 
                  [io.prometheus/simpleclient_hotspot "0.12.0"]
                  [clj-commons/iapetos "0.1.14"]
@@ -96,10 +96,6 @@
                  [com.onelogin/java-saml "2.9.0" :exclusions [org.slf4j/slf4j-api]]
                  [medley "1.4.0"]
                  [olical/crawlers "0.2.0"]
-
-                 [org.apache.commons/commons-compress "1.27.1"]
-                 [org.apache.commons/commons-lang3 "3.14.0"]
-                 [commons-codec/commons-codec "1.17.0"]     ; Override the very old version in cemerick/friend, which isn't compatible with java-saml
 
                  [io.opentelemetry/opentelemetry-sdk]]
   :bom {:import [[io.opentelemetry/opentelemetry-bom "1.7.0"]]}
@@ -115,6 +111,9 @@
                                     org.bouncycastle/bcpkix-jdk18on]}
              :dev {:jvm-opts ["-Dclojure.compiler.disable-locals-clearing=true"
                               ;"-Djavax.net.debug=all" ; Useful for debugging SSL issues
-                              ]}
+                              ]
+                   :dependencies [[nubank/matcher-combinators "3.9.2"]
+                                  [org.senatehouse/expect-call "0.4.0"]]}
              :test {:dependencies [[lambdaisland/kaocha "1.91.1392"]]}}
+
   :aliases {"test" ["with-profile" "+test" "run" "-m" "kaocha.runner"]})

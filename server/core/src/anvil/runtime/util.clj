@@ -1,7 +1,7 @@
 (ns anvil.runtime.util
   (:require [anvil.runtime.app-data :as app-data]
             [anvil.runtime.conf :as conf]
-            [crypto.random :as random]
+            [ring.middleware.json :as ring-json]
             [ring.util.response :as resp]
             [clojure.tools.logging :as log]
             [anvil.util :as util]
@@ -9,7 +9,6 @@
             [org.httpkit.client :as http]
             [clj-logging-config.log4j]
             digest
-            [anvil.metrics :as metrics]
             [hiccup.util :as hiccup-util]
             [clojure.java.io :as io])
   (:import (com.google.common.net InternetDomainName)))
@@ -82,12 +81,9 @@
                                            (do
                                              (log/trace "Same-origin request (" (pr-str origin-header) (pr-str referer-header) ") for" (:app-origin request))
                                              nil))]
-
       (handler (if cross-origin?
                  (assoc request :cross-origin foreign-origin)
                  (assoc request :alternate-app-origin foreign-origin))))))
-
-
 
 (defn with-unlocked-apps-only [handler]
   (fn [{:keys [app-id] :as request}]
@@ -96,6 +92,15 @@
           (resp/content-type "text/plain")
           (resp/status 503))
       (handler request))))
+
+(defn wrap-json-body-except
+  ([handler pattern] (wrap-json-body-except handler pattern {}))
+  ([handler pattern options]
+   (let [json-handler (ring-json/wrap-json-body handler options)]
+     (fn [req]
+       (if (re-matches pattern (:uri req))
+         (handler req)
+         (json-handler req))))))
 
 (defn is-password-pwned? [password]
   (let [sha1sum ^String (digest/sha-1 password)
@@ -148,4 +153,13 @@
 
 (defonce get-runtime-app-info (fn [environment] {:id "" :branch nil :environment (select-keys environment [:description :tags])}))
 
-(def set-hooks! (util/hook-setter #{runtime-client-resource get-static-origin get-runtime-app-info}))
+(defonce get-oauth-info (fn [_app-origin _environment _app-session] (throw (UnsupportedOperationException.))))
+
+(defonce get-app-details-from-oauth-info (fn [_oauth-info] (throw (UnsupportedOperationException.))))
+
+(defonce oauth-info-valid? (fn [_oauth-info _app-origin _environment _app-session] (throw (UnsupportedOperationException.))))
+
+(defonce allow-oauth-app-origin-redirect? (fn [_environment] true))
+
+(def set-hooks! (util/hook-setter #{runtime-client-resource get-static-origin get-runtime-app-info
+                                    get-oauth-info get-app-details-from-oauth-info oauth-info-valid? allow-oauth-app-origin-redirect?}))

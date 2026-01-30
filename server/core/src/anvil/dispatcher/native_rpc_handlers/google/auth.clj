@@ -1,16 +1,18 @@
 (ns anvil.dispatcher.native-rpc-handlers.google.auth
   (:use [anvil.dispatcher.native-rpc-handlers.util]
         [anvil.dispatcher.native-rpc-handlers.google.util]
-        [slingshot.slingshot])
+        [clj-commons.slingshot])
   (:require [anvil.runtime.conf :as conf]
             [anvil.runtime.secrets :as secrets]))
 
 (defn get-user-email [_kwargs]
+  (logout-on-client-id-mismatch!)
   (-> @*session-state* :google :user-tokens :id-token :email))
 
 (defn ensure-client-id!
   ([] (ensure-client-id! nil))
   ([google-service]
+   (logout-on-client-id-mismatch! google-service)
    (when-not (has-own-client-id? google-service)
      (throw+ {:anvil/server-error "To get Google API tokens, you need to supply your own client ID and secret"
               :docId              "google_rest_api"
@@ -35,8 +37,11 @@
     (let [google-client-secret (or (when-let [encrypted-client-secret (get-in google-service [:server_config :client_secret_enc])]
                                      (:value (secrets/get-global-app-secret-value *app-info* "google-service/client-secret" encrypted-client-secret)))
                                    (get-in google-service [:server_config :client_secret])
-                                   (and (:custom? conf/google-client-config) (:client-secret conf/google-client-config)))]
-      (:access_token (anvil.core.sso.google/refresh-access-token refresh-token google-client-id google-client-secret)))))
+                                   (and (:custom? conf/google-client-config) (:client-secret conf/google-client-config)))
+          access-token (:access_token (anvil.core.sso.google/refresh-access-token refresh-token google-client-id google-client-secret))]
+
+      (swap! *session-state* assoc-in [:google :user-tokens :access-token] access-token)
+      access-token)))
 
 (defn- get-config [_kwargs]
   (:client_config (first (filter #(= (:source %) "/runtime/services/google.yml") (:services *app*)))))

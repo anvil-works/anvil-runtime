@@ -1922,6 +1922,7 @@ declare global {
             tabindex?: number | string;
             title?: string;
             translate?: "yes" | "no";
+            role?: string;
 
             // RDFa Attributes
             about?: string;

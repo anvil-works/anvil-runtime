@@ -1,5 +1,5 @@
 (ns anvil.runtime.tables.schema
-  (:require [slingshot.slingshot :refer :all]
+  (:require [clj-commons.slingshot :refer :all]
             [clojure.pprint :refer [pprint]]
             [anvil.runtime.tables.manager :as tables-manager]
             [crypto.random :as random]

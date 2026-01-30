@@ -1,7 +1,7 @@
 (ns anvil.runtime.tables.v2.search
   (:require [anvil.runtime.tables.v2.jdbc-trace :as jdbc-t]
             [clojure.pprint :refer [pprint]]
-            [slingshot.slingshot :refer :all]
+            [clj-commons.slingshot :refer :all]
             [clojure.tools.logging :as log]
             [anvil.runtime.tables.v2.util :as util-v2]
             [anvil.runtime.tables.v2.table-types :as table-types]

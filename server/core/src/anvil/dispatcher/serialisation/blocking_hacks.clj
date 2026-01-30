@@ -1,6 +1,6 @@
 (ns anvil.dispatcher.serialisation.blocking-hacks
   (:require [anvil.dispatcher.types :as types]
-            [slingshot.slingshot :refer :all]
+            [clj-commons.slingshot :refer :all]
             [anvil.core.worker-pool :as worker-pool]
             [anvil.dispatcher.serialisation.lazy-media :as lazy-media])
   (:import (java.io ByteArrayOutputStream)

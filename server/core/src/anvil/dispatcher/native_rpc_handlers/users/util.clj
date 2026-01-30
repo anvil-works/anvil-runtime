@@ -1,5 +1,5 @@
 (ns anvil.dispatcher.native-rpc-handlers.users.util
-  (:use slingshot.slingshot)
+  (:use clj-commons.slingshot)
   (:require [anvil.dispatcher.native-rpc-handlers.util :as util]
             [anvil.dispatcher.types :as types]
             [anvil.runtime.app-data :as app-data]

@@ -53,7 +53,9 @@
     (let [^Histogram$Timer t (.startTimer ^Histogram$Child this)]
       #(.observeDurationWithExemplar t exemplar))))
 
-;; If you update this with a hotfix, you will need to restart the prometheus server with (start-server!)
+;; If you update this with a hotfix, you will need to:
+;;   - Manually register the new metrics with `(register-metric)`
+;;   - Restart the metrics server with `(start-server! 9080)`
 (defonce registry (atom (-> (prometheus/collector-registry)
                             (jvm/initialize)
                             (prometheus/register
@@ -79,7 +81,7 @@
                               (prometheus/gauge :api/jdbc-pool-active-connections-total {:labels #{:uri :pool}}) ;; TODO: Max, avg
                               (prometheus/counter :api/jdbc-pool-usage-seconds-total {:labels #{:uri :pool}})
 
-                              (prometheus/gauge :api/runtime-connected-downlinks-total)
+                              (prometheus/gauge :api/runtime-connected-downlinks-total {:labels #{:downlink-type}})
                               (prometheus/gauge :api/runtime-connected-uplinks-total)
                               (prometheus/gauge :api/runtime-connected-clients-total)
                               (prometheus/counter :api/runtime-serve-app-total)
@@ -96,14 +98,15 @@
                               (prometheus/counter :api/runtime-session-edn-roundtrip-total)
 
                               (prometheus/counter :api/downlink-builds-started-total)
-                              (prometheus/counter :api/downlink-builds-succeeded-total)
-                              (prometheus/counter :api/downlink-builds-failed-total)
+                              (prometheus/counter :api/downlink-builds-completed-total {:labels #{:succeeded}})
                               (prometheus/counter :api/downlink-calls-started-total)
-                              (prometheus/counter :api/downlink-calls-succeeded-total)
-                              (prometheus/counter :api/downlink-calls-failed-total)
+                              (prometheus/counter :api/downlink-calls-completed-total {:labels #{:succeeded}})
                               (prometheus/counter :api/background-tasks-started-total)
-                              (prometheus/counter :api/background-tasks-succeeded-total)
-                              (prometheus/counter :api/background-tasks-failed-total)))))
+                              (prometheus/counter :api/background-tasks-responded-total {:labels #{:succeeded}})
+
+                              (prometheus/counter :api/downlink-launches-total {:labels #{:downlink-server}})
+                              (prometheus/counter :api/downlink-rate-limit-launch-delayed-total {:labels #{:downlink-server}})
+                              (prometheus/counter :api/downlink-rate-limit-launch-cancelled-total {:labels #{:downlink-server}})))))
 
 (defonce server (atom nil))
 
@@ -146,3 +149,6 @@
 
 (defn register-metric [metric]
   (swap! registry prometheus/register metric))
+
+(defn unregister-metric [metric-name]
+  (swap! registry prometheus/unregister metric-name))

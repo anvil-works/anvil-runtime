@@ -1,0 +1,18 @@
+FROM eclipse-temurin:22-jdk-jammy
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl python3 python3-pip python3-dev gcc git ca-certificates gnupg && \
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && \
+    npm install -g pnpm@latest-10 && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install uv and Python deps
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    ~/.local/bin/uv pip install --system pytest anvil-uplink pyyaml pychrome
+
+RUN curl -O https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein && \
+    chmod +x lein && mv lein /usr/local/bin/ && lein
+
+RUN git clone --depth 1 https://github.com/anvil-works/embedded-traefik.git && \
+    cd embedded-traefik/ && lein install

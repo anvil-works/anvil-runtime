@@ -1352,14 +1352,18 @@ class _LoadAppResponse(object):
 #!defFunction(anvil.server,%,[form],*args,**kws)!2:
 # {
 #   $doc: "Open the specified form as a new page from a route.\n\n'form' is a string, and when received by the client the new form will be created (extra arguments will be passed to its constructor).",
-#   anvil$helpLink: "/docs/"
+#   anvil$helpLink: "/docs/http-apis/creating-http-endpoints#formresponse-object"
 # } ["FormResponse"]
 def FormResponse(form_name, *args, **kwargs):
     return _LoadAppResponse(form=form_name, args=args, kwargs=kwargs)
 
 
 class AppResponder(object):
-    #!defMethod(_, data=None, meta=None)!2: ("Create an AppResponder object") ["__init__"];
+    #!defMethod(_,[data=None],[meta=None])!2:
+    # {
+    #   $doc: "Create an AppResponder object. `data` should be a serializable object. `meta` should be a dict of meta tag names and values to inject into the head of the HTML document.", 
+    #   anvil$helpLink: "/docs/http-apis/creating-http-endpoints#appresponder-object"
+    # } ["__init__"]
     def __init__(self, *args, **kws):
         # because keyword only syntax is not supported in python2
         _ensure_only_kws("AppResponder", args, kws, ["data", "meta"])

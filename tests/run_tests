@@ -1,7 +1,7 @@
 #! /bin/bash 
 set -e
 
-cd "$(dirname "$0")"
+cd "$(dirname "${BASH_SOURCE[0]}")"
 
 docker build -t anvil-runtime-tests -f Dockerfile ../..
 
@@ -11,7 +11,7 @@ export MSYS_NO_PATHCONV=1
 docker run --rm -it -v "$(pwd)/apps:/runtime/server/app-server/apps" \
                     -v "$(pwd)/configs:/runtime/server/app-server/configs" \
                     -v "$(pwd)/py_tests:/runtime/server/app-server/py_tests" \
-                   anvil-runtime-tests bash -c 'pytest' 
+                   anvil-runtime-tests bash -c 'pytest -xsv' 
 
 
 

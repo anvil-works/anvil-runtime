@@ -1,14 +1,17 @@
-import type { pyCallable, pyDict, pyNewableType, pyObject } from "@Sk";
 import {
     chainOrSuspend,
     isTrue,
     pyCall,
+    pyCallable,
     pyCallOrSuspend,
+    pyDict,
     pyException,
     pyHasAttr,
     pyIsInstance,
+    pyNewableType,
     pyNone,
     pyNoneType,
+    pyObject,
     pyRecursionError,
     pyStr,
     Suspension,
@@ -16,7 +19,8 @@ import {
     tryCatchOrSuspend,
 } from "@Sk";
 import { Component, LayoutProperties, setDefaultDepIdForNextComponent, ToolboxItem } from "../components/Component";
-import { ComponentYaml, EventBindingYaml, FormContainerYaml, FormYaml } from "./data";
+import { ComponentYaml, FormContainerYaml, FormYaml } from "./data";
+import { FormTemplate } from "./forms";
 import {
     getAnvilComponentInstantiator,
     getNamedFormInstantiator,
@@ -73,7 +77,7 @@ export const getAndCheckNextCreationStack = (formName: string, depAppId: string 
 
 // Instrumentation hook
 let wrapFormEventHandler: (handler: pyCallable) => pyCallable = (x) => x;
-export const setInstrumentationHooks = (wfeh?: (pyCallable) => pyCallable) => {
+export const setInstrumentationHooks = (wfeh?: (handler: pyCallable) => pyCallable) => {
     wrapFormEventHandler = wfeh ?? wrapFormEventHandler;
 };
 
@@ -112,18 +116,18 @@ export function removeEventHandlers(
 
 /** We can't use the wrapped function else we break equality of event handlers
  * but we can use a proxy, this way they are python equal */
-function ensureWrappedFunctionEquality(wrappedFn, originalFn) {
+function ensureWrappedFunctionEquality(wrappedFn: pyCallable, originalFn: pyCallable) {
     if (wrappedFn === originalFn) return wrappedFn;
     return new Proxy(originalFn, {
-        get(target, prop) {
+        get(target, prop: PropertyKey) {
             if (prop === "tp$call") {
                 // call the wrapped version of tp$call
                 return wrappedFn.tp$call;
             }
-            return target[prop];
+            return (target as any)[prop];
         },
-        set(target, prop, value) {
-            target[prop] = value;
+        set(target, prop: PropertyKey, value) {
+            (target as any)[prop] = value;
             return true;
         },
     });
@@ -133,11 +137,10 @@ export function addEventHandlers(
     pyComponent: Component,
     pyForm: Component,
     componentName: string,
-    eventBindings: EventBindingYaml | undefined
+    eventBindings: [string, string][]
 ) {
     let pyAddEventHandler = null;
-    const bindingsYaml = eventBindings || {};
-    for (const [eventName, methodName] of Object.entries(bindingsYaml)) {
+    for (const [eventName, methodName] of eventBindings) {
         pyAddEventHandler ??= Sk.abstr.gattr(pyComponent, s_add_event_handler);
 
         const pyHandler = Sk.generic.getAttr.call(pyForm, new pyStr(methodName)) as pyObject; // use object.__getattribute__ for performance
@@ -216,6 +219,20 @@ function createComponents(
     yamlStack: YamlCreationStack,
     rootComponent?: Component
 ) {
+    const { eventHandlers: formEventHandlers } = pyForm.ob$type._ComponentClass;
+
+    const buildEventBindings = (componentName: string, yamlBindings?: Record<string, string>): [string, string][] => {
+        const remaining = { ...(yamlBindings ?? {}) };
+        const bindings: [string, string][] = [];
+        const componentEventHandlers = formEventHandlers.get(componentName) || [];
+        for (const { event, handler } of componentEventHandlers) {
+            bindings.push([event, handler]);
+            delete remaining[event];
+        }
+        bindings.unshift(...Object.entries(remaining));
+        return bindings;
+    };
+
     const instantiationContext: YamlInstantiationContext = {
         requestingComponent: pyForm,
         fromYaml: true,
@@ -272,7 +289,13 @@ function createComponents(
                         }
 
                         if (setupHandlers) {
-                            addEventHandlers(pyComponent, pyForm, yaml.name, yaml.event_bindings);
+                            // We support multiple handlers for a single event, BUT if there are any @handle decorators for
+                            // an event, we ignore YAML event bindings for that event.
+
+                            // If an event handler is set in the YAML and with a decorator, the decorator wins.
+                            const eventBindings = buildEventBindings(yaml.name, yaml.event_bindings);
+
+                            addEventHandlers(pyComponent, pyForm, yaml.name, eventBindings);
                         }
 
                         if (
@@ -310,6 +333,11 @@ function createComponents(
                         reportError(exception);
                         return mkInvalidComponent(`Error setting up component "${yaml?.name}": ${strError(exception)}`);
                     }
+                ),
+            (pyComponent) =>
+                chainOrSuspend(
+                    pyComponent.anvilComponent$registerWithForm?.(pyForm as FormTemplate),
+                    () => pyComponent
                 ),
             (pyComponent) => {
                 const layoutArgs: any = [];
@@ -353,7 +381,7 @@ function createComponents(
             for (const [name, { set_layout_properties, one_component, template, target, index }] of sortedSlots) {
                 let getContainer: () => Suspension | pyObject;
                 if (target.type === "container") {
-                    const pyContainer = target.name ? setupResult.components[target.name].component : pyForm;
+                    const pyContainer = target.name ? setupResult.components[target.name]?.component : pyForm;
                     if (!pyContainer) {
                         // TODO should we throw a real error here rather than a string?
                         throw `No such target container "${target.name}" for slot "${name}"`;
@@ -408,7 +436,7 @@ function createComponents(
     if (formYaml.layout) {
         //let componentsBySlot: {[slotName:string]: {pyComponent: pyObject, layout_properties: object}} = {};
         if (setupHandlers) {
-            addEventHandlers(pyForm, pyForm, "", formYaml.layout.form_event_bindings);
+            addEventHandlers(pyForm, pyForm, "", buildEventBindings("", formYaml.layout.form_event_bindings));
         }
 
         return chainOrSuspend(
@@ -424,7 +452,7 @@ function createComponents(
     } else {
         // No layout; this form inherits from a container class directly
         if (setupHandlers) {
-            addEventHandlers(pyForm, pyForm, "", formYaml.container!.event_bindings);
+            addEventHandlers(pyForm, pyForm, "", buildEventBindings("", formYaml.container!.event_bindings));
         }
 
         let pyAddToForm = pyAlwaysThrow;

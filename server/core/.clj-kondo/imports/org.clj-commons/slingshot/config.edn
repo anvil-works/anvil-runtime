@@ -1,0 +1,5 @@
+{:hooks
+ {:analyze-call {clj-commons.slingshot/try+
+                 clj-kondo.clj-commons.slingshot/try+
+                 clj-commons.slingshot/throw+
+                 clj-kondo.clj-commons.slingshot/throw+}}}

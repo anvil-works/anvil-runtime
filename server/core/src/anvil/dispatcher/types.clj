@@ -1,5 +1,5 @@
 (ns anvil.dispatcher.types
-  (:use [slingshot.slingshot :only [throw+ try+]])
+  (:use [clj-commons.slingshot :only [throw+ try+]])
   (:require [anvil.runtime.conf :as conf]
             [crypto.random :as random]
             [anvil.util :as util]

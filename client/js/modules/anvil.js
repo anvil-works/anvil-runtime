@@ -2,19 +2,21 @@
 
 import { validateChild } from "@runtime/components/Container";
 import { pluggableUI } from "@runtime/modules/_anvil/pluggable-ui";
-import { getClientConfig, topLevelForms } from "@runtime/runner/data";
-import { getCssPrefix } from "@runtime/runner/legacy-features";
+import { getClientConfig, hooks, topLevelForms } from "@runtime/runner/data";
 import { warn } from "@runtime/runner/warnings";
 import {
     chainOrSuspend,
     checkArgsLen,
     checkNone,
-    copyKeywordsToNamedArgs,
+    checkString,
+    copyKeywordsToNamedArgs, isTrue,
     promiseToSuspension,
     pyCall,
     pyCallOrSuspend,
+    pyCheckArgsLen,
+    pyCheckType,
     pyFalse,
-    pyFunc,
+    pyFunc, pyHasAttr,
     pyInt,
     pyNone,
     pyRuntimeError,
@@ -24,12 +26,24 @@ import {
     toJs,
     toPy,
 } from "@Sk";
-import { notifyComponentMounted, notifyComponentUnmounted } from "../components/Component";
-import { anvilServerMod, funcFastCall, kwsToObj, objToKws, pyPropertyFromGetSet, s_clear, s_refresh_data_bindings, s_slots } from "../runner/py-util";
+import {decoratedEventHandlers, notifyComponentMounted, notifyComponentUnmounted} from "../components/Component";
+import {
+    anvilServerMod,
+    funcFastCall,
+    kwsToObj,
+    objToKws,
+    pyPropertyFromGetSet,
+    pyTryFinally, s__get__, s__name__, s__set_name__, s_append,
+    s_clear,
+    s_refresh_data_bindings,
+    s_setdefault,
+    s_slots
+} from "../runner/py-util";
 import { defer, getRandomStr } from "../utils";
-import Modal, { BOOTSTRAP_MODAL_BG } from "./modal";
+import Modal from "./modal";
 import PyDefUtils from "PyDefUtils";
 import * as b64 from "../lib/b64";
+import notify from "./notify";
 
 function anvil(appOrigin, uncaughtExceptions) {
 
@@ -268,6 +282,22 @@ function anvil(appOrigin, uncaughtExceptions) {
             return self._environment || (self._environment = new _environmentClass());
         });
 
+
+        /*!defMethod(_, [path])!2*/ ("Get an asset file from the app's theme assets.");
+        $loc["get_asset"] = funcFastCall(function (args, kws) {
+            const [self, pyPath] = copyKeywordsToNamedArgs("get_app_asset", [null, "path"], args, kws, [pyNone]);
+            return chainOrSuspend(
+                pyCallOrSuspend(anvilServerMod.call, [new pyStr("anvil.private.get_app_asset"), pyPath]),
+                (media) => {
+                    if (media === pyNone) {
+                        throw new pyValueError(`Asset not found: ${pyPath}`);
+                    }
+                    return media;
+                }
+            );
+        });
+
+
         /*!defMethod(_,[package_name])!2*/ "Get the client config for the specified package. If no package name is specified, the client config for the current app is returned.";
         $loc["get_client_config"] = funcFastCall(function (args, kws) {
             const [self, pyPackageName] = copyKeywordsToNamedArgs(
@@ -411,12 +441,21 @@ function anvil(appOrigin, uncaughtExceptions) {
             return notifyComponentMounted(pyForm, true);
         });
 
+        fns.push(() => {
+            // For what ever reason, this imported at the top prevents the ide iframe from loading sometimes
+            // TODO - figure out why and fix it
+            // for leave it here for now
+            // if you change this - try opening m3 in the designer, any component fails
+            hooks.onOpenedForm?.();
+        });
+
         fns.push(() => pyForm);
 
         return Sk.misceval.chain(null, ...fns);
     }
 
     let openFormCall = 0;
+    const INFLIGHT_FORM_IMPORTS = new Map();
 
     /*!defFunction(anvil,!,form,*args,**kwargs)!2*/ "Open the specified form as a new page.\n\nIf 'form' is a string, a new form will be created (extra arguments will be passed to its constructor).\nIf 'form' is a Form object, it will be opened directly."
     pyModule["open_form"] = new Sk.builtin.func(PyDefUtils.withRawKwargs(function(rawKwargs, pyForm, ...args) {
@@ -433,11 +472,25 @@ function anvil(appOrigin, uncaughtExceptions) {
         const formName = pyForm.toString();
 
         return Sk.misceval.chain(
-            null,
-            () => {
-                const moduleDict = { __package__: new Sk.builtin.str(window.anvilAppMainPackage) };
-                return Sk.builtin.__import__(formName, moduleDict, {}, [], -1);
-            },
+            pyTryFinally(
+                () => {
+                    const moduleDict = { __package__: new Sk.builtin.str(window.anvilAppMainPackage) };
+                    // This prevents multiple imports of the same form
+                    // If the module is slow to load, multiple inflight imports can result in false positive circular import errors
+                    // This probably needs addressing in Skulpt
+                    // but it's not obvious how to distinguish between a circular import (that suspends)
+                    // and multiple imports of the same slow module resulting from user interaction, say a button click handler
+                    if (INFLIGHT_FORM_IMPORTS.has(formName)) {
+                        return INFLIGHT_FORM_IMPORTS.get(formName);
+                    }
+                    const rv = Sk.builtin.__import__(formName, moduleDict, {}, [], -1);
+                    INFLIGHT_FORM_IMPORTS.set(formName, rv);
+                    return rv;
+                },
+                () => {
+                    INFLIGHT_FORM_IMPORTS.delete(formName);
+                }
+            ),
             () => {
                 const leafName = formName.split(".").pop();
                 const modName = new Sk.builtin.str(window.anvilAppMainPackage + "." + formName);
@@ -683,7 +736,7 @@ function anvil(appOrigin, uncaughtExceptions) {
                 const uint8 = self._data;
                 for (let i = 0; i < uint8.length; i++) {
                     jsstr += String.fromCharCode(uint8[i]);
-                } 
+                }
             } else {
                 jsstr = self._data;
             }
@@ -825,7 +878,7 @@ function anvil(appOrigin, uncaughtExceptions) {
         });
 
         $loc["__getitem__"] = new Sk.builtin.func(function(self, pyName) {
-            
+
             // Are we iterable?
             if (self._spec.methods.indexOf("__anvil_iter_page__") > -1)
             {
@@ -1158,7 +1211,7 @@ function anvil(appOrigin, uncaughtExceptions) {
     docs_url: /docs/client/python/alerts-and-notifications
     title: Alerts
     description: |
-      You can display popup messages using the `alert` and `confirm` 
+      You can display popup messages using the `alert` and `confirm`
       functions. They are in the `anvil` module, so will be imported by default.
 
       #### Messages
@@ -1167,8 +1220,8 @@ function anvil(appOrigin, uncaughtExceptions) {
       alert("Welcome to Anvil")
       ```
 
-      The simplest way to display a popup message is to call the `alert` function. 
-      You must supply at least one argument: The message to be displayed. The `alert` 
+      The simplest way to display a popup message is to call the `alert` function.
+      You must supply at least one argument: The message to be displayed. The `alert`
       function will return `True` if the user clicks OK, or `None` if they dismiss
       the popup by clicking elsewhere. The example on the right produces the following popup:
 
@@ -1182,7 +1235,7 @@ function anvil(appOrigin, uncaughtExceptions) {
       ```
 
       If you want to ask your user a yes/no question, just call the `confirm` function
-      in the same way. The `confirm` function returns `True` if the user clicks Yes, 
+      in the same way. The `confirm` function returns `True` if the user clicks Yes,
       `False` if the user clicks No, and `None` if they dismiss the popup by clicking elsewhere (See `dismissible` keyword argument, below).
 
       ![Alert popup](img/confirm.png)
@@ -1265,7 +1318,7 @@ function anvil(appOrigin, uncaughtExceptions) {
         return PyDefUtils.suspensionFromPromise(modal(kwargs));
     });
 
-    /*!defFunction(anvil,_,content,[title=""],[buttons=],[large=False],[dismissible=True],[role=])!2*/ ('Pop up an alert box. By default, it will have a single "OK" button which will return True when clicked.');
+    /*!defFunction(anvil,_,content,[title=""],[buttons=],[large=False],[dismissible=True],[role=])!2*/ ("Pop up an alert box. By default, it will have a single \"OK\" button which will return True when clicked.");
     pyModule["alert"] = funcFastCall((args, kws) => {
         const kwargs = cleanModalArgs(args, kws);
         kwargs.dismissible ??= pyTrue;
@@ -1273,7 +1326,7 @@ function anvil(appOrigin, uncaughtExceptions) {
         return callPluggableUiModal(kwargs);
     });
 
-    /*!defFunction(anvil,_,content,[title=""],[buttons=],[large=False],[dismissible=False], [role=])!2*/ ('Pop up a confirmation box. By default, it will have "Yes" and "No" buttons which will return True and False respectively when clicked.');
+    /*!defFunction(anvil,_,content,[title=""],[buttons=],[large=False],[dismissible=False], [role=])!2*/ ("Pop up a confirmation box. By default, it will have \"Yes\" and \"No\" buttons which will return True and False respectively when clicked.");
     pyModule["confirm"] = funcFastCall((args, kws) => {
         const kwargs = cleanModalArgs(args, kws);
         kwargs.dismissible ??= pyFalse;
@@ -1295,7 +1348,7 @@ function anvil(appOrigin, uncaughtExceptions) {
       n = Notification("This is an important message!")
       n.show()
       ```
-      
+
       To show a simple notification with some content, call the `show()` method.
       By default, it will disappear after 2 seconds.
 
@@ -1327,32 +1380,13 @@ function anvil(appOrigin, uncaughtExceptions) {
                    style="success").show()
       ```
 
-      As well as a message, notifications can also have a title. Use the `style` 
+      As well as a message, notifications can also have a title. Use the `style`
       keyword argument to set the colour of the notification. Use `"success"` for green,
       `"danger"` for red, `"warning"` for yellow, or `"info"` for blue (default).
 
 
     */
     pyModule["Notification"] = Sk.misceval.buildClass(pyModule, function($gbl, $loc) {
-        // adjusted in runtimeVersion >= 3 to prefix bootstrap classes e.g. .col-sm-4 and .close
-        // still relies on animate.css
-        let templateArgs;
-        const getTemplateArgs = () => {
-            if (!templateArgs || window.anvilParams.runtimeVersion >= 3) {
-                const prefix = getCssPrefix();
-                const template = `<div data-notify="container" class="${prefix}col-xs-11 ${prefix}col-sm-4 ${prefix}alert ${prefix}alert-{0}" role="alert">
-                <button type="button" aria-hidden="true" class="${prefix}close" data-notify="dismiss">&times;</button>
-                <span data-notify="icon"></span> <span data-notify="title">{1}</span> <span data-notify="message">{2}</span>
-                `;
-                const animate = {
-                    enter: `${prefix}animated ${prefix}fadeInDown`,
-                    exit: `${prefix}animated ${prefix}fadeOutUp`,
-                };
-                templateArgs = { template, animate };
-            }
-
-            return (templateArgs ??= {});
-        };
 
 
         function _show(self) {
@@ -1361,19 +1395,13 @@ function anvil(appOrigin, uncaughtExceptions) {
             }
 
             const {message, title, style: type, timeout} = self._anvil;
-            const { template, animate } = getTemplateArgs();
 
-            self._anvil.notification = $.notify(
+            self._anvil.notification = notify(
                 { message, title },
                 {
                     type,
-                    delay: timeout || 2000,
-                    timer: timeout === 0 ? 0 : 10,
+                    timeout,
                     placement: { from: "top", align: "center" },
-                    mouse_over: "pause",
-                    template,
-                    z_index: BOOTSTRAP_MODAL_BG, // same as alerts
-                    animate,
                     onClosed() {
                         self._anvil.notification = null;
                     },
@@ -1430,6 +1458,66 @@ function anvil(appOrigin, uncaughtExceptions) {
     }, "Notification", []);
 
     // The anvil.download() function used to be here, but has moved to anvil.media.download(). The anvil.media module aliases the function back to here for backwards compatibility.
+
+    pyModule["EventHandlerDescriptor"] = Sk.misceval.buildClass(
+        pyModule,
+        function ($gbl, $loc) {
+            $loc["__init__"] = new pyFunc(function (self, componentName, eventName, pyFn) {
+                self.componentName = componentName.toString();
+                self.eventName = eventName.toString();
+                self.pyFn = pyFn;
+            });
+
+            $loc["__get__"] = new pyFunc(function (self, obj, objtype) {
+                if (isTrue(pyHasAttr(self.pyFn, s__get__))) {
+                    return self.pyFn.tp$getattr(s__get__).tp$call([obj, objtype]);
+                } else {
+                    return self.pyFn;
+                }
+            });
+
+            $loc["__set_name__"] = new pyFunc(function (self, pyOwner, pyName) {
+                if (isTrue(pyHasAttr(self.pyFn, s__set_name__))) {
+                    self.pyFn.tp$getattr(s__set_name__).tp$call([pyOwner, pyName]);
+                }
+                if (!decoratedEventHandlers.has(pyOwner)) {
+                    decoratedEventHandlers.set(pyOwner, new Map());
+                }
+                const formHandlers = decoratedEventHandlers.get(pyOwner);
+                if (!formHandlers.has(self.componentName)) {
+                    formHandlers.set(self.componentName, []);
+                }
+                const componentHandlers = formHandlers.get(self.componentName);
+                componentHandlers.push({
+                    event: self.eventName,
+                    handler: pyName.toString(),
+                });
+            });
+        },
+        "EventHandlerDescriptor",
+        []
+    );
+
+    /*!defFunction(anvil,_,component_name,event_name)!2*/ ("When applied to a form method as a decorator, sets the decorated method as an event handler for the specified component event.");
+    pyModule["handle"] = Sk.misceval.buildClass(
+        pyModule,
+        function ($gbl, $loc) {
+            $loc["__init__"] = new pyFunc(function (self, ...args) {
+                const [pyComponentName, pyEvent] = args;
+                pyCheckArgsLen("handle", args.length, 2, 2);
+                pyCheckType("component_name", "string", checkString(pyComponentName));
+                pyCheckType("event_name", "string", checkString(pyEvent));
+                self.componentName = pyComponentName;
+                self.eventName = pyEvent;
+            });
+
+            $loc["__call__"] = new pyFunc(function (self, pyFn) {
+                return pyModule["EventHandlerDescriptor"].tp$call([self.componentName, self.eventName, pyFn]);
+            });
+        },
+        "handle",
+        []
+    );
 
     return pyModule;
 };

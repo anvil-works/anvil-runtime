@@ -55,19 +55,16 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
 
     async function displayLogInModal(additionalScopes) {
 
-        var anvil = PyDefUtils.getModule("anvil");
-        var appPath = Sk.ffi.remapToJs(anvil.tp$getattr(new Sk.builtin.str("app_path")));
-
         var scopesToRequest = scopes.concat(additionalScopes || []).join(' ');
 
         function doLogin() {
 
             var authParams = {
                 scope: scopesToRequest,
-                _anvil_session: window.anvilSessionToken,
+                oauth_info: window.anvilOAuthInfo,
             };
 
-            var authUrl = appPath + "/_/client_auth_redirect?" + $.param(authParams);
+            var authUrl = window.anvilRuntimeCommonUrl + "/_/google_auth_redirect?" + $.param(authParams);
 
             var windowFeatures = {
                 width: 450,
@@ -91,7 +88,7 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
                 strWindowFeatures+= "=" + v;
             }
 
-            var popup = window.open(authUrl, null, strWindowFeatures);
+            window.open(authUrl, null, strWindowFeatures);
         };
 
         if (PyDefUtils.isPopupOK()) {
@@ -101,9 +98,10 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
             const modal = await window.anvilModal.create({
                 id: "google-login-modal",
                 backdrop: "static",
+                large: false,
                 keyboard: false,
                 dismissible: false,
-                title: "Log in with Google",
+                title: "Log in",
                 body: true,
                 buttons: [
                     {
@@ -117,8 +115,9 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
             const { modalBody } = modal.elements;
             const btn = document.createElement("google-signin-button");
             btn.textContent = "Sign in with Google"; // not necessary - but if the web component were to fail - this would still render
-            modalBody.appendChild(btn);
+            btn.style.cursor = "pointer";
             btn.addEventListener("click", doLogin);
+            modalBody.appendChild(btn);
             modalBody.style.textAlign = "center";
             await modal.show();
             return modal;
@@ -127,8 +126,8 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
 
     var registerCallbackHandlers = function(messageFns) {
 
-        messageFns.clientAuthErrorCallback = function(params) {
-            console.error("Client auth ERROR", params);
+        messageFns.googleAuthErrorCallback = function(params) {
+            console.error("Google auth ERROR: ", params.message);
 
             if (loginCallbackResolve) {
                 if (params.message == "SESSION_EXPIRED") {
@@ -140,27 +139,32 @@ var $builtinmodule = window.memoise('anvil.google.auth', function() {
             }
         }
 
-        messageFns.clientAuthSuccessCallback = function(params) {
-
+        messageFns.googleAuthSuccessCallback = async function(args) {
             // This will only happen if we have successfully finished the popup flow. Any problems, they'll be displayed in the popup.
-            console.debug("Client auth callback");
+            // The origin of this message is validated in the messages.js file, so we don't need to recheck it here.
 
-            // Get current user info
-            var anvil = PyDefUtils.getModule("anvil");
-            var appPath = Sk.ffi.remapToJs(anvil.tp$getattr(new Sk.builtin.str("app_path")));
+            const anvil = PyDefUtils.getModule("anvil");
+            const appPath = Sk.ffi.remapToJs(anvil.tp$getattr(new Sk.builtin.str("app_path")));
 
-            $.get(appPath + "/_/client_auth_id_token?_anvil_session=" + window.anvilSessionToken).done(function(idToken) {
-                console.debug("Got app user ID token:", idToken);
+            const resp = await fetch(appPath + "/_/google_auth_complete?_anvil_session=" + window.anvilSessionToken, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(args),
+            });
+            const data = await resp.json().catch(() => null);
+
+            if (!resp.ok) {
+                const error = data?.error || resp.statusText;
+                console.error("Error getting user info: " + error);
                 if (loginCallbackResolve) {
-                    loginCallbackResolve.resolve(idToken);
+                    loginCallbackResolve.reject("Error getting user info: " + error);
                 }
-            }).fail(function(e) {
-                console.error("Error getting user info.");
-                if (loginCallbackResolve) {
-                    loginCallbackResolve.reject("Error getting user info");
-                }
-            })
-
+                return;
+            }
+            const idToken = data.id_token;
+            if (loginCallbackResolve) {
+                loginCallbackResolve.resolve(idToken);
+            }
         }
     }
 

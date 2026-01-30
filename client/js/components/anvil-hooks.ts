@@ -1,4 +1,5 @@
 import {
+    type Suspension,
     WrapperDescriptorDef,
     buildNativeClass,
     chainOrSuspend,
@@ -18,7 +19,6 @@ import {
     retryOptionalSuspensionOrThrow,
     toJs,
     toPy,
-    type Suspension,
 } from "@Sk";
 import {
     s_anvil_disable_drop_mode,

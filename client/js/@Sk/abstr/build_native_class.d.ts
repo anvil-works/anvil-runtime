@@ -16,6 +16,7 @@ interface AbstractMethodDef {
     $doc?: string | null;
     $textsig?: string | null;
     $name?: string;
+    anvil$args?: { [key: string]: string };
 }
 
 interface MethDef<I extends pyObject> extends AbstractMethodDef {

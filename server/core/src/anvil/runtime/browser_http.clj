@@ -1,6 +1,6 @@
 (ns anvil.runtime.browser-http
   (:use [org.httpkit.server]
-        [slingshot.slingshot :only [throw+ try+]]
+        [clj-commons.slingshot :only [throw+ try+]]
         [anvil.runtime.util])
   (:require [clojure.data.json :as json]
             [crypto.random :as random]
@@ -14,11 +14,11 @@
             [clojure.string :as str]))
 
 (defn- file->blob [{file :tempfile}]
-  (with-open [input-stream (io/input-stream file)]
-    (let [file-size (-> file .length int)
-          byte-array (byte-array file-size)]
-      (.read input-stream byte-array)
-      byte-array)))
+  (with-open [input-stream (io/input-stream file)
+              baos (java.io.ByteArrayOutputStream.)]
+    ;; io/copy ensures all bytes are read, even if InputStream.read() doesn't read everything in one call
+    (io/copy input-stream baos)
+    (.toByteArray baos)))
 
 (defn- get-json-data [request] (json/read-str (get-in request [:multipart-params "json-data"]) :key-fn keyword))
 

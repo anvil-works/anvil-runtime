@@ -1,7 +1,7 @@
 (ns anvil.dispatcher.native-rpc-handlers.airtable
   (:use [anvil.dispatcher.native-rpc-handlers.util]
         [clojure.pprint]
-        [slingshot.slingshot])
+        [clj-commons.slingshot])
   (:require [clojure.data.json :as json]
             [org.httpkit.client :as http]
             [clojure.data.xml :as xml]

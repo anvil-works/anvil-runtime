@@ -493,7 +493,7 @@ function GoogleMap(pyModule) {
                 type: "object",
                 pyType: "anvil.GoogleMap.Data instance",
                 description: "Map data",
-                hideFromDesigner: true,
+                hidden: true,
                 mapProp: true,
                 set(s, e, v) {
                     s._jsVal.data = remapToJs(v);
@@ -518,7 +518,7 @@ function GoogleMap(pyModule) {
             center: {
                 name: "center",
                 description: "The Map center.",
-                hideFromDesigner: true,
+                hidden: true,
                 type: "object",
                 pyType: "anvil.GoogleMap.LatLng instance",
                 pyVal: true,
@@ -608,7 +608,7 @@ function GoogleMap(pyModule) {
             fullscreen_control_options: {
                 name: "fullscreen_control_options",
                 description: "The display options for the Fullscreen control.",
-                hideFromDesigner: true,
+                hidden: true,
                 type: "object",
                 pyType: "anvil.GoogleMap.FullscreenControlOptions instance",
                 pyVal: true,
@@ -665,7 +665,7 @@ function GoogleMap(pyModule) {
             map_type_control_options: {
                 name: "map_type_control_options",
                 description: "The display options for the Map type control.",
-                hideFromDesigner: true,
+                hidden: true,
                 type: "object",
                 pyType: "anvil.GoogleMap.MapTypeControlOptions instance",
                 pyVal: true,
@@ -677,7 +677,7 @@ function GoogleMap(pyModule) {
             map_type_id: {
                 name: "map_type_id",
                 description: "The map type ID. Defaults to MapTypeId.ROADMAP",
-                hideFromDesigner: true,
+                hidden: true,
                 type: "object",
                 pyType: "anvil.GoogleMap.MapTypeId",
                 pyVal: true,
@@ -722,7 +722,7 @@ function GoogleMap(pyModule) {
             rotate_control_options: {
                 name: "rotate_control_options",
                 description: "The display options for the rotate control.",
-                hideFromDesigner: true,
+                hidden: true,
                 type: "object",
                 pyType: "anvil.GoogleMap.RotateControlOptions instance",
                 pyVal: true,
@@ -745,7 +745,7 @@ function GoogleMap(pyModule) {
             scale_control_options: {
                 name: "scale_control_options",
                 description: "The display options for the scale control.",
-                hideFromDesigner: true,
+                hidden: true,
                 type: "object",
                 pyType: "anvil.GoogleMap.ScaleControlOptions instance",
                 pyVal: true,
@@ -781,7 +781,7 @@ function GoogleMap(pyModule) {
             street_view_control_options: {
                 name: "street_view_control_options",
                 description: "The display options for the street view control.",
-                hideFromDesigner: true,
+                hidden: true,
                 type: "object",
                 pyType: "anvil.GoogleMap.StreetViewControlOptions instance",
                 pyVal: true,
@@ -828,7 +828,7 @@ function GoogleMap(pyModule) {
             zoom_control_options: {
                 name: "zoom_control_options",
                 description: "The display options for the zoom control.",
-                hideFromDesigner: true,
+                hidden: true,
                 type: "object",
                 pyType: "anvil.GoogleMap.ZoomControlOptions instance",
                 pyVal: true,

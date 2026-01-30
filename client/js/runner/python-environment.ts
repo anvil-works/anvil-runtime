@@ -1,7 +1,8 @@
 //import * as $ from "jquery";
 import { chainOrSuspend, pyObject, Suspension, suspensionToPromise } from "@Sk";
 import { Container } from "@runtime/components/Container";
-import { hooks } from "@runtime/runner/index";
+import { hooks } from "@runtime/runner/data";
+import { HtmlComponent } from "@runtime/components/HtmlComponent";
 import PyDefUtils from "PyDefUtils";
 import { Component } from "../components/Component";
 import { registerJsPythonModules } from "./components-in-js/common";
@@ -178,6 +179,7 @@ export async function setupPythonEnvironment() {
     // This runner *does* expose the root "Component" class
     anvilModule["Component"] = Component;
     anvilModule["Container"] = Container;
+    anvilModule["HtmlComponent"] = HtmlComponent;
 
     // Inject the theme HTML assets into the HtmlTemplate component
     anvilModule["HtmlTemplate"].$_anvilThemeAssets = data.app.theme?.html || {};

@@ -1,3 +1,4 @@
+import type { FormTemplate } from "@runtime/runner/forms";
 import {
     Kws,
     Suspension,
@@ -5,8 +6,10 @@ import {
     buildNativeClass,
     buildPyClass,
     chainOrSuspend,
+    checkArgsLen,
     checkOneArg,
     checkString,
+    copyKeywordsToNamedArgs,
     isTrue,
     lookupSpecial,
     objectRepr,
@@ -27,6 +30,7 @@ import {
     pyTuple,
     pyType,
     pyTypeError,
+    pyValueError,
     toPy,
     tryCatchOrSuspend,
 } from "../@Sk";
@@ -36,11 +40,13 @@ import {
     kwsToObj,
     objToKws,
     reportError,
+    s__mro__,
     s_add_event_handler,
     s_anvil_events,
     s_get_components,
     s_name,
     s_raise_event,
+    s_remove_event_handler,
 } from "../runner/py-util";
 import type { DropModeFlags, WithLayout } from "../runner/python-objects";
 import { HasRelevantHooks } from "../runner/python-objects";
@@ -90,18 +96,32 @@ function eventDescriptionToString(event: pyStr | pyDict): string {
     throw new pyTypeError(`Invalid argument for ${objectRepr(s_anvil_events)}, got ${objectRepr(event)}`);
 }
 
-const s___mro__ = new pyStr("__mro__");
-
 const hasOwnProperty = Object.prototype.hasOwnProperty;
+
+export const decoratedEventHandlers = new WeakMap<
+    pyType<Component>,
+    Map<string, { event: string; handler: string }[]>
+>();
 
 function initComponentSubclass(cls: ComponentConstructor) {
     const providesHooksInPython: HookDescriptors = {};
     setupClsHooks(cls);
 
-    const mro = cls.tp$getattr<pyTuple<pyType>>(s___mro__);
+    const mro = cls.tp$getattr<pyTuple<pyType>>(s__mro__);
     const allowedEvents = new Set<string>();
+    const eventHandlers = new Map<string, { event: string; handler: string }[]>();
     for (const c of arrayFromIterable(mro)) {
         if (c === Component) break;
+        const es = decoratedEventHandlers.get(c as pyType<Component>);
+        if (es) {
+            for (const [componentName, handlers] of es.entries()) {
+                if (!eventHandlers.has(componentName)) {
+                    eventHandlers.set(componentName, []);
+                }
+                const componentHandlers = eventHandlers.get(componentName)!;
+                componentHandlers.push(...handlers);
+            }
+        }
         // we could check if c is a subclass of Component, but seems unnecessary
         if (!hasOwnProperty.call(c.prototype, s_anvil_events.toString())) {
             continue;
@@ -113,7 +133,7 @@ function initComponentSubclass(cls: ComponentConstructor) {
         }
     }
 
-    cls._ComponentClass = { allowedEvents, providesHooksInPython };
+    cls._ComponentClass = { eventHandlers, allowedEvents, providesHooksInPython };
 
     return pyNone;
 }
@@ -138,7 +158,7 @@ interface ComponentParent {
 
 interface ComponentState {
     allowedEvents: Set<string>;
-    eventHandlers: { [eventName: string]: pyCallable[] };
+    eventHandlers: { [eventName: string]: pyCallable<pyObject | Suspension>[] };
     parent?: ComponentParent;
     tag: pyObject;
     defaultDepId: string | null;
@@ -158,6 +178,7 @@ interface ComponentState {
 // Make sure to update CustomComponent dialogue if adding new hints
 export type DesignerHint =
     | "align-horizontal"
+    | "align-vertical"
     | "font-bold"
     | "font-italic"
     | "font-underline"
@@ -362,7 +383,7 @@ export type PropertyValue<T extends PropertyType> =
 export interface EventDescription {
     name: string;
     description?: string;
-    parameters?: { name: string; description?: string; important?: boolean }[];
+    parameters?: { name: string; description?: string; important?: boolean; type?: string; pyType?: string;  pyVal?: boolean }[];
     defaultEvent?: boolean;
     hidden?: boolean;
 }
@@ -526,8 +547,8 @@ export interface DroppingSpecification {
 }
 
 export interface AnvilHookSpec<T extends Component = Component> {
-    setupDom: (this: T) => Suspension | HTMLElement;
-    getDomElement(this: T): HTMLElement | undefined | null;
+    setupDom: (this: T) => Suspension | Element;
+    getDomElement(this: T): Element | undefined | null;
     getProperties?(this: T): PropertyDescriptionBase[];
     getEvents?(this: T): EventDescription[];
     updateDesignName?(this: T, name: string): void;
@@ -540,7 +561,7 @@ export interface AnvilHookSpec<T extends Component = Component> {
         newValues: LayoutProperties
     ): PropertyValueUpdates | null | undefined | Suspension; // TODO: Should we allow an option to signal "I need the page refreshing anyway"?
     getSections?(this: T): Section[] | null | undefined;
-    getSectionDomElement?(this: T, id: string): HTMLElement | undefined | null;
+    getSectionDomElement?(this: T, id: string): Element | undefined | null;
     setSectionPropertyValues?(
         this: T,
         id: string,
@@ -578,6 +599,7 @@ type HookDescriptors = Partial<Record<keyof AnvilHooks, pyObject>>;
 export interface ComponentConstructor extends pyType<Component> {
     new (): Component;
     _ComponentClass: {
+        eventHandlers: Map<string, { event: string; handler: string }[]>;
         allowedEvents: Set<string>;
         providesHooksInPython: HookDescriptors;
     };
@@ -593,11 +615,16 @@ export interface Component extends pyObject {
             onRemove,
             setVisibility,
             isMounted,
-        }: { onRemove: () => void; setVisibility?: (visible: boolean) => void; isMounted?: boolean }
+        }: { onRemove: () => void | Suspension; setVisibility?: (visible: boolean) => void; isMounted?: boolean }
     ): Suspension | pyObject;
     $verifyEventName(this: Component, pyEventName: pyStr, msg: string): string;
     $verifyCallable(this: Component, eventName: string, pyHandler: pyObject): void;
     anvilComponent$onRemove(this: Component, remove: () => void): void;
+    /**
+     * Private JS method to register a component with its form host.
+     * This could later be exposed as a Python API if needed.
+     */
+    anvilComponent$registerWithForm?: (this: Component, pyForm: FormTemplate) => Suspension | void;
 }
 
 export interface LayoutProperties {
@@ -660,6 +687,7 @@ export interface ToolboxItemBase {
     codePrelude?: string;
     createForms?: { [formKey: string]: CreateForm };
     url?: string;
+    tooltipText?: string;
     showInToolbox?: boolean; // Missing means true
 }
 export interface ToolboxComponentItem extends ToolboxItemBase {
@@ -792,6 +820,9 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
 
             //console.log("Class", cls.toString(), "has permitted events", allowedEvents);
             return self;
+        },
+        tp$init(args, kws) {
+            // pass
         },
     },
     classmethods: {
@@ -986,18 +1017,42 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
             $flags: { OneArg: true },
             $doc: "Notify the component's parent and children that its visible status has changed",
         },
-        /*!defBuiltinMethod(,smooth=False)!2*/ // "scroll_into_view";
+        /*!defBuiltinMethod(,smooth=False, align="center")!2*/ // "scroll_into_view";
         scroll_into_view: {
-            $meth: function (smooth) {
-                const how = { behavior: isTrue(smooth) ? "smooth" : "instant", block: "center", inline: "center" };
+            $meth: function (args, kws) {
+                // backwards compatibility - smooth can be a plain argument
+                checkArgsLen("scroll_into_view", args, 0, 1);
+                const [smooth, pyAlign] = copyKeywordsToNamedArgs("scroll_into_view", ["smooth", "align"], args, kws, [
+                    pyFalse,
+                    new pyStr("center"),
+                ]);
+
+                if (!checkString(pyAlign)) {
+                    throw new pyTypeError("'align' must be a string");
+                }
+
+                const align = pyAlign.toString().toLowerCase() as ScrollLogicalPosition;
+                const VALID_ALIGN_VALUES: ScrollLogicalPosition[] = ["start", "center", "end", "nearest"];
+
+                if (!VALID_ALIGN_VALUES.includes(align)) {
+                    throw new pyValueError("'align' must be one of 'start', 'center', 'end', 'nearest'");
+                }
+
                 return chainOrSuspend(this.anvil$hooks.setupDom(), (element) => {
-                    // @ts-expect-error - can't do ts typing because of gendoc
-                    element.scrollIntoView(how);
+                    element.scrollIntoView({
+                        behavior: isTrue(smooth) ? "smooth" : "instant",
+                        block: align,
+                        inline: align,
+                    });
                     return pyNone;
                 });
             },
-            $flags: { NamedArgs: ["smooth"], Defaults: [Sk.builtin.bool.false$] },
+            $flags: { FastCall: true },
             $doc: "Scroll the window to make sure this component is in view.",
+            anvil$args: {
+                smooth: "Determines whether the scroll should be smooth or instant.",
+                align: "Determines where the component should be aligned within the viewport. Options are 'start', 'center', 'end', and 'nearest'.",
+            },
         },
         /*!defBuiltinMethod(tuple_of_event_handlers, event_name)!2*/ // "get_event_handlers";
         get_event_handlers: {
@@ -1066,15 +1121,30 @@ export function raiseWritebackEventOrSuspend(component: Component, pyAttr: pyStr
     );
 }
 
+const EVENT_HANDLER_CACHE = new WeakMap<Function, pyCallable<pyObject | Suspension>>();
+
+export const removeEventHandler = (
+    component: Component,
+    pyName: pyStr,
+    handler: (k: Kws) => Suspension | pyObject | void
+) => {
+    const pyHandler = EVENT_HANDLER_CACHE.get(handler);
+    if (!pyHandler) {
+        return pyNone;
+    }
+    EVENT_HANDLER_CACHE.delete(handler);
+    return pyCallOrSuspend(component.tp$getattr<pyCallable>(s_remove_event_handler), [pyName, pyHandler]);
+};
+
 export const addEventHandler = (
     component: Component,
     pyName: pyStr,
     handler: (k: Kws) => Suspension | pyObject | void
-) =>
-    pyCallOrSuspend(component.tp$getattr<pyCallable>(s_add_event_handler), [
-        pyName,
-        funcFastCall((_args, kws = []) => chainOrSuspend(handler(kws), () => pyNone)),
-    ]);
+) => {
+    const pyHandler = funcFastCall((_args, kws = []) => chainOrSuspend(handler(kws), () => pyNone));
+    EVENT_HANDLER_CACHE.set(handler, pyHandler);
+    return pyCallOrSuspend(component.tp$getattr<pyCallable>(s_add_event_handler), [pyName, pyHandler]);
+};
 
 /*!defClass(anvil,Component)!*/
 

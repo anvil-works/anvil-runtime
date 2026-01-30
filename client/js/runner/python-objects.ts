@@ -65,7 +65,7 @@ interface SlotConstructor extends pyType<Slot> {
     new (
         getPyContainer?: () => Suspension | pyObject,
         index?: number,
-        setLayoutProps?: { [prop: string]: pyObject },
+        setLayoutProps?: { [prop: string]: any },
         oneComponent?: boolean,
         templateSpec?: ToolboxItem
     ): Slot;
@@ -150,16 +150,19 @@ function mkSlotState(
             }
             return offset;
         },
-        enableDropMode(dropping) {
+        enableDropMode(dropping, flags) {
             const pyLayoutProperties = (dropping.pyLayoutProperties || new pyDict()).nb$or(this.pyLayoutProps);
             const offset = this.calculateOffset();
             const dropZones: DropZone[] =
-                this.cache?.hooks.enableDropMode?.({
-                    ...dropping,
-                    pyLayoutProperties,
-                    minChildIdx: this.insertionIndex + offset,
-                    maxChildIdx: this.insertionIndex + offset + this.components.length,
-                }) || [];
+                this.cache?.hooks.enableDropMode?.(
+                    {
+                        ...dropping,
+                        pyLayoutProperties,
+                        minChildIdx: this.insertionIndex + offset,
+                        maxChildIdx: this.insertionIndex + offset + this.components.length,
+                    },
+                    flags
+                ) || [];
             const filteredDropzones = dropZones
                 .filter(
                     ({ element, dropInfo: { minChildIdx, maxChildIdx, layout_properties } = {} }) =>
@@ -294,7 +297,8 @@ export const Slot: SlotConstructor = Sk.abstr.buildNativeClass("anvil.Slot", {
                 }
 
                 // Adjust for index
-                const insertionIndex = layoutProps["index"] ? toJs(layoutProps["index"]) : _slotState.components.length;
+                const givenIndex = toJs(layoutProps["index"]);
+                const insertionIndex = givenIndex != null ? givenIndex : _slotState.components.length;
                 if (typeof insertionIndex !== "number") {
                     throw new Sk.builtin.ValueError("index= must be a number");
                 }

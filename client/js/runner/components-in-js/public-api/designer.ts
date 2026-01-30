@@ -7,7 +7,7 @@
 
 import { ComponentConstructor, StringPropertyDescription } from "@runtime/components/Component";
 import { SectionUpdates, designerApi } from "@runtime/runner/component-designer-api";
-import { JsComponent } from "./component";
+import { JsComponent, raiseAnvilEvent } from "./component";
 import { assert, toPyComponent } from "./utils";
 
 // @ts-ignore
@@ -55,8 +55,9 @@ export function notifyInteractionsChanged(jsComponent: JsComponent) {
     designerApi.notifyInteractionsChanged(toPyComponent(jsComponent));
 }
 
+/** @deprecated - keep for anvil-react usage */
 export function notifyDomNodeChanged(jsComponent: JsComponent) {
-    designerApi.notifyDomNodeChanged(toPyComponent(jsComponent));
+    raiseAnvilEvent(jsComponent, "x-anvil-dom-node-changed");
 }
 
 export function getConstructorForFormProperty() {

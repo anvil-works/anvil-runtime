@@ -1,6 +1,6 @@
 (ns anvil.runtime.tables.v2.updates
   (:require [anvil.runtime.tables.v2.jdbc-trace :as jdbc-t]
-            [slingshot.slingshot :refer :all]
+            [clj-commons.slingshot :refer :all]
             [anvil.runtime.tables.v2.search :as search-v2]
             [anvil.runtime.tables.v2.table-types :as table-types]
             [anvil.runtime.tables.v2.util :as util-v2]

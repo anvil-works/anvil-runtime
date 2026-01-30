@@ -1,5 +1,5 @@
 (ns anvil.dispatcher.native-rpc-handlers.users.fido
-  (:use slingshot.slingshot)
+  (:use clj-commons.slingshot)
   (:require [anvil.runtime.app-data :as app-data]
             [clojure.data.codec.base64 :as b64]
             [anvil.dispatcher.native-rpc-handlers.util :as util]

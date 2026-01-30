@@ -1,7 +1,7 @@
 (ns anvil.dispatcher.native-rpc-handlers.google.util
   (:use [anvil.dispatcher.native-rpc-handlers.util]
         [clojure.pprint]
-        [slingshot.slingshot])
+        [clj-commons.slingshot])
   (:require [anvil.runtime.conf :as conf]
             [anvil.core.sso.google :as google-sso]
             [org.httpkit.client :as http]
@@ -16,11 +16,24 @@
 (defn get-google-service-props []
   (first (filter #(= (:source %) "/runtime/services/google.yml") (:services *app*))))
 
+(defn get-app-client-id [service]
+  (or (get-in (or service (get-google-service-props)) [:server_config :client_id])
+      (and (:custom? conf/google-client-config) (:client-id conf/google-client-config))))
+
 (defn has-own-client-id?
   ([] (has-own-client-id? nil))
-  ([service] (let [client-id (or (get-in (or service (get-google-service-props)) [:server_config :client_id])
-                                 (and (:custom? conf/google-client-config) (:client-id conf/google-client-config)))]
+  ([service] (let [client-id (get-app-client-id service)]
                (and client-id (not= "" client-id)))))
+
+(defn logout-on-client-id-mismatch!
+  ([] (logout-on-client-id-mismatch! nil))
+  ([google-service]
+   (when (has-own-client-id? google-service)
+     (let [app-client-id (get-app-client-id google-service)]
+       (when-let [client-id (get-in @*session-state* [:google :user-tokens :client-id])]
+         (when-not (= client-id app-client-id)
+           (log/warn "Google Client ID '" client-id "' != App Client ID '" app-client-id "'. Logging out.")
+           (swap! *session-state* update-in [:google] dissoc :user-tokens)))))))
 
 (defn get-delegation-refresh-token [app-info google-service-server-config]
   (let [{:keys [delegation_refresh_token enc_delegation_refresh_token]} google-service-server-config
@@ -32,8 +45,10 @@
 
 (defn add-credentials [httpkit-map creds]
   (condp = creds
-    "google-user" (assoc-in httpkit-map [:headers "Authorization"]
-                            (str "Bearer " (-> @*session-state* :google :user-tokens :access-token)))
+    "google-user" (do
+                    (logout-on-client-id-mismatch!)
+                    (assoc-in httpkit-map [:headers "Authorization"]
+                              (str "Bearer " (-> @*session-state* :google :user-tokens :access-token))))
     "google-delegated" (do
                          (when (or (not (-> @*session-state* :google :delegation-access-token))
                                    ;; Refresh access token if it's about to expire.

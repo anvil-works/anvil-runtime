@@ -1,6 +1,8 @@
 
 var $builtinmodule = window.memoise('anvil.users.mfa.webauthn', function() {
     var mod = {};
+    // added to window in runner/index.ts
+    const { base64DecToArr, base64EncArr } = window.b64;
 
     let getCredentials = function() {
         if (navigator.credentials) {

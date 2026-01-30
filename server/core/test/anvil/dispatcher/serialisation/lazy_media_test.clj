@@ -4,9 +4,9 @@
   (:import (anvil.dispatcher.types MediaDescriptor Media BlobMedia)))
 
 (defn dummy-manager [request media-id _session-state app-id app]
-  (is (= media-id "x"))
-  (is (= app :app))
-  (is (= request nil))
+  (is (= "x" media-id))
+  (is (= :app app))
+  (is (nil? request))
   (BlobMedia. "mimeType" (byte-array 3) "dummyMedia"))
 
 #_(deftest test-mk-LazyMedia

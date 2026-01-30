@@ -39,7 +39,21 @@ function _generateUUID() {
     return uuid;
 }
 
-export const generateUUID = window.crypto.randomUUID ? () => window.crypto.randomUUID() : _generateUUID;
+// Support both browser and Node.js environments
+// In Node.js 18+, globalThis.crypto.randomUUID is available
+// In browsers, window.crypto.randomUUID is available
+function getCryptoUUID(): (() => string) | null {
+    if (typeof globalThis !== "undefined" && globalThis.crypto?.randomUUID) {
+        return () => globalThis.crypto.randomUUID();
+    }
+    // Fallback for older environments
+    if (typeof window !== "undefined" && window.crypto?.randomUUID) {
+        return () => window.crypto.randomUUID();
+    }
+    return null;
+}
+
+export const generateUUID = getCryptoUUID() ?? _generateUUID;
 
 export const globalSuppressLoading = {
     value: 0,
@@ -50,7 +64,6 @@ export const globalSuppressLoading = {
         this.value--;
     },
 };
-
 
 /** Polyfill for IOS < 13 (13.1 released March 2020) */
 class _ResizeObserverPolyfill {
@@ -104,7 +117,8 @@ class _ResizeObserverPolyfill {
     }
 }
 
-export const ResizeObserverPolyfill = window.ResizeObserver ?? _ResizeObserverPolyfill;
+export const ResizeObserverPolyfill =
+    (typeof window !== "undefined" && window.ResizeObserver) || _ResizeObserverPolyfill;
 
 /** avoids the first call to the resize observer callback */
 export class PostponedResizeObserver extends ResizeObserverPolyfill {

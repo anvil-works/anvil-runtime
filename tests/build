@@ -1,6 +1,6 @@
 #! /bin/bash 
 set -e
 
-cd "$(dirname "$0")"
+cd "$(dirname "${BASH_SOURCE[0]}")"
 
 docker build -t anvil-runtime-tests -f Dockerfile ../..

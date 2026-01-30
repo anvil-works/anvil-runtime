@@ -8,7 +8,7 @@
     [anvil.runtime.tables.v2.jdbc-trace :as jdbc-t]
     [clojure.string :as str]
     [clojure.tools.logging :as log]
-    [slingshot.slingshot :refer :all]
+    [clj-commons.slingshot :refer :all]
     [clojure.string :as string]
     [medley.core :refer [indexed map-keys]]
     [clojure.pprint :as pprint]))

@@ -1,5 +1,5 @@
 (ns anvil.dispatcher.native-rpc-handlers.time
-  (:use [slingshot.slingshot])
+  (:use [clj-commons.slingshot])
   (:import [java.util Calendar GregorianCalendar TimeZone]
            [java.util.regex Pattern])
   (:require [anvil.dispatcher.native-rpc-handlers.util :as native-util]))

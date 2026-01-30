@@ -1,5 +1,5 @@
 (ns anvil.dispatcher.native-rpc-handlers.users.twilio
-  (:require [slingshot.slingshot :refer :all]
+  (:require [clj-commons.slingshot :refer :all]
             [org.httpkit.client :as http]
             [anvil.runtime.conf :as runtime-conf]
             [anvil.util :as util]

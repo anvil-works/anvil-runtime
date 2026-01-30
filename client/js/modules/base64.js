@@ -1,4 +1,4 @@
-import b64 from "../lib/b64";
+import * as b64 from "../lib/b64";
 
 const base64 = () => {
     const pyMod = { __name__: new Sk.builtin.str("base64") };

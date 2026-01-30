@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" class="no-js anvil-runner {{legacy-head-class}}">
+<html lang="en" class="anvil-runner {{legacy-head-class}}">
 <head>
   <base href="{{canonical-url}}/">
   <meta charset="utf-8">
@@ -30,7 +30,6 @@
   {{legacy-bootstrap-css}}
   {{legacy-classnames}}
   <link rel="stylesheet" href="{{app-origin}}/_/static/runtime/dist/static/css/runner-v3.min.css?buildTime=0" crossorigin/>
-  <link rel="stylesheet" href="{{app-origin}}/_/static/runtime/css/daterangepicker.min.css?buildTime=0" crossorigin/>
 
   <link rel="stylesheet" href="{{app-origin}}/_/static/runtime/css/font-awesome.min.css?buildTime=0" crossorigin/>
 
@@ -99,17 +98,10 @@
   }());
 </script>
 
-<script src="{{app-origin}}/_/static/runtime/js/lib/modernizr-3.8.0.min.js?buildTime=0" crossorigin></script>
-
 <!--<script src="{{app-origin}}/_/static/runtime/js/lib/bootstrap.min.js?buildTime=0" crossorigin></script>-->
 {{legacy-bootstrap-js}}
 <script src="{{app-origin}}/_/static/runtime/js/lib/moment.min.js?buildTime=0" crossorigin></script>
 <script src="{{app-origin}}/_/static/runtime/js/lib/moment-timezone-with-data-10-year-range.min.js?buildTime=0" crossorigin></script>
-<script src="{{app-origin}}/_/static/runtime/js/lib/daterangepicker.min.js?buildTime=0" crossorigin></script>
-<script src="{{app-origin}}/_/static/runtime/js/lib/b64.js?buildTime=0" crossorigin></script>
-<script src="{{app-origin}}/_/static/runtime/js/lib/bootstrap-notify.min.js?buildTime=0" crossorigin></script>
-
-<script src="{{app-origin}}/_/static/runtime/js/lib/js-yaml.min.js?buildTime=0" crossorigin></script>
 
 
 
@@ -123,10 +115,12 @@
 <script>
   window.anvilCDNOrigin = "{{cdn-origin}}";
   window.anvilAppOrigin = "{{canonical-url}}";
+  window.anvilRuntimeCommonUrl = "{{runtime-common-url}}"
   window.anvilEnvironmentOrigin = "{{environment-origin}}";
   window.anvilSessionToken = "{{session-token}}";
   window.anvilVersion = "{{anvil-version}}";
   window.anvilAppInfo = {{app-info-object}};
+  window.anvilOAuthInfo = "{{oauth-info}}";
   window.anvilGoogleApiKey = "{{google-api-key}}";
   {
     // remove _anvil_session to prevent referrer links from including the session

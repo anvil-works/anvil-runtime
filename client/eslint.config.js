@@ -18,8 +18,7 @@ export default [
             globals: {
                 $: "readonly",
                 moment: "readonly",
-                base64DecToStr: "readonly",
-                base64EncStr: "readonly",
+                b64: "readonly",
                 Sk: "readonly",
                 ANVIL_IN_DESIGNER: "readonly",
                 BUILD_TIME: "readonly",

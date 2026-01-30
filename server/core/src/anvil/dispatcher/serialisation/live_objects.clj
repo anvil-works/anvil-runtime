@@ -1,6 +1,6 @@
 (ns anvil.dispatcher.serialisation.live-objects
   (:use clojure.set
-        slingshot.slingshot)
+        clj-commons.slingshot)
   (:require [anvil.util :as util]
             [anvil.dispatcher.types :as types]
             [clojure.tools.logging :as log]))

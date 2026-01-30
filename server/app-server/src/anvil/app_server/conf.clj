@@ -1,5 +1,5 @@
 (ns anvil.app-server.conf
-  (:require [slingshot.slingshot :refer :all]
+  (:require [clj-commons.slingshot :refer :all]
             [anvil.runtime.conf :as runtime-conf])
   (:import (java.io File)
            (java.net URI)))

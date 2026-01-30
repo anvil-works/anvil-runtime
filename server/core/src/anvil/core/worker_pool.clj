@@ -17,7 +17,7 @@
 ;;(clj-logging-config.log4j/set-logger! :level :trace)
 
 
-(def SLOW-HANDLER-TIME-MS 500)
+(def SLOW-HANDLER-TIME-MS 100)
 (def MAX-QUEUE-SIZE 20480)
 
 (defonce TASK-LOCK (Object.))

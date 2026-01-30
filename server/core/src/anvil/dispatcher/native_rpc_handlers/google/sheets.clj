@@ -2,7 +2,7 @@
   (:use [anvil.dispatcher.native-rpc-handlers.util]
         [anvil.dispatcher.native-rpc-handlers.google.util]
         [clojure.data.zip.xml]
-        [slingshot.slingshot])
+        [clj-commons.slingshot])
   (:require [clojure.zip :as zip]
             [clojure.string :as string]
             [clojure.data.json :as json]

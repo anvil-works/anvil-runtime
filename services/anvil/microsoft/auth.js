@@ -4,22 +4,25 @@ var $builtinmodule = window.memoise('anvil.microsoft.auth', function() {
     var mod = {};
 
     var loginCallbackResolve = null;
+    let microsoftButtonLoaded = false;
+    function loadMicrosoftSignInButton() {
+        if (microsoftButtonLoaded) return;
+        microsoftButtonLoaded = true;
+        PyDefUtils.loadScript(window.anvilAppOrigin + "/_/static/runtime/img/microsoft-signin-buttons/btn.js?sha=571f3e80eba45f5901fc")
+    }
 
      async function displayLogInModal(additionalScopes) {
-
-        var anvil = PyDefUtils.getModule("anvil");
-        var appPath = Sk.ffi.remapToJs(anvil.tp$getattr(new Sk.builtin.str("app_path")));
 
         var scopesToRequest = (additionalScopes || []).join(' ');
 
         function doLogin() {
 
             var authParams = {
-                scopes: scopesToRequest,
-                _anvil_session: window.anvilSessionToken,
+                scope: scopesToRequest,
+                oauth_info: window.anvilOAuthInfo,
             };
 
-            var authUrl = appPath + "/_/microsoft_auth_redirect?" + $.param(authParams);
+            var authUrl = window.anvilRuntimeCommonUrl + "/_/microsoft_auth_redirect?" + $.param(authParams);
 
             var windowFeatures = {
                 width: 450,
@@ -43,19 +46,21 @@ var $builtinmodule = window.memoise('anvil.microsoft.auth', function() {
                 strWindowFeatures+= "=" + v;
             }
 
-            var popup = window.open(authUrl, null, strWindowFeatures);
+            window.open(authUrl, null, strWindowFeatures);
         };
 
         if (PyDefUtils.isPopupOK()) {
             doLogin();
         } else {
+            loadMicrosoftSignInButton();
             const modal = await window.anvilModal.create({
                 id: "microsoft-login-modal",
                 backdrop: "static",
+                large: false,
                 keyboard: false,
                 dismissible: false,
-                title: "Log in with Microsoft",
-                body: "You are about to log in to this app with Microsoft",
+                title: "Log in",
+                body: true,
                 buttons: [
                     {
                         text: "Cancel",
@@ -63,9 +68,15 @@ var $builtinmodule = window.memoise('anvil.microsoft.auth', function() {
                             modal.once("hidden", () => loginCallbackResolve.reject("MODAL_CANCEL"));
                         },
                     },
-                    { text: "Log in", style: "success", onClick: doLogin },
                 ],
             });
+            const { modalBody } = modal.elements;
+            const btn = document.createElement("microsoft-signin-button");
+            btn.textContent = "Sign in with Microsoft"; // not necessary - but if the web component were to fail - this would still render
+            btn.style.cursor = "pointer";
+            btn.addEventListener("click", doLogin);
+            modalBody.appendChild(btn);
+            modalBody.style.textAlign = "center";
             await modal.show();
             return modal;
         }
@@ -74,8 +85,7 @@ var $builtinmodule = window.memoise('anvil.microsoft.auth', function() {
     var registerCallbackHandlers = function(messageFns) {
 
         messageFns.microsoftAuthErrorCallback = function(params) {
-            console.error("Microsoft auth ERROR", params);
-
+            console.error("Microsoft auth ERROR: ", params.message);
             if (loginCallbackResolve) {
                 if (params.message == "SESSION_EXPIRED") {
                     var server = PyDefUtils.getModule("anvil.server");
@@ -86,14 +96,32 @@ var $builtinmodule = window.memoise('anvil.microsoft.auth', function() {
             }
         }
 
-        messageFns.microsoftAuthSuccessCallback = function(params) {
+        messageFns.microsoftAuthSuccessCallback = async function(args) {
+            // The origin of this message is validated in the messages.js file, so we don't need to recheck it here.
 
-            PyDefUtils.callAsync(mod["get_user_email"]).then(function(c) {
-                loginCallbackResolve.resolve(Sk.ffi.remapToJs(c));
-            }).catch(function(e) {
-                loginCallbackResolve.reject(e);
+            const anvil = PyDefUtils.getModule("anvil");
+            const appPath = Sk.ffi.remapToJs(anvil.tp$getattr(new Sk.builtin.str("app_path")));
+
+            const resp = await fetch(appPath + "/_/microsoft_auth_complete?_anvil_session=" + window.anvilSessionToken, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(args),
             });
 
+            const data = await resp.json().catch(() => null);
+            if (!resp.ok) {
+                const error = data?.error || resp.statusText;
+                console.error("Error getting user info: " + error);
+                if (loginCallbackResolve) {
+                    loginCallbackResolve.reject("Error getting user info: " + error);
+                }
+                return;
+            }
+
+            const email = data.email;
+            if (loginCallbackResolve) {
+                loginCallbackResolve.resolve(email);
+            }
         }
     }
 

@@ -2,6 +2,7 @@
 /target
 /lib
 /classes
+pom.xml
 pom.xml.asc
 *.jar
 *.class

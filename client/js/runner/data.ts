@@ -7,7 +7,7 @@ import type {
     DesignerHint,
     ToolboxSection,
 } from "@runtime/components/Component";
-import type { pyObject } from "../@Sk";
+import type { pyObject, pyFunc } from "../@Sk";
 
 export interface DataBindingYaml {
     code: string;
@@ -16,6 +16,7 @@ export interface DataBindingYaml {
 }
 
 export type EventBindingYaml = { [eventName: string]: string };
+export type EventBinding = { [eventName: string]: string | pyFunc };
 
 export interface ComponentYaml {
     type: string;
@@ -77,6 +78,7 @@ export interface LayoutMetadata {
 export interface FormYaml {
     class_name: string;
     is_package?: boolean;
+    save_as_html?: boolean; // Whether to save as .html file (vs .yaml)
     code: string;
     // If this is a classic form (inherits from a container type)
     container?: FormContainerYaml;
@@ -85,6 +87,7 @@ export interface FormYaml {
     // Else, if this form uses a layout
     layout?: FormLayoutYaml;
     components_by_slot?: { [slotName: string]: ComponentYaml[] };
+    serialized_html?: string;
 
     // If this form *provides* slots
     slots?: SlotDefsYaml;
@@ -273,7 +276,7 @@ interface ServerParams {
     consoleMessage?: string;
     ideOrigin?: string;
     runtimeVersion: number;
-    instrumentFormEvents?: boolean;
+    achievements?: Record<string, any>;
     [param: string]: any;
 }
 
@@ -408,3 +411,16 @@ export const getClientConfig = (packageName?: string | null) => {
         throw new Error(`Package '${packageName}' is not part of this app.`);
     }
 };
+
+export let hooks: {
+    beforeLoadApp?: () => void | Promise<void>;
+    onLoadedApp?: () => void;
+    onOpenedForm?: () => void;
+    onUpdatedDataBinding?: () => void;
+    onWroteBackDataBinding?: () => void;
+    getSkulptOptions?: () => any;
+} = {};
+
+export function setHooks(h: typeof hooks) {
+    hooks = h;
+}
