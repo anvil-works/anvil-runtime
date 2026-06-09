@@ -1,7 +1,7 @@
 - description: ''
   form:
     class_name: Form
-    code: "from ._anvil_designer import $NAME$Template\nfrom anvil import *\n\nclass $NAME$($NAME$Template):\n\n  def __init__(self, **properties):\n    # Set Form properties and Data Bindings.\n    self.init_components(**properties)\n\n    # Any code you write here will run before the form opens.\n    \n"
+    code: "from ._anvil_designer import $NAME$Template\nfrom anvil import *\n\nclass $NAME$($NAME$Template):\n\n  def __init__(self, **properties):\n    # Set Form properties and Data Bindings.\n    super().__init__(**properties)\n\n    # Any code you write here will run before the form opens.\n    \n"
     components:
     - layout_properties: {slot: default}
       name: content_panel

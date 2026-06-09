@@ -45,6 +45,10 @@ export function getCssPrefix() {
     return (_prefix = "anvil-");
 }
 
+export function usingBootstrap3() {
+    return window.anvilParams.runtimeVersion < 3 || legacyOptions.bootstrap3;
+}
+
 const INLINE_STYLES = {
     checkbox: "padding: 7px 7px 7px 20px;",
     radio: "padding: 7px 7px 7px 20px;",

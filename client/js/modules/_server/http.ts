@@ -77,7 +77,7 @@ async function trySend(jsonData: any, blobData: BlobContent[] = []) {
     const formData = new FormData();
     formData.append("json-data", JSON.stringify(jsonData));
 
-    blobData.forEach((contentChunks: { json: any; data: DataView }[], i) => {
+    blobData.forEach((contentChunks, i) => {
         contentChunks.forEach(({ json, data }, j) => {
             formData.append(`chunk-json-${i}-${j}`, JSON.stringify(json));
             const chunkBlob = new Blob([data], { type: "application/octet-stream" });

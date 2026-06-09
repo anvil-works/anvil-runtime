@@ -65,6 +65,117 @@ def init_view_data(view_key, g_table_data):
     return g_table_data.setdefault(view_key, {})
 
 
+def clean_row_data_dict(row_data, table_spec, remote_is_trusted):
+    if remote_is_trusted:
+        return row_data
+
+    if table_spec is None:
+        return row_data
+
+    rv = {}
+
+    orig_i = 0
+    new_i = 0
+
+    for col, is_cached in zip(table_spec["cols"], table_spec["cache"]):
+        if not is_cached:
+            orig_i += 1
+            new_i += 1
+            continue
+
+        if col.get("client_hidden", False):
+            orig_i += 1
+            continue
+
+        val = row_data.get(str(orig_i), NOT_FOUND)
+        if val is not NOT_FOUND:
+            rv[str(new_i)] = val
+        new_i += 1
+        orig_i += 1
+
+    rv[CAP_KEY] = row_data[CAP_KEY]
+    return rv
+
+
+def clean_row_data_list(row_data, table_spec, remote_is_trusted):
+    if remote_is_trusted:
+        return row_data
+
+    if table_spec is None:
+        return row_data
+
+    rv = []
+
+    # We should have cached data for all cached columns (plus the Capability at the end)
+    assert len(table_spec["cache"]) == len(table_spec["cols"])
+    assert (len(row_data) - 1) == sum(table_spec["cache"])
+
+    row_data_iter = iter(row_data[:-1])
+    for (col, is_cached) in zip(table_spec["cols"], table_spec["cache"]):
+        if not is_cached:
+            continue
+
+        data = next(row_data_iter)
+        if not col.get("client_hidden", False):
+            rv.append(data)
+    
+    rv.append(row_data[-1])
+
+    return rv
+
+
+def clean_row_data(row_data, table_spec, remote_is_trusted):
+    if isinstance(row_data, dict):
+        return clean_row_data_dict(row_data, table_spec, remote_is_trusted)
+
+    if isinstance(row_data, list):
+        return clean_row_data_list(row_data, table_spec, remote_is_trusted)
+
+    raise TypeError("Invalid row data")
+
+
+def clean_table_spec(table_spec, remote_is_trusted):
+    if remote_is_trusted:
+        return table_spec
+
+    if table_spec is None:
+        return table_spec
+
+    rv_table_spec = {"cols": [], "cache": []}
+
+    for col, init_cache in zip(table_spec["cols"], table_spec["cache"]):
+        if not col.get("client_hidden", False):
+            rv_table_spec["cols"].append(col)
+            rv_table_spec["cache"].append(init_cache)
+
+    return rv_table_spec
+
+
+def clean_cache_table_spec(cache_spec, table_spec, remote_is_trusted):
+    if remote_is_trusted:
+        return cache_spec, table_spec
+
+    if table_spec is None:
+        return cache_spec, table_spec
+
+    rv_cache_spec = []
+    rv_table_spec = {"cols": [], "cache": []}
+
+    assert len(cache_spec) == len(table_spec["cache"]) == len(table_spec["cols"]), (
+        "cache spec length mismatch"
+    )
+
+    for col, init_cache, is_cached in zip(
+        table_spec["cols"], table_spec["cache"], cache_spec
+    ):
+        if not col.get("client_hidden", False):
+            rv_cache_spec.append(is_cached)
+            rv_table_spec["cols"].append(col)
+            rv_table_spec["cache"].append(init_cache)
+
+    return rv_cache_spec, rv_table_spec
+
+
 def init_spec_rows(g_view_data, table_spec, cache_spec=None):
     g_table_spec = g_view_data.get("spec")
     if g_table_spec is not None:

@@ -20,9 +20,10 @@
        (update-indexes-and-views! access-record))))
   ([{:keys [table_id python_name] :as access-record}]
    (let [SQL-NAME (let [s (.replaceAll python_name "[^\\p{Alnum}]" "_")]
-                    (if (= s "") "_" s))]
-     (tables-util/update-col-indexes (tables-util/db) table_id)
-     (tables-util/update-table-views! (tables-util/db) table_id)
+                    (if (= s "") "_" s))
+         table-record (tables-util/load-table-record (tables-util/db) table_id)]
+     (tables-manager/update-col-indexes! (tables-util/db) table-record)
+     (tables-util/update-table-views! (tables-util/db) table-record)
 
      (jdbc/execute! (tables-util/db) ["CREATE SCHEMA IF NOT EXISTS app_tables"])
      (jdbc/execute! (tables-util/db) [(str "DROP VIEW IF EXISTS app_tables." SQL-NAME)])
@@ -63,7 +64,7 @@
             (log/info "Data tables schema out of date. Applying migrations:\n" (with-out-str (pprint updates)))
             (log/info "Migrating automatically...")
             (binding [tables-util/*environment-for-admin-call* {}]
-              (schema/apply-changes! {} current-tables updates (fn [& args] #_"No quota enforcement required here")))
+              (schema/apply-changes! {} current-tables updates tables-util/TABLE-ADMIN-POLICY-ALLOW-ALL (fn [& args] #_"No quota enforcement required here")))
             (log/info "Migration complete."))
           (do
             (log/info "Data tables schema out of date. Here is the migration that will run if you restart Anvil with the --auto-migrate command-line flag:")
@@ -74,6 +75,3 @@
               (do
                 (log/info "Anvil will now exit. Run with --ignore-invalid-schema to startup anyway, or --auto-migrate to apply the changes above.")
                 (System/exit 1)))))))))
-
-
-(tables-util/set-table-hooks! {:mutate-db-for-mapping? (fn [mapping] true)})

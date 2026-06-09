@@ -1,4 +1,4 @@
-import type { Suspension, pyCallable, pyObject, pyType } from "@Sk";
+import type { Suspension, pyCallable, pyNoneType, pyObject, pyType } from "@Sk";
 import { chainOrSuspend, pyCall, pyFunc, pyNone, pyProperty, pySuper } from "@Sk";
 import { s_init_subclass } from "./interned";
 
@@ -11,12 +11,15 @@ export function initNativeSubclass(cls: pyType) {
 /** Allows you to write a python property from a getter and setter function */
 export function pyPropertyFromGetSet<T = pyObject>(
     getter: (self: T) => pyObject | Suspension,
-    setter?: (self: T, value: pyObject) => void
+    setter?: (self: T, value: pyObject) => void | Suspension
 ) {
-    const pyGetter = new pyFunc((self) => getter(self));
+    const pyGetter = new pyFunc((self: T) => getter(self));
     let pySetter;
     if (setter) {
-        pySetter = new pyFunc((self, value) => chainOrSuspend(setter(self, value), () => pyNone));
+        pySetter = new pyFunc(
+            (self: T, value: pyObject): pyNoneType | Suspension =>
+                chainOrSuspend(setter(self, value), (): pyNoneType => pyNone)
+        );
     }
     return new pyProperty(pyGetter, pySetter);
 }

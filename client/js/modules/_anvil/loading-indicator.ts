@@ -143,7 +143,7 @@ export const LoadingIndicator: pyNewableType<LoadingIndicator> = buildNativeClas
                         this._dom.style.position = "relative";
                     }
                     if (this._opts.min_height) {
-                        this._dom.style.minHeight = cssLength(this._opts.min_height);
+                        this._dom.style.minHeight = PyDefUtils.cssLength(this._opts.min_height);
                     }
                     this._dom.appendChild(overlay);
                 },

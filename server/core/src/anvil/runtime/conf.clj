@@ -8,6 +8,8 @@
 
 (defonce error-log-path (or (System/getenv "ANVIL_ERROR_LOG_PATH") (str data-path "/error.log")))
 
+(defonce thread-dump-path (str "/shared"))
+
 (defonce live-object-mac-path (str data-path "/anvil-live-object-key.txt"))
 
 (defonce saml-paths {:private-key (str data-path "/anvil-saml-private-key.pem")

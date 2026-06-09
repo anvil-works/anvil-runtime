@@ -36,7 +36,7 @@ interface ChunkData {
 interface MediaErrorData {
     type: "MEDIA_ERROR";
     requestId: string;
-    mediaIds: string;
+    mediaIds: string[];
     cause?: { type: string; message: string };
 }
 

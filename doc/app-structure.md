@@ -223,7 +223,7 @@ has the same effect as:
 
 ### Native Libraries
 
-[Native Libraries](https://anvil.works/docs/client/javascript#using-native-javascript-libraries) allow you to use Native Javascript Libraries with Anvil. You can do this by configuring a `native_deps` string in your `anvil.yaml` file. Anything passed to `head_html` within `native_deps` will be  inserted into the `<head>` tag of your Anvil app's HTML.
+[Native Libraries](https://anvil.works/docs/client/customisation/javascript#using-native-javascript-libraries) allow you to use Native Javascript Libraries with Anvil. You can do this by configuring a `native_deps` string in your `anvil.yaml` file. Anything passed to `head_html` within `native_deps` will be  inserted into the `<head>` tag of your Anvil app's HTML.
 
 Here is an example entry in `anvil.yaml` for an app that uses the D3 and Chartjs external libraries. 
 

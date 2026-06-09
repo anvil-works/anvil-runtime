@@ -2,16 +2,20 @@
     "extends": "./tsconfig.base.json",
     "composite": true,
     "compilerOptions": {
-        "baseUrl": "./",
         "paths": {
             "@Sk": ["./js/@Sk"],
-            "PyDefUtils": ["js/PyDefUtils"],
+            "PyDefUtils": ["./js/PyDefUtils"],
             "@runtime/*": ["./js/*"],
             "@runtime-assets/*": ["./*"]
         },
         "jsx": "preserve",
-        "jsxFactory": "PyDefUtils.h"
+        "jsxFactory": "PyDefUtils.h",
+        "types": ["google.maps", "jquery", "plotly.js", "youtube"]
     },
     "include": ["./"],
-    "exclude": ["node_modules", "js/runner/components-in-js/packages"]
+    "exclude": [
+        "node_modules",
+        "dist",
+        "js/runner/components-in-js/packages"
+    ]
 }

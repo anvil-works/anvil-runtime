@@ -19,7 +19,7 @@ class _Batcher(ThreadLocal):
 
     def __init__(self):
         self._active = 0
-        self._updates = []
+        self._args = []
         self._buffer = {}
         self._func = PREFIX + self._name
 
@@ -27,31 +27,30 @@ class _Batcher(ThreadLocal):
     def active(self):
         return self._active > 0
 
-    def push(self, cap, update=False, on_behalf_of_client=False):
-        self._updates.append((cap, update, on_behalf_of_client))
+    def push(self, *args):
+        self._args.append(args)
 
     def flush(self):
         if not self.active:
             return
-        updates = self._updates
-        if not updates:
+        args = self._args
+        if not args:
             return
         try:
-            anvil.server.call(self._func, self.get_args(updates))
-            for cap, update, _ in updates:
-                cap.send_update(update)
+            rv = anvil.server.call(self._func, args)
+            self.post_flush(args, rv)
         finally:
             self.reset()
 
     def reset(self):
-        self._updates.clear()
+        self._args.clear()
         self._buffer.clear()
+
+    def post_flush(self, args, result):
+        raise NotImplementedError
 
     def __enter__(self):
         self._active += 1
-
-    def get_args(self, updates):
-        raise NotImplementedError
 
     def __exit__(self, exc_type, exc_value, traceback):
         is_final_context = self._active == 1
@@ -62,14 +61,20 @@ class _Batcher(ThreadLocal):
             self._active -= 1
             if is_final_context:
                 self.reset()
-            
+
 
 
 class BatchUpdate(_Batcher):
     _name = "batch_update"
 
     def push(self, cap, update, on_behalf_of_client):
-        self._updates.append((cap, update, on_behalf_of_client))
+        global _make_refs
+        if _make_refs is None:
+            from ._refs import make_refs  # circular import
+
+            _make_refs = make_refs
+
+        self._args.append((cap, _make_refs(update), on_behalf_of_client))
         self._buffer.setdefault(cap, {}).update(update)
 
     def get_updates(self, cap):
@@ -78,24 +83,27 @@ class BatchUpdate(_Batcher):
     def read(self, cap, key):
         return self.get_updates(cap).get(key, NOT_FOUND)
 
-    def get_args(self, updates):
-        global _make_refs
-        if _make_refs is None:
-            from ._refs import make_refs  # circular import
+    def post_flush(self, args, result):
+        from ._row import _send_cap_update
 
-            _make_refs = make_refs
+        _seen = set()
+        for (cap, _, _), spec in zip(args, result):
+            if cap in _seen:
+                continue
 
-        return [
-            (cap, _make_refs(update), on_behalf_of_client)
-            for cap, update, on_behalf_of_client in updates
-        ]
+            _seen.add(cap)
+            update = self._buffer.get(cap, {})
+            _send_cap_update(cap, {"S": spec, "U": update})
 
 
 class BatchDelete(_Batcher):
     _name = "batch_delete_2"
 
-    def get_args(self, updates):
-        return [(cap, on_behalf_of_client) for cap, _, on_behalf_of_client in updates]
+    def post_flush(self, args, result):
+        from ._row import _send_cap_update
+
+        for cap, _ in args:
+            _send_cap_update(cap, {"D": True})
 
 
 batch_update = BatchUpdate()

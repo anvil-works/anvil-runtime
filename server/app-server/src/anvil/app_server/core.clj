@@ -22,7 +22,7 @@
             [compojure.route :as route]
             [anvil.runtime.server :as runtime]
             [anvil.runtime.sessions :as runtime-sessions]
-            [anvil.runtime.serve-app :as serve-app]
+            [anvil.runtime.serve-app.core :as serve-app]
             [anvil.runtime.util :as runtime-util]
             [anvil.core.ring.util :as ring-util])
   (:import (java.io File)))
@@ -165,7 +165,7 @@
 
 (background-tasks/set-background-task-hooks! {:get-environment-for-background-task (constantly {})})
 
-(email/set-email-hooks! {:get-smtp-connection (fn [_email-service-config _environment]
+(email/set-rpc-email-hooks! {:get-smtp-connection (fn [_email-service-config _environment]
                                                 (let [{:keys [host] :as smtp-config} (:default runtime-conf/app-smtp-config)]
 
                                                   (when-not host

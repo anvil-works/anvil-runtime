@@ -202,11 +202,11 @@ function server(appId: string, appOrigin: string) {
             /*!defBuiltinMethod(_,apply_update:callable,[get_update:callable])!1*/
             set_update_handler: {
                 $name: "set_update_handler",
-                $meth(pyApplyUpdate, _ignored) {
+                $meth(pyApplyUpdate, pyGetUpdate, pySanitizeUpdate) {
                     this._doApplyUpdate = pyApplyUpdate;
                     return pyNone;
                 },
-                $flags: { MinArgs: 1, MaxArgs: 2 },
+                $flags: { NamedArgs: ["apply_update", "get_update"], Defaults: [pyNone] },
                 $doc: "Set a handler for what happens when an update is sent to this capability.\n\nOptionally provide a function for aggregating updates (default behaviour is to merge them, if they are all dictionaries, or to return only the most recent update otherwise.)",
             },
             /*!defBuiltinMethod(_,update)!1*/
@@ -259,7 +259,7 @@ function server(appId: string, appOrigin: string) {
     ];
     /*!defClass(anvil.server, Capability)!*/
 
-    pyMod["unwrap_capability"] = new pyFunc((cap, scopePattern) => {
+    pyMod["unwrap_capability"] = new pyFunc((cap: pyObject, scopePattern: pyObject) => {
         if (pyType(cap) !== pyCapability) {
             throw new pyTypeError("The first argument must be a Capability");
         }
@@ -304,13 +304,13 @@ function server(appId: string, appOrigin: string) {
     pyMod["AnvilWrappedError"] = buildPyClass(
         pyMod,
         function ($gbl, $loc) {
-            $loc["__init__"] = new pyFunc((self, message) => {
+            $loc["__init__"] = new pyFunc((self: pyObject, message: pyObject) => {
                 message ||= pyStr.$empty;
                 self.tp$setattr(s_message, message);
                 return pyNone;
             });
 
-            $loc["__repr__"] = new pyFunc((self) => {
+            $loc["__repr__"] = new pyFunc((self: pyObject) => {
                 const r = pyException.prototype.$r.call(self);
                 if (self.ob$type !== pyMod["AnvilWrappedError"]) {
                     return r;
@@ -330,7 +330,7 @@ function server(appId: string, appOrigin: string) {
     pyNamedExceptions["anvil.server.SessionExpiredError"] = pyMod["SessionExpiredError"] = buildPyClass(
         pyMod,
         ($gbl, $loc) => {
-            $loc["__init__"] = new pyFunc(function init(self) {
+            $loc["__init__"] = new pyFunc(function init(self: pyObject) {
                 self.traceback = [];
                 self.args = new pyList([toPy("Session expired")]);
                 return pyNone;
@@ -483,11 +483,11 @@ function server(appId: string, appOrigin: string) {
     const _NoLoadingIndicator = buildPyClass(
         pyMod,
         function ($gbl, $loc) {
-            $loc["__enter__"] = new pyFunc(function (self) {
+            $loc["__enter__"] = new pyFunc(function (self: pyObject) {
                 globalSuppressLoading.inc();
                 return self;
             });
-            $loc["__exit__"] = new pyFunc(function (self) {
+            $loc["__exit__"] = new pyFunc(function (self: pyObject) {
                 globalSuppressLoading.dec();
                 return pyNone;
             });
@@ -526,7 +526,7 @@ function server(appId: string, appOrigin: string) {
     });
 
     pyMod["_invalidation_callbacks"] = new pyList();
-    pyMod["_on_invalidate_client_objects"] = new pyFunc(function (f) {
+    pyMod["_on_invalidate_client_objects"] = new pyFunc(function (f: pyCallable) {
         pyCall(pyMod["_invalidation_callbacks"].tp$getattr<pyList>(new pyStr("append")), [f]);
         return pyNone;
     });
@@ -665,7 +665,7 @@ function server(appId: string, appOrigin: string) {
     // Old name, for apps written before portable classes were released
     pyMod["serializable_type"] = pyMod["portable_class"];
 
-    const getAppOrigin = (pyEnvironmentType: pyStr | pyNoneType, pyPreferEmphemeralDebug: pyBool) => {
+    const getAppOrigin = (pyEnvironmentType: pyStr | pyNoneType, pyPreferEmphemeralDebug: pyBool | pyNoneType) => {
         if (pyEnvironmentType === pyNone) {
             return toPy(
                 isTrue(pyPreferEmphemeralDebug)
@@ -680,13 +680,19 @@ function server(appId: string, appOrigin: string) {
         );
     };
 
-    pyMod["get_app_origin"] = new pyFunc(function (pyEnvironmentType, pyPreferEmphemeralDebug) {
+    pyMod["get_app_origin"] = new pyFunc(function (
+        pyEnvironmentType: pyStr | pyNoneType,
+        pyPreferEmphemeralDebug: pyBool | pyNoneType
+    ) {
         return getAppOrigin(pyEnvironmentType, pyPreferEmphemeralDebug);
     });
     pyMod["get_app_origin"].func_code.co_varnames = ["branch", "prefer_ephemeral_debug"]; // "branch" is the legacy name for the first arg. Leave this as-is, in case anyone has previously passed branch=...
     pyMod["get_app_origin"].func_code.$defaults = [pyNone, pyNone];
 
-    pyMod["get_api_origin"] = new pyFunc(function (pyEnvironmentType, pyPreferEmphemeralDebug) {
+    pyMod["get_api_origin"] = new pyFunc(function (
+        pyEnvironmentType: pyStr | pyNoneType,
+        pyPreferEmphemeralDebug: pyBool | pyNoneType
+    ) {
         return chainOrSuspend(
             getAppOrigin(pyEnvironmentType, pyPreferEmphemeralDebug),
             (pyOrigin) => new pyStr(pyOrigin.toString() + "/_/api")
@@ -705,7 +711,7 @@ function server(appId: string, appOrigin: string) {
         const cls = buildPyClass(
             pyMod,
             ($gbl, $loc) => {
-                $loc["__repr__"] = new pyFunc(function (self) {
+                $loc["__repr__"] = new pyFunc(function (self: pyObject) {
                     return new pyStr(self.$d);
                 });
             },
@@ -750,6 +756,11 @@ function server(appId: string, appOrigin: string) {
         constructor: function server_method() {
             this._server_name = null;
             this._is_class_method = false;
+            this._func = null;
+            this._decorator_call = funcFastCall((args, kws = []) => {
+                this.tp$init(args, kws);
+                return this;
+            });
             this._check_register = () => {
                 if (this._server_name === null) {
                     if (ANVIL_IN_DESIGNER) {
@@ -772,7 +783,7 @@ function server(appId: string, appOrigin: string) {
                 self._kws = kws;
                 // kws are meaningless on the client - they only make sense on the server
                 if (args.length === 0) {
-                    return Sk.abstr.gattr(self, pyStr.$call);
+                    return self._decorator_call;
                 } else {
                     return self;
                 }
@@ -783,11 +794,12 @@ function server(appId: string, appOrigin: string) {
                 }
                 const fn = args[0];
                 this._is_class_method = fn instanceof pyClassMethod;
+                this._func = this._is_class_method ? fn.tp$getattr(new pyStr("__func__")) : fn;
                 functoolsUpdateWrapper(this as pyCallable, fn as pyCallable);
             },
             tp$call(args, kws) {
-                this.tp$init(args, kws);
-                return this;
+                this._check_register();
+                return doServerCall(kws ?? [], args, this._server_name);
             },
             tp$descr_get(obj, type) {
                 this._check_register();

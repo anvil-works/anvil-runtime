@@ -1,3 +1,4 @@
+import PyDefUtils from "PyDefUtils";
 import {
     pyBaseException,
     pyCallable,
@@ -10,8 +11,8 @@ import {
     toJs,
 } from "../@Sk";
 import Modal from "../modules/modal";
-import PyDefUtils from "PyDefUtils";
 import { logEvent } from "./logging";
+import { isOpaqueScriptError } from "./py-util/error-utils";
 
 // overrides the dom-lib OnErrorEventHandlerNonNull
 interface OnErrorEventHandlerNonNull {
@@ -94,6 +95,13 @@ $("#error-indicator").on("click", function () {
 });
 
 window.onerror = function (errormsg, url, line, col, errorObj) {
+    if (isOpaqueScriptError(errormsg, url, line, col, errorObj)) {
+        // Ignore only browser-generated opaque script errors. Native-library or
+        // user-code script errors with a URL, line, column, or Error object still
+        // flow through to handleJsError below.
+        console.error(errormsg);
+        return true;
+    }
     if (typeof errormsg === "string" && errormsg.indexOf("__gCrWeb.autofill.extractForms") > -1) {
         // This is a Chrome-on-iOS bug. Only happens when autofill=off in settings. Ignore.
         return true;

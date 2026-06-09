@@ -1,5 +1,6 @@
 (ns anvil.runtime.tables.v2.basic-ops
   (:require
+    [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]
     [anvil.dispatcher.types :as types]
     [anvil.runtime.tables.v2.table-types :as table-types]
     [anvil.runtime.tables.v2.util :as util-v2]
@@ -10,46 +11,69 @@
     [clojure.tools.logging :as log]
     [clj-commons.slingshot :refer :all]
     [clojure.string :as string]
-    [medley.core :refer [indexed map-keys]]
-    [clojure.pprint :as pprint]))
+    [medley.core :refer [indexed map-keys map-vals remove-vals]]
+    [clojure.pprint :as pprint]
+    [anvil.runtime.tables.v2.query :as query]
+    [anvil.runtime.tables.split.sql :as split-sql]
+    [anvil.runtime.tables.v2.sql-util :as sql-util]))
 
 (clj-logging-config.log4j/set-logger! :level :trace)
 
+(defn- get-all-cols-maybe-removing-client-hidden [tables table-id]
+  (let [all-cols (get-in tables [table-id :columns])]
+    (if rpc-util/*client-request?*
+      (remove-vals :client_hidden all-cols)
+      all-cols)))
+
 (defn SELECT-COLUMNS [tables fetch-spec fetch-id]
   (let [{{table-id :id} :view-spec, :keys [fetching-cols] :as fs} (get-in fetch-spec [:fetches fetch-id])
-        all-columns (get-in tables [table-id :columns])
+        all-columns (get-all-cols-maybe-removing-client-hidden tables table-id)
         colspecs-to-fetch (for [cn fetching-cols] (get all-columns cn))
-        col-param-kvs (for [{:keys [type]} colspecs-to-fetch]
-                        (if (= type "media")
-                          (str "?, (SELECT to_jsonb(all_except_data) from (select " util-v2/MEDIA-INFO-COLS " from app_storage_media) all_except_data WHERE object_id = (data->>?)::text::bigint)")
-                          (str "?, data->?")))]
-    ;; We can only pass 100 arguments to jsonb_build_object, so we partition the colspecs and join the resulting objects together
-    [(str "(" (->> (for [param-group (if (not-empty col-param-kvs) (partition-all 50 col-param-kvs) [[]])]
-                 (str "jsonb_build_object(" (str/join ", " param-group) ")"))
-               (str/join " || "))
-          ") AS rdata")
-     (mapcat (fn [{:keys [name id]}] [name id]) colspecs-to-fetch)]))
+        {:keys [storage] :as table-record} (get-in tables [table-id :table-record])]
 
-(defn LOOKUP-ROW-QUERY [tables table-id row-id fetch-spec]
-  (let [[SELECT-EXPR select-params] (SELECT-COLUMNS tables fetch-spec 0)]
-    [(str "SELECT id, " SELECT-EXPR ", 0 AS fid, 0 AS primary_order FROM app_storage_data WHERE table_id = ? AND id = ?")
-     (concat select-params [table-id row-id])]))
+    (if (:split storage)
+      [(sql-util/JSONB-BUILD-OBJECT (for [{:keys [type id] :as colspec} colspecs-to-fetch]
+                                      (str "?, " (split-sql/TO-JSON-EXPR table-record id colspec true true))))
+       (map :name colspecs-to-fetch)]
+
+      [(sql-util/JSONB-BUILD-OBJECT (for [{:keys [type]} colspecs-to-fetch]
+                                      (if (= type "media")
+                                        (str "?, (SELECT to_jsonb(all_except_data) from (select " util-v2/MEDIA-INFO-COLS " from app_storage_media) all_except_data WHERE object_id = (data->>?)::text::bigint)")
+                                        (str "?, data->?"))))
+       (mapcat (fn [{:keys [name id]}] [name id]) colspecs-to-fetch)])))
+
+(defn LOOKUP-ROW-QUERY [tables {table-id :id :keys [restrict] :as view-spec} row-id fetch-spec]
+  (let [{:keys [storage] :as table-record} (get-in tables [table-id :table-record])
+        [SELECT-EXPR select-params] (SELECT-COLUMNS tables fetch-spec 0)
+        [RESTRICT-EXPR restrict-params] (when restrict (query/QUERY->SQL table-record restrict))]
+    (if (:split storage)
+      [(str "SELECT _id AS id, " SELECT-EXPR " AS rdata, 0 AS fid, 0 AS primary_order FROM " (split-sql/TABLE-NAME table-record) " WHERE _id = ? AND "
+            (or RESTRICT-EXPR "TRUE"))
+       (concat select-params [row-id] restrict-params)]
+      [(str "SELECT id, " SELECT-EXPR " AS rdata, 0 AS fid, 0 AS primary_order FROM app_storage_data WHERE table_id = ? AND id = ? AND "
+            (or RESTRICT-EXPR "TRUE"))
+       (concat select-params [table-id row-id] restrict-params)])))
 
 (defn LINK-FOLLOW-CTE [tables fetch-spec FETCH-ID]
   (let [{{:keys [fetch-id col-name link-type]} :link-from, {table-id :id} :view-spec} (get-in fetch-spec [:fetches FETCH-ID])
+        {:keys [storage] :as table-record} (get-in tables [table-id :table-record])
         FROM-FETCH (str "fetch_" (int fetch-id))
-        [COLUMN-SQL col-params] (SELECT-COLUMNS tables fetch-spec FETCH-ID)]
+        [COLUMN-SQL col-params] (SELECT-COLUMNS tables fetch-spec FETCH-ID)
+        ID-COL (if (:split storage) "_id" "app_storage_data.id")
+        FROM-TABLE (if (:split storage) (split-sql/TABLE-NAME table-record) "app_storage_data")
+        [TABLE-ID-COND table-id-cond-args] (when-not (:split storage) ["WHERE app_storage_data.table_id=?" [table-id]])]
+
     (condp = link-type
-       "link_single" [(str "fetch_" FETCH-ID " AS (SELECT app_storage_data.id, " COLUMN-SQL ", " FETCH-ID " AS fid, NULL::integer AS primary_order "
-                          " FROM " FROM-FETCH " JOIN app_storage_data ON "
-                          "app_storage_data.id = (((" FROM-FETCH ".rdata->?->>'id')::jsonb)->>1)::bigint"
-                          " WHERE app_storage_data.table_id=?)")
-                     (concat col-params [col-name table-id])]
-      "link_multiple" [(str "fetch_" FETCH-ID " AS (SELECT app_storage_data.id, " COLUMN-SQL ", " FETCH-ID " AS fid, NULL::integer AS primary_order "
-                            " FROM (SELECT jsonb_array_elements(case jsonb_typeof(rdata->?) when 'array' then rdata->? else NULL end) AS lj FROM " FROM-FETCH ") AS links JOIN app_storage_data ON "
-                            "app_storage_data.id = (((lj->>'id')::jsonb)->>1)::bigint"
-                            " WHERE app_storage_data.table_id=?)")
-                       (concat col-params [col-name col-name table-id])])))
+      "link_single" [(str "fetch_" FETCH-ID " AS (SELECT " ID-COL " AS id, " COLUMN-SQL " AS rdata, " FETCH-ID " AS fid, NULL::integer AS primary_order "
+                          " FROM " FROM-FETCH " JOIN " FROM-TABLE " ON "
+                          ID-COL " = (((" FROM-FETCH ".rdata->?->>'id')::jsonb)->>1)::bigint "
+                          TABLE-ID-COND ")")
+                     (concat col-params [col-name] table-id-cond-args)]
+      "link_multiple" [(str "fetch_" FETCH-ID " AS (SELECT " ID-COL " AS id, " COLUMN-SQL " AS rdata, " FETCH-ID " AS fid, NULL::integer AS primary_order "
+                            " FROM (SELECT jsonb_array_elements(case jsonb_typeof(rdata->?) when 'array' then rdata->? else NULL end) AS lj FROM " FROM-FETCH ") AS links JOIN " FROM-TABLE " ON "
+                            ID-COL " = (((lj->>'id')::jsonb)->>1)::bigint "
+                            TABLE-ID-COND ")")
+                       (concat col-params [col-name col-name] table-id-cond-args)])))
 
 (defn- get-linked-row-id [link-json]
   (when link-json
@@ -82,9 +106,8 @@
   (validate-clean-row-id "[1,5]" 4)
   (clean-table-id "[1,5]")
   (clean-table-id "foo")
-  (clean-table-id 32)
-  ;
-  )
+  (clean-table-id 32))
+
 
 (defn- get-linked-view-spec [table-id root-perm]
   ;; the linked table gets whatever the yaml says
@@ -97,35 +120,48 @@
     (format "{\"id\":%s,\"perm\":\"rwc\"}" (util/write-json-str table-id))
     (format "{\"id\":%s}" (util/write-json-str table-id))))
 
-(defn get-col-names [table-id tables only-columns]
+(defn get-col-names-removing-client-hidden [table-id tables only-columns]
    ;; sort the names for consistent view specs
-   (sort (or only-columns (seq (keys (get-in tables [table-id :columns]))))))
+  (let [all-cols (get-all-cols-maybe-removing-client-hidden tables table-id)
+        ordered-cols (sort (or only-columns (seq (keys all-cols))))]
+   (if rpc-util/*client-request?*
+     (filter all-cols ordered-cols)
+     ordered-cols)))
 
 (defn get-table-spec [table-id tables root-perm cached-columns only-columns]
   ;; cached columns is a set or nil
-  (let [{:keys [columns]} (get tables table-id)
-        col-names (get-col-names table-id tables only-columns)]
+  (let [columns (get-all-cols-maybe-removing-client-hidden tables table-id)
+        col-names (get-col-names-removing-client-hidden table-id tables only-columns)]
     {:cols  (for [c col-names
                   :let [{:keys [table_id] :as col-spec} (get columns c)]]
-              (merge (select-keys col-spec [:name :type :table_id])
+              (merge (select-keys col-spec [:name :type :table_id :client_hidden])
                      (when table_id
                        {:view_key (get-linked-view-key table_id root-perm)})))
      :cache (for [c col-names]
               (if (contains? cached-columns c) 1 0))}))
 
-(defn- ensure-column-valid [tables {table-id :id :keys [cols] :as view-key} col-name]
-  )
 
-(defn- default-cols-to-fetch [column-map]
-  (keys column-map)
+(defn- default-cols-to-fetch-removing-client-hidden [column-map]
+  (if rpc-util/*client-request?*
+    (keys (remove-vals :client_hidden column-map))
+    (keys column-map)))
   ;; old behaviour ignores simpleObjects - can remove at some point
   ;;(for [[col-name {:keys [type]}] column-map
   ;;      :when (not= type "simpleObject")]
   ;;  col-name)
-  )
+
+
+(defn- is-valid-and-visible? [cols column-map col-name]
+  (let [col (column-map col-name)
+        valid-cols (if cols (set cols) column-map)
+        is-valid (valid-cols col-name)]
+    (if rpc-util/*client-request?*
+      (and is-valid col (not (:client_hidden col)))
+      is-valid)))
+
 
 (defn- check-requested-cols! [tables {table-id :id :keys [cols] :as view-spec} column-map requested-cols]
-  (let [allowed? (if cols (set cols) column-map)]
+  (let [allowed? (partial is-valid-and-visible? cols column-map)]
     (->>
       (for [[col-name request] requested-cols
             :let [col-name (util/preserve-slashes col-name)]]
@@ -182,8 +218,8 @@
   [requested-cols all-cols {:keys [tables level view-spec]}]
   (set (cond
          (map? requested-cols) (check-requested-cols! tables view-spec all-cols requested-cols)
-         requested-cols (default-cols-to-fetch all-cols)
-         (<= level DEFAULT-WALK-DEPTH) (default-cols-to-fetch all-cols))))
+         requested-cols (default-cols-to-fetch-removing-client-hidden all-cols)
+         (<= level DEFAULT-WALK-DEPTH) (default-cols-to-fetch-removing-client-hidden all-cols))))
 
 (defn- follow-link? [requested-cols col-name level type]
   (if-not (map? requested-cols)
@@ -232,7 +268,7 @@
 
 (defn- add-fetch [fetch-spec {:keys [table-id requested-cols tables] :as args}]
   (let [requested-cols (clean-requested-cols requested-cols)
-        all-cols (get-in tables [table-id :columns])
+        all-cols (get-all-cols-maybe-removing-client-hidden tables table-id)
         fetching-cols (get-cols-to-fetch requested-cols all-cols args)
         fetch-id (:next-fetch-id fetch-spec)
         fetch-spec (update-fetch-spec fetch-spec fetching-cols fetch-id args)]
@@ -248,21 +284,15 @@
                                    :requested-cols requested-cols
                                    :tables         tables})))
 
-(defn- render-transmitted-value [tables table-id row-data col-name]
-  (let [json-value (get row-data (keyword col-name))]
-    (when-not (nil? json-value)
-      (table-types/render-column-value tables table-id col-name json-value))))
-
-
-(defn- dict-row-data [row-data cap fetching-cols cols render-value]
+(defn- dict-row-data [table row-id row-data cap fetching-cols cols]
   (reduce (fn [row-dict [i {col-name :name}]]
            (if (fetching-cols col-name)
-             (assoc row-dict (str i) (render-value row-data col-name))
+             (assoc row-dict (str i) (util-v2/render-transmitted-value table row-id row-data (get-in table [:columns col-name])))
              row-dict))
          {:c cap} (indexed cols)))
 
-(defn- compact-row-data [row-data cap col-names render-value]
-  (conj (mapv (partial render-value row-data) col-names) cap))
+(defn- compact-row-data [table row-id row-data cap col-names]
+  (conj (mapv #(util-v2/render-transmitted-value table row-id row-data (get-in table [:columns %])) col-names) cap))
 
 (defn- get-cached-col-order [fetch-spec view-spec]
   (get-in fetch-spec [:cache-cols view-spec :cache-order]))
@@ -273,11 +303,11 @@
 (defn- get-transmitted-row-data [tables fetch-spec table-data id rdata {:keys [view-key fetching-cols cache-clash? view-spec]}]
   (let [_ (assert view-spec)
         table-id (:id view-spec)
-        render-value (partial render-transmitted-value tables table-id)
-        cap (types/->Capability ["_" "t" (util-v2/encode-view-spec view-spec) {:r id}])]
+        cap (types/->Capability ["_" "t" (util-v2/encode-view-spec view-spec) {:r id}])
+        table (get tables table-id)]
     (if cache-clash?
-      (dict-row-data rdata cap fetching-cols (get-col-specs table-data view-key) render-value)
-      (compact-row-data rdata cap (get-cached-col-order fetch-spec view-spec) render-value))))
+      (dict-row-data table id rdata cap fetching-cols (get-col-specs table-data view-key))
+      (compact-row-data table id rdata cap (get-cached-col-order fetch-spec view-spec)))))
 
 (defn- add-cap [view-key view-spec table-data row-link-json]
   (if row-link-json
@@ -343,16 +373,135 @@
 
 (defn get-row [tables db-c {table-id :id :as view-spec} row-id requested-cols]
   (let [fetch-spec (compute-fetch-spec tables view-spec requested-cols)
-        SQL-QUERY (LOOKUP-ROW-QUERY tables table-id row-id fetch-spec)]
+        SQL-QUERY (LOOKUP-ROW-QUERY tables view-spec row-id fetch-spec)]
     (walk-and-fetch-table-links tables db-c view-spec SQL-QUERY fetch-spec)))
 
-(defn row-data-to-updates [table-data view-key row-id]
-  (let [spec (get-in table-data [view-key :spec])
-        data (get-in table-data [view-key :rows (str row-id)])
-        cached-col-names (for [[col cached?] (map vector (:cols spec) (:cache spec))
-                               :when (= cached? 1)]
-                           (:name col))]
-    (into {} (map vector cached-col-names data))))
 
-(defn add-row [tables db-c table-id only-if-query reduced-values]
-  (let []))
+(defn table-has-row? [tables db-c {table-id :id :keys [restrict] :as view-spec} row-id]
+  (-> (when row-id
+        (let [{:keys [storage] :as table-record} (get-in tables [table-id :table-record])
+              [RESTRICT-EXPR restrict-args] (when restrict (query/QUERY->SQL table-record restrict))
+              [SQL args] (if (:split storage)
+                           [(str "SELECT 1 FROM " (split-sql/TABLE-NAME table-record) " WHERE _id = ? AND " (or RESTRICT-EXPR "TRUE"))
+                            (concat [row-id] restrict-args)]
+                           [(str "SELECT 1 FROM app_storage_data WHERE table_id=? AND id=? AND " (or RESTRICT-EXPR "TRUE"))
+                            (concat [table-id row-id] restrict-args)])]
+          (seq (jdbc-t/query db-c (cons SQL args)))))
+      (boolean)))
+
+(defn- select-indices
+  "returns a vector of elements from coll at the given indices (idxs)"
+  [coll idxs]
+  (mapv #(nth coll %) idxs))
+
+(defn- get-client-visible-col-indices [{:keys [cols] :as spec}]
+  (vec (keep-indexed (fn [i col]
+                       (when-not (:client_hidden col) i))
+                     cols)))
+
+(defn clean-spec [{:keys [cols cache] :as spec}]
+  (let [visible-col-idxs (get-client-visible-col-indices spec)]
+    {:cols  (select-indices cols visible-col-idxs)
+     :cache (select-indices cache visible-col-idxs)}))
+
+
+(defn- clean-row-map [row-data  {:keys [old-key->new-key] :as params}]
+  (reduce-kv (fn [m k v]
+               (if-let [new-k (old-key->new-key k)]
+                 (assoc m new-k v)
+                 m))
+    {} row-data))
+
+
+
+(defn- clean-row [row-data {:keys [visible-cached-row-indices] :as params}]
+  (cond
+    ;; For row vectors, select only visible & cached values, then append capability
+    (vector? row-data)
+    (conj (select-indices row-data visible-cached-row-indices) (peek row-data))
+
+    (map? row-data)
+    (clean-row-map row-data params)
+
+    :else row-data))
+
+(defn- compute-row-transform-params [{:keys [cache] :as spec}]
+  (let [visible-col-idxs (get-client-visible-col-indices spec)
+        cached-col-idxs (keep-indexed (fn [i v] (when (= v 1) i)) cache)
+        visible-and-cached-idxs (filter (set cached-col-idxs) visible-col-idxs)
+        col-idx->row-pos (zipmap cached-col-idxs (range))]
+    {:old-key->new-key           (merge {:c :c}
+                                        (zipmap (map str visible-col-idxs)
+                                                (map str (range (count visible-col-idxs)))))
+     :visible-cached-row-indices (map col-idx->row-pos visible-and-cached-idxs)}))
+
+;; TODO this appears to be unused?
+(defn- clean-rows [rows spec]
+  ;; compute the params once per table
+  (let [params (compute-row-transform-params spec)]
+    (map-vals #(clean-row % params) rows)))
+
+
+(declare walk-linked-columns)
+;; Recursively walk a row and all client-visible links, building up a cleaned version of the table data
+;; Only includes columns and linked rows that are not client_hidden.
+;;
+(defn clean-table-data-for-client
+  "Recursively walks from a starting row, following only client-visible links, and builds up a cleaned table-data map
+  only containing visible columns and reachable rows. Uses an accumulator for cleaned-data."
+  ([table-data table-id row-id]
+   (clean-table-data-for-client table-data table-id row-id {}))
+  ([table-data table-id row-id cleaned-data]
+   (let [view-key (get-linked-view-key table-id "r")
+         str-row-id (util/write-json-str row-id)
+         table-entry (get table-data view-key)
+         spec (:spec table-entry)
+         cleaned-spec (clean-spec spec)
+         already-cleaned-row? (contains? (get-in cleaned-data [view-key :rows] {}) str-row-id)]
+     (if already-cleaned-row?
+       cleaned-data
+       (let [row (get-in table-entry [:rows str-row-id])
+             ;; todo - consider caching the compute-row-transform-params per table-id
+             ;; and keeping this in local cache
+             cleaned-row (clean-row row (compute-row-transform-params spec))
+             updated-data (-> cleaned-data
+                              (assoc-in [view-key :spec] cleaned-spec)
+                              (assoc-in [view-key :rows str-row-id] cleaned-row))]
+         (walk-linked-columns cleaned-spec cleaned-row table-data updated-data))))))
+
+
+(defn walk-linked-columns
+  "Given a cleaned spec and cleaned row, recursively walk all non-client-hidden link columns.
+  Handles both link_single and link_multiple columns.
+  Uses medley.core/indexed to provide col and col-idx.
+  - cleaned-spec: spec with only client-visible columns
+  - cleaned-row: cleaned row (vector or map)
+  - table-data: original full table-data
+  - cleaned-data: accumulator"
+  [cleaned-spec cleaned-row table-data cleaned-data]
+  (reduce
+    (fn [acc-data [col-idx {:keys [type] :as col}]]
+      (if (#{"link_single" "link_multiple"} type)
+        (let [linked-table-id (:table_id col)
+              linked-row-val (if (vector? cleaned-row)
+                               (nth cleaned-row col-idx nil)
+                               ;; For map rows, key is string index (as per row cleaning convention)
+                               (get cleaned-row (str col-idx)))]
+          (cond
+            ;; Only recurse for non-nil link_single
+            (and (= type "link_single") (some? linked-row-val))
+            (clean-table-data-for-client table-data linked-table-id linked-row-val acc-data)
+
+            ;; recurse for row-ids in link_multiple - if a vector these can't be nil
+            (and (= type "link_multiple") (sequential? linked-row-val))
+            (reduce (fn [a row-id]
+                      (clean-table-data-for-client table-data linked-table-id row-id a))
+                    acc-data
+                    linked-row-val)
+
+            :else acc-data))
+        acc-data))
+    cleaned-data
+    (indexed (:cols cleaned-spec))))
+
+

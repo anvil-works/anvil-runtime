@@ -1,7 +1,9 @@
 (ns anvil.runtime.tables.util
   (:use [compojure.core]
         [clj-commons.slingshot])
-  (:require [anvil.runtime.tables.v2.jdbc-trace :as jdbc-t]
+  (:require [anvil.metrics :as metrics]
+            [anvil.runtime.tables.split.sql :as split-sql]
+            [anvil.runtime.tables.v2.jdbc-trace :as jdbc-t]
             [crypto.random :as random]
             [clojure.java.jdbc :as jdbc]
             [anvil.runtime.conf :as conf]
@@ -10,14 +12,10 @@
             [anvil.util :as util]
             [clojure.tools.logging :as log]
             [anvil.dispatcher.serialisation.live-objects :as live-objects]
-            [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]
             [anvil.runtime.quota :as quota]
             digest
             [clojure.string :as str]
-            [anvil.runtime.app-data :as app-data]
-            [clojure.string :as string]
-            [anvil.core.server :as anvil-server]
-            [anvil.core.worker-pool :as worker-pool])
+            [clojure.string :as string])
   (:import (java.sql Connection SQLException)
            (anvil.dispatcher.types Date DateTime LiveObjectProxy MediaDescriptor SerialisableForRpc)
            (java.io InputStream ByteArrayInputStream SequenceInputStream OutputStream)
@@ -26,28 +24,36 @@
            (java.time.format DateTimeFormatter DateTimeFormatterBuilder)
            (java.time.temporal ChronoField)))
 
-(clj-logging-config.log4j/set-logger! :level :info)
+;(clj-logging-config.log4j/set-logger! :level :trace)
+
+(defn allow-admin-actions-on-db [db]
+  (assoc-in db [:anvil/pool-info :allow-admin-actions?] true))
 
 (defonce table-mapping-for-environment (fn
                                          ([environment] {})
                                          ([environment session-state] {})))
-(defonce db-for-mapping (fn ([mapping] util/db) ([session-state mapping] util/db)))
-(defonce db-for-mapping-transaction (fn [mapping] util/db))
-(defonce mutate-db-for-mapping? (fn [mapping] false))
+(defonce cache-key-for-table-mapping (fn [mapping] :one-table-mapping))
+(defonce db-for-mapping (fn
+                          ([mapping] (allow-admin-actions-on-db util/db))
+                          ([session-state mapping] (allow-admin-actions-on-db util/db))))
+(defonce db-for-mapping-transaction (fn [mapping] (allow-admin-actions-on-db util/db)))
 
 (defonce get-table-access
          (fn [_mapping table-id]
-           (first (jdbc/query util/db
-                              ["SELECT name,columns,client,server FROM app_storage_tables,app_storage_access WHERE id = table_id AND table_id = ?"
-                               table-id]))))
+           (->> (jdbc/query util/db
+                            ["SELECT name,columns,client,server,storage FROM app_storage_tables,app_storage_access WHERE id = table_id AND table_id = ?"
+                             table-id])
+                (first))))
 
 (defonce get-table-id-by-name
          (fn [db-c _mapping python-name]
            (:table_id (first (jdbc/query db-c ["SELECT table_id FROM app_storage_access WHERE python_name = ?" python-name])))))
 
 (defonce get-all-table-access-records
-         (fn [_mapping]
-           (jdbc-t/query util/db ["SELECT DISTINCT ON (table_id) table_id,name,python_name,columns,client,server FROM app_storage_tables,app_storage_access WHERE id = table_id"])))
+         (fn
+           ([mapping] (get-all-table-access-records util/db mapping))
+           ([db-c _mapping]
+            (jdbc-t/query db-c ["SELECT DISTINCT ON (table_id) table_id,name,python_name,columns,client,server,storage FROM app_storage_tables,app_storage_access WHERE id = table_id"]))))
 
 (defonce update-table-access-record!
          (fn [_mapping table-id update]
@@ -68,12 +74,14 @@
     :docId              "data_tables"
     :docLinkTitle       "Learn more about Data tables"}))
 
+(defonce ^:private log-every-sql-error? false)
+
 (defn transform-err [^SQLException e]
   (log/debug e)
   (if (= "40001" (.getSQLState e))
     (general-tables-error "Another transaction has changed this data; aborting"
                           "anvil.tables.TransactionConflict")
-    (if (re-matches #"(?s).*ResultSet is closed.*" (str (.getMessage e)))
+    (if (or (re-matches #"(?s).*ResultSet is closed.*" (str (.getMessage e))) log-every-sql-error?)
       (let [error-id (random/hex 6)]
         (log/error e "An \"impossible\" SQLException occurred, Error code: " error-id)
         (general-tables-error (str "Internal database error: " (.getMessage e) " (" error-id ")")))
@@ -239,6 +247,19 @@
                           (.toFormatter)
                           (.withZone (ZoneId/of "UTC"))))
 
+(def normal-datetime-parser (-> (DateTimeFormatterBuilder.)
+                                (.append DateTimeFormatter/ISO_LOCAL_DATE)
+                                (.appendLiteral " ")
+                                (.appendValue ChronoField/HOUR_OF_DAY 2)
+                                (.appendLiteral ":")
+                                (.appendValue ChronoField/MINUTE_OF_HOUR 2)
+                                (.appendLiteral ":")
+                                (.appendValue ChronoField/SECOND_OF_MINUTE 2)
+                                (.appendFraction ChronoField/MICRO_OF_SECOND 0 9 true)
+                                (.appendOffset "+HHMM" "+0000")
+                                (.toFormatter)
+                                (.withZone (ZoneId/of "UTC"))))
+
 (defn datetime->instant [datetime]
   (when-let [val (:datetime-string datetime)]
     (.toInstant (OffsetDateTime/parse val reduce-formatter))))
@@ -251,17 +272,20 @@
           (.withZone (ZoneOffset/UTC))
           (.format instant)))))
 
-(defn reinflate-anvil-datetime [val]
+(defn reinflate-anvil-datetime [^String val]
   (when val
     (DateTime.
-      (let [offset-pos (- (count val) 5)
-            swapped-offset (str (.substring val 0 offset-pos)
-                                (if (= (get val offset-pos) \+) "-" "+")
-                                (.substring val (+ offset-pos 1)))
-            instant (.toInstant (OffsetDateTime/parse swapped-offset reinflate-parser))]
-        (-> (DateTimeFormatter/ofPattern (str "yyyy-MM-dd HH:mm:ss.SSSSSS'" (.substring val offset-pos) "'"))
-            (.withZone (ZoneOffset/UTC))
-            (.format instant))))))
+      (let [offset-pos (- (.length val) 5)
+            DATE-END-POS 10]
+        (if (= \A (.charAt val DATE-END-POS))
+          (let [swapped-offset (str (.substring val 0 offset-pos)
+                                    (if (= (get val offset-pos) \+) "-" "+")
+                                    (.substring val (+ offset-pos 1)))
+                instant (.toInstant (OffsetDateTime/parse swapped-offset reinflate-parser))]
+            (-> (DateTimeFormatter/ofPattern (str "yyyy-MM-dd HH:mm:ss.SSSSSS'" (.substring val offset-pos) "'"))
+                (.withZone (ZoneOffset/UTC))
+                (.format instant)))
+          (str (.toInstant (OffsetDateTime/parse val normal-datetime-parser))))))))
 
 (defn reduced-val
   ([type val] (reduced-val type val false))
@@ -390,7 +414,7 @@
         (try
           (.close ^Connection (:connection (:db-map tx)))
           (catch Exception _))
-        (util/rollback-quota-changes! (:anvil-quota-rollback-state (:db-map tx)))))))
+        (util/rollback-quota-changes! (:anvil-txn-state (:db-map tx)))))))
 
 (defn start-transaction-tidy-timer []
   (.start (Thread. ^Runnable
@@ -476,8 +500,9 @@
           db-map (-> (jdbc/add-connection db-map conn)
                      ;; Tell the JDBC helper it's in a transaction already
                      (assoc :level 1
-                            :anvil-quota-rollback-state (atom {})
-                            :anvil-txn-isolation-level isolation-kw))]
+                            :anvil-txn-state (atom {:quota-rollbacks {} :on-commit nil})
+                            :anvil-txn-isolation-level isolation-kw
+                            :schema-cache (atom {})))]
 
       (log/trace "Opening app transaction in thread" rpc-util/*thread-id*)
 
@@ -487,7 +512,7 @@
              #(if %
                 (do
                   (try (.close conn) (catch Exception _))
-                  (util/rollback-quota-changes! (:anvil-quota-rollback-state db-map))
+                  (util/rollback-quota-changes! (:anvil-txn-state db-map))
                   (throw+ (general-tables-error "Internal error: Duplicate racing transactions on the same thread")))
                 {:open 0, :db-map db-map, :last-touched (System/currentTimeMillis)}))
 
@@ -501,7 +526,7 @@
   (when-not rpc-util/*thread-id*
     (throw+ (general-tables-error "Cannot close a transaction in an unidentified thread")))
   ;; Atomically remove and retrieve the value of the 'thread-id' key from this map
-  (if-let [{{:keys [^Connection connection anvil-quota-rollback-state]} :db-map}
+  (if-let [{{:keys [^Connection connection anvil-txn-state]} :db-map}
            (-> (swap-vals! open-transactions dissoc rpc-util/*thread-id*)
                (first)
                (get rpc-util/*thread-id*))]
@@ -510,8 +535,10 @@
       (swap! rpc-util/*session-state* update-in [::transaction-threads] disj rpc-util/*thread-id*)
       (if-not rollback?
         (.commit connection)
-        (.rollback connection))
-      (util/rollback-quota-changes! anvil-quota-rollback-state)
+        (do
+          (.rollback connection)
+          (metrics/inc! :api/jdbc-transaction-rollbacks {:transaction "<app>"})))
+      (util/rollback-quota-changes! anvil-txn-state)
       (finally
         (.close connection)))
 
@@ -592,11 +619,56 @@
 (defn filter-columns [columns view-cols]
   (select-keys columns (->> (keys columns) (remove #(contains? (set view-cols) (name %))))))
 
-(defn get-columns [c table-id view-cols]
-  (if-let [{:keys [columns]} (first (jdbc/query c ["SELECT columns FROM app_storage_tables WHERE id = ?"
-                                                   table-id]))]
-    (filter-columns columns view-cols)
-    (throw+ (general-tables-error "Table not found. Has it been deleted?"))))
+(defn normalise-indexes [{:keys [columns indexes] :as table-record}]
+  (let [all-indexes (reduce (fn [all-indexes [col-id {:keys [indexes]}]]
+                              (apply conj all-indexes
+                                     (for [{:keys [type]} indexes]
+                                       {:columns [(name col-id)]
+                                        :type    type})))
+                            (set indexes) columns)]
+    ;; This sort is entirely arbitrary, but should be stable (for use in app-schema YAML in git)
+    (assoc table-record :all_indexes (sort-by (fn [{:keys [columns type]}]
+                                                (apply str type ":" (interpose ":" columns)))
+                                              all-indexes))))
+
+(defn load-table-record [db-c table-id]
+  (if-let [table-record (first (jdbc/query db-c ["SELECT * FROM app_storage_tables WHERE id = ?"
+                                                 table-id]))]
+    (normalise-indexes table-record)
+    (throw+ (-> (general-tables-error "Table not found. Has it been deleted?")
+                (assoc :anvil.tables/no-such-table true
+                       :log-stack-trace true)))))
+
+(defn save-table-record! [db-c {:keys [id columns indexes] :as table-record}]
+  (when (empty? (jdbc/query db-c ["UPDATE app_storage_tables SET columns=?::jsonb, indexes=?::jsonb WHERE id=? RETURNING id"
+                                  columns (some-> indexes vec) id]))
+    (throw (Exception. (format "Table %s does not exist" id))))
+  table-record)
+
+(defn update-columns-vals!
+  "Like (swap-vals!) but for the 'columns' map of the specified table. Must be called in a transaction."
+  [db-c table-id update-fn & args]
+  (let [old-cols (:columns (first (jdbc/query db-c ["SELECT columns FROM app_storage_tables WHERE id = ?" table-id])))
+        new-cols (apply update-fn old-cols args)]
+    (when new-cols                                          ;; nil return aborts
+      (jdbc/execute! db-c ["UPDATE app_storage_tables SET columns = ?::jsonb WHERE id = ?" new-cols table-id])
+      [old-cols new-cols])))
+
+(defn get-columns-and-storage [c table-id view-cols]
+  (if-let [{:keys [columns storage]} (first (jdbc/query c ["SELECT columns,storage FROM app_storage_tables WHERE id = ?"
+                                                           table-id]))]
+    [(filter-columns columns view-cols) storage]
+    (throw+ (assoc (general-tables-error "Table not found. Has it been deleted?")
+              :log-stack-trace true))))
+
+(defn get-table-storage [db-c table-id]
+  (:storage (first (jdbc/query db-c ["SELECT storage FROM app_storage_tables WHERE id = ?" table-id]))))
+
+(defn ensure-combined-storage! [{:keys [split] :as storage}]
+  ;; call from places where we can't yet handle split tables
+  (when split
+    (throw+ (assoc (general-tables-error "Please enable Accelerated Tables in order to use new-style tables")
+              :log-stack-trace true))))
 
 (defn get-object-size
   ([oid] (get-object-size (db) oid))
@@ -629,15 +701,8 @@
                                      (map :object_id)) use-quota!)
      (when use-quota! (use-quota! 0 (- (->> affected-media (filter :len) (map :len) (reduce + 0))))))))
 
-(defn delete-media-in-column [table-id col-id use-quota!]
-  (let [affected-media (jdbc/query (db) ["DELETE FROM app_storage_media WHERE table_id = ? AND column_id = ? RETURNING object_id, (data is null) as has_lo, length(data) AS len" table-id (name col-id)])]
-    (delete-media-objects (->> affected-media
-                               (filter :has_lo)
-                               (map :object_id)) use-quota!)
-    (when use-quota! (use-quota! 0 (- (->> affected-media (filter :len) (map :len) (reduce + 0)))))))
-
 (defn delete-media-in-cell [table-id col-id row-id use-quota!]
-  (let [affected-media (jdbc/query (db) ["DELETE FROM app_storage_media WHERE table_id = ? AND column_id = ? AND row_id = ? RETURNING object_id, (data is null) as has_lo, length(data) AS len" table-id col-id row-id])]
+  (let [affected-media (jdbc/query (db) ["DELETE FROM app_storage_media WHERE table_id = ? AND column_id = ? AND row_id = ? RETURNING object_id, (data is null) as has_lo, length(data) AS len" table-id (util/preserve-slashes col-id) row-id])]
     (delete-media-objects (->> affected-media
                                (filter :has_lo)
                                (map :object_id)) use-quota!)
@@ -655,14 +720,16 @@
       (.close out-stream)
       (.close in-stream))))
 
-(defn lazy-export-data
-  ([^Connection db-c, table-ids] (lazy-export-data db-c table-ids {}))
-  ([^Connection db-c, table-ids, view-query]
+(defn lazy-export-combined-data
+  ([^Connection raw-conn, table-ids] (lazy-export-combined-data raw-conn table-ids {}))
+  ([^Connection raw-conn, table-ids, view-query]
    (into {}
-         (for [id table-ids]
+         (for [id table-ids
+               :let [storage (get-table-storage {:connection raw-conn} id)
+                     _ (ensure-combined-storage! storage)]]
            [id
             (let [[QUERY-SQL query-args] (query->sql view-query)
-                  stmt (doto (.prepareStatement db-c (str "SELECT * FROM app_storage_data WHERE table_id=? AND " QUERY-SQL))
+                  stmt (doto (.prepareStatement raw-conn (str "SELECT * FROM app_storage_data WHERE table_id=? AND " QUERY-SQL))
                          (.setFetchSize 100)                ; Need to do this, else jdbc will load every row into memory on the first fetch. Doh.
                          (.setInt 1 id))]
               (dorun (map-indexed (fn [idx val]
@@ -670,7 +737,7 @@
                                   query-args))
               (.executeQuery stmt))]))))
 
-(defn export-as-csv [table-id query-obj cols escape-for-excel?]
+(defn export-as-csv-v1 [table-id query-obj cols escape-for-excel?]
   (let [raw-conn ^Connection (jdbc/get-connection (db))
         columns (->> (for [[col-id col-spec] cols] (assoc col-spec :id col-id))
                      (sort-by #(:order (:admin_ui %))))
@@ -708,7 +775,7 @@
                           (interpose ",")
                           (apply str)))
 
-        table-data (-> (lazy-export-data raw-conn [table-id] query-obj)
+        table-data (-> (lazy-export-combined-data raw-conn [table-id] query-obj)
                        (get table-id))
 
         header (->> columns
@@ -734,20 +801,22 @@
 (defn get-view-name-from-table-id [db table-id]
   (format "data_tables.table_%d" table-id))
 
-(defn drop-view! [db table-id]
-  (let [VIEW-NAME (get-view-name-from-table-id db table-id)]
-    (util/with-metric-query "DROP VIEW" (jdbc/execute! db [(str "DROP VIEW IF EXISTS " VIEW-NAME " CASCADE")]))
-    (util/with-metric-query "DROP FUNCTION" (jdbc/execute! db [(str "DROP FUNCTION IF EXISTS " VIEW-NAME "_update")]))
-    (util/with-metric-query "DROP TRIGGER" (jdbc/execute! db [(str "DROP TRIGGER IF EXISTS update_trigger ON " VIEW-NAME)]))))
+(defn drop-view! [db {table-id :id :keys [storage] :as table-record}]
+  (when-not (:split storage)
+    (let [VIEW-NAME (get-view-name-from-table-id db table-id)]
+      (util/with-metric-query "DROP VIEW" (jdbc/execute! db [(str "DROP VIEW IF EXISTS " VIEW-NAME " CASCADE")]))
+      (util/with-metric-query "DROP FUNCTION" (jdbc/execute! db [(str "DROP FUNCTION IF EXISTS " VIEW-NAME "_update")]))
+      (util/with-metric-query "DROP TRIGGER" (jdbc/execute! db [(str "DROP TRIGGER IF EXISTS update_trigger ON " VIEW-NAME)])))))
 
 
-(defn update-table-view! [db table-id cols]
-  (when (mutate-db-for-mapping? (table-mapping-for-environment (current-environment)))
-    (drop-view! db table-id)
-    (log/trace "Updating view for table" table-id "with cols" (pr-str cols))
+(defn update-table-view! [db {table-id :id :keys [columns storage] :as table-record}]
+  (when (and (not (:split storage))
+             (not (get-in db [:anvil/pool-info :multi-tenant-db?]))
+             (get-in db [:anvil/pool-info :allow-admin-actions?]))
+    (drop-view! db table-record)
+    (log/trace "Updating view for table" table-id "with cols" (pr-str columns))
     (let [VIEW-NAME (get-view-name-from-table-id db table-id)
-
-          view-cols (for [col (sort-by (fn [c] (-> c :admin_ui :order)) (for [[col-id col-spec] cols]
+          view-cols (for [col (sort-by (fn [c] (-> c :admin_ui :order)) (for [[col-id col-spec] columns]
                                                                           (assoc col-spec :id col-id)))]
                       (do
                         (when-not (re-matches #"[-A-Za-z0-9+_=]+" (name (:id col)))
@@ -931,126 +1000,15 @@
       (util/with-metric-query "CONFIGURE TRIGGER FUNCTION" (jdbc/execute! db setup-function-permissions-sql))
       (util/with-metric-query "CREATE/UPDATE TRIGGER SQL" (jdbc/execute! db create-update-trigger-sql)))))
 
-(defonce update-table-views! (fn ([db table-id] (update-table-view! db table-id (get-cols db table-id)))
-                               ([db table-id cols] (update-table-view! db table-id cols))))
+(defonce update-table-views! (fn [db table-record] (update-table-view! db table-record)))
 
-(defn update-col-indexes
-  ([db table-id] (update-col-indexes db table-id (get-cols db table-id)))
-  ([_ table-id cols]
-    ; This doesn't use the DB passed in, because it can't run in a transaction.
-   (when (mutate-db-for-mapping? (table-mapping-for-environment (current-environment)))
-     (let [db (db-for-current-app)
-           valid-index-types {"b_tree" #{"string" "number" "date" "datetime" "bool"}
-                              "trigram" #{"string"}
-                              "full_text" #{"string"}}
-           required-indexes (reduce (fn [required-indexes [col-id {indexes :indexes col-type :type :as _col}]]
-                                      (if (empty? indexes)
-                                        required-indexes
-                                        (concat required-indexes
-                                                (filter identity
-                                                        (map (fn [{index-type :type :as index-spec}]
-                                                               (let [valid-col-types (get valid-index-types index-type)]
-                                                                 (if (get valid-col-types col-type)
-                                                                   {:col-id col-id
-                                                                    :type   index-type
-                                                                    :NAME   (.toLowerCase (str "data_table_" table-id "_" (clojure.string/replace col-id #"[^a-zA-Z0-9]" "") "_" index-type))
-                                                                    :index-spec index-spec
-                                                                    :col-type col-type}
-                                                                   (throw (Exception. (str "Could not update index of type '" index-type "' on column of type '" col-type "'"))))))
-                                                             indexes))))) [] cols)
 
-           EXISTING-INDEX-NAMES (set (map :relname (jdbc/query db ["select relname from pg_class where relname ilike ? and relkind = 'i';" (str "data_table_" table-id "_%")])))
-           REQUIRED-INDEX-NAMES (set (map :NAME required-indexes))
-
-           INDEXES-TO-DROP (clojure.set/difference EXISTING-INDEX-NAMES REQUIRED-INDEX-NAMES)
-           INDEXES-TO-CREATE (clojure.set/difference REQUIRED-INDEX-NAMES EXISTING-INDEX-NAMES)]
-
-       (log/trace "Required indexes:" required-indexes)
-       (log/trace "Existing indexes:" EXISTING-INDEX-NAMES)
-       (log/trace "Required index names:" REQUIRED-INDEX-NAMES)
-       (log/trace "Indexes to drop:" INDEXES-TO-DROP)
-       (log/trace "Indexes to create:" INDEXES-TO-CREATE)
-
-       ;; Here lieth Ian's attempt to do CREATE INDEX CONCURRENTLY so that Business Plan users could create indexes on
-       ;; the main app_storage_data table. Unfortunately, this causes postgres to wedge completely the *second* time
-       ;; you try to create an index. No idea why, and life is too short to dig deeply enough to find out. Only allow
-       ;; dedicated-db users to do this for now.
-
-       (util/with-metric-query "DROP INDEX"
-         (doseq [IDX-NAME INDEXES-TO-DROP]
-           (util/with-metric-query "DROP INDEX" (jdbc/execute! db (str "DROP INDEX IF EXISTS " IDX-NAME) {:transaction? false}))))
-       (util/with-metric-query "CREATE INDEX"
-         (doseq [IDX-NAME INDEXES-TO-CREATE]
-           (let [{:keys [type col-id col-type] :as _idx} (first (filter #(= IDX-NAME (:NAME %)) required-indexes))
-                 TABLE-ID (str (int table-id))
-                 COL-ID (string/replace (name col-id) #"[^A-Za-z0-9+_=]" "")
-                 SQL
-                 (condp = type
-                   "b_tree"
-                   (if (= col-type "number")
-                     (str "CREATE INDEX IF NOT EXISTS " IDX-NAME " ON app_storage_data USING btree(((data->>'" COL-ID "')::float)) where table_id = " TABLE-ID)
-                     (if (contains? #{"string" "date" "datetime"} col-type)
-                       (str "CREATE INDEX IF NOT EXISTS " IDX-NAME " ON app_storage_data USING btree((data->>'" COL-ID "')) where table_id = " TABLE-ID)
-                       (throw (Exception. (str "Could not create index of type '" type "' on column of type '" col-type "'")))))
-
-                   "trigram"
-                   (str "CREATE INDEX IF NOT EXISTS " IDX-NAME " ON app_storage_data USING gin((data->>'" COL-ID "') gin_trgm_ops) where table_id = " TABLE-ID)
-
-                   "full_text"
-                   ;; TODO: Get tsvector configuration name from spec to support other languages.
-                   (str "CREATE INDEX IF NOT EXISTS " IDX-NAME " ON app_storage_data USING gin(to_tsvector('english', (data->>'" COL-ID "'))) where table_id = " TABLE-ID)
-
-                   (throw (Exception. (str "Could not create index of type '" type "': " IDX-NAME))))]
-             (log/trace (pr-str SQL))
-             (util/with-metric-query "CREATE INDEX"
-               (util/with-long-query
-                 (jdbc/execute! db SQL {:transaction? false}))))))
-
-       (log/trace "Finished updating indexes.")))))
-
-(defn update-cols-returning
-  ([table-id new-cols old-cols] (update-cols-returning table-id new-cols old-cols
-                                                       (fn [& _args]
-                                                         (throw (Exception. "Cannot use quota here.")))))
-  ([table-id new-cols old-cols use-quota!] (update-cols-returning table-id new-cols old-cols use-quota! true))
-  ([table-id new-cols old-cols use-quota! init-data?] ; init-data? should always be true in normal usage. Only provided for manual adding of columns in tables where data initialisation times out.
-   (worker-pool/with-expanding-threadpool-when-slow
-     (with-table-transaction
-       (util/with-long-query
-         (let [col-records (for [[id desc] (-> (jdbc/query (db) ["UPDATE app_storage_tables SET columns = ?::jsonb WHERE id = ? RETURNING columns"
-                                                                 new-cols table-id])
-                                               (first) (:columns))]
-                             (assoc desc :id id))
-               added-cols (filter #(not (contains? old-cols (:id %))) col-records)
-               removed-cols (filter (fn [[id _c]] (not (contains? new-cols id))) old-cols)]
-
-           (doseq [[id _c] removed-cols]
-             (delete-media-in-column table-id id use-quota!))
-           (when (and init-data? (seq added-cols))
-             (jdbc/execute! (db) ["UPDATE app_storage_data SET data = data || ?::jsonb WHERE table_id = ?"
-                                  (into {} (for [{:keys [id type]} added-cols] [id (if (= type "bool") false nil)]))
-                                  table-id]))
-           (update-col-indexes (db) table-id new-cols)
-           (update-table-views! (db) table-id new-cols)
-           col-records))))))
-
-;; Useful for manually adding columns when it doesn't work through the UI because of timeouts.
-(defn add-col-no-init
-  ([app-id table-mapping-id table-id name type] (add-col-no-init app-id table-mapping-id table-id name type nil nil))
-  ([app-id table-mapping-id table-id name type backend linked-table-id]
-   (binding [*environment-for-admin-call* {:app_id app-id :table_mapping_id table-mapping-id}]
-     (with-table-transaction
-       (let [cols (get-cols table-id)
-             new-id (gen-new-id 8)
-             new-col (cond-> {:name     name
-                              :type     type
-                              :admin_ui {:order (inc (count cols))}}
-                             backend (assoc :backend backend :table-id linked-table-id))]
-         (update-cols-returning table-id (assoc cols new-id new-col) cols (fn [& _args] (throw (Exception. "Cannot use quota here."))) false)
-         new-col)))))
-
-(def set-table-hooks! (util/hook-setter [table-mapping-for-environment db-for-mapping
-                                         db-for-mapping-transaction mutate-db-for-mapping?
+(def set-table-hooks! (util/hook-setter [table-mapping-for-environment cache-key-for-table-mapping
+                                         db-for-mapping db-for-mapping-transaction
                                          get-table-access get-table-id-by-name
                                          get-all-table-access-records delete-table-access-record!
                                          update-table-access-record! update-table-views!]))
+
+(defrecord TableAdminPolicy [allow-index?]) ; allow-index?: (db, storage, index) -> bool
+
+(def TABLE-ADMIN-POLICY-ALLOW-ALL (map->TableAdminPolicy {:allow-index? (constantly true)}))

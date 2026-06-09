@@ -199,6 +199,7 @@ const PaginatorFactory = (pyModule: PyModMap) => {
                         return pyNone;
                     });
                 }
+                return pyNone;
             });
 
             $loc["previous_page"] = new pyFunc((self: Paginator) => {
@@ -219,6 +220,7 @@ const PaginatorFactory = (pyModule: PyModMap) => {
                         return pyNone;
                     });
                 }
+                return pyNone;
             });
 
             $loc["get_page"] = new pyFunc((self: Paginator) => {
@@ -298,6 +300,7 @@ const PaginatorFactory = (pyModule: PyModMap) => {
                     const jumpToFirstPageMeth = self.tp$getattr<pyCallable>(new pyStr("jump_to_first_page"));
                     return pyCallOrSuspend(jumpToFirstPageMeth);
                 }
+                return pyNone;
             });
         },
     });

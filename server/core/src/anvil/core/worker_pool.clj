@@ -212,7 +212,7 @@
        (apply str)))
 
 (defn dump-threads! []
-  (let [filename (str "/shared/threads-" (.format (SimpleDateFormat. "yyyy-MM-dd_HH-mm-ss")
+  (let [filename (str runtime-conf/thread-dump-path "/threads-" (.format (SimpleDateFormat. "yyyy-MM-dd_HH-mm-ss")
                                                   (Date.)) ".dump")
         thread-dump (thread-dump-str)]
     (try

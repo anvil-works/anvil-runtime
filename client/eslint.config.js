@@ -1,8 +1,12 @@
 import js from "@eslint/js";
 import typescript from "@typescript-eslint/eslint-plugin";
 import typescriptParser from "@typescript-eslint/parser";
+import globals from "globals";
 
 export default [
+    {
+        ignores: ["dist/**", "lib/*.js", "**/*.d.ts"],
+    },
     js.configs.recommended,
     {
         files: ["**/*.{js,jsx,ts,tsx}"],
@@ -16,17 +20,16 @@ export default [
                 sourceType: "module",
             },
             globals: {
+                ...globals.browser,
                 $: "readonly",
+                JQuery: "readonly",
+                JSX: "readonly",
                 moment: "readonly",
                 b64: "readonly",
                 Sk: "readonly",
                 ANVIL_IN_DESIGNER: "readonly",
                 BUILD_TIME: "readonly",
             },
-        },
-        env: {
-            browser: true,
-            es2020: true,
         },
         plugins: {
             "@typescript-eslint": typescript,
@@ -45,11 +48,28 @@ export default [
             "@typescript-eslint/ban-ts-comment": "off",
             "@typescript-eslint/no-unused-vars": "off",
             "@typescript-eslint/no-explicit-any": "off",
-            "@typescript-eslint/no-empty-interface": "warn",
+            "@typescript-eslint/no-empty-object-type": "warn",
             "@typescript-eslint/no-this-alias": "off",
         },
     },
     {
-        ignores: ["lib/*.js"],
+        files: ["**/*.{ts,tsx}"],
+        languageOptions: {
+            globals: {
+                ...globals.serviceworker,
+            },
+        },
+        rules: {
+            "no-undef": "off",
+            "no-redeclare": "off",
+        },
+    },
+    {
+        files: ["**/*.{config.js,config.ts}", "scripts/**/*.{js,ts}"],
+        languageOptions: {
+            globals: {
+                ...globals.node,
+            },
+        },
     },
 ];

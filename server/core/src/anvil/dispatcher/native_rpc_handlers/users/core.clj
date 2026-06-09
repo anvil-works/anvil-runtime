@@ -748,34 +748,34 @@
         ; We don't care if cookies didn't work.
         nil))))
 
-(swap! dispatcher/native-rpc-handlers merge
-       {"anvil.private.users.get_current_user"          (util/wrap-native-fn get-current-user)
-        "anvil.private.users.get_current_user_email"    (util/wrap-native-fn get-current-user-email)
-        "anvil.private.users.get_last_login_email"      (util/wrap-native-fn get-last-login-email)
-        "anvil.private.users.logout"                    (util/wrap-native-fn logout)
-        "anvil.private.users.login_with_token"          (util/wrap-native-fn login-with-token)
-        "anvil.private.users.login_with_email"          (util/wrap-native-fn login-with-email)
-        "anvil.private.users.login_with_google"         (util/wrap-native-fn login-with-google)
-        "anvil.private.users.login_with_facebook"       (util/wrap-native-fn login-with-facebook)
-        "anvil.private.users.login_with_microsoft"      (util/wrap-native-fn login-with-microsoft)
-        "anvil.private.users.login_with_saml"           (util/wrap-native-fn login-with-saml)
-        "anvil.private.users.force_login"               (util/wrap-native-fn force-login)
-        "anvil.private.users.signup_with_email"         (util/wrap-native-fn signup-with-email)
-        "anvil.private.users.send_password_reset_email" (util/wrap-native-fn send-password-reset-email)
-        "anvil.private.users.signup_with_google"        (util/wrap-native-fn signup-with-google)
-        "anvil.private.users.signup_with_facebook"      (util/wrap-native-fn signup-with-facebook)
-        "anvil.private.users.signup_with_microsoft"     (util/wrap-native-fn signup-with-microsoft)
-        "anvil.private.users.signup_with_saml"          (util/wrap-native-fn signup-with-saml)
-        "anvil.private.users.reset_password"            (util/wrap-native-fn reset-password)
-        "anvil.private.users.cancel_password_reset"     (util/wrap-native-fn cancel-password-reset)
+(defn v1-users-handlers []
+  {"anvil.private.users.get_current_user"          (util/wrap-native-fn get-current-user)
+   "anvil.private.users.get_current_user_email"    (util/wrap-native-fn get-current-user-email)
+   "anvil.private.users.get_last_login_email"      (util/wrap-native-fn get-last-login-email)
+   "anvil.private.users.logout"                    (util/wrap-native-fn logout)
+   "anvil.private.users.login_with_token"          (util/wrap-native-fn login-with-token)
+   "anvil.private.users.login_with_email"          (util/wrap-native-fn login-with-email)
+   "anvil.private.users.login_with_google"         (util/wrap-native-fn login-with-google)
+   "anvil.private.users.login_with_facebook"       (util/wrap-native-fn login-with-facebook)
+   "anvil.private.users.login_with_microsoft"      (util/wrap-native-fn login-with-microsoft)
+   "anvil.private.users.login_with_saml"           (util/wrap-native-fn login-with-saml)
+   "anvil.private.users.force_login"               (util/wrap-native-fn force-login)
+   "anvil.private.users.signup_with_email"         (util/wrap-native-fn signup-with-email)
+   "anvil.private.users.send_password_reset_email" (util/wrap-native-fn send-password-reset-email)
+   "anvil.private.users.signup_with_google"        (util/wrap-native-fn signup-with-google)
+   "anvil.private.users.signup_with_facebook"      (util/wrap-native-fn signup-with-facebook)
+   "anvil.private.users.signup_with_microsoft"     (util/wrap-native-fn signup-with-microsoft)
+   "anvil.private.users.signup_with_saml"          (util/wrap-native-fn signup-with-saml)
+   "anvil.private.users.reset_password"            (util/wrap-native-fn reset-password)
+   "anvil.private.users.cancel_password_reset"     (util/wrap-native-fn cancel-password-reset)
+   "anvil.private.users.send_token_login_email"    (util/wrap-native-fn send-token-login-email)
+   "anvil.private.users.generate_email_link_token" (util/wrap-native-fn generate-email-link-token)
+   "anvil.private.users.add_mfa_method"            (util/wrap-native-fn add-mfa-method)
+   "anvil.private.users.get_available_mfa_types"   (util/wrap-native-fn get-available-mfa-types)
+   "anvil.private.users.get_enabled_mfa_types"     (util/wrap-native-fn get-enabled-mfa-types)
+   "anvil.private.users.send_mfa_reset_email"      (util/wrap-native-fn send-mfa-reset-email)})
 
-        "anvil.private.users.send_token_login_email"    (util/wrap-native-fn send-token-login-email)
-        "anvil.private.users.generate_email_link_token" (util/wrap-native-fn generate-email-link-token)
-
-        "anvil.private.users.add_mfa_method"            (util/wrap-native-fn add-mfa-method)
-        "anvil.private.users.get_available_mfa_types"   (util/wrap-native-fn get-available-mfa-types)
-        "anvil.private.users.get_enabled_mfa_types"     (util/wrap-native-fn get-enabled-mfa-types)
-        "anvil.private.users.send_mfa_reset_email"      (util/wrap-native-fn send-mfa-reset-email)})
+;; (swap! dispatcher/native-rpc-handlers merge (v1-users-handlers)) ; Only use for manual switching
 
 (defn export-with-table [yaml app-id version-spec]
   (let [SERVICE-URL "/runtime/services/anvil/users.yml"
@@ -784,5 +784,3 @@
     (update-in yaml [:services] (partial map #(if (= SERVICE-URL (:source %))
                                                 (assoc % :server_config {:user_table (:user_table (users-util/get-props (:content app)))})
                                                 %)))))
-
-

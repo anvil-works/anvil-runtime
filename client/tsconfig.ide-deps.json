@@ -1,0 +1,16 @@
+{
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "noEmit": false,
+        "declaration": true,
+        "emitDeclarationOnly": true,
+        "noCheck": true,
+        "skipLibCheck": true,
+        "rootDir": "js",
+        "outDir": "../../platform/editor/react/.cache/ide-typecheck-deps/runtime-client",
+        "declarationMap": false
+    },
+    "include": [
+        "js/**/*"
+    ]
+}

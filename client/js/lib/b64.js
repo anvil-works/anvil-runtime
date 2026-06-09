@@ -27,6 +27,10 @@ function b64ToUint6 (nChr) {
 
 }
 
+/**
+ * @param {string} sBase64
+ * @param {number=} nBlocksSize
+ */
 function base64DecToArr (sBase64, nBlocksSize) {
 
   var

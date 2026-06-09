@@ -38,7 +38,6 @@
        (into (sorted-map-by compare-keys))
        vals))
 
-
 (comment
   (let [test-data {"chunk-json-1-1" "A"
                    "chunk-json-2-1" "D"
@@ -68,7 +67,6 @@
       (serialisation/processBlobHeader deserialiser header)
       (serialisation/processBlob deserialiser data))))
 
-
 (defn- send-headers [channel]
   (send! channel {:headers {"Content-Type" (str "multipart/x-mixed-replace;boundary=" serialisation/boundary)}} false))
 
@@ -82,20 +80,19 @@
 (defn- mk-serial-responder [channel session-liveobject-secret request-id]
   (fn [resp call-finished?]
     (serialisation/serialise-to-http!
-      (assoc resp :id request-id) channel true session-liveobject-secret #(when call-finished? (close channel)))))
+     (assoc resp :id request-id) channel true session-liveobject-secret #(when call-finished? (close channel)))))
 
 (defn- do-deserialization [deserialiser responder data]
   (try+
-    (let [deserialised-data (serialisation/deserialise deserialiser data)
-          live-object (serialisation/loadLiveObject deserialiser (:liveObjectCall deserialised-data))]
-      [deserialised-data live-object])
-    (catch :anvil/invalid-mac e
-      (responder {:error {:type    "anvil.server.InvalidObjectError"
-                          :message "Error processing object from expired session"
-                          :trace   [["<rpc>", 0]]}}
-                 true)
-      nil)))
-
+   (let [deserialised-data (serialisation/deserialise deserialiser data)
+         live-object (serialisation/loadLiveObject deserialiser (:liveObjectCall deserialised-data))]
+     [deserialised-data live-object])
+   (catch :anvil/invalid-mac e
+     (responder {:error {:type    "anvil.server.InvalidObjectError"
+                         :message "Error processing object from expired session"
+                         :trace   [["<rpc>", 0]]}}
+                true)
+     nil)))
 
 (defn- process-call-data [data {:keys [app-id app-session environment app-origin] :as request} app-yaml deserialiser serial-responder]
   (let [request-template {:app           app-yaml
@@ -105,7 +102,7 @@
                           :origin        :client
                           :session-state app-session
                           :use-quota?    true
-                          :call-stack    (list {:type :browser})}
+                          :call-stack    (list {:type :browser, :protocol-version (:v data)})}
         func (or (:command data) (:method (:liveObjectCall data)))
         request-id (:id data)
         responder (serial-responder request-id)
@@ -123,12 +120,11 @@
                          (responder r false)))}]
     (when-let [[deserialised-data live-object] (do-deserialization deserialiser responder data)]
       (dispatcher/dispatch! (assoc request-template
-                              :vt_global (:vt_global deserialised-data)
-                              :call (assoc (select-keys deserialised-data [:args :kwargs])
-                                      :func func
-                                      :live-object live-object))
+                                   :vt_global (:vt_global deserialised-data)
+                                   :call (assoc (select-keys deserialised-data [:args :kwargs])
+                                                :func func
+                                                :live-object live-object))
                             return-path))))
-
 
 (defn- process-data [request app-yaml deserialiser serial-responder]
   (let [data (get-json-data request)]
@@ -137,7 +133,6 @@
                (process-call-data data request app-yaml deserialiser serial-responder)
                (process-chunk-data request deserialiser))
       "LOG" (process-log-data data request))))
-
 
 (defn http-handler [{:keys [app-id app-session environment app-origin] :as request} app-yaml]
   (with-channel request channel

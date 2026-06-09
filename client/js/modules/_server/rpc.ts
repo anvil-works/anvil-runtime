@@ -1,7 +1,8 @@
 import { defer, Deferred, generateUUID, globalSuppressLoading } from "@runtime/utils";
 import { anvilServerMod } from "@runtime/runner/py-util";
-import { Args, Kws, promiseToSuspension, pyRuntimeError, pyStr, Suspension } from "@Sk";
+import { Args, Kws, promiseToSuspension, pyObject, pyRuntimeError, pyStr, Suspension } from "@Sk";
 import PyDefUtils from "PyDefUtils";
+import { PROTOCOL_VERSION } from "./constants";
 import { diagnosticData, diagnosticRequest } from "./diagnostics";
 import { ErrorData, ResponseData } from "./handlers";
 import { Profile, profileStart } from "./profile";
@@ -26,7 +27,14 @@ declare global {
 type Path = (string | number)[];
 
 export interface OutstandingMedia {
-    [id: string]: { path: Path; mime_type: string; content: Blob[]; name: string; complete?: boolean; error?: boolean };
+    [id: string]: {
+        path: Path;
+        mime_type: string;
+        content: Blob[];
+        name: string;
+        complete?: boolean;
+        error?: { type: string; message: string } | boolean;
+    };
 }
 
 export interface OutstandingRequest {
@@ -126,7 +134,14 @@ export function createRequestTemplate(
     const knownLiveObjectMethods: KnownLiveObjectMethods = {};
     const knownLiveObjectInstances: KnownLiveObjectInstances = {};
     const blobContent: BlobContent[] = []; // array of arrays: [[{json: chunk header, data: DataView}...]]
-    const callObjToSerialize = { type: "CALL", id: requestId, args, kwargs };
+    const callObjToSerialize: {
+        type: "CALL";
+        id: string;
+        v: number;
+        args: Args;
+        kwargs: Record<string, pyObject>;
+        reload_env?: boolean;
+    } = { type: "CALL", id: requestId, v: PROTOCOL_VERSION, args, kwargs };
     modifyOutgoingServerCall?.(callObjToSerialize);
     if (requestReloadEnvOnNextCall) {
         callObjToSerialize.reload_env = true;
@@ -235,7 +250,7 @@ const sleep = (ms: number) => {
 
 async function trySend(
     jsonData: any,
-    blobData?: DataView | null,
+    blobData?: DataView<ArrayBuffer> | null,
     profile?: Profile,
     outstandingRequest?: OutstandingRequest
 ) {

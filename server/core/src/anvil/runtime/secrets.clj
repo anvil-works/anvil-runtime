@@ -61,5 +61,5 @@
 (defn decrypt-str [^SecretKey k ^String s]
   (let [key (try (b64/decode (.getBytes s))
                  (catch Exception e
-                   (throw+ (generic-secret-error "This is not a valid key"))))]
+                   (throw+ (generic-secret-error "Cannot decrypt string: " (.getMessage e)))))]
     (String. ^bytes (decrypt-bin k key))))

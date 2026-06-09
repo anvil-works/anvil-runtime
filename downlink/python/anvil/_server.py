@@ -83,14 +83,9 @@ class LiveObjectProxy(anvil.LiveObject):
 
         setitem = self.__getattr__("__setitem__")
         try:
-            r = setitem(key, value)
+            return setitem(key, value)
         except AnvilWrappedError as e:
             raise _deserialise_exception(e.error_obj)
-
-        if "itemCache" in self._spec and (isinstance(value, string_type) or isinstance(value, numbers.Number) or isinstance(value, bool) or value is None):
-            self._spec["itemCache"][key] = value
-
-        return r
 
     class Iter:
         def __init__(self, live_object, start=None, stop=None, step=None):
@@ -257,9 +252,12 @@ class Capability(object):
     # None -> nothing to send
     def _get_update(self):
         if self._do_get_update is not None:
-            return self._do_get_update()
+            update = self._do_get_update()
         else:
-            return None if self._queued_update == {} else self._queued_update
+            update = None if self._queued_update == {} else self._queued_update
+        
+
+        return update
 
     # Sentinel value for unwrap_capability
     ANY = _CapAny()
@@ -1412,6 +1410,7 @@ class CallContext(object):
         def __init__(self, sf):
             self.type = sf.get("type")
             self.is_trusted = self.type in {'server_module', 'uplink', 'background_task'}
+            self.protocol_version = sf.get("protocol-version")
 
         def __repr__(self):
             return "<StackFrame:%s>" % repr(self.__dict__)
@@ -1428,10 +1427,13 @@ class CallContext(object):
             l = client.get('location')
             self.client.location = CallContext.Location(l) if l else None
             self.remote_caller = CallContext.StackFrame(call_stack[0] if call_stack else client)
+            # Store full call stack for version checking across entire chain
+            self.call_stack = [CallContext.StackFrame(sf) for sf in call_stack] if call_stack else []
         else:
             self.client = None
             self.remote_caller = None
             self.background_task_id = None
+            self.call_stack = []
 
     __init__ = _setup
 
@@ -1631,9 +1633,35 @@ def http_endpoint(path, require_credentials=False, authenticate_users=False, aut
     return decorator
 
 
-wellknown_endpoint = functools.partial(http_endpoint, _task_prefix="http-wellknown")
-
 route = functools.partial(http_endpoint, _task_prefix="route")
+
+
+def wellknown_endpoint(path, require_credentials=False, authenticate_users=False, authenticate_user=False,
+                       methods=["GET","POST"], enable_cors=False, cross_site_session=False):
+    def decorator(fn):
+        # Compatibility bridge: register both names until deployed servers no
+        # longer dispatch root .well-known requests to http-wellknown:/...
+        @functools.wraps(fn)
+        def wellknown_route_fn(**kwargs):
+            # The legacy server dispatcher strips "/.well-known" before invoking
+            # http-wellknown:/..., so preserve that request.path for route-backed
+            # wellknown_endpoint calls as well.
+            api_request.path = path
+            return fn(**kwargs)
+
+        if path.startswith("/"):
+            route("/.well-known" + path, require_credentials, authenticate_users, authenticate_user,
+                  methods, enable_cors, cross_site_session)(wellknown_route_fn)
+        # Historically, paths without a leading slash registered as e.g.
+        # http-wellknown:foo, which did not match normal /.well-known/foo
+        # requests. Don't create a new route:/.well-knownfoo URL for those.
+
+        # TODO: Remove this legacy http-wellknown registration after the server
+        # no longer dispatches root .well-known requests to http-wellknown:/...
+        http_endpoint(path, require_credentials, authenticate_users, authenticate_user,
+                      methods, enable_cors, cross_site_session, _task_prefix="http-wellknown")(fn)
+        return fn
+    return decorator
 
 
 class AnvilCookie(object):
@@ -1752,7 +1780,7 @@ class server_method(object):
         self = object.__new__(cls)
         self._kws = kws
         if func is None:
-            return self.__call__
+            return self._decorator_call
         else:
             return self
 
@@ -1766,9 +1794,13 @@ class server_method(object):
             raise TypeError("server_method must decorate a callable, got {}".format(type(func).__name__))
         self._func = func
 
-    def __call__(self, func):
+    def _decorator_call(self, func):
         self.__init__(func)
         return self
+
+    def __call__(self, *args, **kwargs):
+        self._check_register()
+        return self._func(*args, **kwargs)
 
     def _check_register(self):
         if self._server_name is None:

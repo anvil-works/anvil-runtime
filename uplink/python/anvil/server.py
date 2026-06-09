@@ -57,7 +57,8 @@ from ._server import (register,
                       unsubscribe,
                       get_subscriptions,
                       invalidate_client_objects,
-                      _on_invalidate_client_objects)
+                      _on_invalidate_client_objects,
+                      server_method)
 
 _threaded_server.send_reqresp = lambda r, collect_capabilities=None, remote_is_trusted=False: _get_connection().send_reqresp(r, collect_capabilities=collect_capabilities, remote_is_trusted=remote_is_trusted)
 
@@ -67,6 +68,9 @@ def __getattr__(name):
     if name == "startup_data":
         raise RuntimeError("anvil.server.startup_data is only available on the client")
     raise AttributeError(name)
+
+# Must match PROTOCOL_VERSION in runtime/client/js/modules/_server/constants.ts
+PROTOCOL_VERSION = 8
 
 _url = 'wss://anvil.works/uplink'
 
@@ -200,7 +204,7 @@ class _Connection(WebSocketClient):
 
     def opened(self):
         logger.info("Anvil websocket open")
-        self.send(json.dumps({'key': _key, 'v': 7}))
+        self.send(json.dumps({'key': _key, 'v': PROTOCOL_VERSION}))
         if _init_session is None:
             # Optimisation: Don't wait for an extra roundtrip if we don't need to
             self._register_server_functions()

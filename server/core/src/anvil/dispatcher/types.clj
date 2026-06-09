@@ -20,6 +20,9 @@
   (getLength [this] "Get the number of bytes in this Media object")
   (getInputStream [this] "Get the data of this Media object (as an InputStream)"))
 
+(defprotocol HasBytes
+  (getBytes [this] "Get the data of this Media object, as a byte array"))
+
 (defprotocol ChunkedStream
   (consume [this on-chunk on-error] "Call (on-chunk chunk-idx last-chunk data) for each byte-array chunk in this stream, or (on-error error) in case of an error"))
 
@@ -140,7 +143,10 @@
 
   Media
   (getLength [_] (alength bytes))
-  (getInputStream [_] (ByteArrayInputStream. bytes)))
+  (getInputStream [_] (ByteArrayInputStream. bytes))
+
+  HasBytes
+  (getBytes [_] bytes))
 
 (deftype InputStreamMedia [content-type input-stream name content-length]
   MediaDescriptor

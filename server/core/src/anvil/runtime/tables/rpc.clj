@@ -19,7 +19,8 @@
             [anvil.dispatcher.native-rpc-handlers.util :as nrpc-util]
             [anvil.runtime.sessions :as sessions]
             [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks]
-            [anvil.core.tracing :as tracing])
+            [anvil.core.tracing :as tracing]
+            [medley.core :refer [remove-vals]])
   (:import (java.sql SQLException ResultSet Blob)
            (anvil.dispatcher.types Date DateTime LiveObjectProxy MediaDescriptor Media ChunkedStream BlobMedia SerialisableForRpc SerializedPythonObject)
            (java.io ByteArrayOutputStream InputStream OutputStream)
@@ -34,9 +35,11 @@
 
   (if (= op :read-row)
     ;; They have a LiveObject => they have a read capability.
-    [(get-columns (db) table-id view-cols) nil]
+    (let [[cols storage] (get-columns-and-storage (db) table-id view-cols)]
+      (ensure-combined-storage! storage)
+      [cols nil])
 
-    (if-let [{:keys [columns client server] table-name :name}
+    (if-let [{:keys [columns client server storage] table-name :name}
              (tables-util/get-table-access rpc-util/*environment* table-id)]
       (let [ambient-permission (if rpc-util/*client-request?*
                                  client server)
@@ -55,6 +58,8 @@
                              (and (some op-allowed-with-permission? permissions-from-lo)
                                   (op-allowed-with-permission? server)))]
 
+        (ensure-combined-storage! storage)
+
         (if op-allowed?
           [(filter-columns columns view-cols) table-name]
           (do
@@ -71,6 +76,12 @@
 (defn- ensure-table-access-ok-returning-cols [_c table-id op view-cols]
   (first (ensure-table-access-ok-returning-cols-and-name table-id op view-cols)))
 
+(defn- filter-client-hidden-cols [cols]
+  ;; Client-side row/table iteration should not expose client_hidden columns.
+  ;; Server-side paths preserve existing behavior.
+  (if rpc-util/*client-request?*
+    (remove-vals :client_hidden cols)
+    cols))
 
 (defn- get-cols-by-name [cols]
   (into {} (for [[col-id col-desc] cols]
@@ -88,10 +99,12 @@
 (def reinflate-val)
 (def ^:dynamic *max-reinflation-recursion-depth* 5)
 
-(defn- make-item-cache [cols data loaded-rows loaded-tables]
-  (reduce (fn [itemCache [col-id {:keys [name _type] :as col}]]
-            (let [rebuilt-val (reinflate-val col (get data col-id) loaded-rows loaded-tables)]
-              (assoc itemCache name rebuilt-val))) {} cols))
+(defn- make-item-cache [cols data loaded-rows loaded-tables include-client-hidden-columns?]
+  (reduce (fn [itemCache [col-id {:keys [name client_hidden] :as col}]]
+            (if (and client_hidden (not include-client-hidden-columns?))
+              itemCache
+              (let [rebuilt-val (reinflate-val col (get data col-id) loaded-rows loaded-tables)]
+                (assoc itemCache name rebuilt-val)))) {} cols))
 
 (def ^:dynamic *reinflating-los* [])
 
@@ -119,7 +132,7 @@
                                                (binding [*max-reinflation-recursion-depth* (dec *max-reinflation-recursion-depth*)]
                                                  (assoc val :itemCache (make-item-cache cols data loaded-rows
                                                                                         ;; Prevent long loops with mutually referring rows
-                                                                                        (dissoc loaded-tables table-id))))
+                                                                                        (dissoc loaded-tables table-id) false)))
                                                val)]
                          (reconstitute-with-permissions live-object-map))
 
@@ -137,7 +150,7 @@
                               rpc-util/*permissions* (keys TRow)
                               (make-item-cache cols data loaded-rows
                                                ;; Prevent mutual recursion between tables
-                                               (dissoc loaded-tables table-id)))))
+                                               (dissoc loaded-tables table-id) false))))
 
 
 (defn iter-page [[table-id query-obj view-cols cols query-modifiers :as _liveobject-id] _kwargs start-vals]
@@ -307,18 +320,19 @@
               "to_csv"              (fn [[table-id query-obj view-cols cols] {:keys [escape_for_excel]}]
 
                                       (ensure-table-access-ok-returning-cols (db) table-id :search view-cols)
-                                      (lazy-media/mk-LazyMedia-with-correct-mac {:manager   "query-csv", :id (util/write-json-str [table-id query-obj view-cols cols escape_for_excel]),
+                                      (let [cols (filter-client-hidden-cols cols)]
+                                        (lazy-media/mk-LazyMedia-with-correct-mac {:manager   "query-csv", :id (util/write-json-str [table-id query-obj view-cols cols escape_for_excel]),
                                                                                  :mime-type "text/csv", :name "download.csv"}
-                                                                                rpc-util/*req*))})
+                                                                                rpc-util/*req*)))})
 
 (defn- prepare-update! [c table-id current-values updates view-cols auto-create-cols?]
   (let [cols (atom (ensure-table-access-ok-returning-cols c table-id :write nil))
         cols-by-name (get-cols-by-name (filter-columns @cols view-cols))
         set-column-type! (fn [id new-type]
-                           (swap! cols update-in [id] #(merge new-type (select-keys % [:name :admin_ui])))
-                           (jdbc/execute! c ["UPDATE app_storage_tables SET columns=?::jsonb WHERE id = ?"
-                                             @cols table-id])
-                           (update-table-views! c table-id @cols))
+                           (swap! cols update-in [id] #(merge new-type (select-keys % [:name :admin_ui :client_hidden])))
+                           (let [[table-record] (jdbc/query c ["UPDATE app_storage_tables SET columns=?::jsonb WHERE id = ? RETURNING *"
+                                                                @cols table-id])]
+                             (update-table-views! c table-record)))
         media-updates (atom {})]
 
     [(into current-values
@@ -345,6 +359,9 @@
                  (and (not col) (not-empty view-cols))
                  (throw+ (general-tables-error (str "Cannot automatically add column '" col-name "' to this view")))
 
+                 (and (:client_hidden col) rpc-util/*client-request?*)
+                 (throw+ (general-tables-error (str "Row update failed: Column '" col-name "' does not exist and automatic column creation is disabled.") "anvil.tables.NoSuchColumnError"))
+
                  (not col)
                  (if-not auto-create-cols?
                    (throw+ (general-tables-error (str "Row update failed: Column '" col-name "' does not exist and automatic column creation is disabled.") "anvil.tables.NoSuchColumnError"))
@@ -352,7 +369,7 @@
 
                      (rpc-util/*rpc-println* (str "Automatically creating column " (pr-str col-name) " (" (get-type-name c val-type) ")"))
 
-                     (set-column-type! new-id (assoc val-type :name col-name :admin_ui {:width 200
+                     (set-column-type! new-id (assoc val-type :name col-name :client_hidden false :admin_ui {:width 200
                                                                                         :order (count @cols)}))
                      (jdbc/execute! c ["UPDATE app_storage_data SET data = data || ?::jsonb WHERE table_id = ?"
                                        {new-id nil}
@@ -757,7 +774,7 @@
           (use-quota! 0 new-size-bytes)
 
           (rpc-util/update-live-object-cache! "anvil.tables.Row" rpc-util/*live-object-id*
-                                              (make-item-cache cols new-data nil nil))
+                                              (make-item-cache cols new-data nil nil false))
 
           nil)
         (catch Exception e
@@ -843,8 +860,9 @@
           new-row)))))
 
 (def TRow* {"__anvil_iter_page__" (fn [[table-id row-id view-cols] _kwargs _page-id]
-                                    (let [cols (ensure-table-access-ok-returning-cols (db) table-id :read-row
-                                                                                      view-cols)]
+                                    (let [cols (-> (ensure-table-access-ok-returning-cols (db) table-id :read-row
+                                                                                           view-cols)
+                                                   filter-client-hidden-cols)]
                                       (if-let [r (:data (first (jdbc/query (db) ["SELECT data FROM app_storage_data WHERE table_id = ? AND id = ?" table-id row-id])))]
                                         {:items (for [[col-id {:keys [name] :as col}] cols]
                                                   [name (reinflate-val col (get r (keyword col-id)) nil nil)])}
@@ -854,11 +872,14 @@
                                     (let [cols (ensure-table-access-ok-returning-cols (db) table-id :read-row
                                                                                       view-cols)
                                           cbn (get-cols-by-name cols)
-                                          col (get cbn name)
-                                          _col-id (or (:id col) (throw+ (general-tables-error (str "No such column '" name "' in this " (if view-cols "view" "table")))))]
+                                          col (get cbn name)]
+                                      (when-not (and (:id col)
+                                                     (or (not (:client_hidden col)) (not rpc-util/*client-request?*)))
+                                        (throw+ (general-tables-error (str "No such column '" name "' in this " (if view-cols "view" "table")))))
                                       (if-let [r (:data (first (jdbc/query (db) ["SELECT data FROM app_storage_data WHERE table_id = ? AND id = ?" table-id row-id])))]
-                                        (let [item-cache (make-item-cache cols r nil nil)]
-                                          (rpc-util/update-live-object-cache! "anvil.tables.Row" rpc-util/*live-object-id* item-cache)
+                                        (let [item-cache (make-item-cache cols r nil nil true)]
+                                          (when-not (:client_hidden col)
+                                            (rpc-util/update-live-object-cache! "anvil.tables.Row" rpc-util/*live-object-id* item-cache))
                                           (get item-cache name))
                                         (throw+ (general-tables-error "This row has been deleted")))))
 
@@ -967,7 +988,8 @@
             "to_csv"                  (fn [[table-id view-query] {:keys [escape_for_excel]}]
 
                                         (let [view-cols (get-cols-from-view-query view-query)
-                                              cols (ensure-table-access-ok-returning-cols (db) table-id :search view-cols)]
+                                              cols (ensure-table-access-ok-returning-cols (db) table-id :search view-cols)
+                                              cols (filter-client-hidden-cols cols)]
 
                                           (lazy-media/mk-LazyMedia-with-correct-mac {:manager   "query-csv", :id (util/write-json-str [table-id view-query view-cols cols escape_for_excel]),
                                                                                      :mime-type "text/csv", :name "download.csv"}
@@ -1034,7 +1056,7 @@
             ;; from another thread.
             (binding [rpc-util/*app-id* app-id
                       rpc-util/*environment* environment]
-              (export-as-csv table-id query-obj cols escape-for-excel?))))))))
+              (export-as-csv-v1 table-id query-obj cols escape-for-excel?))))))))
 
 (defn get-stored-media [object-id]
   (with-table-transaction

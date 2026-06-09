@@ -6,7 +6,7 @@ export default mergeRsbuildConfig(baseConfigObject, {
         entry: {
             runner2: "./js/runner/index.ts",
             sw: {
-                import: "./js/sw.js",
+                import: "./js/sw.ts",
                 html: false,
             },
             "runner.min": {

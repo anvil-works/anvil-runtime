@@ -1,7 +1,7 @@
-import { GetSetDef } from "./abstr/build_native_class";
+import type { GetSetDef, MethDef } from "./abstr/build_native_class";
 import type { Args, Flags, Kws } from "./namespace";
 
-export type { GetSetDef };
+export type { GetSetDef, MethDef };
 
 export const {
     builtin: {
@@ -31,6 +31,7 @@ export const {
         super_: pySuper,
 
         getset_descriptor: pyGetSetDescriptor,
+        method_descriptor: pyMethodDescriptor,
         wrapper_descriptor: pyWrapperDescriptor,
 
         classmethod: pyClassMethod,
@@ -94,6 +95,8 @@ export const {
         pyCheckType,
         pyCheckArgs,
         pyCheckArgsLen,
+        asnum$: pyAsNum,
+        repr: pyRepr,
 
         issubclass: pyIsSubclass,
         isinstance: pyIsInstance,
@@ -132,6 +135,9 @@ export const {
         typeLookup,
         typeName,
         setUpModuleMethods,
+        objectSetItem,
+        gattr: pyGetAttr,
+        sattr: pySetAttr,
         objectHash: pyObjectHash,
     },
     ffi: { toPy, toJs, proxy, remapToJsOrWrap },
@@ -251,6 +257,12 @@ export interface pyGetSetDescriptorConstructor<I extends pyObject = pyObject> ex
 
 export interface pyGetSetDescriptor extends pyObject {}
 
+export interface pyMethodDescriptorConstructor<I extends pyObject = pyObject> extends pyType<pyMethodDescriptor> {
+    new (t: pyType<I>, def: MethDef<I>): pyMethodDescriptor;
+}
+
+export interface pyMethodDescriptor extends pyObject {}
+
 export interface WrapperDescriptorDef<I> {
     $wrapper: (this: (...args: any[]) => any, self: I, args: Args, kws: Kws) => pyObject | Suspension;
     $flags: Flags;
@@ -258,8 +270,8 @@ export interface WrapperDescriptorDef<I> {
     $textsig?: string;
     $doc?: string;
 }
-export interface pyWrapperDescriptorConstructor<I extends pyObject = pyObject> extends pyType<pyWrapperDescriptor> {
-    new (t: pyType<I>, def: WrapperDescriptorDef<I>, wrapper: (...args: Args) => any): pyGetSetDescriptor;
+export interface pyWrapperDescriptorConstructor extends pyType<pyWrapperDescriptor> {
+    new <I extends pyObject>(t: pyType<I>, def: WrapperDescriptorDef<I>, wrapper: Function): pyWrapperDescriptor;
 }
 
 export interface pyWrapperDescriptor extends pyObject {}
@@ -438,8 +450,7 @@ export interface pyListConstructor extends pyType<pyList> {
 }
 
 export interface pyList<T extends pyObject | pyObject[] = pyObject>
-    extends pyObject,
-        pyIterable<T extends pyObject[] ? ElementType<T> : T> {
+    extends pyObject, pyIterable<T extends pyObject[] ? ElementType<T> : T> {
     constructor: pyListConstructor;
     readonly ob$type: pyListConstructor;
     tp$hash: pyNoneType;
@@ -454,8 +465,7 @@ export interface pyTupleConstructor extends pyType<pyTuple> {
 }
 
 export interface pyTuple<T extends pyObject | pyObject[] = pyObject>
-    extends pyObject,
-        pyIterable<T extends pyObject[] ? ElementType<T> : T> {
+    extends pyObject, pyIterable<T extends pyObject[] ? ElementType<T> : T> {
     constructor: pyTupleConstructor;
     readonly ob$type: pyTupleConstructor;
     valueOf(): T extends pyObject ? T[] : T;
@@ -524,9 +534,18 @@ export interface pyMethod extends pyCallable {
 
 export type FuncParameters<T extends Function> = T extends (...args: infer P) => any ? P : never;
 export type FuncReturnType<T extends Function> = T extends (...args: any) => infer R ? R : any;
+type PyFuncReturn = pyObject | Suspension;
+
+type EnforcePyCallableReturn<T extends Function> =
+    FuncReturnType<T> extends PyFuncReturn
+        ? T
+        : T & {
+              __pyFuncReturnTypeError__: "pyFunc callable must return pyObject | Suspension";
+              __pyFuncActualReturnType__: FuncReturnType<T>;
+          };
 
 export interface pyFuncConstructor extends pyType<pyFunc> {
-    new <T extends Function>(callable: T): pyFunc<FuncReturnType<T>>;
+    new <T extends Function>(callable: EnforcePyCallableReturn<T>): pyFunc<FuncReturnType<T>>;
 }
 
 export interface pyFunc<R = pyObject> extends pyCallable<R> {
@@ -565,7 +584,12 @@ export interface pyStaticMethod extends pyObject {
 }
 
 export interface pyPropertyConstructor extends pyType<pyProperty> {
-    new (fget?: pyCallable, fset?: pyCallable, fdel?: pyCallable, doc?: pyStr): pyProperty;
+    new (
+        fget?: pyCallable<pyObject | Suspension>,
+        fset?: pyCallable<pyObject | Suspension>,
+        fdel?: pyCallable<pyObject | Suspension>,
+        doc?: pyStr
+    ): pyProperty;
 }
 
 export interface pyProperty extends pyObject {

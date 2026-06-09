@@ -1,4 +1,4 @@
-import type { Kws, pyObject } from "@Sk";
+import type { Kws, pyDict, pyObject, pyStr } from "@Sk";
 import { toJs, toPy } from "@Sk";
 
 /** takes a Kws array and converts to an object with pyObject values */
@@ -39,6 +39,17 @@ export function jsObjToKws(obj?: Record<string, any>): Kws {
     const kws: Kws = [];
     for (const [k, v] of Object.entries(obj ?? {})) {
         kws.push(k, toPy(v));
+    }
+    return kws;
+}
+
+export function pyDictToKws(dict?: pyDict<pyStr, pyObject>): Kws {
+    const kws: Kws = [];
+    if (dict === undefined) {
+        return kws;
+    }
+    for (const [k, v] of dict.$items()) {
+        kws.push(k.toString(), v);
     }
     return kws;
 }

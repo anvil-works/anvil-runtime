@@ -62,9 +62,9 @@ export function pythonifyPath(path: Path) {
     return path.map((p) => "[" + JSON.stringify(p) + "]").join("");
 }
 
-export function pyBytesOrStr2ab(pyBytesVal: string | Uint8Array) {
+export function pyBytesOrStr2ab(pyBytesVal: string | Uint8Array): ArrayBuffer {
     if (typeof pyBytesVal !== "string") {
-        return pyBytesVal.buffer;
+        return pyBytesVal.buffer as ArrayBuffer;
     }
     const str = pyBytesVal;
     const buf = new ArrayBuffer(str.length); // 1 byte for each char

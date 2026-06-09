@@ -8,7 +8,7 @@
     [anvil.runtime.tables.v2.jdbc-trace :as jdbc-t]
     [anvil.runtime.tables.v2.search :as search-v2]
     [anvil.runtime.tables.v2.updates :as updates]
-    [anvil.runtime.tables.v2.csv :as csv]
+    [anvil.runtime.tables.v2.export :as export]
     [anvil.runtime.tables.v2.util :as util-v2 :refer [unwrap-cap-with-perm! encode-view-spec decode-view-spec encode-search-spec decode-search-spec encode-cursor decode-cursor]]
     [clojure.java.jdbc :as jdbc]
     [clojure.pprint :as pprint]
@@ -19,7 +19,10 @@
     [clojure.data.json :as json]
     [anvil.util :as util]
     [anvil.runtime.tables.v2.search :as search]
-    [clojure.set :as set])
+    [medley.core :refer [remove-vals]]
+    [clojure.set :as set]
+    [anvil.runtime.tables.v2.query :as query]
+    [anvil.runtime.tables.split.data :as split-data])
   (:import (anvil.dispatcher.types SerializedPythonObject)))
 
 (clj-logging-config.log4j/set-logger! "anvil.runtime.tables.v2.rpc" :level :info)
@@ -50,26 +53,30 @@
                          (assoc python_name (table-args table-id tables))))
                {} tables)))
 
-(defn get-table-by-id [_kwargs table-id]
+
+(defn get-table-by-id [_kws table-id]
   (let [tables (util-v2/get-tables)
         table-id (basic-ops/clean-table-id table-id)]
     (when (contains? tables table-id)
       (table-args table-id tables))))
 
-(defn table-list-columns [_kwargs table-cap]
-    (let [tables (util-v2/get-tables)
-          {:keys [id cols]} (-> (unwrap-cap-with-perm! tables table-cap :table util-v2/READ)
-                                (first)
-                                (decode-view-spec))
-          all-cols (get-in tables [id :columns])
-          available-cols (->> (if cols
-                                (select-keys all-cols cols)
-                                all-cols)
-                              (sort-by (fn [[name col]] name))
-                              (sort-by (fn [[name col]] (:ui-order col))))]
-      (for [[name col] available-cols]
-        (-> (select-keys col [:id :type :table_id])
-            (assoc :name name)))))
+(defn table-list-columns [_kws table-cap]
+  (let [tables (util-v2/get-tables)
+        {:keys [id cols]} (-> (unwrap-cap-with-perm! tables table-cap :table util-v2/READ)
+                              (first)
+                              (decode-view-spec))
+        all-cols (get-in tables [id :columns])
+        all-cols (if rpc-util/*client-request?*
+                   (remove-vals :client_hidden all-cols)
+                   all-cols)
+        available-cols (->> (if cols
+                              (select-keys all-cols cols)
+                              all-cols)
+                            (sort-by (fn [[name col]] name))
+                            (sort-by (fn [[name col]] (:ui-order col))))]
+    (for [[name col] available-cols]
+      (-> (select-keys col [:id :type :table_id :client_hidden])
+          (assoc :name name)))))
 
 (defn- equality-val? [v]
   (not (and (instance? SerializedPythonObject v)
@@ -112,12 +119,21 @@
               [only-cols (conj query-args arg)]))
           [nil []] query-args))
 
+(defn- backcompat-request-overrides [request-overrides]
+  ;; Older versions of downlink/uplink code just passed a boolean called "treat-as-client-request?". We now have
+  ;; a more complex map of flags. To be compatible with old code, we translate a boolean as
+  ;; {:use_client_config <value>}. This will not help us with client-hidden columns, but if the requesting code is that
+  ;; old it can't preserve those security boundaries anyway.
+  (if (boolean? request-overrides)
+    {:use_client_config request-overrides}
+    request-overrides))
+
 (defn table-get-view [_kws table-cap new-perm _only-cols query-args query-kws]
   (let [tables (util-v2/get-tables)
         {table-id :id :keys [cols perm restrict]} (-> (util-v2/unwrap-cap table-cap :table)
                                                       (first)
                                                       (decode-view-spec))
-        current-cols (basic-ops/get-col-names table-id tables cols)
+        current-cols (basic-ops/get-col-names-removing-client-hidden table-id tables cols)
         VIEW-NAMES {"rwc" "cascading writable", "rw" "read-write", "r" "read-only"}
         ;; Conditions for "are they allowed to do this?":
         ;; 1. The view-type is no more privileged than current permissions
@@ -141,9 +157,9 @@
 
         new-restrict (when (or query-args query-kws)
                        ;; Restrictions can apply to any cols accessible in the *parent* table/view (ie current-cols)
-                       (search-v2/parse-query tables table-id allowed-cols query-args query-kws))
+                       (query/parse-query tables table-id allowed-cols query-args query-kws))
         combined-restrict (if (and restrict new-restrict)
-                            (search-v2/both-queries restrict new-restrict)
+                            (query/both-queries restrict new-restrict)
                             (or restrict new-restrict))
 
         ;; 3. Great, the query is valid - get the new-cap-cols only-if there were no q.only_cols() defined in the query-args
@@ -190,9 +206,9 @@
                                             (first)
                                             (decode-view-spec))
         _ (assert id)
-        cols (basic-ops/get-col-names id tables cols)
+        cols (basic-ops/get-col-names-removing-client-hidden id tables cols)
         [search-options query-args] (search-v2/get-search-options tables view-spec search-args)
-        query (search-v2/parse-query tables id (set cols) query-args query-kws)]
+        query (query/parse-query tables id (set cols) query-args query-kws)]
     {:tables tables, :table-id id, :view-spec view-spec :search-options search-options, :query query}))
 
 (defn- mk-search-cap [{:keys [query view-spec search-options]} cursor]
@@ -217,46 +233,84 @@
     (when row-id
       [row-id table-data])))
 
-(defn table-add-rows
-  ([_kw table-cap rows] (table-add-rows _kw table-cap rows false))
-  ([_kw table-cap rows treat-as-client-request?]
+(defn- do-add-rows [tables {table-id :id :keys [perm cols] :as view-spec} row-dicts request-overrides]
+  (let [new-row-ids (updates/do-insert! (db) (quota-ctx) (can-auto-create?) tables view-spec row-dicts request-overrides)]
+    [(for [row-id new-row-ids]
+       [row-id (types/->Capability ["_" "t" (encode-view-spec view-spec) {:r row-id}])])
+     (basic-ops/get-table-spec table-id tables perm nil cols)]))
+
+
+(defn- table-add-rows
+  ([_kw table-cap row-dicts] (table-add-rows _kw table-cap row-dicts nil))
+  ([_kw table-cap row-dicts request-overrides]
    (let [tables (util-v2/get-tables)
-         [encoded-view-spec] (unwrap-cap-with-perm! tables table-cap :table util-v2/WRITE treat-as-client-request?)
-         {table-id :id :keys [perm cols] :as view-spec} (decode-view-spec encoded-view-spec)
-         new-row-ids (updates/do-insert! (db) (quota-ctx) (can-auto-create?) tables view-spec rows)]
-     [(for [row-id new-row-ids]
-        [row-id (types/->Capability ["_" "t" encoded-view-spec {:r row-id}])])
-      (basic-ops/get-table-spec table-id tables perm nil cols)])))
+         [encoded-view-spec] (unwrap-cap-with-perm! tables table-cap :table util-v2/WRITE request-overrides)
+         view-spec (decode-view-spec encoded-view-spec)]
+     (do-add-rows tables view-spec row-dicts request-overrides))))
+
+;; trusted doesn't make sense in the table-add-rows function
+;; because there's no _do_create_rows and no batching of add-row
+;; first we check the row-dict items are valid - i.e. check if they are trying to update client-hidden-columns
+;; then we merge the row-dict with the trusted-row-dict before calling the do-add-rows function
+(defn- do-table-add-row [tables table-cap row-dict request-overrides trusted-row-dict]
+  (let [request-overrides (backcompat-request-overrides request-overrides)
+        [encoded-view-spec] (unwrap-cap-with-perm! tables table-cap :table util-v2/WRITE request-overrides)
+        view-spec (decode-view-spec encoded-view-spec)
+        _ (when (or trusted-row-dict (:filter_client_hidden request-overrides))
+            (doseq [kv row-dict]
+              (updates/ensure-valid-column-for-update tables view-spec request-overrides kv)))
+        row-dict (merge row-dict trusted-row-dict)
+        request-overrides (dissoc request-overrides :filter_client_hidden)
+        [[[row-id cap]] table-spec] (do-add-rows tables view-spec [row-dict] request-overrides)]
+    [row-id cap table-spec]))
 
 (defn table-add-row
-  ([_kws table-cap row] (table-add-row _kws table-cap row false))
-  ([_kws table-cap row treat-as-client-request?]
-   (let [[[[row-id cap]] table-spec] (table-add-rows _kws table-cap [row] treat-as-client-request?)]
-     [row-id cap table-spec])))
+  ([_kws table-cap row-dict] (table-add-row _kws table-cap row-dict nil))
+  ([_kws table-cap row-dict request-overrides] (table-add-row _kws table-cap row-dict request-overrides nil))
+  ([_kws table-cap row-dict request-overrides trusted-row-dict]
+   (let [tables (util-v2/get-tables)]
+     (do-table-add-row tables table-cap row-dict request-overrides trusted-row-dict))))
 
 (defn row-update
-  ([_kw row-cap values] (row-update _kw row-cap values false))
-  ([_kw row-cap values treat-as-client-request?]
+  ([_kw row-cap values] (row-update _kw row-cap values nil))
+  ([_kw row-cap values request-overrides]
    (let [tables (util-v2/get-tables)
-         [encoded-view-spec encoded-search-spec] (unwrap-cap-with-perm! tables row-cap :row util-v2/WRITE treat-as-client-request?)
+         request-overrides (backcompat-request-overrides request-overrides)
+         [encoded-view-spec encoded-search-spec] (unwrap-cap-with-perm! tables row-cap :row util-v2/WRITE request-overrides)
+         {table-id :id :keys [perm cols] :as view-spec} (decode-view-spec encoded-view-spec)
          {row-id :r} (decode-search-spec encoded-search-spec)]
-     (updates/do-update! (db) (quota-ctx) (can-auto-create?) tables (decode-view-spec encoded-view-spec) [{:row-id row-id :values values}])
-     nil)))
+        ;; include treat as client request in this update
+     (updates/do-update! (db) (quota-ctx) (can-auto-create?) tables view-spec [{:row-id row-id :values values :request-overrides request-overrides}])
+     (basic-ops/get-table-spec table-id tables perm nil cols))))
 
 (defn row-batch-update [_kws updates]
   (let [tables (util-v2/get-tables)
-        all-updates (->> (for [[row-cap update treat-as-client-request?] updates
-                               :let [[encoded-view-spec encoded-search-spec] (unwrap-cap-with-perm! tables row-cap :row util-v2/WRITE treat-as-client-request?)
-                                     {row-id :r} (decode-search-spec encoded-search-spec)]]
-                           {:view-spec (decode-view-spec encoded-view-spec) :row-id row-id :values update})
-                         (group-by :view-spec))]
-    (doseq [[view-spec updates] all-updates]
-      (updates/do-update! (db) (quota-ctx) (can-auto-create?) tables view-spec updates))))
+        indexed-updates (map-indexed (fn [idx [row-cap update request-overrides]]
+                                       (let [request-overrides (backcompat-request-overrides request-overrides)
+                                             [encoded-view-spec encoded-search-spec] (unwrap-cap-with-perm! tables row-cap :row util-v2/WRITE request-overrides)
+                                             {table-id :id :keys [perm cols] :as view-spec} (decode-view-spec encoded-view-spec)
+                                             {row-id :r} (decode-search-spec encoded-search-spec)]
+                                         {:index idx :view-spec view-spec :row-id row-id :values update :request-overrides request-overrides}))
+                                     updates)
+        grouped-updates (group-by :view-spec indexed-updates)]
+    (reduce (fn [acc [view-spec updates]]
+              ;; Perform updates for each group and collect table-spec
+              (let [table-spec (do
+                                 (updates/do-update! (db) (quota-ctx) (can-auto-create?) tables view-spec updates)
+                                 (basic-ops/get-table-spec (:id view-spec) tables (:perm view-spec) nil (:cols view-spec)))]
+                ;; Place the table-spec in the accumulator at the correct indices
+                (reduce (fn [acc {:keys [index]}]
+                          (assoc acc index table-spec))
+                        acc
+                        updates)))
+            (vec (repeat (count updates) nil))
+            grouped-updates)))
 
 (defn row-batch-delete-2 [_kw row-caps]
   (let [tables (util-v2/get-tables)
-        all-deletions (->> (for [[row-cap treat-as-client-request?] row-caps
-                                 :let [[encoded-view-spec encoded-search-spec] (unwrap-cap-with-perm! tables row-cap :row util-v2/WRITE treat-as-client-request?)
+        all-deletions (->> (for [[row-cap request-overrides] row-caps
+                                 :let [request-overrides (backcompat-request-overrides request-overrides)
+                                       [encoded-view-spec encoded-search-spec] (unwrap-cap-with-perm! tables row-cap :row util-v2/WRITE request-overrides)
                                        {row-id :r} (decode-search-spec encoded-search-spec)]]
                              {:view-spec (decode-view-spec encoded-view-spec), :row-id row-id})
                            (group-by :view-spec))]
@@ -264,13 +318,13 @@
       (updates/do-delete! (db) (quota-ctx) tables view-spec (map :row-id deletions)))))
 
 (defn row-batch-delete-1 [_kw row-caps]
-  "A compatibility shim for pre-models code that doesn't know to pass [row-cap treat-as-client-request?] pairs"
-  (row-batch-delete-2 _kw (for [rc row-caps] [rc false])))
+  "A compatibility shim for pre-models code that doesn't know to pass [row-cap request-overrides] pairs"
+  (row-batch-delete-2 _kw (for [rc row-caps] [rc nil])))
 
 (defn row-delete
-  ([_kws row-cap] (row-delete _kws row-cap false))
-  ([_kws row-cap treat-as-client-request?]
-   (row-batch-delete-2 _kws [[row-cap treat-as-client-request?]])))
+  ([_kws row-cap] (row-delete _kws row-cap nil))
+  ([_kws row-cap request-overrides]
+   (row-batch-delete-2 _kws [[row-cap request-overrides]])))
 
 (defn do-row-fetch [tables {table-id :id :keys [cols] :as view-spec} row-id requested-cols]
   (let [{:keys [table-data primary-row-ids]} (basic-ops/get-row tables (db) view-spec row-id requested-cols)]
@@ -285,11 +339,11 @@
       table-data
       (throw+ (util-v2/general-tables-error "This row has been deleted" "anvil.tables.RowDeleted")))))
 
-(defn- validate-fetch-request [fetch-request]
+(defn validate-fetch-request [fetch-request]
   (when fetch-request
     (if (and (instance? SerializedPythonObject fetch-request) (= (:type fetch-request) "anvil.tables.fetch_only"))
       (:spec (:value fetch-request))
-      (throw+ (util-v2/general-tables-error "The second argument to get_by_id() should be a q.fetch_only() object")))))
+      (throw+ (util-v2/general-tables-error (str "Expected a q.fetch_only() object"))))))
 
 (defn table-get-row-by-id [{fetch-request :fetch :as _kws} table-cap row-id]
   (let [tables (util-v2/get-tables)
@@ -305,18 +359,21 @@
 
 (defn table-has-row? [_kw table-cap row-id]
   (let [tables (util-v2/get-tables)
-        {table-id :id} (-> (unwrap-cap-with-perm! tables table-cap :table util-v2/READ)
-                           (first)
-                           (decode-view-spec))
+        {table-id :id :as view-spec} (-> (unwrap-cap-with-perm! tables table-cap :table util-v2/READ)
+                                         (first)
+                                         (decode-view-spec))
         row-id (basic-ops/validate-clean-row-id row-id table-id)]
-    (boolean (when row-id
-               (seq (jdbc-t/query (db) ["SELECT 1 FROM app_storage_data WHERE table_id=? AND id=?" table-id row-id]))))))
+    (basic-ops/table-has-row? tables (db) view-spec row-id)))
 
 (defn- get-csv-lazy-media [tables {table-id :id :keys [cols restrict] :as _view-spec} query escape-for-excel?]
-  (let [cols (or cols (keys (get-in tables [table-id :columns])))
-        query (if (and restrict query) (search/both-queries restrict query) (or restrict query))]
+  (let [query (query/both-queries restrict query)
+        ;; Enforce client_hidden filtering for client-originated CSV exports only.
+        ;; Server-side exports should preserve their existing column semantics.
+        cols (if rpc-util/*client-request?*
+               (basic-ops/get-col-names-removing-client-hidden table-id tables cols)
+               cols)]
     (lazy-media/mk-LazyMedia-with-correct-mac {:manager   "query-csv-v2", :id (util/write-json-str [table-id query cols escape-for-excel?]),
-                                               :mime-type "text/csv", :name (csv/get-csv-filename tables table-id)}
+                                               :mime-type "text/csv", :name (export/get-csv-filename tables table-id)}
                                               rpc-util/*req*)))
 
 (defn table-to-csv [{:keys [escape_for_excel]} table-cap]
@@ -329,13 +386,20 @@
 (defn search-to-csv [{:keys [escape_for_excel]} search-cap]
   (let [tables (util-v2/get-tables)
         [encoded-view-spec encoded-search-spec] (util-v2/unwrap-cap search-cap :search)
-        {:keys [search]} (decode-search-spec encoded-search-spec)]
-    (get-csv-lazy-media tables (decode-view-spec encoded-view-spec) search escape_for_excel)))
+        {:keys [search]} (decode-search-spec encoded-search-spec)
+        view-spec (decode-view-spec encoded-view-spec)]
+    (get-csv-lazy-media tables view-spec search escape_for_excel)))
 
 (defn serve-csv-lazy-media [media-id]
   (let [tables (util-v2/get-tables)
         [table-id query cols escape-for-excel?] (json/read-str media-id :key-fn keyword)]
-    (csv/serve-query-csv-lazy-media tables (db) table-id query cols escape-for-excel?)))
+    (export/serve-query-csv-lazy-media tables (db) table-id query cols escape-for-excel?)))
+
+(defn serve-split-table-media [media-id]
+  (let [[table-id row-id col-id] (util/read-json-str media-id)]
+    (or (when-let [table-record (old-tables-util/load-table-record (db) table-id)]
+          (split-data/get-media-with-data (db) table-record row-id col-id))
+        (throw (util-v2/general-tables-error "Media object deleted")))))
 
 (defn get-table-schema [{:keys [_anvil_expose_all_for_designer] :as _kwargs}]
   (let [tables (dissoc (util-v2/get-tables) ::util-v2/table-mapping)
@@ -397,4 +461,6 @@
 (swap! dispatcher/native-rpc-handlers merge tables-v2-rpc-handlers)
 (swap! dispatcher/db-only-native-rpc-handlers merge tables-v2-rpc-handlers)
 
-(swap! lazy-media/managers assoc "query-csv-v2" (rpc-util/wrap-lazy-media-server serve-csv-lazy-media))
+(swap! lazy-media/managers merge
+       {"query-csv-v2" (rpc-util/wrap-lazy-media-server serve-csv-lazy-media)
+        "table-media-s" (rpc-util/wrap-lazy-media-server serve-split-table-media)})

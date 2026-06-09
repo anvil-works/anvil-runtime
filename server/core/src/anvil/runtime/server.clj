@@ -28,7 +28,7 @@
             [anvil.core.worker-pool :as worker-pool]
             [anvil.runtime.sessions :as sessions]
             [anvil.runtime.util :as runtime-util]
-            [anvil.runtime.serve-app :as serve-app])
+            [anvil.runtime.serve-app.core :as serve-app])
   (:import (java.io ByteArrayInputStream)
            (anvil.dispatcher.types Media MediaDescriptor)
            (org.apache.commons.codec.binary Base64)
@@ -71,6 +71,14 @@
 (defn get-spinner [req]
   ;; we can make this more involved in the future
   (slurp (runtime-client-resource req "/img/loading.min.svg")))
+
+(defn- theme-asset-etag [{:keys [name content hash]}]
+  (str "\"" (or hash (util/sha-256 (str name ":" content))) "\""))
+
+(defn- if-none-match-matches? [if-none-match etag]
+  (let [header-value (str/trim (or if-none-match ""))]
+    (and (not (str/blank? header-value))
+         (= header-value etag))))
 
 (defn serve-lazy-media [manager media-key media-id nodl request]
   (log/trace "Request for media" request)
@@ -173,23 +181,25 @@
         (resp/header "Access-Control-Allow-Credentials" "true")))
 
   (GET ["/_/theme/:asset-name", :asset-name #".*"] [asset-name :as request]
-    (let [{:keys [version content]} (get-app-from-request request)]
-      (if (= version (get-in request [:headers "if-none-match"]))
-        (-> (resp/response nil)
-            (resp/status 304)
-            (resp/header "X-Anvil-Cacheable" true)
-            (resp/header "ETag" version)
-            (resp/header "Access-Control-Expose-Headers" "X-Anvil-Cacheable"))
-        (when-let [asset (app-data/get-asset content asset-name)]
-          (log/trace "Serving an asset: " (:name asset))
-          (let [mime-type (mime-type/ext-mime-type asset-name util/additional-mime-types)]
-            (-> (Base64/decodeBase64 ^String (:content asset))
-                (ByteArrayInputStream.)
-                (resp/response)
+    (let [{:keys [content]} (get-app-from-request request)]
+      (when-let [asset (app-data/get-asset content asset-name)]
+        (let [etag (theme-asset-etag asset)]
+          (if (if-none-match-matches? (get-in request [:headers "if-none-match"]) etag)
+            (-> (resp/response nil)
+                (resp/status 304)
                 (resp/header "X-Anvil-Cacheable" true)
-                (resp/header "ETag" version)
-                (resp/header "Access-Control-Expose-Headers" "X-Anvil-Cacheable")
-                (resp/content-type mime-type)))))))
+                (resp/header "ETag" etag)
+                (resp/header "Access-Control-Expose-Headers" "X-Anvil-Cacheable"))
+            (do
+              (log/trace "Serving an asset: " (:name asset))
+              (let [mime-type (mime-type/ext-mime-type asset-name util/additional-mime-types)]
+                (-> (Base64/decodeBase64 ^String (:content asset))
+                    (ByteArrayInputStream.)
+                    (resp/response)
+                    (resp/header "X-Anvil-Cacheable" true)
+                    (resp/header "ETag" etag)
+                    (resp/header "Access-Control-Expose-Headers" "X-Anvil-Cacheable")
+                    (resp/content-type mime-type)))))))))
 
   (ANY ["/_/lm/:manager/:media-key/:media-id/*"] [manager media-key media-id nodl :as request]
     (serve-lazy-media manager media-key media-id nodl request))
@@ -262,7 +272,9 @@
   (POST "/_/saml_auth_complete" {:keys [body app-session app-origin environment] :as _req}
     (let [{:keys [tokens oauth_info]} (some-> (:encrypted_tokens body)
                                               (#(secrets/decrypt-str-with-global-key ::oauth-tokens-saml %))
-                                              util/read-json-str)]
+                                              util/read-json-str)
+          ;; SAML attributes may have keys with ":"s in them, meaning they won't serialise nicely as keyword keys in EDN maps (in the session). Turn them back into strings.
+          tokens (update tokens :attributes update-keys util/preserve-slashes)]
       (if-not (runtime-util/oauth-info-valid? oauth_info app-origin environment app-session)
         (resp/status (resp/response {:error "Rejecting mismatched OAuth Info"}) 403)
         (do

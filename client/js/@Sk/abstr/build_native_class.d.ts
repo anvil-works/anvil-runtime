@@ -1,4 +1,4 @@
-import type { pyObject, pyType, Suspension } from "../index";
+import type { Suspension, pyObject, pyType } from "../index";
 import type { Flags } from "../namespace";
 import type { numberSlots, seqMapSlots, tpSlots } from "../slots";
 import { ConstructorOverloadParameters, InstanceOverloadType } from "./overload_types";
@@ -10,7 +10,6 @@ interface Callable<I> {
     (...args: any[]): I;
 }
 
-
 interface AbstractMethodDef {
     $flags: Flags;
     $doc?: string | null;
@@ -19,7 +18,7 @@ interface AbstractMethodDef {
     anvil$args?: { [key: string]: string };
 }
 
-interface MethDef<I extends pyObject> extends AbstractMethodDef {
+export interface MethDef<I extends pyObject> extends AbstractMethodDef {
     $meth(this: I, ...args: any): pyObject | Suspension;
 }
 

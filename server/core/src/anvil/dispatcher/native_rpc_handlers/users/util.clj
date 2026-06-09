@@ -183,10 +183,9 @@
   ;; {"a" 1 "e" 5}
   (map-from-compact [1 4 5 "CAP"]
                     [{:name "a"} {:name "b"} {:name "c"} {:name "d" :type "link_single"} {:name "e"} {:name "f"}]
-                    [1 0 0 1 1 0])
+                    [1 0 0 1 1 0]))
 
-  ;
-  )
+
 
 (defn- map-from-non-compact [row cols]
   (->> (dissoc row :c)
@@ -305,6 +304,7 @@
          (validate-enabled-user! user-map)
          (throw+ {:anvil/server-error "This account has not been enabled by an administrator", :type "anvil.users.AccountIsNotEnabled"})))
      u)))
+
 
 (defn record-login-failure! [user-row]
   (when user-row

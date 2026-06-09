@@ -13,6 +13,7 @@ import {
     pyCallOrSuspend,
     pyDict,
     pyFunc,
+    pyIsSubclass,
     pyNone,
     pyObject,
     pyStr,
@@ -57,8 +58,9 @@ import {
 
 const hasOwnProperty = Object.prototype.hasOwnProperty;
 
-export interface ClassicComponentConstructor<T extends ClassicComponent = ClassicComponent>
-    extends ComponentConstructor {
+export interface ClassicComponentConstructor<
+    T extends ClassicComponent = ClassicComponent,
+> extends ComponentConstructor {
     new <T extends ClassicComponent>(): T;
     prototype: T & {
         _anvilClassic$propDefaults: Record<string, pyObject>;
@@ -367,11 +369,6 @@ const ClassicComponentFactory = (pyModule: PyModMap) => {
                 getEvents() {
                     return Object.values(this._anvilClassic$eventTypes);
                 },
-                getContainerDesignInfo(child: Component): ContainerDesignInfo {
-                    return {
-                        layoutPropertyDescriptions: getPropertyDescriptions(this._anvil.layoutPropTypes ?? []),
-                    };
-                },
             };
         } else {
             hookSpec = {
@@ -388,6 +385,15 @@ const ClassicComponentFactory = (pyModule: PyModMap) => {
                 getEvents() {
                     return Object.values(this._anvilClassic$eventTypes);
                 },
+            };
+        }
+        const ClassicContainer = pyModule["ClassicContainer"] as ClassicComponentConstructor;
+
+        if (ClassicContainer && pyIsSubclass(cls, ClassicContainer)) {
+            hookSpec.getContainerDesignInfo = function (child) {
+                return {
+                    layoutPropertyDescriptions: getPropertyDescriptions(this._anvil.layoutPropTypes ?? []),
+                };
             };
         }
         cls.prototype.anvil$hookSpec = hookSpec;

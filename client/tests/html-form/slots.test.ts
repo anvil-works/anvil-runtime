@@ -1,5 +1,5 @@
 import { describe, it, expect } from "@rstest/core";
-import { parseContainerForm, serializeFormContainer } from "@runtime/html-form/parser";
+import { parseContainerForm, parseSerializedHtml, serializeFormContainer } from "@runtime/html-form/parser";
 import type { ParsedFormYaml } from "@runtime/html-form/types";
 import { normalizeDropzoneNames, normalizeMultiline, normalizedHtml, expectNormalizedComponents } from "./test-utils";
 
@@ -22,6 +22,29 @@ function expectSlot(parsed: ParsedFormYaml, slotName: string) {
 }
 
 describe("slot parsing and serialization", () => {
+    it("prunes stale data-slot dropzones but preserves explicit dropzones", () => {
+        const html = `<center style="font-style:italic; color:#888; margin: 3em;">
+  (Insert your custom HTML here)
+</center>
+<anvil-dropzone name="$dz_ajbta8" data-slot="slot_1"></anvil-dropzone>
+<anvil-dropzone name="$dz_ifpkow"></anvil-dropzone>`;
+
+        const parsed = parseSerializedHtml(html);
+        expect(parsed.kind).toBe("form");
+        if (parsed.kind !== "form") {
+            throw new Error("Expected stale data-slot fixture to parse as a form");
+        }
+
+        expect(parsed.slots).toBeUndefined();
+        expectHtmlEqual(
+            serializeFormContainer(parsed),
+            `<center style="font-style:italic; color:#888; margin: 3em;">
+  (Insert your custom HTML here)
+</center>
+<anvil-dropzone name="$dz_ifpkow"></anvil-dropzone>`
+        );
+    });
+
     it("parses top-level slots and round-trips", () => {
         const html = `<div class="layout">
     <anvil-slot name="body"></anvil-slot>
@@ -352,6 +375,91 @@ describe("slot parsing and serialization", () => {
 <anvil-slot name="gamma"></anvil-slot>`
         );
     });
+
+    it("serializes a root slot with empty layout properties into an existing root dropzone", () => {
+        const parsed: ParsedFormYaml = {
+            container: {
+                type: "HtmlComponent",
+                properties: {
+                    html: `<center style="font-style:italic; color:#888; margin: 3em;">
+  (Insert your custom HTML here)
+</center>
+<anvil-dropzone name="default"></anvil-dropzone>`,
+                },
+            },
+            components: [],
+            slots: {
+                slot_1: {
+                    index: 0,
+                    set_layout_properties: {},
+                    target: { type: "container", name: "" },
+                },
+            },
+        };
+
+        const serialized = serializeFormContainer(parsed, { allowReparse: true });
+
+        expect(normalizeMultiline(serialized)).toBe(
+            normalizeMultiline(`<center style="font-style:italic; color:#888; margin: 3em;">
+  (Insert your custom HTML here)
+</center>
+<anvil-slot name="slot_1"></anvil-slot>`)
+        );
+    });
+
+    it("round trips a root slot with empty layout properties through serialized HTML", () => {
+        const parsed: ParsedFormYaml = {
+            container: {
+                type: "HtmlComponent",
+                properties: {
+                    html: `<center style="font-style:italic; color:#888; margin: 3em;">
+  (Insert your custom HTML here)
+</center>
+<anvil-dropzone name="default"></anvil-dropzone>`,
+                },
+            },
+            components: [],
+            slots: {
+                slot_1: {
+                    index: 0,
+                    set_layout_properties: {},
+                    target: { type: "container", name: "" },
+                },
+            },
+        };
+
+        const serialized = serializeFormContainer(parsed, { allowReparse: true });
+        const reparsed = parseContainerForm(serialized);
+
+        expect(expectSlot(reparsed, "slot_1")).toMatchObject({
+            target: { type: "container", name: "" },
+            index: 0,
+            set_layout_properties: { dropzone: "<dropzone>" },
+        });
+        expect(normalizeMultiline(serializeFormContainer(reparsed))).toBe(normalizeMultiline(serialized));
+    });
+
+    it("does not serialize a root slot with empty layout properties into a named non-default dropzone", () => {
+        const parsed: ParsedFormYaml = {
+            container: {
+                type: "HtmlComponent",
+                properties: {
+                    html: `<anvil-dropzone name="sidebar"></anvil-dropzone>`,
+                },
+            },
+            components: [],
+            slots: {
+                slot_1: {
+                    index: 0,
+                    set_layout_properties: {},
+                    target: { type: "container", name: "" },
+                },
+            },
+        };
+
+        expect(serializeFormContainer(parsed)).toBe(`<anvil-dropzone name="sidebar"></anvil-dropzone>`);
+    });
+
     it("serializes slots that target root dropzones alongside components that share a dropzone", () => {
         const parsed: ParsedFormYaml = {
             container: {

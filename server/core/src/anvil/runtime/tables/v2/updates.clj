@@ -11,9 +11,13 @@
             [anvil.core.worker-pool :as worker-pool]
             [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]
             [clojure.tools.logging :as log]
-            [medley.core :refer [assoc-some]]
+            [medley.core :refer [assoc-some map-kv]]
             [anvil.runtime.quota :as quota]
-            [clojure.pprint :as pprint])
+            [clojure.pprint :as pprint]
+            [anvil.runtime.tables.v2.query :as query]
+            [anvil.runtime.tables.split.data :as split-data]
+            [anvil.runtime.tables.split.manager :as split-table-manager]
+            [anvil.runtime.tables.manager :as tables-manager])
   (:import (org.apache.commons.io IOUtils)
            (java.io ByteArrayOutputStream InputStream)
            (java.sql Blob ResultSet Array Connection)))
@@ -35,17 +39,31 @@
 ;; The worst headaches are produced by autocreating and resolving columns, which makes batch operations very hard.
 ;; So right now we're omitting this problem entirely. This is necessarily temporary.
 
-(defn- check-values-for-update [tables {table-id :id :keys [perm cols restrict] :as view-spec} value-args]
-  (let [table-columns (get-in tables [table-id :columns])]
+
+(defn- is-valid-col-and-visible? [cols column-map col-name request-overrides]
+  (let [col (column-map col-name)
+        valid-cols (if cols (set cols) column-map)
+        is-valid (valid-cols col-name)]
+    (if (or rpc-util/*client-request?* (get request-overrides :filter_client_hidden))
+      (and is-valid (not (:client_hidden col)))
+      is-valid)))
+
+
+(defn ensure-valid-column-for-update [tables {table-id :id :keys [cols restrict] :as view-spec} request-overrides [col-name value]]
+  (let [col-name (util/preserve-slashes col-name)
+        table-columns (get-in tables [table-id :columns])]
+    (when-not (is-valid-col-and-visible? cols table-columns col-name request-overrides)
+      (throw+ (cond-> (util-v2/general-tables-error (format "No such column '%s'%s" col-name (if cols " in this view" ""))
+                                                    "anvil.tables.NoSuchColumnError")
+                      ;; double check if we actually have this column already - it might be client-hidden
+                      (and (not (table-columns col-name)) (nil? cols) (nil? restrict)) (assoc ::would-create-column [col-name (table-types/get-type-from-value value)]))))))
+
+
+(defn- check-and-reduce-values-for-update [tables {table-id :id :keys [perm cols restrict] :as view-spec} value-args request-overrides]
+  (let [{table-columns :columns, storage :storage} (get tables table-id)]
     (reduce (fn [rv [col-name value]]
               (let [col-name (util/preserve-slashes col-name)
-                    _ (when-not (if cols
-                                  (some #{col-name} cols)
-                                  (contains? table-columns col-name))
-                        (throw+ (cond-> (util-v2/general-tables-error (format "No such column '%s'%s" col-name (if cols " in this view" ""))
-                                                                      "anvil.tables.NoSuchColumnError")
-                                        (and (nil? cols) (nil? restrict)) (assoc ::would-create-column [col-name (table-types/get-type-from-value value)]))))
-
+                    _ (ensure-valid-column-for-update tables view-spec request-overrides [col-name value])
                     col (get table-columns col-name)
                     col-id (:id col)
                     col-type (util-v2/typemap-from-column col)
@@ -57,62 +75,59 @@
                                            (not= :error (table-types/resolve-type col-type (table-types/get-type-from-value value))))
                                       (assoc ::would-resolve-column [col-id col-type (table-types/get-type-from-value value)]))))
 
-                  (= (:type col-type) "media")
-                  (-> rv
-                      (update :media-to-displace conj col-id)
-                      (assoc-in [:reduced-values col-id] nil)
-                      (cond-> value (assoc-in [:media-to-write col-id] {:media value
-                                                                        :bytes (delay ; Don't do this until we need it, because it may never be required. In batch updates,
-                                                                                      ; check-values-for-update is called repeatedly, and we only actually want the last one.
-                                                                                      ; This is a delay rather than a fn because we can't re-consume the media object in the
-                                                                                      ; event of a transaction retry.
-                                                                                 (with-open [in-stream ^InputStream (blocking-hacks/?->InputStream rpc-util/*req* value)
-                                                                                             out-stream (ByteArrayOutputStream.)]
-                                                                                   (IOUtils/copy in-stream out-stream 4096)
-                                                                                   (.toByteArray out-stream)))})))
+                  (and (= (:type col-type) "media"))
+                  (if (:split storage)
+                    (-> rv
+                        (assoc-in [:reduced-values col-id] (table-types/reduce-val-for-update storage col-type
+                                                                                              (when value
+                                                                                                (delay (blocking-hacks/?->BlobMedia rpc-util/*req* value))))))
+                    (-> rv
+                        (update :media-to-displace conj col-id)
+                        (assoc-in [:reduced-values col-id] nil)
+                        (cond-> value (assoc-in [:media-to-write col-id] {:media value
+                                                                          :bytes (delay ; Don't do this until we need it, because it may never be required. In batch updates,
+                                                                                   ; check-values-for-update is called repeatedly, and we only actually want the last one.
+                                                                                   ; This is a delay rather than a fn because we can't re-consume the media object in the
+                                                                                   ; event of a transaction retry.
+                                                                                   (.getBytes (blocking-hacks/?->BlobMedia rpc-util/*req* value)))}))))
 
                   :else
-                  (assoc-in rv [:reduced-values col-id] (table-types/reduce-val col-type value))))
-              ) {} value-args)))
+                  (assoc-in rv [:reduced-values col-id] (table-types/reduce-val-for-update storage col-type value)))))
+            {} value-args)))
 
 ;; Note: I am deeply resentful that any of this work is required. Automatic column addition is a silly feature
 ;; we should never have supported.
 
-(defn- resolving-columns [db can-auto-create? tables {table-id :id :as table-spec} f]
+(defn- resolving-columns [db-c can-auto-create? tables {table-id :id :as table-spec} f]
   (try+
-    (doall (f tables))
+    [(doall (f tables)) tables]
     (catch ::would-create-column e
       (when-not can-auto-create?
         (throw+ e))
-      (util/with-db-transaction
-        [db db :repeatable-read]
-        (let [[col-name col-type] (::would-create-column e)
-              {:keys [columns]} (first (jdbc-t/query db ["SELECT columns FROM app_storage_tables WHERE id = ?" table-id]))]
-          (when-not (some #(= (:name %) col-name) (vals columns))
-            ;; if we haven't lost the race:
-            (jdbc-t/execute! db ["UPDATE app_storage_tables SET columns=?::jsonb WHERE id = ?"
-                                 (-> columns
-                                     (assoc (util-v2/generate-column-id) (assoc (table-types/make-db-column-from-type col-type) :name col-name))
-                                     (util/write-json-str))
-                                 table-id])
-            (rpc-util/*rpc-println* (str "Automatically creating column " (pr-str col-name) " (" (table-types/get-type-name tables col-type) ")")))))
-      ;; TODO invalidate the cache here
-      (resolving-columns db can-auto-create? (util-v2/get-tables (::util-v2/table-mapping tables)) table-spec f))
+      (let [[col-name col-type] (::would-create-column e)
+            {:keys [storage] :as table-record} (get tables table-id)
+            col-spec (-> (table-types/make-db-column-from-type col-type)
+                         (assoc :name col-name))]
+        (util/with-db-transaction
+          [db-c db-c :repeatable-read]
+          (let [{:keys [columns]} (first (jdbc-t/query db-c ["SELECT columns FROM app_storage_tables WHERE id = ?" table-id]))]
+            (when-not (some #(= (:name %) col-name) (vals columns))
+              ;; if we haven't lost the race:
+              (rpc-util/*rpc-println* (str "Automatically creating column " (pr-str col-name) " (" (table-types/get-type-name tables col-type) ")"))
+              (tables-manager/table-create-columns! db-c table-id [col-spec] false)))))
+      (resolving-columns db-c can-auto-create? (util-v2/reload-tables db-c (::util-v2/table-mapping tables) tables) table-spec f))
     (catch ::would-resolve-column e
-      (util/with-db-transaction [db db]
+      (util/with-db-transaction [db-c db-c]
         (let [[col-id {unresolved-type :type} new-type] (::would-resolve-column e)
-              col-id (keyword col-id)
-              {:keys [columns]} (first (jdbc-t/query db ["SELECT columns FROM app_storage_tables WHERE id = ?" table-id]))
-              ;;_ (log/trace "RESOLVING COLUMN:" col-id columns unresolved-type new-type)
-              new-columns (into {} (for [[id {:keys [name type table_id] :as col}] columns]
-                                     [id (cond-> col
-                                                 (and (= id col-id) (= type unresolved-type))
-                                                 (merge (table-types/make-db-column-from-type new-type)))]))]
-          (when (not= new-columns columns)
-            (jdbc-t/execute! db ["UPDATE app_storage_tables SET columns=?::jsonb WHERE id = ?" new-columns table-id])
+              col-id-kw (keyword col-id)
+              {:keys [columns]} (first (jdbc-t/query db-c ["SELECT columns FROM app_storage_tables WHERE id = ?" table-id]))]
+          (when (= unresolved-type (get-in columns [col-id-kw :type]))
+            ;; if we haven't lost the race:
+            (tables-manager/table-resolve-column! db-c table-id col-id-kw new-type)
             (rpc-util/*rpc-print* (str "Type of column " (pr-str (get-in columns [col-id :name])) " is now " (table-types/get-type-name tables new-type))))))
-      ;; TODO invalidate the cache here
-      (resolving-columns db can-auto-create? (util-v2/get-tables (::util-v2/table-mapping tables)) table-spec f))))
+
+
+      (resolving-columns db-c can-auto-create? (util-v2/reload-tables db-c (::util-v2/table-mapping tables) tables) table-spec f))))
 
 
 ;; To insert a batch of rows, we must now:
@@ -197,40 +212,50 @@
             (update-in [:reduced-values] merge created-oids))))))
 
 (defn- merge-row-updates [tables view-spec row-updates]
-  (reduce (fn [updates {:keys [row-id values]}]
+  (reduce (fn [updates {:keys [row-id values request-overrides]}]
             (let [[prev-vals _] (get updates row-id)
                   all-vals (merge prev-vals values)]
               ;; This duplicates the (check-values-for-update), so each update gets a solo check
-              (assoc updates row-id [all-vals (check-values-for-update tables view-spec all-vals)])))
+              (assoc updates row-id [all-vals (check-and-reduce-values-for-update tables view-spec all-vals request-overrides)])))
           {} row-updates))
 
 (defn do-update! [db-c quota-ctx can-auto-create? tables {table-id :id :keys [perm cols restrict] :as view-spec} row-updates]
-  (let [[RESTRICT-SQL restrict-args] (when restrict (search-v2/QUERY->SQL restrict))
-        rows (resolving-columns db-c can-auto-create? tables view-spec
-                                (fn [tables] (for [[row-id [_ checked-update]] (merge-row-updates tables view-spec row-updates)]
-                                               (assoc checked-update :row-id row-id))))]
-    ;; TODO: Only go transactional if (some #(or (:media-to-write %) (:media-to-displace %)) rows)
-    ;; (but the overhead's pretty low, so this isn't urgent)
-    (util/with-db-transaction [db-c db-c :repeatable-read]
-      (let [rollback! #(do
-                         ;; This is belt and braces - the exception ought to cause a rollback, but when there's a
-                         ;; security boundary here it's best to be sure.
-                         (.rollback ^Connection (:connection db-c))
-                         (throw+ %))
-            bytes-displaced (delete-displaced-media! db-c table-id rows)
-            _ (when bytes-displaced
-                (quota/decrement-c! quota-ctx db-c :db-bytes (- bytes-displaced)))
-            rows (create-media-records! db-c table-id quota-ctx rows)
+  (let [{:keys [storage] :as table-record} (get-in tables [table-id :table-record])
+        [rows tables] (resolving-columns db-c can-auto-create? tables view-spec
+                                         (fn [tables] (for [[row-id [_ checked-update]] (merge-row-updates tables view-spec row-updates)]
+                                                        (assoc checked-update :row-id row-id))))]
 
-            data-json (-> (for [{:keys [row-id reduced-values]} rows]
-                            {:id row-id, :data reduced-values})
-                          (util/write-json-str))]
+    (if (:split storage)
+      (util/with-db-transaction [db-c db-c :repeatable-read]
+        (let [[old-bytes new-bytes] (split-data/update-rows! db-c tables view-spec rows)]
+          (quota/decrement-c! quota-ctx db-c :db-bytes (- old-bytes))
+          (quota/decrement-if-possible-c! quota-ctx db-c :db-bytes new-bytes)
+          nil))
 
-        (if-not RESTRICT-SQL
-          ;; Updating normally: Create virtual table, update from it
-          (let [{:keys [updated old_bytes new_bytes]}
-                (-> (util/with-metric-query "v2 update without restrictions"
-                      (jdbc-t/query db-c ["WITH new_data AS (SELECT * FROM jsonb_to_recordset(?::jsonb) AS x(id bigint, data jsonb)),
+      ;; Else (not split)
+      ;; TODO: Only go transactional if (some #(or (:media-to-write %) (:media-to-displace %)) rows)
+      ;; (but the overhead's pretty low, so this isn't urgent)
+      (let [[RESTRICT-SQL restrict-args] (when restrict (query/QUERY->SQL table-record restrict))]
+        (util/with-db-transaction [db-c db-c :repeatable-read]
+          (let [rollback! #(do
+                             ;; This is belt and braces - the exception ought to cause a rollback, but when there's a
+                             ;; security boundary here it's best to be sure.
+                             (.rollback ^Connection (:connection db-c))
+                             (throw+ %))
+                bytes-displaced (delete-displaced-media! db-c table-id rows)
+                _ (when bytes-displaced
+                    (quota/decrement-c! quota-ctx db-c :db-bytes (- bytes-displaced)))
+                rows (create-media-records! db-c table-id quota-ctx rows)
+
+                data-json (-> (for [{:keys [row-id reduced-values]} rows]
+                                {:id row-id, :data reduced-values})
+                              (util/write-json-str))]
+
+            (if-not RESTRICT-SQL
+              ;; Updating normally: Create virtual table, update from it
+              (let [{:keys [updated old_bytes new_bytes]}
+                    (-> (util/with-metric-query "v2 update without restrictions"
+                          (jdbc-t/query db-c ["WITH new_data AS (SELECT * FROM jsonb_to_recordset(?::jsonb) AS x(id bigint, data jsonb)),
                                             updates AS (SELECT table_id, nd.id, nd.data AS new_data, od.data AS old_data FROM app_storage_data AS od, new_data AS nd
                                                           WHERE table_id=? AND od.id = nd.id FOR UPDATE),
                                             updated_rows AS (UPDATE app_storage_data SET data=app_storage_data.data||nd.new_data
@@ -238,20 +263,20 @@
                                                                   WHERE app_storage_data.table_id=? AND app_storage_data.id=nd.id
                                                                   RETURNING octet_length(app_storage_data.data::text) AS new_bytes, (SELECT octet_length(old_data::text) FROM updates AS old WHERE table_id=? AND old.id=app_storage_data.id) AS old_bytes)
                                                SELECT COUNT(*) AS updated, SUM(new_bytes) AS new_bytes, SUM(old_bytes) AS old_bytes FROM updated_rows"
-                                          data-json table-id table-id table-id]))
-                    (first))]
-            (log/trace "Updated" updated old_bytes new_bytes)
-            (when (< updated (count rows))
-              (rollback! (util-v2/general-tables-error "This row has been deleted" "anvil.tables.RowDeleted")))
-            (quota/decrement-c! quota-ctx db-c :db-bytes (- old_bytes))
-            (quota/decrement-if-possible-c! quota-ctx db-c :db-bytes new_bytes)
-            (log/debug "v2 Updated " (- old_bytes) new_bytes "bytes in table" table-id))
+                                              data-json table-id table-id table-id]))
+                        (first))]
+                (log/trace "Updated" updated old_bytes new_bytes)
+                (when (< updated (count rows))
+                  (rollback! (util-v2/general-tables-error "This row has been deleted" "anvil.tables.RowDeleted")))
+                (quota/decrement-c! quota-ctx db-c :db-bytes (- old_bytes))
+                (quota/decrement-if-possible-c! quota-ctx db-c :db-bytes new_bytes)
+                (log/debug "v2 Updated " (- old_bytes) new_bytes "bytes in table" table-id))
 
-          ;; Updating a view with restrictions: it's a little bit complicated. We need to join the virtual table
-          ;; of new results back against the input data to get the final new data, then compute the view, then update that
-          (let [{:keys [found matched updated old_bytes new_bytes]}
-                (-> (util/with-metric-query "v2 update with restrictions"
-                      (jdbc-t/query db-c (concat [(str "WITH joined_data AS (SELECT o.data as old_data, o.data||x.data as data, x.id
+              ;; Updating a view with restrictions: it's a little bit complicated. We need to join the virtual table
+              ;; of new results back against the input data to get the final new data, then compute the view, then update that
+              (let [{:keys [found matched updated old_bytes new_bytes]}
+                    (-> (util/with-metric-query "v2 update with restrictions"
+                          (jdbc-t/query db-c (concat [(str "WITH joined_data AS (SELECT o.data as old_data, o.data||x.data as data, x.id
                                                                       FROM jsonb_to_recordset(?::jsonb) AS x(id bigint, data jsonb)
                                                                            JOIN app_storage_data AS o ON (o.id = x.id)
                                                                       WHERE o.table_id = ?),
@@ -265,73 +290,97 @@
                                                        (SELECT COUNT(*) FROM updated_rows) AS updated,
                                                        (SELECT SUM(octet_length(old_data::text)) FROM joined_data) AS old_bytes,
                                                        (SELECT SUM(octet_length(data::text)) FROM joined_data) AS new_bytes")
-                                                  data-json table-id] restrict-args [table-id])))
-                    (first))]
-            (when (< found (count rows))
-              (log/trace "Rolling back...")
-              (rollback! (util-v2/general-tables-error "This row has been deleted" "anvil.tables.RowDeleted")))
-            (when (< matched (count rows))
-              (rollback! (util-v2/general-tables-error "Data does not match view constraints")))
-            (when (not= updated matched)
-              (rollback! (util-v2/general-tables-error "Unexpected conflict: Row was deleted mid-update")))
-            (quota/decrement-c! quota-ctx db-c :db-bytes (- old_bytes))
-            (quota/decrement-if-possible-c! quota-ctx db-c :db-bytes new_bytes)
-            (log/debug "v2 Updated " (- old_bytes) new_bytes "bytes in table" table-id)))
+                                                      data-json table-id] restrict-args [table-id])))
+                        (first))]
+                (when (< found (count rows))
+                  (log/trace "Rolling back...")
+                  (rollback! (util-v2/general-tables-error "This row has been deleted" "anvil.tables.RowDeleted")))
+                (when (< matched (count rows))
+                  (rollback! (util-v2/general-tables-error "Data does not match view constraints")))
+                (when (not= updated matched)
+                  (rollback! (util-v2/general-tables-error "Unexpected conflict: Row was deleted mid-update")))
+                (quota/decrement-c! quota-ctx db-c :db-bytes (- old_bytes))
+                (quota/decrement-if-possible-c! quota-ctx db-c :db-bytes new_bytes)
+                (log/debug "v2 Updated " (- old_bytes) new_bytes "bytes in table" table-id)))
 
-        nil))))
+            nil))))))
 
-(defn- merge-with-nil [cols row-dicts]
-  (let [col-nil-map (zipmap (map keyword cols) (repeat nil))]
-    (mapv #(merge col-nil-map %) row-dicts)))
+(defn- row-dict-with-nil-missing-cols [cols table-cols row-dicts request-overrides]
+  (let [valid-cols (filter #(is-valid-col-and-visible? cols table-cols % request-overrides) cols)
+        col-set (set (map keyword valid-cols))]
+    (map (fn [row-dict]
+           (merge (zipmap col-set (repeat nil)) row-dict))
+         row-dicts)))
 
-(defn do-insert! [db-c quota-ctx autocreate-columns? tables {table-id :id :keys [perm cols restrict] :as view-spec} row-dicts]
+(defn- ensure-view-specifies-every-inaccessible-column! [tables {table-id :id :keys [perm cols restrict] :as view-spec} view-inferred-values]
+  ;; You can only add rows to a column-restricted view if the view specifies every inaccessible column
+  (when cols
+    (let [table-cols (get-in tables [table-id :columns])
+          all-col-ids (for [[_ {:keys [id]}] table-cols] id)
+          specified-col-ids (concat (keys view-inferred-values)
+                                    (for [cn cols] (get-in table-cols [cn :id])))]
+      (when-not (= (set all-col-ids) (set specified-col-ids))
+        (log/trace "View doesn't specify all cols. All:" all-col-ids "; specified" specified-col-ids)
+        (throw+ (util-v2/general-tables-error "You cannot add rows to this view"))))))
+
+(defn do-insert! [db-c quota-ctx autocreate-columns? tables {table-id :id :keys [perm cols restrict] :as view-spec} row-dicts request-overrides]
   (let [view-inferred-values (search-v2/infer-values-from-query restrict)
-        ;; You can only add rows to a column-restricted view if the view specifies every inaccessible column
-        _ (when cols
-            (let [table-cols (get-in tables [table-id :columns])
-                  all-col-ids (for [[_ {:keys [id]}] table-cols] id)
-                  specified-col-ids (concat (keys view-inferred-values)
-                                            (for [cn cols] (get-in table-cols [cn :id])))]
-              (when-not (= (set all-col-ids) (set specified-col-ids))
-                ;(log/trace "View doesn't specify all cols. All:" all-col-ids "; specified" specified-col-ids)
-                (throw+ (util-v2/general-tables-error "You cannot add rows to this view")))))
+        _ (ensure-view-specifies-every-inaccessible-column! tables view-spec view-inferred-values)
 
-        [RESTRICT-SQL restrict-args] (when restrict (search-v2/QUERY->SQL restrict))
+        {:keys [storage] :as table-record} (get-in tables [table-id :table-record])
+
+        table-cols (get-in tables [table-id :columns])
 
         ;; if there are cols we need to specify missing columns as nil so that the view-constraints will be triggered
+        ;; but only for cols that aren't clinet-hidden (if it's from the client)
+        ;; otherwise client-writable views would fail when attempting to write to client_hidden columns
         row-dicts (if cols
-                    (merge-with-nil cols row-dicts)
+                    (row-dict-with-nil-missing-cols cols table-cols row-dicts request-overrides)
                     row-dicts)
 
-        rows (resolving-columns db-c autocreate-columns? tables view-spec
-                                (fn [tables]
-                                  (let [empty-value (into {} (for [[col-name {:keys [id]}] (get-in tables [table-id :columns])]
-                                                               [id nil]))]
-                                    (for [values row-dicts]
-                                      (-> (check-values-for-update tables view-spec values)
-                                          (update-in [:reduced-values] #(merge empty-value view-inferred-values %)))))))]
-    ;; TODO: Only go transactional if (some #(or (:media-to-write %) (:media-to-displace %)) rows)
-    ;; (but the roundtrips aren't that expensive, so this isn't urgent)
-    (util/with-db-transaction [db-c db-c :repeatable-read]
-      (quota/decrement-if-possible-c! quota-ctx db-c :db-rows (count rows))
-      (let [rows (create-media-records! db-c table-id quota-ctx rows)
-            new-rows (jdbc-t/query db-c (concat [(str "WITH new_data AS (SELECT value AS data, ordinality FROM jsonb_array_elements(?::jsonb) WITH ORDINALITY)
+        empty-value (map-kv (fn [_ {:keys [id]}] [id nil]) (get-in tables [table-id :columns]))
+
+        [rows tables] (resolving-columns db-c autocreate-columns? tables view-spec
+                                         (fn [tables]
+                                           (for [row-dict row-dicts]
+                                             (do
+                                               ;; We don't actually need these values in the final update since they will come as part of the empty-value map
+                                               ;; But we do need to validate the nil-row-dict against the restrictions
+                                               ;; We do this with client-request? set to false since otherwise a client-writable view on the client can never succeed for client-hidden columns
+                                               (-> (check-and-reduce-values-for-update tables view-spec row-dict request-overrides)
+                                                   (update-in [:reduced-values] #(merge empty-value view-inferred-values %)))))))]
+    (if (:split storage)
+      (util/with-db-transaction [db-c db-c :repeatable-read]
+        (quota/decrement-if-possible-c! quota-ctx db-c :db-rows (count rows))
+        (let [new-rows (split-data/add-rows! db-c tables view-spec (map :reduced-values rows))]
+          (quota/decrement-if-possible-c! quota-ctx db-c :db-bytes (reduce + 0 (map :n_bytes new-rows)))
+          (map :id new-rows)))
+
+      ;; Else (combined storage)
+      ;; TODO: Only go transactional if (some #(or (:media-to-write %) (:media-to-displace %)) rows)
+      ;; (but the roundtrips aren't that expensive, so this isn't urgent)
+      (util/with-db-transaction [db-c db-c :repeatable-read]
+        (quota/decrement-if-possible-c! quota-ctx db-c :db-rows (count rows))
+        (let [[RESTRICT-SQL restrict-args] (when restrict (query/QUERY->SQL table-record restrict))
+
+              rows (create-media-records! db-c table-id quota-ctx rows)
+              new-rows (jdbc-t/query db-c (concat [(str "WITH new_data AS (SELECT value AS data, ordinality FROM jsonb_array_elements(?::jsonb) WITH ORDINALITY)
                                                        INSERT INTO app_storage_data (table_id,data)
                                                        (SELECT ? as table_id, data FROM new_data " (when RESTRICT-SQL (str "WHERE " RESTRICT-SQL)) " ORDER BY ordinality)
                                                        RETURNING id, octet_length(app_storage_data.data::text) AS n_bytes")
-                                                 (util/write-json-str (map :reduced-values rows)) table-id] restrict-args))
-            _ (when-not (= (count new-rows) (count rows))
-                (throw+ (util-v2/general-tables-error "Data does not match view constraints")))
-            _ (log/debug "v2 Insert rows to table" table-id (map :n_bytes new-rows) "bytes")
-            _ (quota/decrement-if-possible-c! quota-ctx db-c :db-bytes (reduce + 0 (map :n_bytes new-rows)))
+                                                   (util/write-json-str (map :reduced-values rows)) table-id] restrict-args))
+              _ (when-not (= (count new-rows) (count rows))
+                  (throw+ (util-v2/general-tables-error "Data does not match view constraints")))
+              _ (log/debug "v2 Insert rows to table" table-id (map :n_bytes new-rows) "bytes")
+              _ (quota/decrement-if-possible-c! quota-ctx db-c :db-bytes (reduce + 0 (map :n_bytes new-rows)))
 
-            ;; Now match up the new media records, using the fact that the ids were returned in the same order as the input rows
-            rows (map (fn [row {:keys [id]}]
-                        (assoc row :row-id id))
-                      rows new-rows)]
-        (doseq [{:keys [row-id created-oids]} rows]
-          (jdbc-t/execute! db-c ["UPDATE app_storage_media SET row_id = ? WHERE object_id = ANY(?)" row-id (int-array created-oids)]))
-        (map :row-id rows)))))
+              ;; Now match up the new media records, using the fact that the ids were returned in the same order as the input rows
+              rows (map (fn [row {:keys [id]}]
+                          (assoc row :row-id id))
+                        rows new-rows)]
+          (doseq [{:keys [row-id created-oids]} rows]
+            (jdbc-t/execute! db-c ["UPDATE app_storage_media SET row_id = ? WHERE object_id = ANY(?)" row-id (int-array created-oids)]))
+          (map :row-id rows))))))
 
 (defn- RETURN-MEDIA [tables {table-id :id :as view-spec}]
   (let [media-column-ids (for [[col-name {:keys [id type]}] (get-in tables [table-id :columns])
@@ -346,8 +395,15 @@
     [GET-MEDIA-SQL get-media-args]))
 
 (defn do-delete! [db-c quota-ctx tables {table-id :id :as view-spec} row-ids]
-  (let [[GET-MEDIA-SQL get-media-args] (RETURN-MEDIA tables view-spec)]
+  (let [{:keys [storage] :as table-record} (get-in tables [table-id :table-record])]
+    (if (:split storage)
+      (util/with-db-transaction [db-c db-c :repeatable-read]
+        (let [{:keys [n_rows n_bytes]} (split-data/delete-rows! db-c table-record row-ids)]
+          (quota/decrement-c! quota-ctx db-c :db-rows (- n_rows))
+          (quota/decrement-c! quota-ctx db-c :db-bytes (- n_bytes))
+          nil))
 
+      (let [[GET-MEDIA-SQL get-media-args] (RETURN-MEDIA tables view-spec)]
         ;; TODO only go transactional when (not-empty media-column-ids)
         (util/with-db-transaction [db-c db-c :repeatable-read]
           (let [result (jdbc-t/query db-c (concat [(str "DELETE FROM app_storage_data WHERE table_id=? AND id = ANY(?) RETURNING "
@@ -363,30 +419,37 @@
             (quota/decrement-c! quota-ctx db-c :db-rows (- n-rows-deleted))
             (when-not (zero? n-bytes-deleted)
               (quota/decrement-c! quota-ctx db-c :db-bytes (- n-bytes-deleted)))
-            nil))))
+            nil))))))
 
 (defn delete-from-query! [db-c quota-ctx tables {table-id :id :keys [perm cols restrict] :as view-spec} search]
   (when cols
     (throw+ (util-v2/general-tables-error "Cannot call delete_all_rows() on a view")))
-  (let [query (if restrict (search-v2/both-queries restrict search) search)
-        [QUERY-SQL query-args] (search-v2/QUERY->SQL query)
-        [GET-MEDIA-SQL get-media-args] (RETURN-MEDIA tables view-spec)]
+  (let [{:keys [storage] :as table-record} (get-in tables [table-id :table-record])
+        query (query/both-queries restrict search)]
     ;; TODO only go transactional when (not-empty media-column-ids)
-    (util/with-db-transaction [db-c db-c :repeatable-read]
-      (let [result (jdbc-t/query db-c (concat [(str "DELETE FROM app_storage_data WHERE table_id=? AND " QUERY-SQL
-                                                    " RETURNING " GET-MEDIA-SQL ", octet_length(data::text) AS n_bytes")
-                                               table-id]
-                                              query-args
-                                              get-media-args))
-            deleted-media-ids (mapcat #(filter identity (.getArray ^Array (:media %))) result)
-            n-rows-deleted (count result)
-            n-bytes-deleted (+ (or (delete-media! db-c deleted-media-ids) 0)
-                               (reduce + 0 (map :n_bytes result)))]
-        (quota/decrement-c! quota-ctx db-c :db-rows (- n-rows-deleted))
-        (when-not (zero? n-bytes-deleted)
-          (quota/decrement-c! quota-ctx db-c :db-bytes (- n-bytes-deleted)))
-        (log/debug "v2 Deleted" n-bytes-deleted "bytes from table" table-id)
-        nil))))
+    (if (:split storage)
+      (util/with-db-transaction [db-c db-c :repeatable-read]
+        (let [{:keys [n_rows n_bytes]} (split-data/delete-from-query! db-c table-record query)]
+          (quota/decrement-c! quota-ctx db-c :db-rows (- n_rows))
+          (quota/decrement-c! quota-ctx db-c :db-bytes (- n_bytes))
+          nil))
+      (let [[QUERY-SQL query-args] (query/QUERY->SQL table-record query)
+            [GET-MEDIA-SQL get-media-args] (RETURN-MEDIA tables view-spec)]
+        (util/with-db-transaction [db-c db-c :repeatable-read]
+          (let [result (jdbc-t/query db-c (concat [(str "DELETE FROM app_storage_data WHERE table_id=? AND " QUERY-SQL
+                                                        " RETURNING " GET-MEDIA-SQL ", octet_length(data::text) AS n_bytes")
+                                                   table-id]
+                                                  query-args
+                                                  get-media-args))
+                deleted-media-ids (mapcat #(filter identity (.getArray ^Array (:media %))) result)
+                n-rows-deleted (count result)
+                n-bytes-deleted (+ (or (delete-media! db-c deleted-media-ids) 0)
+                                   (reduce + 0 (map :n_bytes result)))]
+            (quota/decrement-c! quota-ctx db-c :db-rows (- n-rows-deleted))
+            (when-not (zero? n-bytes-deleted)
+              (quota/decrement-c! quota-ctx db-c :db-bytes (- n-bytes-deleted)))
+            (log/debug "v2 Deleted" n-bytes-deleted "bytes from table" table-id)
+            nil))))))
 
 ;; TODO: Quotas
 
@@ -401,3 +464,9 @@
 ;;   - Update all in-memory pending media column values to include IDs of written media
 ;;   - Insert all new row values, checking en route that they match any view resrictions
 ;;     (if any view restrictions are not matched, then abort)
+
+
+(defn ensure-columns-exist! [db-c tables table-id value-map]
+  (resolving-columns db-c true tables {:id table-id}
+                     (fn [tables]
+                       (check-and-reduce-values-for-update tables {:id table-id} value-map nil))))

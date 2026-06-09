@@ -18,7 +18,7 @@ import { PyModMap } from "./py-util";
 const LazyServiceModule = Sk.misceval.buildClass(
     {},
     ($gbl, $loc) => {
-        $loc.__getattr__ = new pyFunc((self, pyName) => {
+        $loc.__getattr__ = new pyFunc((self: pyObject, pyName: pyStr) => {
             // on first touch actually import the real module
             // then forward attr requests to the real module
             let lazyImport;

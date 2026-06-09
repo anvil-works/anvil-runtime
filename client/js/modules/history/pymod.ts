@@ -103,7 +103,7 @@ function cleanLocationParts(parts: LocationParts) {
     return { path, search, hash };
 }
 
-interface LocationConstructor extends pyType<Location> {
+export interface LocationConstructor extends pyType<Location> {
     new (path: string, search: string, hash: string, state: any, key: any): Location;
 }
 

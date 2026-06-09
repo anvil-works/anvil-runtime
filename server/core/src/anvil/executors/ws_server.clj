@@ -86,19 +86,26 @@
 
 (defn setup-request-handlers [{:keys [link-name disconnection-error]} channel]
   (let [pending-responses (atom {})
-        closed? (atom false)]
+        closed? (atom false)
+        send-close-errors! (fn closed! [error-to-send]
+                             (reset! closed? true)
+                             (doseq [[_ p] @pending-responses]
+                               (dispatcher/respond! (:return-path p) {:error error-to-send})))]
     {:get-pending-response  #(get @pending-responses %)
      :is-idle?              #(empty? @pending-responses)
      :get-pending-responses (fn [] @pending-responses)
      :get-bg-task           #(when-let [id (get-in @pending-responses [% :context ::task-id])]
                                {:id id})                    ;; fake it!
      :is-closed?            (fn [] @closed?)
+     :send-close-errors!    send-close-errors!
      :send-request!         (fn send-request! [context {:keys [type id] :as _envelope} serialisable-request return-path]
                               (let [call-id (or id (gen-call-id serialisable-request))]
                                 (log/trace "Sending" link-name "request" call-id ":" serialisable-request)
 
                                 (when-not (ws/open? channel)
-                                  (log/warn "About to try sending to a closed" link-name "websocket channel for app" (:app-id serialisable-request) (str "(" (:command serialisable-request) ")")))
+                                  (log/warn "About to try sending to a closed" link-name "websocket channel for app" (:app-id serialisable-request) (str "(" (:command serialisable-request) ")"))
+                                  ;; This will record that we are closed and respond to any pending requests. The (when ...) below will respond to the current request.
+                                  (send-close-errors! {:type disconnection-error, :message (str link-name " disconnected")}))
 
                                 (try
                                   (when return-path
@@ -114,6 +121,7 @@
                                     (swap! pending-responses dissoc call-id)
                                     (when return-path
                                       (dispatcher/respond! return-path {:error {:type "anvil.server.SerializationError" :message (str e)}}))))
+
                                 (when (and @closed? return-path)
                                   ;; Avoid a race condition. If we were invoked as the connection was closing and we
                                   ;; added ourselves to pending-responses too late, our message could get lost without
@@ -123,10 +131,6 @@
                                   ;; (This might issue duplicate errors, but that's not a problem.)
                                   (dispatcher/respond! return-path
                                                        {:error {:type disconnection-error, :message (str link-name " disconnected")}}))))
-     :send-close-errors!    (fn closed! [error-to-send]
-                              (reset! closed? true)
-                              (doseq [[_ p] @pending-responses]
-                                (dispatcher/respond! (:return-path p) {:error error-to-send})))
 
      :handle-response!      (fn handle-response! [response]
                               (when-let [{:keys [return-path]} (-> (@pending-responses (:id response)))]

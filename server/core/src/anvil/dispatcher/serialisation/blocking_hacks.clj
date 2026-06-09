@@ -3,8 +3,9 @@
             [clj-commons.slingshot :refer :all]
             [anvil.core.worker-pool :as worker-pool]
             [anvil.dispatcher.serialisation.lazy-media :as lazy-media])
-  (:import (java.io ByteArrayOutputStream)
-           (anvil.dispatcher.types BlobMedia Media ChunkedStream LazyMedia)))
+  (:import (java.io ByteArrayOutputStream InputStream)
+           (anvil.dispatcher.types BlobMedia Media ChunkedStream LazyMedia MediaDescriptor)
+           (org.apache.commons.io IOUtils)))
 
 (defn ChunkedStream->Media [chunked-stream]
   (let [baos (atom (ByteArrayOutputStream.))
@@ -53,3 +54,52 @@
 
     :else
     (throw (IllegalArgumentException. (str "'" (class bindata) "' object is neither Media, LazyMedia nor ChunkedStream")))))
+
+
+(defn ?->BlobMedia
+  "Turn ChunkedStream or Media into a BlobMedia. Use of this function is a code smell,
+   because it causes the whole Media to be buffered in memory at the same time. We should
+   invent ways not to have to use it."
+  [request ^MediaDescriptor media]
+  (cond
+    (nil? media)
+    nil
+
+    (instance? BlobMedia media)
+    media
+
+    (instance? ChunkedStream media)
+    (ChunkedStream->Media media)
+
+    (instance? LazyMedia media)
+    (?->BlobMedia request (lazy-media/get-lazy-media request media))
+
+    :else
+    (let [name (.getName media)
+          content-type (.getContentType media)]
+      (types/->BlobMedia content-type name
+                         (with-open [in-stream ^InputStream (?->InputStream request media)
+                                     out-stream (ByteArrayOutputStream.)]
+                           (IOUtils/copy in-stream out-stream 4096)
+                           (.toByteArray out-stream))))))
+
+(defn ?->bytes
+  "Turn ChunkedStream or Media into a byte array. Use of this function is a code smell,
+   because it causes the whole Media to be buffered in memory at the same time. We should
+   invent ways not to have to use it."
+  [request media]
+  (cond
+    (instance? BlobMedia media)
+    (:bytes media)
+
+    (instance? ChunkedStream media)
+    (?->bytes request (ChunkedStream->Media media))
+
+    (instance? LazyMedia media)
+    (?->bytes request (lazy-media/get-lazy-media request media))
+
+    :else
+    (with-open [in-stream ^InputStream (?->InputStream request media)
+                out-stream (ByteArrayOutputStream.)]
+      (IOUtils/copy in-stream out-stream 4096)
+      (.toByteArray out-stream))))

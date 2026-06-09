@@ -35,6 +35,8 @@
         valid? #(ot/is-valid-totp-token? (try (Integer/parseInt code) (catch Exception _ 0)) secret {:date (Date. ^long %)})]
     (some valid? [t (+ t 30000) (- t 30000)])))
 
-(swap! dispatcher/native-rpc-handlers merge
-       {"anvil.private.users.totp.generate_secret" (util/wrap-native-fn generate-totp-secret)
-        "anvil.private.users.totp.validate_code"   (util/wrap-native-fn validate-totp-code)})
+(defn v1-users-handlers []
+  {"anvil.private.users.totp.generate_secret" (util/wrap-native-fn generate-totp-secret)
+   "anvil.private.users.totp.validate_code"   (util/wrap-native-fn validate-totp-code)})
+
+;; (swap! dispatcher/native-rpc-handlers merge (v1-users-handlers))

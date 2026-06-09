@@ -1,6 +1,6 @@
-import { PyModMap } from "@runtime/runner/py-util";
-import { isTrue, pyCallOrSuspend, pyFunc, pyIsInstance, pyNone, pyStr, pyType, toJs, toPy } from "@Sk";
+import { chainOrSuspend, isTrue, pyCallOrSuspend, pyFunc, pyIsInstance, pyNone, pyStr, pyType, toJs, toPy } from "@Sk";
 import PyDefUtils from "PyDefUtils";
+import { PyModMap } from "@runtime/runner/py-util";
 import { PostponedResizeObserver } from "../utils";
 import { ClassicComponent, ClassicComponentConstructor } from "./ClassicComponent";
 
@@ -462,8 +462,12 @@ const CanvasFactory = (pyModule: PyModMap) => {
                         ctx[ctxProp] = toJs(pyValue);
                     }
                 } else {
-                    return Sk.builtin.object.prototype.tp$setattr.call(self, pyName, pyValue, true);
+                    return chainOrSuspend(
+                        Sk.builtin.object.prototype.tp$setattr.call(self, pyName, pyValue, true),
+                        () => pyNone
+                    );
                 }
+                return pyNone;
             });
 
             // Context

@@ -7,6 +7,8 @@ from ._constants import CAP_KEY, SERVER_PREFIX, SHARED_DATA_KEY
 from ._row import Row
 from ._utils import (
     check_serialized,
+    clean_row_data,
+    clean_table_spec,
     init_spec_rows,
     init_view_data,
     merge_row_data,
@@ -142,7 +144,7 @@ class SearchIterator(BaseSearchIterator):
         _populate_table_views_ids(self._view_key, self._table_data, table_view_keys)
         return table_view_keys
 
-    def _merge(self, g_table_data, local_data):
+    def _merge(self, g_table_data, local_data, remote_is_trusted):
         if check_serialized(self, local_data):
             return
 
@@ -152,10 +154,8 @@ class SearchIterator(BaseSearchIterator):
             g_view_data = init_view_data(view_key, g_table_data)
             l_view_data = self._table_data[view_key]
 
-            l_table_spec, l_table_rows = (
-                l_view_data["spec"],
-                l_view_data.get("rows", {}),
-            )
+            l_table_spec = clean_table_spec(l_view_data["spec"], remote_is_trusted)
+            l_table_rows = l_view_data.get("rows", {})
             g_table_spec, g_table_rows = init_spec_rows(g_view_data, l_table_spec)
 
             g_cache_spec = g_table_spec["cache"]
@@ -168,13 +168,18 @@ class SearchIterator(BaseSearchIterator):
                     # this is rare - we've consumed the search iterator and now we're serializing
                     # or we created this row from shared serialization data and we're now reserializing
                     row = row_data
-                    row._anvil_merge_and_reduce(g_table_data, local_data)
+                    row._anvil_merge_and_reduce(
+                        g_table_data, local_data, remote_is_trusted
+                    )
                     continue
+
+                
+                row_data = clean_row_data(row_data, l_view_data["spec"], remote_is_trusted)
 
                 g_row_data = g_table_rows.get(row_id, [])
                 g_is_compact = cache_match and type(g_row_data) is list
                 row_data = self._make_row_data(
-                    row_data, l_table_spec, compact=g_is_compact
+                    row_data, l_view_data["spec"], compact=g_is_compact
                 )
                 merge_row_data(
                     row_id, row_data, g_table_rows, g_table_spec, l_cache_spec
@@ -186,7 +191,7 @@ class SearchIterator(BaseSearchIterator):
         if table_data is None:
             row_ids = self._cap_next = None
         elif info.local_is_trusted and self._table_data is not None:
-            self._merge(table_data, local_data)
+            self._merge(table_data, local_data, info.remote_is_trusted)
         return [self._view_key, self._table_id, row_ids, self._cap, self._cap_next]
 
     def _make_partial_iterator(self, slice_=slice(None)):

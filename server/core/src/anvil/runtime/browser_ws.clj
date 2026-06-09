@@ -98,7 +98,6 @@
                   (log/debug "Client websocket closed: " (:id @app-session) (pr-str why))))
                   ;; TODO: A websocket closing constitutes 'activity' on this session, so reset its expiry countdown.
 
-
       (on-receive channel
                   (fn [json-or-binary]
                     (worker-pool/set-task-info! :websocket ::receive)
@@ -123,7 +122,7 @@
                                                       :origin        :client
                                                       :session-state app-session
                                                       :use-quota?    true
-                                                      :call-stack    (list {:type :browser})
+                                                      :call-stack    (list {:type :browser, :protocol-version (:v data)})
                                                       :step-in       (:stepIn data)
                                                       :paused        (:paused data)}
                                     func (or (:command data) (:method (:liveObjectCall data)))
@@ -155,59 +154,57 @@
                                                                                           :start-time (System/currentTimeMillis)})
                                 (log/trace "Calling with replacement session?" (:anvil.runtime/replacement-session @app-session))
                                 (try+
-                                  (if (= (:command data) "anvil.private.reset_session")
-                                    (do
-                                      (swap! app-session assoc :anvil.runtime/replacement-session false)
-                                      (reload-anvil-cookies! app-session request)
-                                      (sessions/resolve-ambiguous-client-type! app-session "browser")
-                                      (sessions/ensure-logged! app-session)
-                                      (sessions/persist! app-session)
-                                      (rpc-util/invalidate-client-objects-without-notify! app-session)
-                                      (responder {:response (sessions/url-token app-session)}
-                                                 true))
-                                    (if (and (:anvil.runtime/replacement-session @app-session)
-                                             (not (.startsWith (str (:command data)) "anvil.record_schema.get/")))
-                                      (do
+                                 (if (= (:command data) "anvil.private.reset_session")
+                                   (do
+                                     (swap! app-session assoc :anvil.runtime/replacement-session false)
+                                     (reload-anvil-cookies! app-session request)
+                                     (sessions/resolve-ambiguous-client-type! app-session "browser")
+                                     (sessions/ensure-logged! app-session)
+                                     (sessions/persist! app-session)
+                                     (rpc-util/invalidate-client-objects-without-notify! app-session)
+                                     (responder {:response (sessions/url-token app-session)}
+                                                true))
+                                   (if (and (:anvil.runtime/replacement-session @app-session)
+                                            (not (.startsWith (str (:command data)) "anvil.record_schema.get/")))
+                                     (do
                                         ;; Set the session type here, just in case something (like a log event) causes the replacement session to be logged.
-                                        (sessions/resolve-ambiguous-client-type! app-session "browser")
-                                        (responder {:error {:type    "anvil.server.SessionExpiredError"
-                                                            :message "Session expired"
-                                                            :trace   [["<rpc>", 0]]}}
-                                                   true))
-                                      (let [[deserialised-data live-object] (try+
-                                                                              (let [deserialised-data (serialisation/deserialise ds data)
-                                                                                    live-object (serialisation/loadLiveObject ds (:liveObjectCall deserialised-data))]
-                                                                                [deserialised-data live-object])
-                                                                              (catch :anvil/invalid-mac e
-                                                                                (responder {:error {:type    "anvil.server.InvalidObjectError"
-                                                                                                    :message "Error processing object from expired session"
-                                                                                                    :trace   [["<rpc>", 0]]}}
-                                                                                           true)))]
+                                       (sessions/resolve-ambiguous-client-type! app-session "browser")
+                                       (responder {:error {:type    "anvil.server.SessionExpiredError"
+                                                           :message "Session expired"
+                                                           :trace   [["<rpc>", 0]]}}
+                                                  true))
+                                     (let [[deserialised-data live-object] (try+
+                                                                            (let [deserialised-data (serialisation/deserialise ds data)
+                                                                                  live-object (serialisation/loadLiveObject ds (:liveObjectCall deserialised-data))]
+                                                                              [deserialised-data live-object])
+                                                                            (catch :anvil/invalid-mac e
+                                                                              (responder {:error {:type    "anvil.server.InvalidObjectError"
+                                                                                                  :message "Error processing object from expired session"
+                                                                                                  :trace   [["<rpc>", 0]]}}
+                                                                                         true)))]
                                         ;; this does the server call
-                                        (dispatcher/dispatch! (assoc request-template
-                                                                :vt_global (:vt_global deserialised-data)
-                                                                :call (assoc (select-keys deserialised-data [:args :kwargs])
-                                                                        :func func
-                                                                        :live-object live-object))
-                                                              return-path))))
+                                       (dispatcher/dispatch! (assoc request-template
+                                                                    :vt_global (:vt_global deserialised-data)
+                                                                    :call (assoc (select-keys deserialised-data [:args :kwargs])
+                                                                                 :func func
+                                                                                 :live-object live-object))
+                                                             return-path))))
 
                                   ;; Don't catch :anvil/server-error here, as dispatch functions should do that themselves
                                   ;; and respond appropriately.
-                                  (catch Object e
-                                    (let [error-id (random/hex 6)]
-                                      (log/error e "Error in function dispatch for '" (:command data) "/" (:method (:liveObjectCall data)) "':" error-id)
-                                      (responder {:error {:message (str "Internal server error: " error-id)}}
-                                                 true))))))
+                                 (catch Object e
+                                   (let [error-id (random/hex 6)]
+                                     (log/error e "Error in function dispatch for '" (:command data) "/" (:method (:liveObjectCall data)) "':" error-id)
+                                     (responder {:error {:message (str "Internal server error: " error-id)}}
+                                                true))))))
 
                             (= type "LOG")
                             (process-log-data data request)
-
 
                             :else
                             (do
                               (log/warn "Client websocket got unknown message type" (pr-str type))
                               (close channel)))))
-
 
                       (catch Exception e
                         (log/error e "Error in client websocket handling")

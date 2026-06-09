@@ -20,6 +20,7 @@ from ._model import get_model_cls
 from ._utils import (
     InternalDict,
     check_serialized,
+    clean_cache_table_spec,
     clean_local_datetime,
     init_spec_rows,
     init_view_data,
@@ -58,8 +59,84 @@ def _copy(so):
     return so
 
 
+def _new_save_plan():
+    """Return the shared save/reset plan structure.
+
+    `_walk_buffered_changes()` builds this plan from one or more starting rows.
+    `save_all()` executes it. `reset_all()` only uses it to discover every row
+    whose local buffer should be cleared.
+
+    Shape:
+    - rows / buffers:
+      Realized rows with buffered updates that should be sent via `_do_update()`.
+      `rows[i]` is updated with `buffers[i]`.
+    - draft_info:
+      Draft rows that should be created via `_do_create()`.
+      Each entry stores the draft's current buffer plus its table id.
+    - single / multi:
+      Patch instructions for linked draft references that could not be sent
+      inline while the plan was being built. Each path is
+      `["rows" | "drafts", index, key]` and points at the buffer entry that
+      should receive either a realized row (`single`) or a list containing
+      realized rows and/or draft indices (`multi`).
+    """
+    return {
+        "rows": [],
+        "buffers": [],
+        "draft_info": [],
+        "single": [],
+        "multi": [],
+    }
+
+
+# Protocol version that supports new cap update format {"D": True} / {"U": ..., "S": ...}
+NEW_CAP_UPDATE_PROTOCOL_VERSION = 8
 # Version identifier for new cap update format - column names unlikely to start with $
 VERSION_KEY = "$_V"
+VERSION_IDENTIFIER = {VERSION_KEY: 0}
+
+
+def _any_caller_needs_old_format():
+    """Check if ANY caller in the stack needs old cap update format.
+
+    We check uplinks and browsers because:
+    - Uplinks (user-controlled Python) might be old
+    - Browsers without a protocol version predate the new format
+    - Downlinks are deployed with the server and always support both formats
+
+    Returns True if we need old format, False if we can use new format.
+    """
+    call_context = anvil.server.context
+
+    # Check the full call stack
+    call_stack = getattr(call_context, 'call_stack', None)
+    if not call_stack:
+        return False  # No stack = internal call, use new format
+
+    for frame in call_stack:
+        # Check uplinks and browsers for version compatibility
+        if frame.type in ('uplink', 'client-uplink', 'browser'):
+            if frame.protocol_version is None:
+                # Unknown version - be conservative, assume old
+                return True
+            if frame.protocol_version < NEW_CAP_UPDATE_PROTOCOL_VERSION:
+                return True
+
+    return False
+
+
+def _make_request_overrides(use_client_config, filter_client_hidden=False):
+    """Create request overrides dict, or None if all false (backwards compat).
+
+    Old Clojure evaluates truthiness of this parameter. Sending {} would be
+    truthy but have no flags set, causing incorrect behavior. Send None instead.
+    """
+    if use_client_config or filter_client_hidden:
+        return {
+            "use_client_config": use_client_config,
+            "filter_client_hidden": filter_client_hidden,
+        }
+    return None
 
 
 def _normalize_cap_update(cap_update):
@@ -79,6 +156,25 @@ def _normalize_cap_update(cap_update):
             # Old format: flat dict of updates
             return {"U": cap_update}
     return cap_update
+
+
+def _send_cap_update(cap, payload):
+    """Send a capability update in the appropriate format based on stack versions.
+
+    Args:
+        cap: The capability to send the update through
+        payload: The new-format payload ({"D": True} or {"U": updates, "S": spec})
+                 The "$_V" marker will be added automatically for new format.
+    """
+    if _any_caller_needs_old_format():
+        # Convert to old format for old uplinks/browsers
+        if payload.get("D"):
+            cap.send_update(False)
+        else:
+            cap.send_update(payload.get("U", {}))
+    else:
+        # Add version marker so receiver knows this is new format
+        cap.send_update({**VERSION_IDENTIFIER, **payload})
 
 
 class _BufferedContext(object):
@@ -126,6 +222,7 @@ class Row(BaseRow):
         self._anvil.table_id = table_id
         self._anvil.id = row_id
         self._anvil.cap = cap
+        self._anvil.queued_cap_updates = {}
         self._anvil.cache = {}
         self._anvil.spec = (
             spec  # None when we are deserialized without access to table_data
@@ -143,7 +240,10 @@ class Row(BaseRow):
         self._anvil.buffer = buffer or {}
 
         if cap is not None:
-            cap.set_update_handler(self._anvil_cap_update_handler)
+            cap.set_update_handler(
+                self._anvil_cap_update_handler,
+                get_update=self._anvil_get_cap_update,
+            )
 
         return self
 
@@ -233,7 +333,9 @@ class Row(BaseRow):
         assert type(cap) is Capability, "invalid row_data"
         if self._anvil.cap is None:
             self._anvil.cap = cap
-            cap.set_update_handler(self._anvil_cap_update_handler)
+            cap.set_update_handler(
+                self._anvil_cap_update_handler, get_update=self._anvil_get_cap_update
+            )
         self._anvil.cache.update(unpacked_cache)
         self._anvil_check_has_cached()
 
@@ -341,11 +443,11 @@ class Row(BaseRow):
         self._anvil_check_can_serialize()
         table_data, local_data = info.shared_data(SHARED_DATA_KEY)
         if table_data is not None and info.local_is_trusted:
-            self._anvil_merge_and_reduce(table_data, local_data)
+            self._anvil_merge_and_reduce(table_data, local_data, info.remote_is_trusted)
         else:
             # We want to ensure we're not trying to send a linked draft or row that has buffered changes
             # TODO - we could be a bit more efficient about this since we don't actually need the data!
-            self._anvil_merge_and_reduce({}, local_data)
+            self._anvil_merge_and_reduce({}, local_data, info.remote_is_trusted)
         return [
             self._anvil.view_key,
             self._anvil.table_id,
@@ -363,7 +465,9 @@ class Row(BaseRow):
         if error:
             raise anvil.server.SerializationError(pre + error.format(self))
 
-    def _anvil_merge_linked(self, val, col, g_table_data, local_data):
+    def _anvil_merge_linked(
+        self, val, col, g_table_data, local_data, remote_is_trusted
+    ):
         type = col["type"]
         if val is UNCACHED or val is None:
             # maybe we were serialized and converted linked row(s) to UNCACHED
@@ -371,15 +475,20 @@ class Row(BaseRow):
             pass
         elif type == SINGLE:
             row = val
-            val = row._anvil_merge_and_reduce(g_table_data, local_data)
+            val = row._anvil_merge_and_reduce(
+                g_table_data, local_data, remote_is_trusted
+            )
         elif type == MULTIPLE:
-            val = [row._anvil_merge_and_reduce(g_table_data, local_data) for row in val]
+            val = [
+                row._anvil_merge_and_reduce(g_table_data, local_data, remote_is_trusted)
+                for row in val
+            ]
         return val
 
-    def _anvil_make_row_data(self, g_table_data, local_data, cache_spec):
+    def _anvil_make_row_data(
+        self, g_table_data, local_data, table_cols, cache_spec, remote_is_trusted
+    ):
         self._anvil_check_can_serialize(linked=True)
-        table_spec = self._anvil.spec
-        table_cols = table_spec["cols"] if table_spec is not None else []
         cache = self._anvil.cache
         # we can't rely on the order of cache in python 2
         cached_data = []
@@ -387,19 +496,21 @@ class Row(BaseRow):
             if not is_cached:
                 continue
             name = col["name"]
-            val = self._anvil_merge_linked(cache[name], col, g_table_data, local_data)
+            val = self._anvil_merge_linked(
+                cache[name], col, g_table_data, local_data, remote_is_trusted
+            )
             cached_data.append((i, val))
         cached_data.append((CAP_KEY, self._anvil.cap))
         return cached_data
 
-    def _anvil_merge_and_reduce(self, g_table_data, local_data):
+    def _anvil_merge_and_reduce(self, g_table_data, local_data, remote_is_trusted):
         if check_serialized(self, local_data):
             return int(self._anvil.id)
         g_view_data = init_view_data(self._anvil.view_key, g_table_data)
-        table_spec, row_id, cache_spec = (
-            self._anvil.spec,
-            self._anvil.id,
-            self._anvil.cache_spec,
+        row_id = self._anvil.id
+
+        cache_spec, table_spec = clean_cache_table_spec(
+            self._anvil.cache_spec, self._anvil.spec, remote_is_trusted
         )
 
         # We assert that there is no way for rows from the same view_key to have different col_specs
@@ -417,7 +528,10 @@ class Row(BaseRow):
             g_view_data["dirty_spec"] = True
             cache_spec = []
 
-        cached_data = self._anvil_make_row_data(g_table_data, local_data, cache_spec)
+        table_cols = table_spec["cols"] if table_spec is not None else []
+        cached_data = self._anvil_make_row_data(
+            g_table_data, local_data, table_cols, cache_spec, remote_is_trusted
+        )
         existing = g_table_rows.get(row_id, [])
 
         if not is_dirty and cache_spec == g_cache_spec and type(existing) is list:
@@ -428,6 +542,29 @@ class Row(BaseRow):
         merge_row_data(row_id, row_data, g_table_rows, g_table_spec, cache_spec)
         return int(row_id)
 
+    def _anvil_queue_cap_update(self, cap_update):
+        if cap_update is None:
+            return
+
+        if not anvil.is_server_side():
+            return
+
+        D = cap_update.get("D")
+        S = cap_update.get("S")
+        U = cap_update.get("U")
+
+        queued = self._anvil.queued_cap_updates
+
+        if D:
+            queued["D"] = True
+
+        if S is not None:
+            queued["S"] = S
+
+        if U is not None:
+            queued["U"] = queued.get("U", {})
+            queued["U"].update(U)
+
     # PRIVATE METHODS
     def _anvil_cap_update_handler(self, cap_update):
         # Normalize old format to new format for backwards compatibility
@@ -435,11 +572,16 @@ class Row(BaseRow):
         if cap_update is None:
             return
 
+        self._anvil_queue_cap_update(cap_update)
+
+        # queue the updates
         D = cap_update.get("D")
+        S = cap_update.get("S")
         U = cap_update.get("U")
 
+        # Deleted
         if D:
-            # We've been deleted - clear cache so that
+            # We've been deleted clear_cache so that
             # server calls are required for data access
             self._anvil_clear_cache()
             self._anvil.mode = _MODE.NORMAL
@@ -447,21 +589,26 @@ class Row(BaseRow):
             self._anvil.exists = False
             return
 
-        if self._anvil.spec is None:
-            return
+        # Spec
+        if S is not None:
+            self._anvil.spec = S
+            for col in S["cols"]:
+                self._anvil.cache.setdefault(col["name"], UNCACHED)
 
-        if U:
+        # Update
+        if U and self._anvil.spec is not None:
             clean_items = self._anvil_walk_local_items(U)
             self._anvil.cache.update(clean_items)
             for key in clean_items:
                 self._anvil.buffer.pop(key, None)
+
             self._anvil_check_has_cached()
 
     def _anvil_check_has_cached(self):
         if self._anvil.spec is None:
             return
         self._anvil.cache_spec = [
-            int(self._anvil.cache[col["name"]] is not UNCACHED)
+            int(self._anvil.cache.get(col["name"], UNCACHED) is not UNCACHED)
             for col in self._anvil.spec["cols"]
         ]
         self._anvil.has_uncached = any(
@@ -536,8 +683,6 @@ class Row(BaseRow):
         # only call this if we're not doing a server call
         if not self._anvil.exists:
             raise RowDeleted("This row has been deleted")
-        elif _is_draft(self):
-            raise ValueError("This row is a draft and does not yet exist")
 
     # DUNDER METHODS
     def __setattr__(self, attr, val):
@@ -712,6 +857,8 @@ class Row(BaseRow):
     def get_id(self):
         # For compatibility with LiveObjects
         self._anvil_check_exists()
+        if _is_draft(self):
+            return None
         return "[{},{}]".format(self._anvil.table_id, self._anvil.id)
 
     # TODO reinclude this api
@@ -797,15 +944,14 @@ class Row(BaseRow):
             self._do_delete(not anvil.is_server_side())
 
     def _do_delete(self, from_client):
-        on_behalf_of_client = self._anvil_on_behalf_of_client("delete", from_client)
+        use_client_config = self._anvil_use_client_config("delete", from_client)
+        request_overrides = _make_request_overrides(use_client_config)
 
         if _batcher.batch_delete.active:
-            return _batcher.batch_delete.push(
-                self._anvil.cap, False, on_behalf_of_client
-            )
+            return _batcher.batch_delete.push(self._anvil.cap, request_overrides)
 
-        _batcher.flush_and_call(PREFIX + "delete", self._anvil.cap, on_behalf_of_client)
-        self._anvil.cap.send_update(False)
+        _batcher.flush_and_call(PREFIX + "delete", self._anvil.cap, request_overrides)
+        _send_cap_update(self._anvil.cap, {"D": True})
 
     def refresh(self, fetch=None):
         self._anvil_clear_cache()
@@ -824,24 +970,93 @@ class Row(BaseRow):
         self._anvil_fill_cache(fetch.spec)
 
     @classmethod
-    def _anvil_on_behalf_of_client(cls, permission, from_client):
-        # We're on the server, this request originated on the client, and the client doesn't have permission to do this
+    def _anvil_use_client_config(cls, permission, from_client):
+        # We're on the server, this request originated on the client, and the model hasn't overridden the permission
         return (
             anvil.is_server_side()
             and from_client
             and not cls._Row_permissions_[permission]
         )
 
-    def _do_update(self, updates, from_client):
-        on_behalf_of_client = self._anvil_on_behalf_of_client("update", from_client)
+    def _anvil_sanitize_update_for_client(self, update):
+        if self._anvil.spec is None:
+            # this shouldn't happen - we should have our spec by now from the cap updates
+            return {}
+
+        rv = {}
+
+        for col in self._anvil.spec["cols"]:
+            name = col["name"]
+            client_hidden = col.get("client_hidden")
+            if client_hidden:
+                continue
+
+            val = update.get(name, NOT_FOUND)
+            if val is NOT_FOUND:
+                continue
+            rv[name] = val
+
+        return rv
+
+    def _anvil_get_cap_update(self):
+        if not anvil.is_server_side():
+            # this shouldn't happen - we never need to send a cap update on the client to anywhere
+            return None
+
+        queued_cap_updates = self._anvil.queued_cap_updates
+        if not queued_cap_updates:
+            return None
+
+        # Check if the receiver supports the new cap update format
+        use_new_format = not _any_caller_needs_old_format()
+
+        if "D" in queued_cap_updates:
+            if use_new_format:
+                return {**VERSION_IDENTIFIER, "D": True}
+            else:
+                return False
+
+        rv = {}
+
+        update = queued_cap_updates.get("U")
+
+        if update is not None:
+            if anvil.server.context.remote_caller.is_trusted:
+                rv["U"] = update
+            else:
+                rv["U"] = self._anvil_sanitize_update_for_client(update)
+
+        spec = queued_cap_updates.get("S")
+        if spec is not None and anvil.server.context.remote_caller.is_trusted:
+            # don't send our spec onto the client
+            # if we want to then we'll need to filter out client hidden columns from the spec
+            rv["S"] = spec
+
+        if use_new_format:
+            return {**VERSION_IDENTIFIER, **rv}
+        else:
+            # Old format: return flat dict of updates (no spec for old uplinks)
+            return rv.get("U", {})
+
+    def _do_update(self, updates, from_client, **kws):
+        trusted_updates = kws.pop("trusted_updates", None)
+        if kws:
+            raise TypeError("Unexpected keyword arguments: {}".format(kws))
+
+        use_client_config = self._anvil_use_client_config("update", from_client)
+        request_overrides = _make_request_overrides(use_client_config, from_client)
+        trusted_overrides = _make_request_overrides(use_client_config)
 
         if _batcher.batch_update.active:
             # a batch update might be on_behalf_of_client, if we are called during a save
             # and the save was from the client
             # and one of the updates does not have client_updatable permissions set
-            return _batcher.batch_update.push(
-                self._anvil.cap, updates, on_behalf_of_client
-            )
+            _batcher.batch_update.push(self._anvil.cap, updates, request_overrides)
+            if trusted_updates:
+                _batcher.batch_update.push(
+                    self._anvil.cap, trusted_updates, trusted_overrides
+                )
+            return
 
         global _make_refs
         if _make_refs is None:
@@ -849,10 +1064,26 @@ class Row(BaseRow):
 
             _make_refs = make_refs
 
-        _batcher.flush_and_call(
-            PREFIX + "update", self._anvil.cap, _make_refs(updates), on_behalf_of_client
-        )
-        self._anvil.cap.send_update(updates)
+        spec = None
+        if not trusted_updates:
+            spec = _batcher.flush_and_call(
+                PREFIX + "update",
+                self._anvil.cap,
+                _make_refs(updates),
+                request_overrides,
+            )
+        else:
+            specs = _batcher.flush_and_call(
+                PREFIX + "batch_update",
+                [
+                    (self._anvil.cap, _make_refs(updates), request_overrides),
+                    (self._anvil.cap, _make_refs(trusted_updates), trusted_overrides),
+                ],
+            )
+            spec = specs[0] if specs else None
+
+        # ok so now we have to clean the updates
+        _send_cap_update(self._anvil.cap, {"S": spec, "U": updates})
 
     @classmethod
     def _do_create(cls, buffer, from_client):
@@ -908,6 +1139,9 @@ if anvil.is_server_side():
 
         drafts = []
 
+        # First create draft rows from the buffers collected in the save plan.
+        # Linked draft references were stripped out while planning and will be
+        # stitched back in below, once every referenced draft has a realized row.
         for draft_info in changes["draft_info"]:
             table_id = draft_info["table_id"]
             table = get_table_by_id(table_id)
@@ -919,13 +1153,14 @@ if anvil.is_server_side():
                 raise Exception("Row._do_create() must return a Row")
             drafts.append(rv)
 
-        # create empty buffers for each draft
-        # these buffers will be filled with any links/mulitlinks that contained drafts
-        # we couldn't include these changes with creation - so we write the changes later
+        # Each created draft may still need follow-up link updates for values that
+        # pointed at other drafts. Keep those separate so `_do_create()` never sees
+        # unresolved draft objects.
         draft_buffers = [{} for _ in changes["draft_info"]]
 
         for single in changes["single"]:
-            # single has paths to drafts and we inject the crated drafts into the appropriate paths
+            # `single` patches replace a placeholder hole in either a realized row
+            # buffer or a draft follow-up buffer with the newly created row.
             path = single["path"]
             row_index = single["row"]
             row = drafts[row_index]
@@ -937,7 +1172,8 @@ if anvil.is_server_side():
             buffer[key] = row
 
         for multi in changes["multi"]:
-            # multi has paths to drafts and we inject the crated drafts into the appropriate paths
+            # `multi` works the same way as `single`, but patches list elements
+            # that were temporarily encoded as draft indices.
             path = multi["path"]
             rows = multi["rows"]
             for i, row in enumerate(rows):
@@ -951,6 +1187,8 @@ if anvil.is_server_side():
             buffer[key] = rows
 
         with _batcher.batch_update:
+            # Apply updates to already-realized rows first, then to drafts that
+            # needed a second pass for linked draft values.
             for row, buffer in zip(changes["rows"], changes["buffers"]):
                 buffer = buffer or {}
                 table = get_table_by_id(row._anvil.table_id)
@@ -987,11 +1225,19 @@ if anvil.is_server_side():
 
 
 def _walk_buffered_changes(row, changes, drafts, buffered, seen):
-    # Approach: we fill the changes dict with draft buffers, rows with bufferred changes and their buffers
-    # where drafts exist in any of the buffers we replace the value with None
-    # we keep track of the path to the where the draft was
-    # we do something similar with multilinke, but replace the element in the list with None
-    # when it comes to saving these changes, we fill the links and multi links after we've created the drafts
+    # Walk the reachable row graph once and populate the shared save plan.
+    #
+    # For buffered realized rows we record `(row, buffer)` in `changes["rows"]`
+    # and `changes["buffers"]`.
+    #
+    # For drafts we record their current buffer in `changes["draft_info"]`.
+    #
+    # If any buffered value points at another draft, we cannot serialize that
+    # draft object into the plan yet. Instead we:
+    # - replace the slot in the copied buffer with `None` (single link) or a
+    #   draft index (multi link), and
+    # - append a patch instruction to `changes["single"]` / `changes["multi"]`
+    #   saying where the realized row should be re-inserted later.
 
     # we can't hash a draft, use the id, because to equal rows might have different buffered changes
     row_key = id(row)
@@ -1024,7 +1270,9 @@ def _walk_buffered_changes(row, changes, drafts, buffered, seen):
     else:
         assert not buffer, "buffer should be empty"
 
-    # now check for any linked drafts
+    # Inspect buffered values first: these are the values that matter for save
+    # and reset semantics. Cache traversal below only exists so we can discover
+    # further reachable rows and clear all affected local buffers.
     for key, val in buffer.items():
         if isinstance(val, Row):
             _walk_buffered_changes(
@@ -1059,6 +1307,10 @@ def _walk_buffered_changes(row, changes, drafts, buffered, seen):
 
             if has_draft:
                 changes["multi"].append({"path": [path_start, index, key], "rows": val})
+                # `_do_create()` / `_do_update()` should not see a partially
+                # materialized multi-link. Keep the real list in `changes["multi"]`
+                # and leave a temporary hole here until the referenced drafts
+                # have been realized.
                 buffer[key] = None
 
     if row._anvil.spec is None:
@@ -1088,10 +1340,10 @@ def _walk_buffered_changes(row, changes, drafts, buffered, seen):
 
 
 def _initialize_drafts(server_drafts, drafts):
-    # we now walk the rows that need changing
-    # we clear the buffer for each row
-    # and we update the buffer mode
-    # when we have drafts, the response should include capabilities that we need to map to the draft
+    # `drafts` contains the original local draft objects. `server_drafts`
+    # contains the realized rows returned from `_save_on_server()`, in matching
+    # order. Replace each draft's internal state with the realized state while
+    # preserving the caller-visible Python object identity.
     assert len(server_drafts) == len(drafts), "Draft count doesn't match response count"
     for server_draft, draft in zip(server_drafts, drafts):
         draft_internal = draft._anvil
@@ -1113,6 +1365,9 @@ def _initialize_drafts(server_drafts, drafts):
 
 
 def _reset_changes(buffered, drafts):
+    # `buffered` and `drafts` are kept separate by `_walk_buffered_changes()`
+    # because drafts need extra handling during save, but reset semantics are
+    # identical: local pending changes are discarded by clearing each buffer.
     for row in buffered:
         row._anvil.buffer.clear()
 
@@ -1128,13 +1383,7 @@ def save_all(*rows):
             "Cannot call save() inside a batch_update block on the client"
         )
 
-    changes = {
-        "rows": [],
-        "buffers": [],
-        "draft_info": [],
-        "single": [],
-        "multi": [],
-    }
+    changes = _new_save_plan()
     drafts = []
     buffered = []
     seen = {}
@@ -1148,6 +1397,9 @@ def save_all(*rows):
             seen=seen,
         )
 
+    # Saving temporarily clears realized-row buffers so any cap updates emitted
+    # by `_do_update()` are merged into cache rather than treated as still-local
+    # pending changes. If the save fails we restore exactly what the caller had.
     temp_buffers = [{**row._anvil.buffer} for row in buffered]
     _reset_changes(buffered, [])
     server_drafts = []
@@ -1169,23 +1421,14 @@ def save_all(*rows):
             row._anvil.buffer.update(buffer)
         raise
 
+    # Draft objects are mutated in place to become realized rows, then every
+    # local buffer involved in the save is cleared.
     _initialize_drafts(server_drafts, drafts)
     _reset_changes(buffered, drafts)
 
 
 def reset_all(*rows):
-    changes = {
-        "rows": [],
-        "buffers": [],
-        "draft_info": [],  # {"buffer": dict, "table_id": str}[]
-        "single": [],  # {"path": ["rows" | "drafts", index, key], "row": int}
-        # the row row is where to find the draft in the draft list
-        # the path is the path to the hole that should be replaced by the draft row
-        "multi": [],  # {"path": ["rows" | "drafts", index, key], "rows": [Row | int]}
-        # the rows is a list of realized rows and ints
-        # the ints represent where to find the draft in the draft list
-        # the path is the path to the hole that should be replaced by the rows
-    }
+    changes = _new_save_plan()
     drafts = []
     seen = {}
     buffered = []

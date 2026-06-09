@@ -192,7 +192,7 @@ const applyEventBindings = (instance: HtmlComponent) => {
                     return pyNone;
                 }
                 return chainOrSuspend(pyEval(handler, { self: state.yamlHost }), (pyHandler) => {
-                    pyCallOrSuspend(pyHandler, [toPy(domEvent)]);
+                    return pyCallOrSuspend(pyHandler, [toPy(domEvent)]);
                 });
             });
         };
@@ -773,6 +773,8 @@ function designerEnableDropMode(self: HtmlComponent, dropping: DroppingSpecifica
             ...(layoutPropsFromDropping ?? {}),
         };
 
+        // HtmlComponent treats the default dropzone as implicit: children dropped there do
+        // not store layout_properties.dropzone. Named dropzones must opt in explicitly.
         if (dropzoneName !== "default") {
             baseLayoutProperties.dropzone = dropzoneName;
         }

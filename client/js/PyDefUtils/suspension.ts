@@ -1,18 +1,18 @@
 import {
-    pyStr,
-    pyCallOrSuspend,
-    pyObject,
-    pyCallable,
     Args,
-    Kws,
-    pyDict,
-    pyTuple,
-    Suspension,
     Break,
     BreakConstructor,
+    Kws,
+    Suspension,
+    pyCallOrSuspend,
+    pyCallable,
+    pyDict,
+    pyObject,
+    pyStr,
+    pyTuple,
 } from "@Sk";
 import { Component } from "@runtime/components/Component";
-import { s_raise_event, jsObjToKws } from "@runtime/runner/py-util";
+import { jsObjToKws, s_raise_event } from "@runtime/runner/py-util";
 
 export function suspensionFromPromise<T>(p: Promise<T>) {
     const newSuspension = new Suspension<{ type: "Sk.promise"; promise: Promise<T>; error?: any; result?: T }>();
@@ -35,10 +35,10 @@ export function suspensionPromise<T>(
     return suspensionFromPromise(new Promise(fn));
 }
 
-export const suspensionHandlers = {
-    timer: function (r: Suspension<{ delay: number }>) {
-        return new Promise(function (resolve, reject) {
-            setTimeout(function () {
+export const suspensionHandlers: Record<string, ((r: Suspension<any>) => Promise<unknown> | unknown) | undefined> = {
+    timer: (r: Suspension<{ delay: number }>) => {
+        return new Promise((resolve, reject) => {
+            setTimeout(() => {
                 resolve(r.resume());
             }, r.data["delay"] * 1000);
         });

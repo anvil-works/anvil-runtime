@@ -85,6 +85,14 @@ const GridPanelFactory = (pyModule: PyModMap) => {
             <PyDefUtils.OuterElement className={`${getCssPrefix()}grid-panel anvil-container`} {...props} />
         ),
 
+        layouts: [
+            { name: "row", type: "string", description: "The name of the row to add the component to.", hidden: true },
+            ...(["xs", "sm", "md", "lg"] as const).flatMap((size) => [
+                { name: `col_${size}`, type: "number" as const, description: `The starting column on ${size} screens, in the range 0-11.`, hidden: true },
+                { name: `width_${size}`, type: "number" as const, description: `The width in columns on ${size} screens, in the range 1-12.`, hidden: true },
+            ]),
+        ],
+
         locals($loc) {
             $loc["__new__"] = PyDefUtils.mkNew<GridPanel>(ClassicContainer, (self) => {
                 self._anvil.gridComponents = [];
@@ -122,7 +130,7 @@ const GridPanelFactory = (pyModule: PyModMap) => {
                         // TODO allow a way of manually inserting into the middle rather than at the bottom?
                         const element = document.createElement("div");
                         element.className = prefix + "row";
-                        element.style.marginBottom = self._anvil.getPropJS("row_spacing");
+                        element.style.marginBottom = PyDefUtils.cssLength(self._anvil.getPropJS("row_spacing"));
                         element.setAttribute("data-anvil-gridpanel-row", rowName);
                         row = { element, lastCol: {} };
                         self._anvil.rows[rowName] = row;

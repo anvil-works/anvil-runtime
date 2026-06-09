@@ -26,7 +26,7 @@ description: |
 interface TimerAnvil {
     timerInterval: number;
     lastTicked: number | null;
-    timerHandle: ReturnType<typeof setTimeout> | null;
+    timerHandle: number | null;
     setTimer: () => void;
     clearTimer: () => void;
 }

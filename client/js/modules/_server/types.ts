@@ -69,5 +69,5 @@ export type KnownLiveObjectMethods = { [backend: string]: string[] };
 export type knownCapabilities = Capability[];
 export type BlobContent = {
     json: { type: "CHUNK_HEADER"; requestId: string; mediaId: string; chunkIndex: number; lastChunk: boolean };
-    data: DataView;
+    data: DataView<ArrayBuffer>;
 }[];

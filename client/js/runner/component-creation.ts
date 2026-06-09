@@ -76,8 +76,8 @@ export const getAndCheckNextCreationStack = (formName: string, depAppId: string 
 };
 
 // Instrumentation hook
-let wrapFormEventHandler: (handler: pyCallable) => pyCallable = (x) => x;
-export const setInstrumentationHooks = (wfeh?: (handler: pyCallable) => pyCallable) => {
+let wrapFormEventHandler: (handler: pyCallable) => pyCallable<pyObject | Suspension> = (x) => x;
+export const setInstrumentationHooks = (wfeh?: (handler: pyCallable) => pyCallable<pyObject | Suspension>) => {
     wrapFormEventHandler = wfeh ?? wrapFormEventHandler;
 };
 
@@ -116,7 +116,10 @@ export function removeEventHandlers(
 
 /** We can't use the wrapped function else we break equality of event handlers
  * but we can use a proxy, this way they are python equal */
-function ensureWrappedFunctionEquality(wrappedFn: pyCallable, originalFn: pyCallable) {
+function ensureWrappedFunctionEquality(
+    wrappedFn: pyCallable<pyObject | Suspension>,
+    originalFn: pyCallable
+) {
     if (wrappedFn === originalFn) return wrappedFn;
     return new Proxy(originalFn, {
         get(target, prop: PropertyKey) {

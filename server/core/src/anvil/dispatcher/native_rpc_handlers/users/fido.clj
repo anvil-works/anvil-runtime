@@ -152,7 +152,9 @@
           (log/trace (str "Fido assertion validation failed. This could be because a different MFA method matched on the same user.\n" (.getMessage e)))
           false)))))
 
-(swap! dispatcher/native-rpc-handlers merge
-       {"anvil.private.users.begin_fido_attestation"    (util/wrap-native-fn begin-fido-attestation)
-        "anvil.private.users.validate_fido_attestation" (util/wrap-native-fn validate-fido-attestation)
-        "anvil.private.users.begin_fido_assertion"      (util/wrap-native-fn begin-fido-assertion)})
+(defn v1-users-handlers []
+  {"anvil.private.users.begin_fido_attestation"    (util/wrap-native-fn begin-fido-attestation)
+   "anvil.private.users.validate_fido_attestation" (util/wrap-native-fn validate-fido-attestation)
+   "anvil.private.users.begin_fido_assertion"      (util/wrap-native-fn begin-fido-assertion)})
+
+;; (swap! dispatcher/native-rpc-handlers merge (v1-users-handlers))

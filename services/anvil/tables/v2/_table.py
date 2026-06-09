@@ -22,7 +22,7 @@ class Table(BaseTable):
         self._cap = cap
         self._view_key = view_key
         table_id = str(table_id)
-        self._id = table_id
+        self._id = table_id # N.B. Customers depend on this because there's no public API. Yell loudly before changing.
         self.Row = get_base_model_cls(table_id)
         return self
 
@@ -97,9 +97,13 @@ class Table(BaseTable):
     def add_row(self, **data):
         return self._do_add_row(data)
 
-    def _do_add_row(self, data, on_behalf_of_client=False):
+    def _do_add_row(self, data, client_request_overrides=None, trusted_values=None):
         row_id, cap, spec = anvil.server.call(
-            PREFIX + "add_row", self._cap, make_refs(data), on_behalf_of_client
+            PREFIX + "add_row",
+            self._cap,
+            make_refs(data),
+            client_request_overrides,
+            make_refs(trusted_values) if trusted_values else None,
         )
         return self.Row._anvil_create_from_local_values(
             self._view_key, self._id, row_id, spec, cap, data

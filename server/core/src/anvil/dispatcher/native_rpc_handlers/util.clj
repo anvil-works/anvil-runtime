@@ -185,8 +185,9 @@
                                        (try+
                                          (apply f return-path context kwargs args)
 
-                                         (catch clojure.lang.ArityException _
+                                         (catch clojure.lang.ArityException e
                                            (update-quota!)
+                                           (log/trace "ArityException:" e)
                                            (respond-with-incorrect-arity-error! return-path (count args) func))
                                          (catch :anvil/server-error e
                                            (update-quota!)
@@ -215,6 +216,7 @@
                         (catch :anvil/server-error e
                           (dispatcher/respond-with-error! return-path e))
                         (catch clojure.lang.ArityException e
+                          (log/trace "ArityException:" e)
                           (respond-with-incorrect-arity-error! return-path (count args) func-name))
                         (catch Object e
                           (dispatcher/respond-with-internal-server-error!

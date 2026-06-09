@@ -5,10 +5,13 @@
 -- by the `platform/database/migrator/tests/check_migrations.py` script.
 
 -- DO NOT run this to upgrade an existing server.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 CREATE TABLE app_storage_tables (id integer primary key, 
-                                 name text NOT NULL, 
-                                 columns jsonb NOT NULL DEFAULT '{}');
+                                 name text NOT NULL,
+                                 columns jsonb NOT NULL DEFAULT '{}',
+                                 storage jsonb,
+                                 indexes jsonb);
 
 CREATE TABLE app_storage_access (table_id integer references app_storage_tables(id), 
                                  python_name text NOT NULL, 
@@ -32,6 +35,10 @@ CREATE TABLE app_storage_media (object_id integer PRIMARY KEY NOT NULL,
                                 data bytea);
 CREATE INDEX app_storage_media_object_id_uindex ON app_storage_media (object_id);
 
+-- NB this is used only in split-table storage
+CREATE TYPE media AS (content_type TEXT, name TEXT, bytes bytea);
+CREATE TYPE datetime_with_tz AS (utc TIMESTAMP, tz TEXT);
+
 DO $$
     DECLARE
         seq_start INTEGER;
@@ -43,7 +50,7 @@ DO $$
 ALTER TABLE app_storage_media ALTER COLUMN data SET STORAGE EXTERNAL;
 ALTER TABLE app_storage_media ALTER COLUMN object_id SET DEFAULT nextval('app_storage_media_object_id_seq');
 
--- Schema in which SQL-friendly views will be created
+-- Schema in which backing tables for split storage and SQL-friendly views for combined storage will be created
 CREATE SCHEMA IF NOT EXISTS data_tables;
 
 --[GRANTS]--

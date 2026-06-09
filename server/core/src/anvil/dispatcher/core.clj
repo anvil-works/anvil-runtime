@@ -284,6 +284,10 @@
                                   :respond! (fn [resp]
                                               (when (not= "anvil.private.echo" func)
                                                 (log/trace "Executor responded:" (pr-str resp)))
+                                              (when (and (not (.startsWith func "anvil."))
+                                                         (= :client origin)
+                                                         (not (:error resp)))
+                                                (runtime-achievements/claim-runtime-achievement session-state "calledServerFunction"))
                                               (respond! return-path resp)))
 
                     request (assoc request :stale-uplink? @*stale-uplink?*)

@@ -93,12 +93,23 @@ def get_base_model_cls(table_id):
             return self
 
         @classmethod
-        def _do_create(cls, buffer, from_client):
+        def _do_create(cls, values, from_client, **kws):
+            trusted_values = kws.pop("trusted_values", None)
+            if kws:
+                raise TypeError("Unexpected keyword arguments: {}".format(kws))
+
             from . import get_table_by_id
 
-            on_behalf_of_client = cls._anvil_on_behalf_of_client("create", from_client)
+            from ._row import _make_request_overrides
+
+            use_client_config = cls._anvil_use_client_config("create", from_client)
             table = get_table_by_id(table_id)
-            return table._do_add_row(buffer, on_behalf_of_client)
+
+            return table._do_add_row(
+                values,
+                _make_request_overrides(use_client_config, from_client),
+                trusted_values,
+            )
 
         def __init_subclass__(
             cls,

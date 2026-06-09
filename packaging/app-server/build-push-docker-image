@@ -5,6 +5,7 @@
 #
 # https://registry.hub.docker.com/r/anvilworks/anvil-app-server
 #
+export BUILDX_NO_DEFAULT_ATTESTATIONS=1
 
 docker build -t anvilworks/anvil-app-server:latest \
              -t anvilworks/anvil-app-server:1.9.0 .

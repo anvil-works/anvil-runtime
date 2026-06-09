@@ -40,6 +40,8 @@
            (com.maxmind.geoip2.model CityResponse)
            (org.apache.commons.codec.binary Base64)))
 
+;(clj-logging-config.log4j/set-logger! :level :info)
+
 ;; This needs to work on lots of different formats.
 ;; E.g. "16" - TODO: Add tests
 (defn get-java-version []
@@ -193,6 +195,24 @@
 (defmacro with-long-query [& body]
   `(with-long-query* (fn [] ~@body)))
 
+(defonce with-really-long-query* (fn [f] (f)))
+
+(defmacro with-really-long-query [& body]
+  `(with-really-long-query* (fn [] ~@body)))
+
+; Prevent postgres query planner from switching to generic query plans whenever it feels like it. They interact
+; particularly poorly with split table queries, where the choice of index can depend on parameter values.
+(defn with-custom-plan-cache-mode ^DataSource [^DataSource ds]
+  (let [set-plan-cache-mode (fn [conn]
+                              (try
+                                ;; Only supported in postgres >= 12. Ignore errors.
+                                (jdbc/execute! {:connection conn} ["SET plan_cache_mode=force_custom_plan"])
+                                (catch Exception _))
+                              conn)]
+    (reify DataSource
+      (getConnection [_this] (set-plan-cache-mode (.getConnection ds)))
+      (getConnection [_this username password] (set-plan-cache-mode (.getConnection ds username password))))))
+
 (defonce get-global-db-datasource
          (fn []
            (when-not conf/db
@@ -207,20 +227,20 @@
                                 (when (and dbtype dbname host)
                                   (format "jdbc:%s://%s%s/%s" dbtype host (when port (str ":" port)) dbname)))
 
-                   ds (DataSources/unpooledDataSource jdbc-uri
-                                                      (as-properties (-> conf/db
-                                                                         (dissoc :connection-uri :subprotocol :subname :dbtype :dbname
-                                                                                 :host :port :classname))))
+                   ds (-> (DataSources/unpooledDataSource jdbc-uri
+                                                          (as-properties (-> conf/db
+                                                                             (dissoc :connection-uri :subprotocol :subname :dbtype :dbname
+                                                                                     :host :port :classname))))
+                          (with-custom-plan-cache-mode))
 
                    pool-params (into {} (for [[k v] pool-params] [(name k) (if (integer? v) (int v) v)]))]
                (DataSources/pooledDataSource ds ^Map pool-params)))))
 
-(def set-db-hooks! (hook-setter [get-global-db-datasource with-long-query*]))
+(def set-db-hooks! (hook-setter [get-global-db-datasource with-long-query* with-really-long-query*]))
 
 (defonce db {:datasource (let [datasource (delay (get-global-db-datasource))]
                            (reify DataSource
                              (getConnection [_this] (.getConnection ^DataSource @datasource))))})
-
 
 (defmacro letd [lets & body]
   (let [new-lets (->> lets
@@ -243,52 +263,75 @@
 
 (def total-txn-retries (atom 0))
 
-(defonce rollback-quota-changes! (fn [rollback-state]))
+(defonce rollback-quota-changes! (fn [txn-state]))
 
 (def set-quota-hooks! (hook-setter [rollback-quota-changes!]))
 
 (defn -with-db-transaction [db-spec relaxed-isolation-level f]
   (loop [n TXN-RETRIES]
-    (let [rollback-state (when-not (:level db-spec)
-                           (atom {}))
+    (let [top-txn-state (when-not (:level db-spec)
+                           (atom {:quota-rollbacks {} :on-commit nil}))
+
+          on-rollback! (fn [e]
+                         (when top-txn-state
+                           (let [{:keys [file line]} (meta f)]
+                             (log/debug (str "Rollback in with-db-transaction at " (format "%s:%s" file line) ": " e))
+                             (metrics/inc! :api/jdbc-transaction-rollbacks {:transaction (format "%s:%s" file line)}))
+                           (rollback-quota-changes! top-txn-state)))
+
+          on-commit! #(when top-txn-state
+                        (doseq [f (:on-commit @top-txn-state)]
+                          (f)))
 
           actual-isolation-level (if (and relaxed-isolation-level (or (zero? (jdbc/get-level db-spec))
                                                                       (= relaxed-isolation-level (:anvil-txn-isolation-level db-spec))))
                                    relaxed-isolation-level
                                    :serializable)
-          [recur? r]
+          [retry? r]
           (try+
             (jdbc/with-db-transaction [db-c db-spec (if (= actual-isolation-level :read-only)
-                                                      {:isolation :read-committed :read-only? true}
+                                                      {:isolation :repeatable-read :read-only? true}
                                                       {:isolation actual-isolation-level})]
-                                      (let [db-c (if rollback-state (assoc db-c :anvil-quota-rollback-state rollback-state
-                                                                                :anvil-txn-isolation-level actual-isolation-level) db-c)]
-                                        [false (f db-c)]))
+              (let [db-c (if top-txn-state (assoc db-c :anvil-txn-state top-txn-state
+                                                       :anvil-txn-isolation-level actual-isolation-level
+                                                       :schema-cache (atom {})) db-c)
+                    db-c (assoc db-c :anvil/pool-info (:anvil/pool-info db-spec))]
+                [false (f db-c)]))
             (catch #(or (and (instance? SQLException %) (#{"40001" "40P01"} (.getSQLState %)))
                         (and (:anvil/server-error %) (= (:type %) "anvil.tables.TransactionConflict")))
                    e
-              (when rollback-state
-                (rollback-quota-changes! rollback-state))
+              (on-rollback! e)
+              (let [{:keys [file line]} (meta f)]
+                (metrics/inc! :api/jdbc-transaction-conflicts {:transaction (format "%s:%s" file line)}))
               (if (and (> n 0) (not (:level db-spec)))
                 (do
-                  (log/trace (str "Conflict in with-db-transaction: " e))
+                  (log/trace (str "Conflict in with-db-transaction:") e)
                   (Thread/sleep (long (* (Math/random) (Math/pow 2 (* 0.5 (- TXN-RETRIES n))))))
                   [true nil])
-                (throw+ e)))
+                (throw (:throwable &throw-context))))
             (catch Object e
-              (when rollback-state
-                (rollback-quota-changes! rollback-state))
-              (throw+ e)))]
-      (if recur?
+              (on-rollback! e)
+              (throw (:throwable &throw-context))))]
+      (if retry?
         (do
           (swap! total-txn-retries inc)
           (recur (dec n)))
-        r))))
+        (do
+          (on-commit!)
+          r)))))
 
 (defmacro with-db-transaction [[conn-sym spec isolation-level] & body]
-  `(-with-db-transaction ~spec ~isolation-level (fn [db#]
-                                                  (let [~conn-sym db#]
-                                                    ~@body))))
+  `(-with-db-transaction ~spec ~isolation-level (with-meta (fn transaction-body# [db#]
+                                                             (let [~conn-sym db#]
+                                                               ~@body))
+                                                           ~(assoc (select-keys (meta &form) [:line])
+                                                              :file *file*))))
+
+(defn call-when-committed [{:keys [anvil-txn-state] :as db-c} f]
+  (if anvil-txn-state
+    (swap! anvil-txn-state update :on-commit conj f)
+    (f)))
+
 (defonce db-locks (atom {}))                                ;; So we can look up locks by number if necessary
 
 (def ^:dynamic *db-locks* {})
@@ -572,3 +615,20 @@
   (when (string? s)
     (or (crawlers/crawler? s)
         (some #(re-find % s) crawler-pattern-overrides))))
+
+; Useful for debug logging
+(def CONSOLE-COLORS {:reset "\u001B[0m"
+                     :red "\u001B[31m"
+                     :blue "\u001B[34m"
+                     :green "\u001B[32m"})
+
+(def current-console-color (atom 0))
+(defn next-console-color! []
+  (let [colors (vals CONSOLE-COLORS)]
+    (->> (swap! current-console-color #(mod (inc %) (count colors)))
+         (nth colors)
+         (print))))
+(defn set-console-color! [color]
+  (print (get CONSOLE-COLORS color)))
+(defn reset-console-color! []
+  (set-console-color! :reset))

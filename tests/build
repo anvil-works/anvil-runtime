@@ -2,5 +2,6 @@
 set -e
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
+export BUILDX_NO_DEFAULT_ATTESTATIONS=1
 
 docker build -t anvil-runtime-tests -f Dockerfile ../..

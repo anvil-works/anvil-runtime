@@ -11,7 +11,7 @@ import {
     notifyComponentUnmounted,
 } from "@runtime/components/Component";
 import { getCssPrefix } from "@runtime/runner/legacy-features";
-import { anvilMod, s_add_component } from "@runtime/runner/py-util";
+import { anvilMod, objToKws, s_add_component, s_DEPRECATED } from "@runtime/runner/py-util";
 import { chainOrSuspend, pyCallOrSuspend, pyObject, pyStr, Suspension } from "@Sk";
 import PyDefUtils from "PyDefUtils";
 
@@ -250,7 +250,9 @@ class Modal extends EventEmitter {
         const hideFns = [];
         const showFns = [];
 
-        const pyButtonPanel = await PyDefUtils.asyncToPromise(() => pyCallOrSuspend<Component>(anvilMod["HtmlTemplate"]));
+        const pyButtonPanel = await PyDefUtils.asyncToPromise(() =>
+            pyCallOrSuspend<Component>(anvilMod["HtmlTemplate"])
+        );
         const buttonPanelElement = await PyDefUtils.asyncToPromise(pyButtonPanel.anvil$hooks.setupDom);
 
         buttonPanelElement.classList.add("anvil-alert-footer-button-panel");
@@ -258,19 +260,26 @@ class Modal extends EventEmitter {
         const buttonClass = anvilMod["pluggable_ui"].mp$subscript(s_alert_footer_buttons);
 
         for (const { text, style, onClick } of buttonDefs) {
+            const kwObj: Record<string, pyObject> = { text: new pyStr(text) };
+            const buttonType = style || "default";
+            // Compatibility for pluggable-ui footer button hooks that still
+            // accept `button_type` as an argument; this is deprecated.
+            kwObj.button_type = s_DEPRECATED;
+            if (style && style !== "default") {
+                kwObj.role = new pyStr(style);
+            }
+
             const pyButton = await PyDefUtils.asyncToPromise(() =>
-                pyCallOrSuspend<Component>(
-                    buttonClass,
-                    [],
-                    ["text", new pyStr(text), "button_type", new pyStr(style || "default")]
-                )
+                pyCallOrSuspend<Component>(buttonClass, [], objToKws(kwObj))
             );
             const hideOnClick = () => {
                 onClick?.();
                 this.hide();
             };
             await PyDefUtils.asyncToPromise(() => addEventHandler(pyButton, s_click, hideOnClick));
-            await PyDefUtils.asyncToPromise(() => pyCallOrSuspend(pyButtonPanel.tp$getattr(s_add_component), [pyButton]));
+            await PyDefUtils.asyncToPromise(() =>
+                pyCallOrSuspend(pyButtonPanel.tp$getattr(s_add_component), [pyButton])
+            );
         }
 
         modalFooter.append(buttonPanelElement);

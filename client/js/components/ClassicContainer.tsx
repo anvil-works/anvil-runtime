@@ -1,7 +1,7 @@
-import { Suspension, pyCallOrSuspend, pyCallable, pyDict, pyStr, pyTuple } from "@Sk";
+import { Suspension, pyCallOrSuspend, pyCallable, pyDict, pyObject, pyStr, pyTuple } from "@Sk";
 import PyDefUtils from "PyDefUtils";
 import { getCssPrefix } from "@runtime/runner/legacy-features";
-import { PyModMap } from "@runtime/runner/py-util";
+import { PyModMap, pyDictToKws, s_add_component } from "@runtime/runner/py-util";
 import { s_raise_event, s_remove_from_parent } from "../runner/py-util";
 import { ClassicComponent, ClassicComponentConstructor } from "./ClassicComponent";
 import { Component } from "./Component";
@@ -88,15 +88,15 @@ const ClassicContainerFactory = (pyModule: PyModMap) => {
                 pyData: pyDict
             ) {
                 const component_key = new Sk.builtin.str("$_components");
-                let components = pyData.mp$subscript(component_key);
+                const components = pyData.mp$subscript(component_key);
                 Sk.abstr.objectDelItem(pyData, component_key);
-                let addComponent = self.tp$getattr(new Sk.builtin.str("add_component"));
+                const addComponent = self.tp$getattr<pyCallable>(s_add_component);
                 return Sk.misceval.chain(PyDefUtils.setAttrsFromDict(self, pyData), () =>
-                    Sk.misceval.iterFor<pyTuple<[Component, any]>, undefined>(
+                    Sk.misceval.iterFor<pyTuple<[Component, pyDict<pyStr, pyObject>]>, pyObject>(
                         Sk.abstr.iter(components),
                         (componentTuple) => {
                             const [pyComponent, pyLayoutParams] = componentTuple.valueOf();
-                            return Sk.misceval.callOrSuspend(addComponent, pyLayoutParams, undefined, [], pyComponent);
+                            return pyCallOrSuspend(addComponent, [pyComponent], pyDictToKws(pyLayoutParams));
                         }
                     )
                 );

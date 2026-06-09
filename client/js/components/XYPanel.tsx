@@ -1,12 +1,12 @@
 "use strict";
 
-import { chainOrSuspend, checkNone, pyFunc, pyNone, toPy } from "@Sk";
 import { getCssPrefix } from "@runtime/runner/legacy-features";
-import { PyModMap, s_x_anvil_dom_node_changed } from "@runtime/runner/py-util";
+import { PyModMap } from "@runtime/runner/py-util";
+import { chainOrSuspend, checkNone, pyFunc, pyNone, toPy } from "@Sk";
 import PyDefUtils from "PyDefUtils";
 import { ClassicComponentConstructor } from "./ClassicComponent";
 import { ClassicContainer } from "./ClassicContainer";
-import { addEventHandler, Component, removeEventHandler } from "./Component";
+import { Component } from "./Component";
 import { validateChild } from "./Container";
 import { isInvisibleComponent } from "./helpers";
 
@@ -32,12 +32,11 @@ description: |
 
 */
 
-interface XYPanel
-    extends ClassicContainer<{
-        elements: { root: HTMLElement; holder: HTMLDivElement };
-        panelId: number;
-        updateHatching: (v?: any) => void;
-    }> {}
+interface XYPanel extends ClassicContainer<{
+    elements: { root: HTMLElement; holder: HTMLDivElement };
+    panelId: number;
+    updateHatching: (v?: any) => void;
+}> {}
 
 const XYPanelFactory = (pyModule: PyModMap) => {
     let panelId = 0;
@@ -155,69 +154,26 @@ const XYPanelFactory = (pyModule: PyModMap) => {
                     const { x, y, width } = kwargs;
                     const holder = self._anvil.elements.holder;
 
-                    const leftCss = PyDefUtils.cssLength(x || 0);
-                    const topCss = PyDefUtils.cssLength(y || 0);
-                    const widthSource = width ?? "";
-                    const widthCss = widthSource ? PyDefUtils.cssLength(widthSource) : "";
+                    // Create a wrapper div for positioning
+                    const wrapper = document.createElement("div");
+                    wrapper.className = "anvil-xy-panel-item";
+                    wrapper.style.position = "absolute";
+                    wrapper.style.left = PyDefUtils.cssLength(x || 0);
+                    wrapper.style.top = PyDefUtils.cssLength(y || 0);
 
-                    let previousElement: HTMLElement | null = null;
-                    let previousInlineStyles: { position: string; left: string; top: string; width: string } | null = null;
+                    if (width !== null && width !== undefined && width !== "") {
+                        wrapper.classList.add("anvil-xy-panel-item-has-width");
+                        wrapper.style.width = PyDefUtils.cssLength(width.toString());
+                    }
 
-                    const cleanupStyles = () => {
-                        if (!previousElement || !previousInlineStyles) {
-                            previousElement = null;
-                            previousInlineStyles = null;
-                            return;
-                        }
-                        previousElement.style.position = previousInlineStyles.position;
-                        previousElement.style.left = previousInlineStyles.left;
-                        previousElement.style.top = previousInlineStyles.top;
-                        previousElement.style.width = previousInlineStyles.width;
-                        previousElement = null;
-                        previousInlineStyles = null;
-                    };
+                    wrapper.appendChild(rawElement);
+                    holder.appendChild(wrapper);
 
-                    const applyStyles = () => {
-                        const element = component.anvil$hooks.domElement;
-                        if (!(element instanceof HTMLElement)) {
-                            return;
-                        }
-                        if (element !== previousElement) {
-                            cleanupStyles();
-                            previousElement = element;
-                            previousInlineStyles = {
-                                position: element.style.position,
-                                left: element.style.left,
-                                top: element.style.top,
-                                width: element.style.width,
-                            };
-                        }
-                        element.style.position = "absolute";
-                        element.style.left = leftCss;
-                        element.style.top = topCss;
-                        if (widthCss === "") {
-                            element.style.removeProperty("width");
-                        } else {
-                            element.style.width = widthCss;
-                        }
-                        if (element.parentElement !== holder) {
-                            holder.appendChild(element);
-                        }
-                    };
-
-                    const beforeAdd = () => {
-                        applyStyles();
-                        return addEventHandler(component, s_x_anvil_dom_node_changed, applyStyles);
-                    };
-
-                    const afterRemoval = () => {
-                        cleanupStyles();
-                        return removeEventHandler(component, s_x_anvil_dom_node_changed, applyStyles);
-                    };
-
-                    return chainOrSuspend(beforeAdd(), () =>
-                        pyModule["ClassicContainer"]._doAddComponent(self, component, kwargs, { afterRemoval })
-                    );
+                    return pyModule["ClassicContainer"]._doAddComponent(self, component, kwargs, {
+                        afterRemoval: () => {
+                            wrapper.parentElement?.removeChild(wrapper);
+                        },
+                    });
                 });
             });
 

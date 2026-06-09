@@ -124,9 +124,9 @@ function remapToJsAndPushNonJson(obj: any, path: Path, nonJson: NonJson[], seria
 
 async function remapMedia(mapping: NonJson, i: number, uid: string, blobContent: BlobContent[]) {
     const mediaParts = await Promise.all([
-        PyDefUtils.callAsync<pyStr>(mapping.value.tp$getattr(INTERNED.get_content_type)),
-        PyDefUtils.callAsync<pyBytes>(mapping.value.tp$getattr(INTERNED.get_bytes)),
-        PyDefUtils.callAsync<pyStr | pyNoneType>(mapping.value.tp$getattr(INTERNED.get_name)),
+        PyDefUtils.callAsync(mapping.value.tp$getattr(INTERNED.get_content_type)),
+        PyDefUtils.callAsync(mapping.value.tp$getattr(INTERNED.get_bytes)),
+        PyDefUtils.callAsync(mapping.value.tp$getattr(INTERNED.get_name)),
     ] as const);
 
     const [mimeType, bytesVal, name] = mediaParts.map(toJs) as [string, Uint8Array, string | null];

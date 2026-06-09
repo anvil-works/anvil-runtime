@@ -21,7 +21,8 @@ import {
     toPy,
     tryCatchOrSuspend,
 } from "@Sk";
-
+import PyDefUtils from "PyDefUtils";
+import type { ComponentHelpers } from "@runtime/components";
 /*#
 id: repeatingpanel
 docs_url: /docs/client/components/repeating-panel
@@ -98,13 +99,12 @@ import {
     s_get_components,
     s_remove_from_parent,
 } from "@runtime/runner/py-util";
-import PyDefUtils from "PyDefUtils";
 import { getFormInstantiator } from "../runner/instantiation";
 import { ClassicComponent, ClassicComponentConstructor } from "./ClassicComponent";
 import { ClassicContainer } from "./ClassicContainer";
 import { Component, notifyComponentMounted } from "./Component";
-import { Done, PaginateFn } from "./Paginator";
 import type { DataGrid } from "./DataGrid";
+import { Done, PaginateFn } from "./Paginator";
 
 type TemplateInstance = ClassicComponent<{
     paginate: PaginateFn;
@@ -146,7 +146,7 @@ interface RepeatingPanelAnvil {
 
 interface RepeatingPanel extends ClassicComponent<RepeatingPanelAnvil> {}
 
-const RepeatingPanelFactory = (pyModule: PyModMap, componentsModule: any) => {
+const RepeatingPanelFactory = (pyModule: PyModMap, componentHelpers: ComponentHelpers) => {
     const ClassicComponent = pyModule["ClassicComponent"] as ClassicComponentConstructor;
     const ClassicContainer = pyModule["ClassicContainer"] as ClassicComponentConstructor;
 
@@ -209,7 +209,7 @@ const RepeatingPanelFactory = (pyModule: PyModMap, componentsModule: any) => {
 
                 // Are we being instantiated from YAML? If so, remember which is "our" app package so we can import
                 // from it when given ambiguous item_template strings.
-                const dependencyTrace = componentsModule.newPythonComponent.dependencyTrace;
+                const dependencyTrace = componentHelpers.newPythonComponent.dependencyTrace;
                 if (dependencyTrace?.depId) {
                     // NB: window.anvilAppDependencies isn't defined in the (old) designer
                     self._anvil.defaultAppPackage = window.anvilAppDependencies?.[dependencyTrace.depId]?.package_name;
@@ -602,11 +602,11 @@ const RepeatingPanelFactory = (pyModule: PyModMap, componentsModule: any) => {
                 ),
             () => {
                 // We've now displayed all the rows we have quota for. It may be that all of them matched the cache, in which case there may be remaining rows displayed that we don't have quota for. Remove them.
-                if (self._anvil.lastPagination.length > idxOnPage) {
+                if (self._anvil.lastPagination.length >= idxOnPage) {
                     // There are left-over rows that we no-longer have quota for.
                     const firstToRemove =
                         idxOnPage === 0
-                            ? self._anvil.lastPagination[0]?.[3] ?? null
+                            ? (self._anvil.lastPagination[0]?.[3] ?? null)
                             : self._anvil.lastPagination[idxOnPage - 1][3];
                     return removeAllTemplateInstancesAfter(self, firstToRemove);
                 }

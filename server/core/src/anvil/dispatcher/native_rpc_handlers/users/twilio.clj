@@ -58,7 +58,9 @@
       (= "approved" (:status body)))
     (throw+ {:anvil/server-error "Twilio not configured"})))
 
-(swap! dispatcher/native-rpc-handlers merge
-       {"anvil.private.users.twilio.generate_mfa_method"      (native-util/wrap-native-fn generate-mfa-method)
-        "anvil.private.users.twilio.send_verification_token"  (native-util/wrap-native-fn send-verification-token)
-        "anvil.private.users.twilio.check_verification_token" (native-util/wrap-native-fn check-verification-token)})
+(defn v1-users-handlers []
+  {"anvil.private.users.twilio.generate_mfa_method"      (native-util/wrap-native-fn generate-mfa-method)
+   "anvil.private.users.twilio.send_verification_token"  (native-util/wrap-native-fn send-verification-token)
+   "anvil.private.users.twilio.check_verification_token" (native-util/wrap-native-fn check-verification-token)})
+
+;; (swap! dispatcher/native-rpc-handlers merge (v1-users-handlers))

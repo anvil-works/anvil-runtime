@@ -123,7 +123,7 @@ export const ResizeObserverPolyfill =
 /** avoids the first call to the resize observer callback */
 export class PostponedResizeObserver extends ResizeObserverPolyfill {
     _init = true;
-    _t: undefined | ReturnType<typeof setTimeout> = undefined;
+    _t: undefined | number = undefined;
     constructor(cb: () => void) {
         super(() => {
             // we don't want to fire this when we are first observed

@@ -1,16 +1,14 @@
 (ns anvil.core.tracing
-  (:require [clojure.data.json :as json]
-            [clojure.tools.logging :as log]
+  (:require [clojure.tools.logging :as log]
             [anvil.util :as util]
             [anvil.runtime.app-log :as app-log]
             [clojure.pprint :refer [pprint]])
   (:import (io.opentelemetry.api.common Attributes)
-           (io.opentelemetry.api.trace ArrayBasedTraceStateBuilder PropagatedSpan Span SpanContext SpanKind StatusCode TraceFlags TraceState TraceStateBuilder)
+           (io.opentelemetry.api.trace Span StatusCode)
            (io.opentelemetry.context Context)
            (io.opentelemetry.api GlobalOpenTelemetry OpenTelemetry)
            (io.opentelemetry.context.propagation TextMapSetter TextMapGetter)
            (io.opentelemetry.api.trace.propagation W3CTraceContextPropagator)
-           (io.opentelemetry.sdk.trace RecordEventsReadableSpan)
            (java.time Instant)
            (java.time.format DateTimeFormatter)))
 

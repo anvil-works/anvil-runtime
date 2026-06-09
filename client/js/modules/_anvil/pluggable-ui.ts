@@ -1,9 +1,10 @@
 import { Component } from "@runtime/components/Component";
-import { getCssPrefix } from "@runtime/runner/legacy-features";
+import { getCssPrefix, usingBootstrap3 } from "@runtime/runner/legacy-features";
 import {
     funcFastCall,
     kwsToObj,
     objToKws,
+    PyModMap,
     pyPropertyFromGetSet,
     s_add_component,
     s_add_event_handler,
@@ -174,7 +175,7 @@ export const pluggableUI = new PluggableUI();
 
 // Anvil built-in defaults
 
-export const setupDefaultAnvilPluggableUI = (anvilModule: { [name: string]: pyObject }) => {
+export const setupDefaultAnvilPluggableUI = (anvilModule: PyModMap) => {
     const builtinComposites = { __name__: new pyStr("_builtin_composites") };
 
     for (const name of ["TextBox", "TextArea", "Button", "CheckBox", "RadioButton", "modal"]) {
@@ -253,15 +254,25 @@ export const setupDefaultAnvilPluggableUI = (anvilModule: { [name: string]: pyOb
 
     const FooterButton = funcFastCall((args, kws) => {
         const kwObj = kwsToObj(kws);
-        const buttonType = toJs(kwObj.button_type);
+        const buttonType = toJs(kwObj.role);
+        // `button_type` is sent for backwards compatibility with external
+        // pluggable-ui hooks; default FooterButton only uses `role`.
         delete kwObj.button_type;
         kwObj.spacing_above ??= s_none;
         kwObj.spacing_below ??= s_none;
 
+        if (!usingBootstrap3()) {
+            // we don't support btn-default if we are not using bootstrap
+            return pyCallOrSuspend(anvilModule["Button"], args, objToKws(kwObj));
+        }
+        // Legacy Bootstrap button variants assume legacy class naming as well.
+        // If bootstrap3 is enabled, class_names should also be enabled so prefixed
+        // btn role classes (e.g. anvil-btn-success) resolve to themed styles.
         return chainOrSuspend(pyCallOrSuspend<Component>(anvilModule["Button"], args, objToKws(kwObj)), (button) =>
             chainOrSuspend(button.anvil$hooks.setupDom(), (buttonElement) => {
-                const btnEl = buttonElement.querySelector("button");
                 const prefix = getCssPrefix();
+                const btnEl = buttonElement.querySelector("button");
+
                 btnEl?.classList.remove(`${prefix}btn-default`);
                 btnEl?.classList.add(`${prefix}btn-${buttonType || "default"}`);
                 return button;

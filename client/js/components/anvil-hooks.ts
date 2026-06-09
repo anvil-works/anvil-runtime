@@ -285,10 +285,11 @@ function setUpPythonWrappers(cls: ComponentConstructor) {
             cls.tp$setattr(pyName, new _AnvilMagicDescriptor(jsGetter));
         } else {
             const pyWrapperDef = anvilHookPyWrapperDescriptors[hook];
-            if (pyWrapperDef) {
+            const wrapped = anvilHookSpec[hook];
+            if (pyWrapperDef && wrapped) {
                 cls.tp$setattr(
                     new pyStr(pyWrapperDef.$name),
-                    new pyWrapperDescriptor(cls, pyWrapperDef, anvilHookSpec[hook])
+                    new pyWrapperDescriptor(cls, pyWrapperDef, wrapped)
                 );
             }
         }

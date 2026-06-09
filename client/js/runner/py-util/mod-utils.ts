@@ -67,4 +67,4 @@ export const anvilJsMod = pyLazyMod("anvil.js");
 export const datetimeMod = pyLazyMod("datetime");
 export const tzMod = pyLazyMod("anvil.tz");
 
-export type PyModMap = { __all__: pyList<pyStr>; [varName: string]: pyObject };
+export type PyModMap = { [varName: string]: pyObject } & { __all__?: pyList<pyStr> };

@@ -1,12 +1,13 @@
 (ns anvil.runtime.tables.v2.table-types
-  (:require [clj-commons.slingshot :refer :all]
+  (:require [anvil.dispatcher.serialisation.blocking-hacks :as blocking-hacks]
+            [clj-commons.slingshot :refer :all]
             [anvil.dispatcher.types :as types]
             [clojure.tools.logging :as log]
             [anvil.util :as util]
             [anvil.dispatcher.serialisation.lazy-media :as lazy-media]
             [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]
             [anvil.runtime.sessions :as sessions])
-  (:import (anvil.dispatcher.types Date DateTime MediaDescriptor Media ChunkedStream BlobMedia SerialisableForRpc SerializedPythonObject)
+  (:import (anvil.dispatcher.types Date DateTime HasBytes MediaDescriptor Media ChunkedStream BlobMedia SerialisableForRpc SerializedPythonObject)
            (java.time.format DateTimeFormatter DateTimeFormatterBuilder)
            (java.time.temporal ChronoField)
            (java.time ZoneId OffsetDateTime ZoneOffset)))
@@ -155,7 +156,7 @@
                                    (.toFormatter)
                                    (.withZone (ZoneId/of "UTC"))))
 
-(defn reduce-datetime [val]
+(defn- reduce-datetime-combined [val]
   (when-let [val (:datetime-string val)]
     (let [instant (.toInstant (OffsetDateTime/parse val datetime-reduce-formatter))
           offset (.substring val (- (count val) 5))]
@@ -163,57 +164,111 @@
           (.withZone (ZoneOffset/UTC))
           (.format instant)))))
 
-(defn reinflate-anvil-datetime [val]
+(defn reduce-datetime-split [val]
+  #_ (if-let [{:keys [datetime-string]} value
+           [_ utc tz] (when datetime-string (re-matches #"(.*)([\+\-]\D+)" datetime-string))]
+       [true utc tz]
+       [false nil nil])
+  (if-let [val (:datetime-string val)]
+    (let [instant (.toInstant (OffsetDateTime/parse val datetime-reduce-formatter))
+          offset (.substring val (- (count val) 5))]
+      [true (str instant) offset])
+    [false nil nil]))
+
+(defn reinflate-anvil-datetime [^String val]
   (when val
     (DateTime.
-      (let [offset-pos (- (count val) 5)
-            swapped-offset (str (.substring val 0 offset-pos)
-                                (if (= (get val offset-pos) \+) "-" "+")
-                                (.substring val (+ offset-pos 1)))
-            instant (.toInstant (OffsetDateTime/parse swapped-offset datetime-reinflate-parser))]
-        (-> (DateTimeFormatter/ofPattern (str "yyyy-MM-dd HH:mm:ss.SSSSSS'" (.substring val offset-pos) "'"))
-            (.withZone (ZoneOffset/UTC))
-            (.format instant))))))
+      (let [offset-pos (- (.length val) 5)
+            DATE-END-POS 10]
+        (if (= \A (.charAt val DATE-END-POS))
+          (let [munged (str (.substring val 0 offset-pos)
+                            (if (= (.charAt val offset-pos) \+) "-" "+")
+                            (.substring val (+ offset-pos 1)))
+                ;munged (if (= \space (.charAt munged DATE-END-POS))
+                ;         (str (.substring munged 0 DATE-END-POS) "T" (.substring munged (inc DATE-END-POS)))
+                ;         munged)
+                instant (.toInstant (OffsetDateTime/parse munged datetime-reinflate-parser))]
+            (-> (DateTimeFormatter/ofPattern (str "yyyy-MM-dd HH:mm:ss.SSSSSS'" (.substring val offset-pos) "'"))
+                (.withZone (ZoneOffset/UTC))
+                (.format instant)))
 
-(defn reduce-val [{:keys [type] :as type-map} val]
-  (if (nil? val)
-    nil
+          val)))))
+
+(defn- ensure-valid-link-target-returning-row-id [{:keys [table_id] :as type-map} val]
+  (let [[_ _ {:keys [id]} {row-id :r}] (types/unwrap-capability (:value val) ["_" "t" :ANY {:r :ANY}])]
+    (when-not (and id row-id)
+      ;; Something has gone VERY wrong if we get here, but this is a security boundary so
+      ;; it doesn't hurt to double check
+      (log/error "THIS SHOULD NEVER BE ALLOWED TO HAPPEN: Invalid capability for link target:" type-map ":" (:value val))
+      (throw (Exception. "Invalid capability for link target")))
+
+    (when-not (and (instance? SerializedPythonObject val)
+                   (= (:type val) "anvil.tables.v2._RowRef")
+                   (= id (:table_id type-map)))
+      (log/error "THIS SHOULD NEVER BE ALLOWED TO HAPPEN: Invalid type/table for link target:" type-map ":" (:type val) (:value val))
+      (throw (Exception. "Invalid type for link target")))
+
+    row-id))
+
+(defn reduce-val-for-update [{:keys [split] :as storage} {:keys [type] :as type-map} val]
+  (if split
     (condp = type
-      "link_single" (let [[_ _ {:keys [id]} {row-id :r}] (types/unwrap-capability (:value val) ["_" "t" :ANY {:r :ANY}])]
-                      (when-not (and id row-id)
-                        ;; Something has gone VERY wrong if we get here, but this is a security boundary so
-                        ;; it doesn't hurt to double check
-                        (log/error "THIS SHOULD NEVER BE ALLOWED TO HAPPEN: Invalid capability for link target:" type-map ":" (:value val))
-                        (throw (Exception. "Invalid capability for link target")))
+      "link_single" (if val
+                      [(ensure-valid-link-target-returning-row-id type-map val)]
+                      [nil])
+      "link_multiple" [(map (partial ensure-valid-link-target-returning-row-id type-map) val)]
+      "string" [val]
+      "number" [val]
+      "bool" [val]
+      "date" [(:date-string val)]
+      "datetime" (reduce-datetime-split val)
+      "media" (do (when-not (or (nil? val) (delay? val))
+                    (throw (Exception. (format "Media value is not a delay (got %s)" (.getName (.getClass val))))))
+                  (if val
+                    [true (delay (.getContentType ^MediaDescriptor @val)) (delay (.getName ^MediaDescriptor @val)) (delay (.getBytes ^HasBytes @val))]
+                    [false nil nil nil]))
+      "simpleObject" (if val
+                       [(util/write-json-str val)]
+                       [nil])
+      "unresolved" [nil]
+      "unresolvedArray" [[]])
+    ;; Else (not split)
+    (if (nil? val)
+      nil
+      (condp = type
+        "link_single" (let [row-id (ensure-valid-link-target-returning-row-id type-map val)]
+                        {:id (util/write-json-str [(:table_id type-map) row-id]), :backend "anvil.tables.Row"})
+        "link_multiple" (map (partial reduce-val-for-update storage (assoc type-map :type "link_single")) val)
+        "string" (str val)
+        "number" (do (when-not (number? val) (throw (Exception. "Non-numeric value")))
+                     val)
+        "bool" (boolean val)
+        "date" (:date-string val)
+        "datetime" (reduce-datetime-combined val)
+        "media" nil
+        "simpleObject" (do (when-not (is-jsonable? val) (throw (Exception. "SimpleObject not JSONable")))
+                           val)
+        "unresolved" nil
+        "unresolvedArray" []))))
 
-                      (assert (and (instance? SerializedPythonObject val)
-                                   (= (:type val) "anvil.tables.v2._RowRef")
-                                   (= id (:table_id type-map))))
-                      {:id (util/write-json-str [(:table_id type-map) row-id]), :backend "anvil.tables.Row"})
-      "link_multiple" (map (partial reduce-val (assoc type-map :type "link_single")) val)
-      "string" (str val)
-      "number" (do (assert (number? val)) val)
-      "bool" (boolean val)
-      "date" (:date-string val)
-      "datetime" (reduce-datetime val)
-      "media" nil
-      "simpleObject" (do (assert (is-jsonable? val)) val)
-      "unresolved" nil
-      "unresolvedArray" [])))
-
+(defn reduce-val-for-query [storage type-map val]
+  (when (some? val)
+    (reduce-val-for-update storage type-map val)))
 
 (defn- get-linked-row-id [link-json]
   (when link-json
     (-> link-json :id util/read-json-str second)))
 
-(defn render-column-value [tables table-id col-name value]
-  (let [{:keys [id name type table_id] :as col} (get-in tables [table-id :columns col-name])]
-    (condp = type
+(defn render-column-value [table-record row-id col value]
+  (when (some? value)
+    (condp = (:type col)
       "link_single" (get-linked-row-id value)
       "link_multiple" (map get-linked-row-id value)
       "media" (let [{:keys [content_type name object_id]} value]
                 (lazy-media/mk-LazyMedia-with-correct-mac
-                  {:manager "table-media", :id (str object_id), :mime-type content_type, :name name}
+                  (if (get-in table-record [:storage :split])
+                    {:manager "table-media-s", :id (util/write-json-str [(:id table-record) row-id (:id col)]), :mime-type content_type, :name name}
+                    {:manager "table-media", :id (str object_id), :mime-type content_type, :name name})
                   ;; LazyMedia needs a request for all sorts of reasons, but table RPC functions are sometimes called
                   ;; without one (from a Users Service password reset, for example). In that case, Lazy Media won't
                   ;; work, but pass a fake request object so that at least it doesn't explode

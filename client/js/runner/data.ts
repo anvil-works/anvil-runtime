@@ -134,7 +134,7 @@ export interface AssetYaml {
 }
 
 export interface DependencyCode {
-    [depId: string]: DependencyYaml;
+    [depId: string]: DependencyTreeMapContent;
 }
 
 interface ThemeColors {
@@ -215,22 +215,6 @@ export interface DepConfigResolved {
     server: { [key: string]: any };
 }
 
-export interface DependencyYaml {
-    package_name?: string; // some old apps are missing packages and we need to cope
-    forms: FormYaml[];
-    modules: ModuleYaml[];
-    runtime_options: RuntimeOptions;
-    toolbox_sections?: ToolboxSection[]; // Legacy. Use toolbox.sections instead.
-    toolbox?: {
-        sections?: ToolboxSection[];
-        hide_classic_components?: boolean;
-    };
-    layouts?: CustomLayoutYaml[];
-    config_schema?: DepConfigSchema;
-    config: DepConfigResolved;
-    client_init_module?: string;
-}
-
 export interface ThemeRole {
     name: string;
     title?: string;
@@ -246,10 +230,10 @@ export interface AppTheme {
     };
 }
 
-export interface AppConfig {
+/** Base fields from anvil.yaml, shared by both the main app and dependencies. */
+export interface AnvilYaml {
     name: string;
     package_name?: string; // some old apps are missing packages and we need to cope
-    theme: AppTheme;
     services?: { source: string; client_config: any }[];
     runtime_options: RuntimeOptions;
     toolbox_sections?: ToolboxSection[]; // Legacy. Use toolbox.sections instead.
@@ -258,17 +242,33 @@ export interface AppConfig {
         hide_classic_components?: boolean;
     };
     layouts?: CustomLayoutYaml[];
+    config_schema?: DepConfigSchema;
+    client_init_module?: string;
+}
+
+/**
+ * Result of `tree-map-to-yaml` in `read_app_storage.clj`.
+ * Adds forms, modules, theme, and resolved config to the base anvil.yaml fields.
+ */
+export interface TreeMapContent extends AnvilYaml {
+    forms: FormYaml[];
+    modules: ModuleYaml[];
+    theme: AppTheme;
+    config: DepConfigResolved;
+}
+
+/** TreeMapContent for a dependency app. */
+export interface DependencyTreeMapContent extends TreeMapContent {}
+
+/**
+ * Result of `get-app-content-with-dependencies` in `app_data.clj`.
+ * Extends TreeMapContent with resolved dependency information.
+ */
+export interface AppContentWithDeps extends TreeMapContent {
     dependency_ids: { [logicalDepId: string]: string };
     // Temporary, while we're fixing some broken apps that worked by accident
     correct_dependency_ids: { [logicalDepId: string]: string };
-    config_schema?: DepConfigSchema;
-}
-
-export interface AppYaml extends DependencyYaml, AppConfig {
-    //server_modules: ModuleYaml[]; - not in client
-    //dependencies: {app_id: string, version: any}[];
     dependency_code: DependencyCode; // client version
-    dependency_ids: { [dep_id: string]: string };
     dependency_order: string[];
 }
 
@@ -281,7 +281,7 @@ interface ServerParams {
 }
 
 interface Data {
-    app: AppYaml;
+    app: AppContentWithDeps;
     appId: string;
     appPackage: string;
     dependencyPackages: { [depId: string]: string };
@@ -365,7 +365,7 @@ export function setData({ app, appId, appOrigin, ...serverParams }: SetDataParam
 
     const customComponentProperties: any = {};
 
-    const updateCustomProperties = (depAppId: string | null, { forms }: DependencyYaml) => {
+    const updateCustomProperties = (depAppId: string | null, { forms }: TreeMapContent) => {
         if (!forms) return; // can this be null?
         for (const { custom_component, class_name, properties } of forms) {
             if (!custom_component) continue;

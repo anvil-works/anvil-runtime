@@ -28,6 +28,7 @@ const PyDefUtils = {
     getModule: getImportedModule,
     staticmethod: (fn: pyFunc) => new pyStaticMethod(fn),
     keywordArrayToHashMap: kwsToObj,
+    /** @deprecated use funcWithKwargs when creating a pyFunc, or kwsToJsObj from py-util for direct conversion. */
     withKwargs: pythonUtils.withKwargs,
     funcWithKwargs: pythonUtils.funcWithKwargs,
     withRawKwargs: pythonUtils.withRawKwargs,

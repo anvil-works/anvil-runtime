@@ -103,38 +103,10 @@
     }
 }
 
-.#{variables.$prefix}btn-default {
+.anvil-btn {
     @include button-variant(variables.$btn-default-color, variables.$btn-default-bg, variables.$btn-default-border);
 }
-.#{variables.$prefix}btn-primary {
-    @include button-variant(variables.$btn-primary-color, variables.$btn-primary-bg, variables.$btn-primary-border);
-}
-// Success appears as green
-.#{variables.$prefix}btn-success {
-    @include button-variant(variables.$btn-success-color, variables.$btn-success-bg, variables.$btn-success-border);
-}
-// Info appears as blue-green
-.#{variables.$prefix}btn-info {
-    @include button-variant(variables.$btn-info-color, variables.$btn-info-bg, variables.$btn-info-border);
-}
-// Warning appears as orange
-.#{variables.$prefix}btn-warning {
-   @include button-variant(variables.$btn-warning-color, variables.$btn-warning-bg, variables.$btn-warning-border);
-}
-// Danger and error appear as red
-.#{variables.$prefix}btn-danger {
-    @include button-variant(variables.$btn-danger-color, variables.$btn-danger-bg, variables.$btn-danger-border);
-}
 
-.#{variables.$prefix}btn-default {
-    background-image: linear-gradient(to bottom, rgba(255, 255, 255, 0.1), rgba(0, 0, 0, 0.1));
-    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5);
-    &:hover,
-    &:focus {
-        background-image: linear-gradient(rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.1));
-        background-position: 0 0;
-    }
-}
 
 .#{variables.$prefix}btn {
     min-height: calc(12px + 1.5em); /* account for padding */
@@ -320,8 +292,13 @@ ul.#{variables.$prefix}linear-panel {
 
 /* Anvil XY Panel */
 
-.anvil-xy-panel > .anvil-holder > .anvil-component {
+.anvil-xy-panel > .anvil-holder > .anvil-xy-panel-item > * {
     margin: 0;
+}
+
+.anvil-xy-panel > .anvil-holder > .anvil-xy-panel-item.anvil-xy-panel-item-has-width > * {
+    width: 100%;
+    min-width: 0;
 }
 
 /* Anvil YouTube Video */

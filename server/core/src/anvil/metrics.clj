@@ -75,6 +75,8 @@
 
                               (prometheus/counter :api/uncaught-exceptions-total)
                               (prometheus/counter :api/jdbc-query-timeouts)
+                              (prometheus/counter :api/jdbc-transaction-conflicts {:labels #{:query :transaction}})
+                              (prometheus/counter :api/jdbc-transaction-rollbacks {:labels #{:query :transaction}})
                               (prometheus/counter :api/jdbc-pool-checkouts-total {:labels #{:uri :pool}})
                               (prometheus/counter :api/jdbc-pool-checkout-wait-time-total {:labels #{:uri :pool}})
                               (prometheus/gauge :api/jdbc-pool-checkouts-max {:labels #{:uri :pool}}) ;; TODO: Remove
@@ -106,7 +108,13 @@
 
                               (prometheus/counter :api/downlink-launches-total {:labels #{:downlink-server}})
                               (prometheus/counter :api/downlink-rate-limit-launch-delayed-total {:labels #{:downlink-server}})
-                              (prometheus/counter :api/downlink-rate-limit-launch-cancelled-total {:labels #{:downlink-server}})))))
+                              (prometheus/counter :api/downlink-rate-limit-launch-cancelled-total {:labels #{:downlink-server}})
+                              (prometheus/gauge :api/downlink-runner-unresponsive {:labels #{:downlink-server}})
+
+                              ;; TEMPORARY counter for the legacy->dynamic rollout.
+                              ;; It's not accurate, since get-downlink-situation-for-request may be called multiple times per request
+                              ;; downlink-calls-started is the accurate metric, but doesn't have the downlink-type label
+                              (prometheus/counter :api/downlink-requests-temp-total {:labels #{:downlink-type}})))))
 
 (defonce server (atom nil))
 

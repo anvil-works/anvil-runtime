@@ -1,5 +1,5 @@
 {
-    "extends": "../../../../../tscopnfig.json",
+    "extends": "../../../../../tsconfig.json",
     "include": ["./src/**/*.ts", "./src/**/*.tsx"],
     "exclude": ["@types/jsx.ts"]
 }

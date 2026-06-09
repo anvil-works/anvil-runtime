@@ -5,7 +5,7 @@ import { handleMessage } from "./handlers";
 import { Profile } from "./profile";
 import { incHeartbeatCount, outstandingRequests } from "./rpc";
 
-export let websocket: Promise<WebSocket> | null = null; // Promise of a WebSocket
+export let websocket: Promise<AnvilWebSocket> | null = null; // Promise of a WebSocket
 
 declare global {
     interface Window {
@@ -41,8 +41,8 @@ let firstSendFail = true;
 
 export class WebsocketFallback extends Error {}
 
-class AnvilWebSocket extends WebSocket {
-    send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
+export class AnvilWebSocket extends WebSocket {
+    send(data: string | ArrayBuffer | Blob | ArrayBufferView<ArrayBuffer>) {
         try {
             super.send(data);
         } catch (e) {
@@ -55,12 +55,12 @@ class AnvilWebSocket extends WebSocket {
     }
 }
 
-export function connect(profile?: Profile) {
+export function connect(profile?: Profile): Promise<AnvilWebSocket> {
     // return promise of a WebSocket
     if (websocket != null) return websocket;
 
     const connectedProfile = profile?.append("Connect websocket");
-    const deferred = defer<WebSocket>();
+    const deferred = defer<AnvilWebSocket>();
 
     websocket = deferred.promise;
 

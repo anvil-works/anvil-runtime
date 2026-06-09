@@ -276,6 +276,10 @@ function getSlotsForTarget(
 
 function getSlotsForDropzone(context: SerializerContext, dropzoneName: string): SerializerSlotEntry[] {
     const entries = context.slotsByDropzoneId.get(dropzoneName) ?? [];
+    return sortSlotEntries(entries);
+}
+
+function sortSlotEntries(entries: SerializerSlotEntry[]): SerializerSlotEntry[] {
     return entries.slice().sort((a, b) => {
         const indexDiff = (a.slot.index ?? 0) - (b.slot.index ?? 0);
         if (indexDiff !== 0) {
@@ -284,6 +288,10 @@ function getSlotsForDropzone(context: SerializerContext, dropzoneName: string): 
 
         return a.name.localeCompare(b.name);
     });
+}
+
+function getSlotsForTargetWithoutDropzone(context: SerializerContext, target: SlotTarget): SerializerSlotEntry[] {
+    return getSlotsForTarget(context, target).filter(({ slot }) => !slot.set_layout_properties?.dropzone);
 }
 
 function collectDropzoneMap(
@@ -592,7 +600,10 @@ function serializeFragmentComponent(
     // 1. Fragments are nested components, not top-level forms
     // 2. Reparsing fragments can cause duplication issues
     // 3. The top-level form serialization will handle reparsing if needed
-    const { html: filled } = fillDropzonesAndAppendRemaining(html, nested, context, indentStep);
+    const { html: filled } = fillDropzonesAndAppendRemaining(html, nested, context, indentStep, {
+        type: "container",
+        name: component.name,
+    });
 
     const normalized = normalizeFragmentHtml(filled);
 
@@ -834,10 +845,11 @@ function fillDropzonesAndAppendRemaining(
     html: string,
     components: ComponentYaml[],
     context: SerializerContext,
-    indentStep: string
+    indentStep: string,
+    target: SlotTarget
 ): { html: string } {
     const unmappedComponents = components.filter((comp) => !comp.layout_properties?.dropzone);
-    const { html: filledHtml, remainingComponents } = fillDropzones(html, components, context, indentStep);
+    const { html: filledHtml, remainingComponents } = fillDropzones(html, components, context, indentStep, target);
 
     // Collect all remaining components that weren't placed into any dropzone
     const allRemainingComponents: ComponentYaml[] = [];
@@ -874,7 +886,8 @@ function fillDropzones(
     html: string,
     components: ComponentYaml[],
     context: SerializerContext,
-    indentStep: string
+    indentStep: string,
+    target: SlotTarget
 ): { html: string; remainingComponents: Map<string, ComponentYaml[]> } {
     if (!html) return { html: "", remainingComponents: new Map() };
 
@@ -912,7 +925,13 @@ function fillDropzones(
                     const indent = getIndentForElement(element, parentIndent);
                     const chunks: string[] = [];
 
-                    const slotsForDropzone = getSlotsForDropzone(context, name);
+                    const slotsForDropzone = sortSlotEntries([
+                        ...getSlotsForDropzone(context, name),
+                        // HtmlComponent omits layout_properties.dropzone for its implicit default dropzone.
+                        // Mirror that convention here; slots without an explicit dropzone must not be
+                        // serialized into named dropzones.
+                        ...(name === "default" ? getSlotsForTargetWithoutDropzone(context, target) : []),
+                    ]);
                     let slotCursor = 0;
                     // Components/slots inside fragment HTML are inside a fragment
                     const parentIsFragment = true;
@@ -964,6 +983,18 @@ function fillDropzones(
                         continue;
                     }
                 }
+
+                const dataSlot = getAttribute(element, "data-slot");
+                if (dataSlot) {
+                    const slot = context.slots[dataSlot];
+                    if (!name || slot?.set_layout_properties?.dropzone !== name) {
+                        if (parts.length > 0 && /^\s*$/.test(parts[parts.length - 1])) {
+                            parts.pop();
+                        }
+                        continue;
+                    }
+                }
+
                 // Dropzones without matching components or slots may need pruning
                 if (shouldRemoveSerializedDropzone(element, nodes, index, map, replacedDropzones, slotDropzoneNames)) {
                     if (parts.length > 0 && /^\s*$/.test(parts[parts.length - 1])) {
@@ -1125,7 +1156,10 @@ export function serializeFormContainer(parsed: FormYaml | ParsedFormYaml, option
     }
 
     // Fill dropzones and append remaining components
-    const { html: filledHtml } = fillDropzonesAndAppendRemaining(html, components, context, indentStep);
+    const { html: filledHtml } = fillDropzonesAndAppendRemaining(html, components, context, indentStep, {
+        type: "container",
+        name: "",
+    });
     let result = filledHtml;
 
     // Reparse and re-serialize to ensure proper structure with dropzones

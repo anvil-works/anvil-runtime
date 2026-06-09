@@ -1,12 +1,14 @@
 (defproject anvil-runtime "latest"
   :min-lein-version "2.8.1"
   :repositories {"anvil" "file:../maven_repository"}
+  :mirrors {"central" {:name "central"
+                       :url "https://maven-central-eu.storage-download.googleapis.com/maven2"}}
   :managed-dependencies [[org.clojure/clojure "1.12.0"]
 
-                         [com.fasterxml.jackson.core/jackson-core "2.18.0"]
-                         [com.fasterxml.jackson.core/jackson-databind "2.18.0"]
-                         [com.fasterxml.jackson.dataformat/jackson-dataformat-cbor "2.18.0"]
-                         [com.fasterxml.jackson.dataformat/jackson-dataformat-smile "2.18.0"]
+                         [com.fasterxml.jackson.core/jackson-core "2.18.6"]
+                         [com.fasterxml.jackson.core/jackson-databind "2.18.6"]
+                         [com.fasterxml.jackson.dataformat/jackson-dataformat-cbor "2.18.6"]
+                         [com.fasterxml.jackson.dataformat/jackson-dataformat-smile "2.18.6"]
 
                          [dnsjava/dnsjava "3.6.0"]  ; 3.4.1 required by apache-jdkim is vulnerable.
                          [org.apache.james/apache-mime4j-core "0.8.10"]  ; 0.8.3 required by apache-jdkim is vulnerable.
@@ -47,7 +49,7 @@
                  [org.clojure/data.codec "0.1.0"]
 
                  [org.clojure/java.jdbc "0.7.10"]
-                 [org.postgresql/postgresql "42.7.7"]
+                 [org.postgresql/postgresql "42.7.11"]
 
                  [javax.mail/mail "1.4.4"]
 
@@ -80,15 +82,15 @@
                  ;  Can't use v0.3 as it removes mailets, which we use in email_server.clj
                  [org.apache.james.jdkim/apache-jdkim "0.2" :extension "pom" :exclusions [org.apache.geronimo.javamail/geronimo-javamail_1.4_mail]]
 
-                 [org.bouncycastle/bcprov-jdk18on "1.78.1"]
-                 [org.bouncycastle/bcpkix-jdk18on "1.78.1"]
+                 [org.bouncycastle/bcprov-jdk18on "1.84"]
+                 [org.bouncycastle/bcpkix-jdk18on "1.84"]
                  [buddy/buddy-core "1.12.0-430"]
                  [buddy/buddy-sign "3.6.1-359"]
 
                  [io.prometheus/simpleclient_hotspot "0.12.0"]
                  [clj-commons/iapetos "0.1.14"]
                  [net.ttddyy/datasource-proxy "1.5.1"]
-                 [com.mchange/c3p0 "0.9.5.4"]
+                 [com.mchange/c3p0 "0.12.0"]
 
                  [malabarba/lazy-map "1.3"]
 
@@ -98,15 +100,15 @@
                  [olical/crawlers "0.2.0"]
 
                  [io.opentelemetry/opentelemetry-sdk]]
-  :bom {:import [[io.opentelemetry/opentelemetry-bom "1.7.0"]]}
+  :bom {:import [[io.opentelemetry/opentelemetry-bom "1.62.0"]]}
   :jvm-opts ["-Dfile.encoding=UTF-8"]
   :plugins [[com.github.anvil-works/lein-aot-order "0.1.1-anvil"]
             [lein-bom "0.2.0-SNAPSHOT"]]
   :aot :order
   :auto-clean false
   :omit-source true
-  :profiles {:provided {:dependencies [[org.bouncycastle/bcprov-jdk18on "1.78.1"]
-                                       [org.bouncycastle/bcpkix-jdk18on "1.78.1"]]}
+  :profiles {:provided {:dependencies [[org.bouncycastle/bcprov-jdk18on "1.84"]
+                                       [org.bouncycastle/bcpkix-jdk18on "1.84"]]}
              :uberjar {:exclusions [org.bouncycastle/bcprov-jdk18on
                                     org.bouncycastle/bcpkix-jdk18on]}
              :dev {:jvm-opts ["-Dclojure.compiler.disable-locals-clearing=true"

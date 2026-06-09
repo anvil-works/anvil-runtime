@@ -5,7 +5,7 @@
             [anvil.runtime.accounting]
             [anvil.util :as util])
   (:import org.postgresql.util.PGobject
-           (clojure.lang IPersistentMap IPersistentVector)))
+           (clojure.lang IPersistentMap IPersistentVector Delay)))
 
 (defn value-to-json-pgobject [value]
   (doto (PGobject.)
@@ -17,7 +17,10 @@
   (sql-value [value] (value-to-json-pgobject value))
 
   IPersistentVector
-  (sql-value [value] (value-to-json-pgobject value)))
+  (sql-value [value] (value-to-json-pgobject value))
+
+  Delay
+  (sql-value [value] @value))
 
 (extend-protocol jdbc/IResultSetReadColumn
   PGobject

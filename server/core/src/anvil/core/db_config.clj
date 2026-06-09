@@ -1,12 +1,16 @@
 (ns anvil.core.db-config
   (:require [clojure.java.jdbc :as jdbc]
             [anvil.util :as util]
-            [clojure.data.codec.base64 :as b64]))
+            [clojure.data.codec.base64 :as b64]
+            [clojure.tools.logging :as log]))
+
+;(clj-logging-config.log4j/set-logger! :level :trace)
 
 (defn set-val
   ([key value]
    (set-val util/db key value))
   ([db key value]
+   (log/trace (str "Setting config key " key " to " (if (bytes? value) "[binary blob]" (pr-str value))))
    (let [key-name (util/preserve-slashes key)
 
          val (if (bytes? value)

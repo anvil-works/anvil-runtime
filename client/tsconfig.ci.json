@@ -1,0 +1,17 @@
+{
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "noEmit": true,
+        "skipLibCheck": true,
+        "rootDir": "js",
+        "types": [
+            "google.maps",
+            "jquery",
+            "plotly.js",
+            "youtube"
+        ]
+    },
+    "include": [
+        "js/**/*"
+    ]
+}

@@ -4,7 +4,6 @@ import PyDefUtils from "PyDefUtils";
 import { pyCallable, pyCallOrSuspend, pyDict, pyNone, pyRuntimeError, pyStr, pyTuple, toJs, toPy } from "../@Sk";
 import "../extra-python-modules";
 import "../messages";
-import { registerSolidComponent, solidComponents } from "./components-in-js/component-from-solid";
 import * as _jsComponentApi from "./components-in-js/public-api";
 import { data, setData, SetDataParams } from "./data";
 import "./error-handling";
@@ -28,7 +27,9 @@ try {
         enumerable: false,
         writable: false,
     });
-} catch {}
+} catch {
+    // Some older browsers reject defineProperty on window; the marker is best-effort.
+}
 
 console.log("Loading runner v2");
 
@@ -223,8 +224,23 @@ window.loadApp = async function (params: SetDataParams) {
     await hooks.beforeLoadApp?.();
 
     if ("serviceWorker" in navigator) {
+        const serviceWorkerParams = new URLSearchParams();
+        if (params.inIDE) {
+            serviceWorkerParams.set("inIDE", "1");
+        }
+        try {
+            if (
+                new URL(window.location.href).searchParams.get("swDebug") === "1" ||
+                window.localStorage.getItem("anvil.swDebug") === "1"
+            ) {
+                serviceWorkerParams.set("swDebug", "1");
+            }
+        } catch {
+            // Storage access can throw in locked-down browser modes.
+        }
+        const serviceWorkerQuery = serviceWorkerParams.toString();
         navigator.serviceWorker
-            .register(`${data.appOrigin}/_/service-worker${params.inIDE ? "?inIDE=1" : ""}`, {
+            .register(`${data.appOrigin}/_/service-worker${serviceWorkerQuery ? `?${serviceWorkerQuery}` : ""}`, {
                 scope: `${data.appOrigin}`,
             })
             .catch((error) => {
@@ -283,8 +299,6 @@ window.anvil = {
             });
         }
     },
-    registerSolidComponent,
-    solidComponents,
     _jsComponentApi,
     _loadAppAfter: [] as Promise<any>[],
     deferLoad() {

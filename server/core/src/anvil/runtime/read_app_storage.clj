@@ -4,6 +4,7 @@
             [anvil.util :as util]
             [clj-yaml.core :as yaml]
             [lazy-map.core :refer [lazy-map]]
+            [medley.core :refer [assoc-some]]
             [crypto.random :as random])
   (:import (java.net URL JarURLConnection)
            (java.io File FileInputStream)
@@ -31,6 +32,7 @@ __path__ = [__path__[0]+\"/server_code\", __path__[0]+\"/client_code\"]
 *.pyo
 __pycache__
 .anvil-data
+/.anvil/
 "
     ; Previous versions
 
@@ -129,8 +131,7 @@ Anvil has tutorials on:
 The Anvil reference documentation provides comprehensive information on how to use Anvil to build web applications. You can find the documentation [here](https://anvil.works/docs/overview?utm_source=github:app_README).
 
 If you want to get to the basics as quickly as possible, each section of this documentation features a [Quick-Start Guide](https://anvil.works/docs/overview/quickstarts?utm_source=github:app_README).
-"]
-   })
+"]})
 
 (defn gen-item-uid []
   (random/base32 20))
@@ -151,19 +152,21 @@ If you want to get to the basics as quickly as possible, each section of this do
         (assoc :serialized_html html)
         (assoc :save_as_html true))))
 
+(defrecord TreeFile [bytes hash])
+
 (defmulti resource-directory-to-map #(keyword (.getProtocol %)))
 
 (defmethod resource-directory-to-map :file [^URL path]
   (into (lazy-map {}) (concat
-                        (for [^File f (.listFiles (io/as-file path))]
-                          [(.getName f) (delay
-                                          (if (.isDirectory f)
-                                            (resource-directory-to-map (-> f (.toURI) (.toURL)))
-                                            (let [ary (byte-array (.length f))
-                                                  is (FileInputStream. f)]
-                                              (.read is ary)
-                                              (.close is)
-                                              ary)))]))))
+                       (for [^File f (.listFiles (io/as-file path))]
+                         [(.getName f) (delay
+                                         (if (.isDirectory f)
+                                           (resource-directory-to-map (-> f (.toURI) (.toURL)))
+                                           (let [ary (byte-array (.length f))
+                                                 is (FileInputStream. f)]
+                                             (.read is ary)
+                                             (.close is)
+                                             (->TreeFile ary (util/sha-256 ary)))))]))))
 
 (defmethod resource-directory-to-map :jar [^URL path]
   (let [jar-conn ^JarURLConnection (.openConnection path)
@@ -174,22 +177,24 @@ If you want to get to the basics as quickly as possible, each section of this do
                         (.entries)
                         (enumeration-seq))
         dir-entries (filter #(re-matches (re-pattern (str dir-name ".+")) (.getName %)) jar-entries)
-        eager-map (reduce (fn [dir-map ^JarEntry entry]
-                            (if (.isDirectory entry)
-                              dir-map
-                              (let [path-parts (str/split (.substring (.getName entry) (.length dir-name)) #"/")]
-                                (assoc-in dir-map path-parts
-                                          (let [file-size (.getSize entry)
-                                                ary (byte-array file-size)
-                                                is (.getInputStream jar-file entry)]
-                                            (loop [start 0]
-                                              (let [read-count (.read is ary start (util/$ file-size - start))
-                                                    next-start (util/$ start + read-count)
-                                                    remaining (- file-size next-start)]
-                                                (when (util/$ remaining > 0)
-                                                  (recur next-start))))
-                                            (.close is)
-                                            ary))))) {} dir-entries)
+        eager-map (reduce
+                   (fn [dir-map ^JarEntry entry]
+                     (if (.isDirectory entry)
+                       dir-map
+                       (let [path-parts (str/split (.substring (.getName entry) (.length dir-name)) #"/")
+                             file-size (.getSize entry)
+                             ary (byte-array file-size)
+                             is (.getInputStream jar-file entry)]
+                         (loop [start 0]
+                           (let [read-count (.read is ary start (util/$ file-size - start))
+                                 next-start (util/$ start + read-count)
+                                 remaining (- file-size next-start)]
+                             (when (util/$ remaining > 0)
+                               (recur next-start))))
+                         (.close is)
+                         (assoc-in dir-map path-parts (->TreeFile ary (util/sha-256 ary))))))
+                   {}
+                   dir-entries)
         eager->lazy-map (fn eager->lazy-map [m]
                           (into (lazy-map {})
                                 (for [[k v] m] (if (map? v)
@@ -197,69 +202,80 @@ If you want to get to the basics as quickly as possible, each section of this do
                                                  [k (delay v)]))))]
     (eager->lazy-map eager-map)))
 
+(defn- tree-file? [entry]
+  (instance? TreeFile entry))
+
+(defn- get-bytes
+  [tree path]
+  (when-let [entry (get-in tree path)]
+    (when (tree-file? entry)
+      (:bytes entry))))
+
+(defn- parse-template-file
+  [tree html-path yaml-path]
+  (when-let [template-b (or (get-bytes tree html-path)
+                            (get-bytes tree yaml-path))]
+    (if (get-bytes tree html-path)
+      (parse-html-with-frontmatter template-b)
+      (util/parse-yaml-bytes template-b))))
+
+(defn- tree-dir? [entry]
+  (and (map? entry)
+       (not (tree-file? entry))))
+
 (defn- add-subtree-to-yaml [yaml package-path tree client? get-unique-id]
   (let [dotted-name #(clojure.string/join "." (concat package-path [%]))]
     (reduce
-      (fn [yaml [^String name content]]
-        (cond
-          (map? content)
-          ;; It's a directory
-          (let [package-pyb (get content "__init__.py")
-                package-py (when package-pyb (String. ^bytes package-pyb))
-                ;; Try .html first, fallback to .yaml
-                template-b (or (get content "form_template.html")
-                               (get content "form_template.yaml"))
-                form-yaml (when template-b
-                            (if (get content "form_template.html")
-                              (parse-html-with-frontmatter template-b)
-                              (util/parse-yaml-bytes template-b)))
-                yaml (cond
-                       (and client? package-py form-yaml)
-                       (update-in yaml [:forms] concat
-                                  [(assoc form-yaml
-                                     :code package-py
-                                     :class_name (dotted-name name)
-                                     :is_package true
-                                     :id (get-unique-id :forms (dotted-name name)))])
-                       package-py
-                       (update-in yaml [(if client? :modules :server_modules)] concat
-                                  [{:name       (dotted-name name)
-                                    :code       package-py
-                                    :is_package true
-                                    :id         (get-unique-id (if client? :modules :server_modules) (dotted-name name))}])
-                       :else
-                       yaml)]
-            (add-subtree-to-yaml yaml (concat package-path [name])
-                                 (dissoc content "__init__.py" "form_template.yaml" "form_template.html")
-                                 client? get-unique-id))
+     (fn [yaml [^String name content]]
+       (cond
+         (tree-dir? content)
+         ;; It's a directory
+         (let [package-pyb (get-bytes content ["__init__.py"])
+               package-py (when package-pyb (String. ^bytes package-pyb))
+               form-yaml (parse-template-file content ["form_template.html"] ["form_template.yaml"])
+               yaml (cond
+                      (and client? package-py form-yaml)
+                      (update-in yaml [:forms] concat
+                                 [(assoc form-yaml
+                                         :code package-py
+                                         :class_name (dotted-name name)
+                                         :is_package true
+                                         :id (get-unique-id :forms (dotted-name name)))])
+                      package-py
+                      (update-in yaml [(if client? :modules :server_modules)] concat
+                                 [{:name       (dotted-name name)
+                                   :code       package-py
+                                   :is_package true
+                                   :id         (get-unique-id (if client? :modules :server_modules) (dotted-name name))}])
+                      :else
+                      yaml)]
+           (add-subtree-to-yaml yaml (concat package-path [name])
+                                (dissoc content "__init__.py" "form_template.yaml" "form_template.html")
+                                client? get-unique-id))
 
-          (.endsWith name ".py")
+         (.endsWith name ".py")
           ;; Is it a module or a module-style form?
-          (let [module-py (String. ^bytes content)
-                [_ module-name] (re-matches #"(.*)\.py" name)
-                ;; Try .html first, fallback to .yaml
-                template-b (or (get tree (str module-name ".html"))
-                               (get tree (str module-name ".yaml")))
-                form-yaml (when template-b
-                            (if (get tree (str module-name ".html"))
-                              (parse-html-with-frontmatter template-b)
-                              (util/parse-yaml-bytes template-b)))]
-            (if (and client? form-yaml)
-              (update-in yaml [:forms] concat
-                         [(assoc form-yaml
-                            :class_name (dotted-name module-name)
-                            :code module-py
-                            :id (get-unique-id :forms (dotted-name module-name)))])
-              (update-in yaml [(if client? :modules :server_modules)] concat
-                         [{:name (dotted-name module-name)
-                           :code module-py
-                           :id (get-unique-id (if client? :modules :server_modules) (dotted-name module-name))}])))
+         (let [module-pyb (:bytes content)
+               module-py (String. ^bytes module-pyb)
+               [_ module-name] (re-matches #"(.*)\.py" name)
+               form-yaml (parse-template-file tree
+                                              [(str module-name ".html")]
+                                              [(str module-name ".yaml")])]
+           (if (and client? form-yaml)
+             (update-in yaml [:forms] concat
+                        [(assoc form-yaml
+                                :class_name (dotted-name module-name)
+                                :code module-py
+                                :id (get-unique-id :forms (dotted-name module-name)))])
+             (update-in yaml [(if client? :modules :server_modules)] concat
+                        [{:name (dotted-name module-name)
+                          :code module-py
+                          :id (get-unique-id (if client? :modules :server_modules) (dotted-name module-name))}])))
 
-          :else
+         :else
           ;; Ignore everything else
-          yaml))
-      yaml tree)))
-
+         yaml))
+     yaml tree)))
 
 (defn- add-extra-files-to-yaml [yaml tm path top-level? ignore-py? ignore-yaml? ignore-one-level-only?]
   (reduce (fn [yaml [^String name subtree]]
@@ -269,12 +285,12 @@ If you want to get to the basics as quickly as possible, each section of this do
                   (and ignore-py? (.endsWith name ".py"))
                   (and top-level? (#{"anvil.yaml" ".anvil_editor.yaml" "theme" "CONFLICTS.yaml" "anvil-server-requirements.txt"} name))
                   (and (= path [:extra_files "server_code"]) (= name "requirements.txt"))
-                  (and top-level? (bytes? subtree)
+                  (and top-level? (tree-file? subtree)
                        (contains? default-file-contents name)
-                       (some #(Arrays/equals ^bytes subtree (.getBytes ^String %)) (get default-file-contents name))))
+                       (some #(Arrays/equals ^bytes (:bytes subtree) (.getBytes ^String %)) (get default-file-contents name))))
               yaml
 
-              (map? subtree)
+              (tree-dir? subtree)
               (add-extra-files-to-yaml yaml subtree (concat path [name]) false
                                        (or (and ignore-py? (not ignore-one-level-only?))
                                            (and top-level?
@@ -284,17 +300,34 @@ If you want to get to the basics as quickly as possible, each section of this do
                                                 (#{"client_code" "forms"} name)))
                                        (and top-level? (#{"scripts"} name)))
 
-              (bytes? subtree)
-              (assoc-in yaml (concat path [name]) (Base64/encodeBase64String ^bytes subtree))
+              (tree-file? subtree)
+              (assoc-in yaml (concat path [name]) (Base64/encodeBase64String ^bytes (:bytes subtree)))
 
               :else
               yaml))
           yaml tm))
 
+(defn flatten-tree [tree prefix get-id]
+  (apply concat
+         (for [[name, src] tree
+               :let [entry @src]
+               :when (tree-file? entry)]
+           (assoc-some {:name (str prefix name)
+                        :content (Base64/encodeBase64String ^bytes (:bytes entry))
+                        :id   (get-id :assets (str prefix name))}
+                       :hash (:hash entry)))
+         (for [[name, dir] tree
+               :let [entry @dir]
+               :when (tree-dir? entry)]
+           (flatten-tree entry (str prefix name "/") get-id))))
+
 (def get-app-yaml-from-resource-directory)
+;; TS types: TreeMapContent (runtime/client/js/runner/data.ts)
+;;           IDETreeMapContent (platform/editor/react/src/types/app.ts)
+
 (defn tree-map-to-yaml [tm ignore-extra-files? generate-item-uids?]
-  (let [read-yaml #(-> (get-in tm %)
-                       (util/parse-yaml-bytes))
+  (let [read-yaml #(some-> (get-bytes tm %)
+                           (util/parse-yaml-bytes))
 
         editor-yaml (read-yaml [".anvil_editor.yaml"])
 
@@ -304,79 +337,68 @@ If you want to get to the basics as quickly as possible, each section of this do
                        (gen-item-uid))))
 
         core-app-files (->
-                         (merge
-                           (when-let [parsed (read-yaml ["anvil.yaml"])]
-                             (when (map? parsed) parsed))
+                        (merge
+                         (when-let [parsed (read-yaml ["anvil.yaml"])]
+                           (when (map? parsed) parsed))
 
-                           {:forms
-                            (->>
-                              (for [[src-name, src] (get tm "forms")
-                                    :let [[_ form-name] (re-matches #"(.+)\.py" src-name)
-                                          ;; Try .html first, fallback to .yaml
-                                          template-b (when form-name
-                                                       (or (get-in tm ["forms" (str form-name ".html")])
-                                                           (get-in tm ["forms" (str form-name ".yaml")])))
-                                          form-yaml (when template-b
-                                                      (if (get-in tm ["forms" (str form-name ".html")])
-                                                        (parse-html-with-frontmatter template-b)
-                                                        (util/parse-yaml-bytes template-b)))]
-                                    :when form-yaml]
-                                (assoc form-yaml :class_name form-name :code (String. ^bytes (deref src))
-                                                 :id (get-id :forms form-name)))
-                              (sort-by :class_name))
+                         {:forms
+                          (->>
+                           (for [[src-name, src] (get tm "forms")
+                                 :let [[_ form-name] (re-matches #"(.+)\.py" src-name)
+                                       form-yaml (when form-name
+                                                   (parse-template-file tm
+                                                                        ["forms" (str form-name ".html")]
+                                                                        ["forms" (str form-name ".yaml")]))]
+                                 :when form-yaml]
+                             (assoc form-yaml :class_name form-name :code (String. ^bytes (:bytes @src))
+                                    :id (get-id :forms form-name)))
+                           (sort-by :class_name))
 
-                            :modules
-                            (->>
-                              (for [[src-name, src] (get tm "modules")
-                                    :let [[_ mod-name] (re-matches #"(.+)\.py" src-name)]
-                                    :when mod-name]
-                                {:name mod-name, :code (String. ^bytes (deref src))
-                                 :id   (get-id :modules mod-name)})
-                              (sort-by :name))
+                          :modules
+                          (->>
+                           (for [[src-name, src] (get tm "modules")
+                                 :let [[_ mod-name] (re-matches #"(.+)\.py" src-name)]
+                                 :when mod-name]
+                             {:name mod-name, :code (String. ^bytes (:bytes @src))
+                              :id   (get-id :modules mod-name)})
+                           (sort-by :name))
 
-                            :server_modules
-                            (->> (for [[src-name, src] (get tm "server_modules")
-                                       :let [[_ mod-name] (re-matches #"(.+)\.py" src-name)]
-                                       :when mod-name]
-                                   {:name mod-name, :code (String. ^bytes (deref src))
-                                    :id   (get-id :server_modules mod-name)})
-                                 (sort-by :name))
+                          :server_modules
+                          (->> (for [[src-name, src] (get tm "server_modules")
+                                     :let [[_ mod-name] (re-matches #"(.+)\.py" src-name)]
+                                     :when mod-name]
+                                 {:name mod-name, :code (String. ^bytes (:bytes @src))
+                                  :id   (get-id :server_modules mod-name)})
+                               (sort-by :name))
 
-                            :scripts
-                            (->> (for [[src-name, src] (get tm "scripts")
-                                       :let [[_ mod-name] (re-matches #"(.+)\.py" src-name)]
-                                       :when mod-name]
-                                   {:name mod-name, :code (String. ^bytes (deref src))
-                                    :id   (get-id :scripts mod-name)})
-                                 (sort-by :name))}
+                          :scripts
+                          (->> (for [[src-name, src] (get tm "scripts")
+                                     :let [[_ mod-name] (re-matches #"(.+)\.py" src-name)]
+                                     :when mod-name]
+                                 {:name mod-name, :code (String. ^bytes (:bytes @src))
+                                  :id   (get-id :scripts mod-name)})
+                               (sort-by :name))}
 
-                           (if (get tm "theme")
-                             {:theme
-                              {:templates
-                               (read-yaml ["theme" "templates.yaml"])
-                               :parameters
-                               (or (read-yaml ["theme" "parameters.yaml"]) {})
-                               :assets
-                               (let [extract-assets (fn extract-assets [tree prefix]
-                                                      (apply concat
-                                                             (for [[name, src] tree :when (bytes? @src)]
-                                                               {:name (str prefix name), :content (Base64/encodeBase64String ^bytes @src),
-                                                                :id   (get-id :assets (str prefix name))})
-                                                             (for [[name, dir] tree :when (map? @dir)]
-                                                               (extract-assets @dir (str prefix name "/")))))]
-                                 (extract-assets (get-in tm ["theme" "assets"]) ""))}}
+                         (if (get tm "theme")
+                           {:theme
+                            {:templates
+                             (read-yaml ["theme" "templates.yaml"])
+                             :parameters
+                             (or (read-yaml ["theme" "parameters.yaml"]) {})
+                             :assets
+                             (flatten-tree (get-in tm ["theme" "assets"]) "" get-id)}}
                              ;; Else, fill it in blank!
-                             {:theme (get (get-app-yaml-from-resource-directory (io/resource "app_templates/blank_theme") false) "theme")})
+                           {:theme (get (get-app-yaml-from-resource-directory (io/resource "app_templates/blank_theme") false) "theme")})
 
-                           (when-let [conflicts (read-yaml ["CONFLICTS.yaml"])]
-                             {:conflicts conflicts}))
-                         (update-in [:runtime_options] (fn [opts]
-                                                         (if-let [reqs (or (get-in tm ["server_code" "requirements.txt"])
-                                                                           (get-in tm ["anvil-server-requirements.txt"]))]
-                                                           (assoc-in opts [:server_spec :requirements] (String. ^bytes reqs))
-                                                           opts)))
-                         (add-subtree-to-yaml [] (get tm "client_code") true get-id)
-                         (add-subtree-to-yaml [] (get tm "server_code") false get-id))]
+                        (when-let [conflicts (read-yaml ["CONFLICTS.yaml"])]
+                           {:conflicts conflicts}))
+                        (update-in [:runtime_options] (fn [opts]
+                                                        (if-let [reqs (or (get-bytes tm ["server_code" "requirements.txt"])
+                                                                          (get-bytes tm ["anvil-server-requirements.txt"]))]
+                                                          (assoc-in opts [:server_spec :requirements] (String. ^bytes reqs))
+                                                          opts)))
+                        (add-subtree-to-yaml [] (get tm "client_code") true get-id)
+                        (add-subtree-to-yaml [] (get tm "server_code") false get-id))]
     (if ignore-extra-files?
       core-app-files
       (add-extra-files-to-yaml core-app-files tm [:extra_files] true false false false))))

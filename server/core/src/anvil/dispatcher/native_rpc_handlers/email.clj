@@ -24,8 +24,9 @@
 
 (defonce get-reroute-address (fn [session-state app-id] (throw (UnsupportedOperationException.))))
 (defonce get-smtp-connection (fn [email-service-config environment] (throw (UnsupportedOperationException.))))
+(defonce redirect-all-emails? (fn [app-info] false))
 
-(def set-email-hooks! (util/hook-setter [get-reroute-address get-smtp-connection]))
+(def set-rpc-email-hooks! (util/hook-setter [redirect-all-emails? get-reroute-address get-smtp-connection]))
 
 (defn email-send-error [& msg]
   {:anvil/server-error (apply str msg), :type "anvil.email.SendFailure"})
@@ -154,7 +155,6 @@
           (catch AddressException _e
             (throw+ (email-send-error "Not a valid sequence of addresses: " lst))))))
 
-
 (defn send! [{:keys [to from_address from_name cc bcc subject html text inline_attachments attachments in_reply_to references] :as _kwargs}]
 
   (let [optional-kwarg (fn [val name pred type-name]
@@ -238,7 +238,10 @@
       (log/trace "Sending email from" (str (InternetAddress. ^String from_address ^String from_name)) "to" [to cc bcc])
 
       (when-not quota-available
-        (rpc-util/*rpc-println* (str "Email quota exceeded. Rerouting email to app owner instead of '" (or to @reroute-address) "'.")))
+        (if (redirect-all-emails? app-info)
+          (when-not (or (empty? to) (= to @reroute-address))
+            (rpc-util/*rpc-println* (str "Email for '" to "' redirected to the app owner. Full Email service is available on the Hobby Plan and above. ")))
+          (rpc-util/*rpc-println* (str "Email quota exceeded. Rerouting email to app owner instead of '" (or to @reroute-address) "'."))))
 
       (try
         (let [msg ^MimeMessage (smtp-send
@@ -253,18 +256,22 @@
                                   :html               html
                                   :attachments        (for [[idx ^Media media] (map-indexed vector attachments)
                                                             :when media]
-                                                        (doto (MimeBodyPart.)
-                                                          (.setDataHandler (DataHandler. (ByteArrayDataSource. ^InputStream (blocking-hacks/?->InputStream rpc-util/*req* media) ^String (anvil.util/or-str (.getContentType ^MediaDescriptor media) "application/octet-stream"))))
-                                                          (.setFileName (or (.getName ^MediaDescriptor media) (str "Attachment " (inc idx))))
-                                                          (.setDisposition "attachment")))
+                                                        (if-not (instance? MediaDescriptor media)
+                                                          (throw+ {:anvil/server-error "Attachments must be a list of Media objects"})
+                                                          (doto (MimeBodyPart.)
+                                                            (.setDataHandler (DataHandler. (ByteArrayDataSource. ^InputStream (blocking-hacks/?->InputStream rpc-util/*req* media) ^String (anvil.util/or-str (.getContentType ^MediaDescriptor media) "application/octet-stream"))))
+                                                            (.setFileName (or (.getName ^MediaDescriptor media) (str "Attachment " (inc idx))))
+                                                            (.setDisposition "attachment"))))
 
                                   :inline-attachments (for [[idx [content-id ^Media media]] (map-indexed vector inline_attachments)
                                                             :when (and content-id media)]
-                                                        (doto (MimeBodyPart.)
-                                                          (.setDataHandler (DataHandler. (ByteArrayDataSource. ^InputStream (blocking-hacks/?->InputStream rpc-util/*req* media) ^String (anvil.util/or-str (.getContentType ^MediaDescriptor media) "application/octet-stream"))))
-                                                          (.setFileName (or (.getName ^MediaDescriptor media) (str "Attachment " (inc idx))))
-                                                          (.setDisposition "inline")
-                                                          (.setContentID (str "<" (name content-id) ">"))))
+                                                        (if-not (instance? MediaDescriptor media)
+                                                          (throw+ {:anvil/server-error "Inline attachments must be a map of strings to Media objects"})
+                                                          (doto (MimeBodyPart.)
+                                                            (.setDataHandler (DataHandler. (ByteArrayDataSource. ^InputStream (blocking-hacks/?->InputStream rpc-util/*req* media) ^String (anvil.util/or-str (.getContentType ^MediaDescriptor media) "application/octet-stream"))))
+                                                            (.setFileName (or (.getName ^MediaDescriptor media) (str "Attachment " (inc idx))))
+                                                            (.setDisposition "inline")
+                                                            (.setContentID (str "<" (name content-id) ">")))))
                                   :in-reply-to        in_reply_to
                                   :references         references
                                   :app-id             rpc-util/*app-id*})]

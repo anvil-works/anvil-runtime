@@ -248,7 +248,8 @@
                                     context (or (:context pending-response)
                                                 (let [{:keys [app-info environment default-session]} @connection]
                                                   (ws-calls/new-call-context :uplink-call app-info environment nil nil default-session)))
-                                    call-stack-info (STACK-FRAME-INFO (:uplink-type @connection))
+                                    call-stack-info (assoc (STACK-FRAME-INFO (:uplink-type @connection))
+                                                          :protocol-version (:protocol-version @connection))
                                     return-path {:update!  (fn [{:keys [debuggers] :as update}]
                                                              ;; catch top-level debug events (if this wasn't the root
                                                              ;; call of this stack, they're diverted upstream already

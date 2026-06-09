@@ -1423,9 +1423,9 @@ function anvil(appOrigin, uncaughtExceptions) {
             );
 
             self._anvil = {
-                message: toJs(message),
-                title: toJs(title),
-                style: toJs(style),
+                message: (message === pyNone ? "" : message).toString(),
+                title: (title === pyNone ? "" : title).toString(),
+                style: style.toString(),
                 timeout: toJs(timeout) * 1000,
             };
 

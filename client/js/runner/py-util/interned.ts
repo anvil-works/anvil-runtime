@@ -62,4 +62,5 @@ export const s_add_event_handler = new pyStr("add_event_handler"),
     s__get__ = new pyStr("__get__"),
     s__set_name__ = new pyStr("__set_name__"),
     s_append = new pyStr("append"),
-    s__mro__ = new pyStr("__mro__");
+    s__mro__ = new pyStr("__mro__"),
+    s_DEPRECATED = new pyStr("DEPRECATED");

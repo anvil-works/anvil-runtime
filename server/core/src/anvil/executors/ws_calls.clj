@@ -80,7 +80,7 @@
 
         {:keys [args kwargs func live-object] :as _call} (:call request)
 
-        request (-> {:call-stack       (map #(select-keys % [:type]) call-stack)
+        request (-> {:call-stack       (map #(select-keys % [:type :protocol-version]) call-stack)
                      :client           (:client @session-state)
                      :sessionData      (or @python-session-state-at-send {})
                      :session-id       (sessions/get-id session-state)
@@ -130,7 +130,7 @@
      ::change-session!      #(reset! current-session %)
      ::upstream-return-path nil}))
 
-(defn reinflate-request [call-context {:keys [origin stack-frame-type] :as call-stack-info} deserialiser-config serialisable-request]
+(defn reinflate-request [call-context {:keys [origin stack-frame-type protocol-version] :as call-stack-info} deserialiser-config serialisable-request]
   (let [{:keys [call-stack environment]} (::request call-context)
         {:keys [args kwargs command liveObjectCall vt_global scheduled-task-id bg-task-watch-key step-in paused span-ctx]} serialisable-request
         liveObjectCall (serialisation/loadLiveObject (serialisation/mk-Deserialiser deserialiser-config) liveObjectCall)]
@@ -147,7 +147,8 @@
                :anvil.dispatcher/change-session! (::change-session! call-context)
                :anvil.dispatcher/alternate-session (:anvil.dispatcher/alternate-session (::request call-context))
                :origin (keyword origin)
-               :call-stack (cons {:type (keyword stack-frame-type)} call-stack)
+               :call-stack (cons {:type (keyword stack-frame-type)
+                                    :protocol-version protocol-version} call-stack)
                :thread-id (:thread-id (::request call-context)))
         (cond->
           scheduled-task-id (assoc :scheduled-task-id scheduled-task-id)

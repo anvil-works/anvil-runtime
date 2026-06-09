@@ -1,5 +1,6 @@
-import { toJs, isTrue, checkString } from "@Sk";
-import { notifyVisibilityChange, PaddingPropertyValue, SpacingPropertyValue } from "@runtime/components/Component";
+import { checkString, isTrue, toJs } from "@Sk";
+import { ClassicComponent, ClassicPropertyDescription } from "@runtime/components/ClassicComponent";
+import { PaddingPropertyValue, notifyVisibilityChange } from "@runtime/components/Component";
 import {
     getUnsetMargin,
     getUnsetPadding,
@@ -10,9 +11,8 @@ import {
     setElementSpacing,
 } from "@runtime/runner/components-in-js/public-api/property-utils";
 import { getCssPrefix } from "@runtime/runner/legacy-features";
+import { mapGetter, mapSetter } from "./map-overlays";
 import { applyRole, cssLength, getColor } from "./styling";
-import { mapSetter, mapGetter } from "./map-overlays";
-import { ClassicComponent, ClassicPropertyDescription } from "@runtime/components/ClassicComponent";
 
 export interface PropertyGroup {
     [key: string]: {
@@ -524,7 +524,7 @@ export const propertyGroups: PropertyGroup = {
             pyVal: true,
             mapProp: true,
             set: mapSetter("clickable", isTrue),
-            get: mapGetter("clickable", Sk.builtin.bool),
+            get: mapGetter("getClickable", Sk.builtin.bool),
         },
         draggable: {
             name: "draggable",
@@ -535,7 +535,7 @@ export const propertyGroups: PropertyGroup = {
             pyVal: true,
             mapProp: true,
             set: mapSetter("draggable", isTrue),
-            get: mapGetter("draggable", Sk.builtin.bool),
+            get: mapGetter("getDraggable", Sk.builtin.bool),
         },
         visible: {
             name: "visible",
@@ -548,7 +548,7 @@ export const propertyGroups: PropertyGroup = {
             // NB: we don't need to worry about notifying parent of visibility
             // a map overlay can only be a child of a Google Map and it doesn't care
             set: mapSetter("visible", isTrue),
-            get: mapGetter("visible", Sk.builtin.bool),
+            get: mapGetter("getVisible", Sk.builtin.bool),
         },
         z_index: {
             name: "z_index",
@@ -557,7 +557,7 @@ export const propertyGroups: PropertyGroup = {
             description: "The z-index compared to other overlays.",
             mapProp: true,
             set: mapSetter("zIndex"),
-            get: mapGetter("zIndex"),
+            get: mapGetter("getZIndex"),
         },
     },
 

@@ -134,3 +134,119 @@
 
     ;; There should be no updates left.
     (is (empty? (dissoc table-col-updates "people" "permissions")))))
+
+(deftest test-schema-diff-index-actions
+  (let [src-schema {"people" {:title   "People"
+                              :server  "full"
+                              :client  "none"
+                              :columns [{:name "full_name" :type "string"}
+                                        {:name "age" :type "number"}]
+                              :indexes [{:columns ["age"] :type "b_tree"}
+                                        {:columns ["full_name"] :type "trigram"}]}}
+
+        target-schema {"people" {:title   "People"
+                                 :server  "full"
+                                 :client  "none"
+                                 :columns [{:name "full_name" :type "string"}
+                                           {:name "how_old" :type "number"}]
+                                 :indexes [{:columns ["how_old"] :type "b_tree"}
+                                           {:columns ["full_name"] :type "full_text"}
+                                           {:columns ["how_old" "full_name"] :type "b_tree"}]}}
+
+        schema-hints {:people {:columns {:age {:known_ids [42]}
+                                         :how_old {:known_ids [42]}}}}
+        actions (diff-schema src-schema target-schema schema-hints)]
+    (is (= [{:type :RENAME_COLUMN :table "people" :column_name "age" :new_column_name "how_old"}
+            {:type :DELETE_INDEX
+             :table "people"
+             :index {:columns ["full_name"] :type "trigram"}}
+            {:type :ADD_INDEX
+             :table "people"
+             :index {:columns ["full_name"] :type "full_text"}}
+            {:type :ADD_INDEX
+             :table "people"
+             :index {:columns ["how_old" "full_name"] :type "b_tree"}}]
+           actions))))
+
+(deftest test-schema-diff-index-actions-rename-then-reuse-column-name
+  (let [src-schema {"people" {:title   "People"
+                              :server  "full"
+                              :client  "none"
+                              :columns [{:name "name" :type "string"}
+                                        {:name "age" :type "number"}]
+                              :indexes [{:columns ["age"] :type "b_tree"}]}}
+
+        target-schema {"people" {:title   "People"
+                                 :server  "full"
+                                 :client  "none"
+                                 :columns [{:name "name" :type "string"}
+                                           {:name "how_old" :type "number"}
+                                           {:name "age" :type "number"}]
+                                 :indexes [{:columns ["how_old"] :type "b_tree"}
+                                           {:columns ["age"] :type "b_tree"}]}}
+
+        schema-hints {:people {:columns {:age {:known_ids [42]}
+                                         :how_old {:known_ids [42]}}}}
+        actions (diff-schema src-schema target-schema schema-hints)
+        index-actions (filter #(contains? #{:ADD_INDEX :DELETE_INDEX} (:type %)) actions)]
+    (is (= [{:type :ADD_INDEX
+             :table "people"
+             :index {:columns ["how_old"] :type "b_tree"}}]
+           index-actions))))
+
+(deftest test-schema-diff-client-hidden-false-does-not-replace-column
+  (let [src-schema {"users" {:title   "Users"
+                             :server  "full"
+                             :client  "search"
+                             :columns [{:name "email" :type "string"}
+                                       {:name "password_hash" :type "string"}]}}
+
+        target-schema {"users" {:title   "Users"
+                                :server  "full"
+                                :client  "search"
+                                :columns [{:name "email" :type "string" :client_hidden false}
+                                          {:name "password_hash" :type "string" :client_hidden false}]}}]
+    (is (= [] (diff-schema src-schema target-schema nil)))))
+
+(deftest test-schema-diff-client-hidden-true-updates-column
+  (let [src-schema {"users" {:title   "Users"
+                             :server  "full"
+                             :client  "search"
+                             :columns [{:name "email" :type "string"}
+                                       {:name "password_hash" :type "string"}]}}
+
+        target-schema {"users" {:title   "Users"
+                                :server  "full"
+                                :client  "search"
+                                :columns [{:name "email" :type "string" :client_hidden false}
+                                          {:name "password_hash" :type "string" :client_hidden true}]}}]
+    (is (= [{:type :UPDATE_COLUMN
+             :table "users"
+             :column_name "password_hash"
+             :changes {:client_hidden true}}]
+           (diff-schema src-schema target-schema nil)))))
+
+(deftest test-schema-diff-client-hidden-false-with-index-actions
+  (let [src-schema {"people" {:title   "People"
+                              :server  "full"
+                              :client  "none"
+                              :columns [{:name "name" :type "string"}
+                                        {:name "age" :type "number"}]
+                              :indexes [{:columns ["age"] :type "b_tree"}]}}
+
+        target-schema {"people" {:title   "People"
+                                 :server  "full"
+                                 :client  "none"
+                                 :columns [{:name "name" :type "string" :client_hidden false}
+                                           {:name "age" :type "number" :client_hidden false}]
+                                 :indexes [{:columns ["name"] :type "trigram"}]}}
+
+        actions (diff-schema src-schema target-schema nil)]
+    (is (= [{:type :DELETE_INDEX
+             :table "people"
+             :index {:columns ["age"] :type "b_tree"}}
+            {:type :ADD_INDEX
+             :table "people"
+             :index {:columns ["name"] :type "trigram"}}]
+           actions))
+    (is (empty? (filter #(contains? #{:DELETE_COLUMN :ADD_COLUMN} (:type %)) actions)))))

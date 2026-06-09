@@ -49,8 +49,13 @@ you should amend the static sha value in runtime/server/core/src/anvil/runtime/s
 }
 
 
-.xy-panel > .holder > .anvil-component {
+.xy-panel > .holder > .anvil-xy-panel-item > * {
     margin: 0;
+}
+
+.xy-panel > .holder > .anvil-xy-panel-item.anvil-xy-panel-item-has-width > * {
+    width: 100%;
+    min-width: 0;
 }
 
 /* Any container can have this class to request that what's in it be inline where possible */

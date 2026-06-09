@@ -6,7 +6,7 @@ import { HtmlComponent } from "@runtime/components/HtmlComponent";
 import PyDefUtils from "PyDefUtils";
 import { Component } from "../components/Component";
 import { registerJsPythonModules } from "./components-in-js/common";
-import { AppYaml, data, DependencyYaml } from "./data";
+import { TreeMapContent, data } from "./data";
 import { createFormTemplateClass } from "./forms";
 import { setupLegacyV1AnvilModule } from "./legacy-python-environment";
 import loadOrdinaryModulesReturningAnvilModule, { registerServerCallSuspension } from "./load-modules";
@@ -36,7 +36,7 @@ function setupAppSourceCode() {
     const getFilePath = (name: string, isPackage: boolean | undefined, topLevelPackage: string) =>
         "app/" + topLevelPackage + "/" + name.replace(/\./g, "/") + (isPackage ? "/__init__.py" : ".py");
 
-    const fillOutModules = (app: AppYaml | DependencyYaml, topLevelPackage: string) => {
+    const fillOutModules = (app: TreeMapContent, topLevelPackage: string) => {
         for (const f of app.forms || []) {
             skulptFiles[getFilePath(f.class_name, f.is_package, topLevelPackage)] = f.code;
         }
@@ -104,7 +104,7 @@ const TEMPLATE_MODULE_BODY = `function $builtinmodule(mod) {
 };`;
 
 function setupAppTemplates(
-    yaml: AppYaml | DependencyYaml,
+    yaml: TreeMapContent,
     depAppId: string | null,
     appPackage: string,
     anvilModule: PyModMap
@@ -155,7 +155,7 @@ function setupAppTemplates(
 const isServerRequestSuspension = (s: Suspension): s is Suspension<{ serverRequestId: string }> =>
     s.data !== null && typeof s.data === "object" && "serverRequestId" in s.data;
 
-PyDefUtils.suspensionHandlers["Sk.promise"] = (s: Suspension) => {
+(PyDefUtils.suspensionHandlers as Record<string, ((s: Suspension) => unknown) | undefined>)["Sk.promise"] = (s: Suspension) => {
     if (isServerRequestSuspension(s)) {
         registerServerCallSuspension?.(s);
     }
@@ -164,11 +164,19 @@ PyDefUtils.suspensionHandlers["Sk.promise"] = (s: Suspension) => {
 
 export async function setupPythonEnvironment() {
     const extraOptions = hooks.getSkulptOptions?.() || {};
+    let pyVer;
+    if (data.app.runtime_options?.client_version == "3") {
+        pyVer = Sk.python3;
+    } else {
+        pyVer = Sk.python2;
+    }
+    pyVer.super_args = true;
+
     Sk.configure({
         output: stdout,
         read: builtinRead,
         syspath: ["app", "anvil-services"],
-        __future__: data.app.runtime_options?.client_version == "3" ? Sk.python3 : Sk.python2,
+        __future__: pyVer,
         suspensionHandlers: PyDefUtils.suspensionHandlers,
         ...extraOptions,
     });

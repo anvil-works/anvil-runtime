@@ -31,7 +31,7 @@ interface SpinnerOptions {
 const SpinnerLoaderCache = new WeakMap<HTMLElement, SpinnerLoader>();
 
 export class SpinnerLoader {
-    timeout: undefined | number;
+    timeout: number | undefined;
     animation: Animation | null = null;
     refCount = 0;
     static getOrCreate(el: HTMLElement, options: SpinnerOptions = {}) {

@@ -62,6 +62,7 @@ const YouTubeVideoFactory = (pyModule: PyModMap) => {
                     exampleValue: "m7kzwpJfEeY",
                     description: "The ID of the YouTube video to play",
                     suggested: true,
+                    important: true,
                     set(s) {
                         update(s);
                     },
@@ -211,6 +212,7 @@ const YouTubeVideoFactory = (pyModule: PyModMap) => {
                     // @ts-expect-error - allowfullscreen with setAttribute is valid
                     allowfullscreen=""
                     allow="autoplay"
+                    referrerpolicy="strict-origin-when-cross-origin"
                     style="height: 100%; width: 100%;"></iframe>
             </PyDefUtils.OuterElement>
         ),
@@ -289,6 +291,11 @@ const YouTubeVideoFactory = (pyModule: PyModMap) => {
         const VideoID = encodeURIComponent(YouTubeGetID(self._anvil.getProp("youtube_id").toString()));
 
         let src = "https://www.youtube.com/embed/" + VideoID + "?rel=0&enablejsapi=1";
+        const origin = window.location?.origin;
+        if (origin) {
+            // Recommended by YouTube whenever enablejsapi=1 is set.
+            src += "&origin=" + encodeURIComponent(origin);
+        }
         if (isTrue(self._anvil.getProp("autoplay"))) {
             src += "&autoplay=1";
         }

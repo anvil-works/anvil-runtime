@@ -1,5 +1,3 @@
-import type * as ABSTR from "./abstr";
-
 import {
     pyArithmeticErrorConstructor,
     pyAssertionErrorConstructor,
@@ -17,11 +15,12 @@ import {
     pyImportErrorConstructor,
     pyIndentationErrorConstructor,
     pyIndexErrorConstructor,
-    pyKeyboardInterruptConstructor,
     pyKeyErrorConstructor,
+    pyKeyboardInterruptConstructor,
     pyLookupErrorConstructor,
     pyMemoryErrorConstructor,
     pyMethodConstructor,
+    pyMethodDescriptorConstructor,
     pyModuleNotFoundErrorConstructor,
     pyNameErrorConstructor,
     pyNewableType,
@@ -49,7 +48,12 @@ import {
     pyValueErrorConstructor,
     pyZeroDivisionErrorConstructor,
 } from "./";
+import type * as ABSTR from "./abstr";
 import {
+    Break,
+    BreakConstructor,
+    Suspension,
+    SuspensionConstructor,
     pyBool,
     pyBoolConstructor,
     pyBytes,
@@ -87,8 +91,8 @@ import {
     pyTupleConstructor,
     pyType,
     pyTypeConstructor,
+    pyWrapperDescriptorConstructor,
 } from "./index";
-import { BreakConstructor, SuspensionConstructor, Suspension, Break } from "./index";
 
 export namespace Sk {
     export namespace builtin {
@@ -99,6 +103,7 @@ export namespace Sk {
         const frozenset: pyFrozenSetConstructor;
         const func: pyFuncConstructor;
         const int_: pyIntConstructor;
+        const lng: pyIntConstructor;
         const list: pyListConstructor;
         const none: pyNoneTypeConstructor;
         const mappingproxy: pyMappingProxyConstructor;
@@ -115,6 +120,8 @@ export namespace Sk {
         const NotImplemented: pyNotImplementedTypeConstructor;
 
         const getset_descriptor: pyGetSetDescriptorConstructor;
+        const method_descriptor: pyMethodDescriptorConstructor;
+        const wrapper_descriptor: pyWrapperDescriptorConstructor;
 
         const classmethod: pyClassMethodConstructor;
         const staticmethod: pyStaticMethodConstructor;
@@ -174,15 +181,21 @@ export namespace Sk {
         function checkBool(obj: any): obj is pyBool;
         function checkAnySet(obj: any): obj is pySet | pyFrozenSet;
         function checkMapping(obj: any): obj is pyDict;
+        function asnum$(obj: pyFloat | pyInt): number | bigint;
         function pyCheckArgs(
             fnName: string,
-            args: Args,
+            args: { readonly length: number },
             minargs: number,
             maxargs?: number,
             kwargs?: number,
             free?: number
         ): void;
-        function pyCheckArgsLen(fnName: string, args: Args, minargs: number, maxargs?: number): void;
+        function pyCheckArgsLen(
+            fnName: string,
+            args: { readonly length: number },
+            minargs: number,
+            maxargs?: number
+        ): void;
         function pyCheckType(fnName: string, excTypeName: string, check: boolean): void;
 
         function round(num: pyObject, ndigits?: pyObject): pyObject;
@@ -198,7 +211,9 @@ export namespace Sk {
         function chr(x: pyInt): pyStr;
         function dir(obj: pyObject): pyList<pyStr> | Suspension;
         function repr(obj: pyObject): pyStr;
+        function format(obj: pyObject, formatSpec: pyStr): pyStr;
         function ascii(obj: pyObject): pyStr;
+        function sorted(iter: pyIterable, cmp?: pyCallable, key?: pyCallable, reverse?: pyBool): pyList;
 
         function isinstance(obj: pyObject, type: pyType | pyTuple<pyType>): pyBool;
         function issubclass(obj: pyType, type: pyType | pyTuple<pyType>): pyBool;
@@ -248,6 +263,14 @@ export namespace Sk {
         function callsim(callable: pyObject, ...args: Args): pyObject;
         /** @deprecated use callsimOrSuspendArray */
         function callsimOrSuspend(callable: pyObject, ...args: Args): pyObject | Suspension;
+        /** @deprecated use callsimOrSuspendArray */
+        function callOrSuspend(
+            func: pyObject,
+            kwdict?: pyDict | undefined | null,
+            varargseq?: pyTuple | undefined | null,
+            kws?: Kws,
+            ...args: Args
+        ): pyObject | Suspension;
 
         /** @deprecated use callsimOrSuspendArray */
         function applyOrSuspend(
@@ -350,6 +373,7 @@ export namespace Sk {
             canSuspend?: S
         ): S extends true ? T[] | Suspension : T[];
 
+        function asIndexOrThrow(obj: pyObject): number;
         function isTrue(obj: any): boolean;
 
         function objectRepr(obj: pyObject): string;
@@ -370,42 +394,41 @@ export namespace Sk {
     }
 
     export namespace ffi {
-        function toPy<T = any>(
-            obj: T,
-            hooks?: any
-        ): T extends string
+        type ToPy<T> = T extends string
             ? pyStr
             : T extends null | undefined
-            ? pyNoneType
-            : T extends boolean
-            ? pyBool
-            : T extends number
-            ? pyInt | pyFloat
-            : T extends Array<any>
-            ? pyList
-            : T extends Record<string, unknown>
-            ? pyDict<pyStr, pyObject>
-            : pyObject;
+              ? pyNoneType
+              : T extends boolean
+                ? pyBool
+                : T extends number
+                  ? pyInt | pyFloat
+                  : T extends Array<infer U>
+                    ? pyList<ToPy<U>>
+                    : T extends Record<string, unknown>
+                      ? pyDict<pyStr, pyObject>
+                      : pyObject;
+
+        function toPy<T = any>(obj: T, hooks?: any): ToPy<T>;
 
         type RecursiveToJs<T> = unknown extends T
             ? any
             : T extends pyStr
-            ? string
-            : T extends pyNoneType
-            ? null
-            : T extends pyBool
-            ? boolean
-            : T extends pyInt
-            ? number | bigint
-            : T extends pyFloat
-            ? number
-            : T extends pyTuple | pyList
-            ? RecursiveToJs<T["v"][number]>
-            : T extends pyBytes
-            ? Uint8Array
-            : T extends pyObject
-            ? unknown
-            : T;
+              ? string
+              : T extends pyNoneType
+                ? null
+                : T extends pyBool
+                  ? boolean
+                  : T extends pyInt
+                    ? number | bigint
+                    : T extends pyFloat
+                      ? number
+                      : T extends pyTuple | pyList
+                        ? RecursiveToJs<T["v"][number]>[]
+                        : T extends pyBytes
+                          ? Uint8Array
+                          : T extends pyObject
+                            ? unknown
+                            : T;
 
         function toJs<T = any>(obj: T, hooks?: any): RecursiveToJs<T>;
 
@@ -497,6 +520,11 @@ export namespace Sk {
 
     const sysmodules: pyDict<pyStr, pyModule>;
 
+    function unfixReserved(name: string): string;
+    function fixReserved(name: string): string;
+
+    let uncaughtException: ((error: unknown) => void) | undefined;
+
     function configure(options: any): void;
     function importSetUpPath(): void;
 
@@ -587,7 +615,12 @@ export type Flags =
     | { MinArgs: number; MaxArgs?: number }
     | { NamedArgs: (null | string)[]; Defaults?: any[] };
 
-type Skulpt = typeof Sk;
+type GenericNew = ((this: pyObject, args: Args, kws?: Kws) => pyObject | Suspension) &
+    (<T extends pyObject>(builtin: pyNewableType<T>) => (this: T, args: Args, kws?: Kws) => T);
+
+type Skulpt = typeof Sk & {
+    generic: typeof Sk.generic & { new: GenericNew };
+};
 
 type UnTyped = { [attr: string]: any };
 
@@ -600,6 +633,6 @@ export interface SkulptUnTyped {
 }
 
 declare global {
-    const Sk: SkulptUnTyped & Skulpt;
-    // const Sk: Skulpt;
+    // const Sk: SkulptUnTyped & Skulpt;
+    const Sk: Skulpt;
 }
