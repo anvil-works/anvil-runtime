@@ -1,5 +1,4 @@
 // An add-in to the `anvil` module that allows us to hook and control component construction
-
 import {
     Args,
     Kws,
@@ -26,30 +25,30 @@ import {
     pyValueError,
     toJs,
 } from "../@Sk";
-import { Component, ComponentConstructor, getDefaultDepIdForComponent } from "../components/Component";
-import { isPyInstantiatorFunction, PyInstantiatorFunction } from "./component-property-utils-api";
-import { data } from "./data";
+import { Component, ComponentConstructor, getDefaultDepAppIdForComponent } from "../components/Component";
+import { PyInstantiatorFunction, isPyInstantiatorFunction } from "./component-property-utils-api";
+import { ParsedFormSpec, parseCustomComponentSpec, parseFormPropertySpec } from "./component-specs";
 import { PyModMap, anvilMod, funcFastCall } from "./py-util";
 
-// There are two times when we might want to turn the name of a form into a constructor, at which point
-// we need to disambiguate which app/dependency we should look in when we get a bare string like "Form1".
+export type { ParsedFormSpec } from "./component-specs";
+
+// There are two times when we turn a spec into a form constructor and need an app context for appLocalFormName values.
 //
-// If a FormTemplate is instantiating a component from a YAML description, it's simple - we should always be relative
-// to the app that defines that form.
+// If a FormTemplate is instantiating a customComponentSpec from YAML, the app context is the app that defines that YAML.
 //
-// If we're instantiating a component from a form property (eg a RepeatingPanel instantiating its item_template
-// property), and it's a property on a component created from YAML, it should be relative to the YAML that created
-// that component. For example, if a dependency defines its own CustomRepeatingPanel, and we use the
-// CustomRepeatingPanel from another app, the item_template property should be looked up relative to the app whose
-// YAML created the CustomRepeatingPanel, not the dependency that defined the CustomRepeatingPanel class.
+// If a RepeatingPanel instantiates the formPropertySpec in its item_template property, and that property belongs to
+// a component created from YAML, the app context is the app whose YAML created that component. For example, if a
+// dependency defines its own CustomRepeatingPanel, and we use that CustomRepeatingPanel from another app, item_template
+// should be looked up in the app that used CustomRepeatingPanel, not the dependency that defined the class.
 //
 // To do this we have a magic reach-around-the-back mechanism in Component.ts which uses global state to set the
-// default dep ID on the next Component to be instantiated. When we instantiate from YAML, we use this mechanism
-// to set the YAML's dep ID as the default dep ID, in case that component wants to instantiate any form properties.
+// default dependency app ID on the next Component to be instantiated. When we instantiate from YAML, we use this
+// mechanism to set the YAML's dependency app ID as the default dependency app ID, in case that component wants to
+// instantiate any form properties.
 export interface YamlInstantiationContext {
     requestingComponent: Component;
     fromYaml: true;
-    defaultDepId: string | null;
+    defaultDepAppId: string | null;
 }
 
 interface PropertyInstantiationContext {
@@ -58,48 +57,48 @@ interface PropertyInstantiationContext {
 }
 export type InstantiationContext = YamlInstantiationContext | PropertyInstantiationContext;
 
-export const getDefaultDepIdForInstantiation = (context: InstantiationContext) =>
-    context.fromYaml ? context.defaultDepId : getDefaultDepIdForComponent(context.requestingComponent);
+export const getDefaultDepAppIdForInstantiation = (context: InstantiationContext) =>
+    context.fromYaml ? context.defaultDepAppId : getDefaultDepAppIdForComponent(context.requestingComponent);
 
-const COMPONENT_MATCHER = /^(?:([^:]+):)?([^:]*)$/;
-const ComponentMatcher = (nameSpec: string) => nameSpec.match(COMPONENT_MATCHER) as [any, string | null, string] | null;
-
-export interface ResolvedForm {
-    formName: string;
-    qualifiedClassName: string;
-    depId: string | null;
-    logicalDepId: string | null;
-}
-
-export const resolveFormSpec = (name: string, defaultDepId: string | null): ResolvedForm => {
-    const [, logicalDepId = null, formName] = ComponentMatcher(name) ?? [];
-    if (!formName) {
-        throw new Error(`Invalid YAML spec for form: ${name}`);
-    }
-    const depId = logicalDepId ? data.logicalDepIds[logicalDepId] : null;
-    if (logicalDepId && !depId) {
+const throwIfUnresolvedDependencyInParsedFormSpec = (name: string, parsedFormSpec: ParsedFormSpec) => {
+    if (parsedFormSpec.logicalDepId && !parsedFormSpec.depAppId) {
         throw new pyValueError(`Dependency not found for ${name}`);
     }
-    const appPackage = logicalDepId
-        ? data.dependencyPackages[depId!]
-        : defaultDepId
-        ? data.dependencyPackages[defaultDepId]
-        : data.appPackage;
-    // console.log("Resolving", appPackage, "for dep", depId, "/", defaultDepId, "from", data.dependencyPackages, "with", data.appPackage);
-    if (!appPackage) {
+    if (!parsedFormSpec.packageName) {
         throw new pyValueError("Dependency not found for: " + name);
     }
-    return { qualifiedClassName: `${appPackage}.${formName}`, depId, formName, logicalDepId };
 };
 
-export const getFormClassObject = ({ qualifiedClassName }: ResolvedForm) => {
-    return chainOrSuspend(Sk.importModule(qualifiedClassName, false, true), () => {
-        const dots = qualifiedClassName.split(".").slice(1);
-        const className = dots[dots.length - 1];
+export const maybeParseCustomComponentSpecForInstantiation = (
+    customComponentSpec: string,
+    defaultDepAppId: string | null
+): ParsedFormSpec | null => {
+    const parsedFormSpec = parseCustomComponentSpec(customComponentSpec, defaultDepAppId, {
+        allowUnknownPackage: true,
+    });
+    if (parsedFormSpec) {
+        throwIfUnresolvedDependencyInParsedFormSpec(customComponentSpec, parsedFormSpec);
+    }
+    return parsedFormSpec;
+};
 
-        const pyFormMod = Sk.sysmodules.quick$lookup(new pyStr(qualifiedClassName));
+export const parseRequiredFormPropertySpec = (
+    formPropertySpec: string,
+    defaultDepAppId: string | null
+): ParsedFormSpec => {
+    const parsedFormSpec = parseFormPropertySpec(formPropertySpec, defaultDepAppId);
+    if (!parsedFormSpec) {
+        throw new Error(`Invalid YAML spec for form: ${formPropertySpec}`);
+    }
+    throwIfUnresolvedDependencyInParsedFormSpec(formPropertySpec, parsedFormSpec);
+    return parsedFormSpec;
+};
+
+export const getFormClassObject = ({ packageQualifiedFormName, leafName }: ParsedFormSpec) => {
+    return chainOrSuspend(Sk.importModule(packageQualifiedFormName, false, true), () => {
+        const pyFormMod = Sk.sysmodules.quick$lookup(new pyStr(packageQualifiedFormName));
         if (pyFormMod) {
-            return Sk.abstr.gattr(pyFormMod, new pyStr(className)) as ComponentConstructor;
+            return Sk.abstr.gattr(pyFormMod, new pyStr(leafName)) as ComponentConstructor;
         }
     });
 };
@@ -135,20 +134,20 @@ export interface FormInstantiationFlags {
 
 export interface InstantiatorFunction {
     (kws?: Kws, pathStep?: number | string): Suspension | Component;
-    anvil$instantiatorForForm: ResolvedForm | null;
+    anvil$parsedFormSpec: ParsedFormSpec | null;
 }
 
 export const getDefaultNamedFormInstantiator = (
-    formSpec: ResolvedForm,
+    parsedFormSpec: ParsedFormSpec,
     requestingComponent?: Component,
     flags?: FormInstantiationFlags
 ): Suspension | InstantiatorFunction => {
-    return chainOrSuspend(getFormClassObject(formSpec), (constructor) => {
+    return chainOrSuspend(getFormClassObject(parsedFormSpec), (constructor) => {
         if (constructor === undefined) {
-            throw new pyImportError("Failed to import form " + formSpec.formName);
+            throw new pyImportError("Failed to import form " + parsedFormSpec.appLocalFormName);
         }
         const ifn = (kwargs?: Kws, pathStep?: string | number) => pyCallOrSuspend(constructor, [], kwargs);
-        ifn.anvil$instantiatorForForm = formSpec;
+        ifn.anvil$parsedFormSpec = parsedFormSpec;
         return ifn;
     });
 };
@@ -162,18 +161,21 @@ export let getNamedFormInstantiator = getDefaultNamedFormInstantiator;
 
 export const getFormInstantiator = (
     context: InstantiationContext,
-    formSpec: pyStr | ComponentConstructor | PyInstantiatorFunction,
+    formPropertyValue: pyStr | ComponentConstructor | PyInstantiatorFunction,
     flags?: FormInstantiationFlags
 ): Suspension | InstantiatorFunction => {
-    if (checkString(formSpec)) {
-        const resolvedForm = resolveFormSpec(formSpec.toString(), getDefaultDepIdForInstantiation(context));
-        return getNamedFormInstantiator(resolvedForm, context.requestingComponent, flags);
-    } else if (isPyInstantiatorFunction(formSpec)) {
-        return formSpec.anvil$underlyingInstantiator;
+    if (checkString(formPropertyValue)) {
+        const parsedFormSpec = parseRequiredFormPropertySpec(
+            formPropertyValue.toString(),
+            getDefaultDepAppIdForInstantiation(context)
+        );
+        return getNamedFormInstantiator(parsedFormSpec, context.requestingComponent, flags);
+    } else if (isPyInstantiatorFunction(formPropertyValue)) {
+        return formPropertyValue.anvil$underlyingInstantiator;
     } else {
-        // formSpec is a Python callable; wrap it
-        const ifn = (kws?: Kws) => pyCallOrSuspend<Component>(formSpec, [], kws);
-        ifn.anvil$instantiatorForForm = null as any;
+        // formPropertyValue is a Python callable; wrap it
+        const ifn = (kws?: Kws) => pyCallOrSuspend<Component>(formPropertyValue, [], kws);
+        ifn.anvil$parsedFormSpec = null as any;
         return ifn;
     }
 };
@@ -210,7 +212,7 @@ export const pyInstantiateComponent = funcFastCall((args_: Args, kws_?: Kws) => 
     return chainOrSuspend(
         checkString(component)
             ? getFormClassObject(
-                  resolveFormSpec(component.toString(), getDefaultDepIdForComponent(requestingComponent))
+                  parseRequiredFormPropertySpec(component.toString(), getDefaultDepAppIdForComponent(requestingComponent))
               )
             : component,
         (constructor) => {

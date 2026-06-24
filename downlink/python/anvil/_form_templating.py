@@ -4,28 +4,54 @@ from . import _server
 
 # Filled in by the downlink_worker package
 packages_by_app_id = {}
+LEGACY_CUSTOM_COMPONENT_SPEC_PREFIX = "form:"
+
+
+def _get_form_class_for_component_yaml_type(component_yaml_type):
+    # In downlink form templates, legacy form: specs use app IDs from
+    # packages_by_app_id. They are not runtime logicalDepId aliases.
+    if component_yaml_type.startswith(LEGACY_CUSTOM_COMPONENT_SPEC_PREFIX):
+        custom_component_spec = component_yaml_type[
+            len(LEGACY_CUSTOM_COMPONENT_SPEC_PREFIX) :
+        ]
+        spec_parts = custom_component_spec.split(":")
+        if len(spec_parts) == 2:
+            app_id = spec_parts[0]
+            app_local_form_name = spec_parts[1]
+        elif len(spec_parts) == 1:
+            app_id = ""
+            app_local_form_name = spec_parts[0]
+        else:
+            raise ValueError(
+                "Can't instantiate custom component %s" % component_yaml_type
+            )
+
+        package_name = packages_by_app_id.get(app_id)
+        if package_name is None:
+            raise ValueError(
+                "Unknown app id %s for component %s" % (app_id, component_yaml_type)
+            )
+
+        package_qualified_form_name = package_name + "." + app_local_form_name
+        class_name = app_local_form_name.split(".")[-1]
+    elif "." in component_yaml_type and not component_yaml_type.startswith("anvil."):
+        package_qualified_form_name = component_yaml_type
+        class_name = component_yaml_type.rsplit(".", 1)[1]
+    else:
+        return None
+
+    form_mod = importlib.import_module(package_qualified_form_name)
+    return getattr(form_mod, class_name)
 
 
 def mk_component(yaml, components_by_name):
-    component_type = yaml["type"]
-    if component_type.startswith("form:"):
-        spec = component_type.split(":")
-        if len(spec) == 3:
-            app_id = spec[1]
-            form_name = spec[2]
-        elif len(spec) == 2:
-            app_id = ""
-            form_name = spec[1]
-        else:
-            raise ValueError("Can't instantiate custom component %s" % component_type)
-
-        form_mod = importlib.import_module(packages_by_app_id[app_id] + "." + form_name)
-        form_cls = getattr(form_mod, form_name.split(".")[-1])
-
+    component_yaml_type = yaml["type"]
+    form_cls = _get_form_class_for_component_yaml_type(component_yaml_type)
+    if form_cls is not None:
         return form_cls(**yaml.get("properties", {}))
     else:
         try:
-            cls = getattr(_components, component_type)
+            cls = getattr(_components, component_yaml_type)
         except AttributeError:
             # Okay, make a dummy
             obj = (
@@ -33,7 +59,7 @@ def mk_component(yaml, components_by_name):
                 if "components" in yaml
                 else _components.Component()
             )
-            obj.SERIALIZATION_INFO = "anvil." + component_type, type(obj)
+            obj.SERIALIZATION_INFO = "anvil." + component_yaml_type, type(obj)
         else:
             obj = cls(**yaml["properties"])
 
@@ -59,7 +85,10 @@ def init_components_on_form(form, components):
 
 def mk_template_class(form_yaml):
     ns = {}
-    container_cls = getattr(_components, form_yaml["container"]["type"])
+    container_yaml_type = form_yaml["container"]["type"]
+    container_cls = _get_form_class_for_component_yaml_type(
+        container_yaml_type
+    ) or getattr(_components, container_yaml_type)
     default_custom_props = {}
     if form_yaml.get("custom_component"):
         for pt in form_yaml.get("properties", []):

@@ -194,6 +194,14 @@
              (metrics/set! :api/waiting-worker-threads-total @n-threads-waiting)
              (metrics/set! :api/max-thread-pool-size-total (get-worker-pool-size))
              (metrics/set! :api/task-queue-length-total (hrr-queue/hrr-size (first @task-queue)))
+             (try
+               (let [enqueue-ts (System/nanoTime)]
+                 (run-task! {:type :task, :name ::measure-latency, :tags [::measure-latency]}
+                   (metrics/observe! :api/task-queue-probe-wait-seconds
+                                     (/ (- (System/nanoTime) enqueue-ts) 1e9)
+                                     nil)))
+               (catch Throwable e
+                 (log/warn e "Failed to enqueue worker-pool latency probe")))
              (Thread/sleep 1000))))
 
 ;; Debugging: Dump thread dumps whenever the worker pool queue gets too big

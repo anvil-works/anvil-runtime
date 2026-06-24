@@ -1,5 +1,6 @@
 import {
     Args,
+    GetSetDef,
     Kws,
     buildNativeClass,
     chainOrSuspend,
@@ -14,8 +15,8 @@ import {
     remapToJsOrWrap,
     toPy,
     tryCatchOrSuspend,
-    GetSetDef,
 } from "@Sk";
+import PyDefUtils from "PyDefUtils";
 import {
     AnvilHookSpec,
     Component,
@@ -25,6 +26,7 @@ import {
     DropZone,
     DroppingSpecification,
     EventDescription,
+    IGNORE_PROPERTY_EXCEPTIONS_KW,
     Interaction,
     PropertyDescriptionBase,
     PropertyValueUpdates,
@@ -39,9 +41,14 @@ import {
     raiseWritebackEventOrSuspend,
 } from "@runtime/components/Component";
 import { Container, validateChild } from "@runtime/components/Container";
-import { initNativeSubclass, kwsToJsObj, s_add_event_handler, s_remove_event_handler } from "@runtime/runner/py-util";
+import {
+    initNativeSubclass,
+    iterKws,
+    kwsToJsObj,
+    s_add_event_handler,
+    s_remove_event_handler,
+} from "@runtime/runner/py-util";
 import { DropModeFlags } from "@runtime/runner/python-objects";
-import PyDefUtils from "PyDefUtils";
 import { addJsModuleHook, customToolboxSections, jsCustomComponents } from "../common";
 import { JS_COMPONENT, PY_COMPONENT } from "./constants";
 import { asJsComponent, maybeSuspend, returnToPy, toPyComponent } from "./utils";
@@ -313,22 +320,18 @@ function pyComponentFromClass(cls: JsComponentConstructor, spec: CustomComponent
                 // We also might want to be cleverer here
                 // potentially adding `_anvilPostInit`, `_anvilPreInit` might be useful
                 let raiseError = true;
-                if (kws) {
-                    for (let i = 0; i < kws.length; i += 2) {
-                        const k = kws[i] as string;
-                        const v = kws[i + 1] as pyObject;
-                        if (k !== "__ignore_property_exceptions") {
-                            chainedFns.push(() =>
-                                tryCatchOrSuspend(
-                                    () => this.tp$setattr(new pyStr(k), v, true),
-                                    (e) => {
-                                        if (raiseError) throw e;
-                                    }
-                                )
-                            );
-                        } else {
-                            raiseError = false;
-                        }
+                for (const [k, v] of iterKws(kws)) {
+                    if (k !== IGNORE_PROPERTY_EXCEPTIONS_KW) {
+                        chainedFns.push(() =>
+                            tryCatchOrSuspend(
+                                () => this.tp$setattr(new pyStr(k), v, true),
+                                (e) => {
+                                    if (raiseError) throw e;
+                                }
+                            )
+                        );
+                    } else {
+                        raiseError = false;
                     }
                 }
                 if (chainedFns.length) return chainOrSuspend(null, ...chainedFns);

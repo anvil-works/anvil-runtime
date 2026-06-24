@@ -1,0 +1,16 @@
+{
+  "name": "slots/stale-data-slot-dropzone",
+  "entrypoint": "parseSerializedHtml",
+  "html": "<center style=\"font-style:italic; color:#888; margin: 3em;\">\n  (Insert your custom HTML here)\n</center>\n<anvil-dropzone name=\"$dz_ajbta8\" data-slot=\"slot_1\"></anvil-dropzone>\n<anvil-dropzone name=\"$dz_ifpkow\"></anvil-dropzone>",
+  "expected": {
+    "container": {
+      "type": "HtmlComponent",
+      "properties": {
+        "html": "<center style=\"font-style:italic; color:#888; margin: 3em;\">\n  (Insert your custom HTML here)\n</center>\n<anvil-dropzone name=\"$dz_ajbta8\" data-slot=\"slot_1\"></anvil-dropzone>\n<anvil-dropzone name=\"$dz_ifpkow\"></anvil-dropzone>"
+      }
+    },
+    "components": [],
+    "serialized_html": "<center style=\"font-style:italic; color:#888; margin: 3em;\">\n  (Insert your custom HTML here)\n</center>\n<anvil-dropzone name=\"$dz_ajbta8\" data-slot=\"slot_1\"></anvil-dropzone>\n<anvil-dropzone name=\"$dz_ifpkow\"></anvil-dropzone>"
+  },
+  "expectedSerializedHtml": "<center style=\"font-style:italic; color:#888; margin: 3em;\">\n  (Insert your custom HTML here)\n</center>\n<anvil-dropzone name=\"$dz_ajbta8\" data-slot=\"slot_1\"></anvil-dropzone>\n<anvil-dropzone name=\"$dz_ifpkow\"></anvil-dropzone>"
+}

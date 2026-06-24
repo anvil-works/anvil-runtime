@@ -3,6 +3,7 @@ import { chainOrSuspend, pyObject, Suspension, suspensionToPromise } from "@Sk";
 import { Container } from "@runtime/components/Container";
 import { hooks } from "@runtime/runner/data";
 import { HtmlComponent } from "@runtime/components/HtmlComponent";
+import { Classes, Style } from "@runtime/modules/_anvil/html-styling";
 import PyDefUtils from "PyDefUtils";
 import { Component } from "../components/Component";
 import { registerJsPythonModules } from "./components-in-js/common";
@@ -188,6 +189,8 @@ export async function setupPythonEnvironment() {
     anvilModule["Component"] = Component;
     anvilModule["Container"] = Container;
     anvilModule["HtmlComponent"] = HtmlComponent;
+    anvilModule["Classes"] = Classes;
+    anvilModule["Style"] = Style;
 
     // Inject the theme HTML assets into the HtmlTemplate component
     anvilModule["HtmlTemplate"].$_anvilThemeAssets = data.app.theme?.html || {};

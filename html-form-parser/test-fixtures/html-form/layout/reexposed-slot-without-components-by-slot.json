@@ -1,0 +1,39 @@
+{
+  "name": "layout/reexposed-slot-without-components-by-slot",
+  "entrypoint": "parseLayoutForm",
+  "html": "<anvil-form layout=\"form:BaseLayout\">\n    <anvil-block slot=\"slot_1\">\n        <anvil-slot name=\"slot_1\"></anvil-slot>\n    </anvil-block>\n</anvil-form>",
+  "expected": {
+    "layout": {
+      "type": "form:BaseLayout"
+    },
+    "components_by_slot": {
+      "slot_1": []
+    },
+    "slots": {
+      "slot_1": {
+        "target": {
+          "type": "slot",
+          "name": "slot_1"
+        },
+        "index": 0,
+        "set_layout_properties": {}
+      }
+    }
+  },
+  "serializerInput": {
+    "layout": {
+      "type": "form:BaseLayout"
+    },
+    "slots": {
+      "slot_1": {
+        "target": {
+          "type": "slot",
+          "name": "slot_1"
+        },
+        "index": 0,
+        "set_layout_properties": {}
+      }
+    }
+  },
+  "expectedSerializedHtml": "<anvil-form layout=\"form:BaseLayout\">\n    <anvil-block slot=\"slot_1\">\n        <anvil-slot name=\"slot_1\"></anvil-slot>\n    </anvil-block>\n</anvil-form>"
+}

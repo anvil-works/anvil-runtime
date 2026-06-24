@@ -1,0 +1,44 @@
+{
+  "name": "parser/html-template-container-html-property",
+  "entrypoint": "parseContainerForm",
+  "html": "<anvil-form container=\"HtmlTemplate\" prop:html=\"&lt;div class=&quot;template&quot;&gt;Keep me&lt;/div&gt;\">\n    <anvil-component type=\"Button\" name=\"button_1\" prop:text=\"Click\"></anvil-component>\n</anvil-form>",
+  "normalization": {
+    "dropzoneIds": false
+  },
+  "expected": {
+    "container": {
+      "type": "HtmlTemplate",
+      "properties": {
+        "html": "<div class=\"template\">Keep me</div>"
+      }
+    },
+    "components": [
+      {
+        "type": "Button",
+        "name": "button_1",
+        "properties": {
+          "text": "Click"
+        }
+      }
+    ],
+    "serialized_html": "<anvil-form container=\"HtmlTemplate\" prop:html=\"&lt;div class=&quot;template&quot;&gt;Keep me&lt;/div&gt;\">\n    <anvil-component type=\"Button\" name=\"button_1\" prop:text=\"Click\"></anvil-component>\n</anvil-form>"
+  },
+  "serializerInput": {
+    "container": {
+      "type": "HtmlTemplate",
+      "properties": {
+        "html": "<div class=\"template\">Keep me</div>"
+      }
+    },
+    "components": [
+      {
+        "type": "Button",
+        "name": "button_1",
+        "properties": {
+          "text": "Click"
+        }
+      }
+    ]
+  },
+  "expectedSerializedHtml": "<anvil-form container=\"HtmlTemplate\" prop:html='<div class=\"template\">Keep me</div>'>\n    <anvil-component type=\"Button\" name=\"button_1\" prop:text=\"Click\"></anvil-component>\n</anvil-form>"
+}

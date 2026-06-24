@@ -79,3 +79,64 @@
         (is (string? (:hash asset))))
       (finally
         (cleanup-tree! tmp-dir)))))
+
+(deftest tree-map-to-yaml-prefers-html-template-when-both-template-formats-exist
+  (let [[_ tmp-dir] (fixture-tree)]
+    (try
+      (write-text! tmp-dir "forms/Form1.html" "<anvil-component type=\"Button\" name=\"button_1\" prop:text=\"HTML\"></anvil-component>")
+      (let [tm (read-app-storage/resource-directory-to-map (-> tmp-dir .toURI .toURL))
+            yaml (read-app-storage/tree-map-to-yaml tm false true)
+            form (first (:forms yaml))]
+        (is (:save_as_html form))
+        (is (= "button_1" (get-in form [:components 0 :name])))
+        (is (= "HTML" (get-in form [:components 0 :properties :text]))))
+      (finally
+        (cleanup-tree! tmp-dir)))))
+
+(deftest get-app-yaml-from-resource-directory-parses-html-form-templates
+  (let [[_ tmp-dir] (fixture-tree)
+        html (str "<h1>Title</h1>\n"
+                  "<anvil-component type=\"Button\" name=\"button_1\" prop:text=\"Go\"></anvil-component>")]
+    (try
+      (write-text! tmp-dir "forms/HtmlForm.py" "x = 2\n")
+      (write-text! tmp-dir "forms/HtmlForm.html" html)
+      (let [yaml (read-app-storage/get-app-yaml-from-resource-directory (-> tmp-dir .toURI .toURL) false true)
+            form (first (filter #(= "HtmlForm" (:class_name %)) (:forms yaml)))]
+        (is (:save_as_html form))
+        (is (= "x = 2\n" (:code form)))
+        (is (= html (:serialized_html form)))
+        (is (= "HtmlComponent" (get-in form [:container :type])))
+        (is (= "Button" (get-in form [:components 0 :type])))
+        (is (= "Go" (get-in form [:components 0 :properties :text]))))
+      (finally
+        (cleanup-tree! tmp-dir)))))
+
+(deftest get-app-yaml-from-resource-directory-parses-html-package-form-templates
+  (let [[_ tmp-dir] (fixture-tree)
+        html-body (str "<section>\n"
+                       "  <anvil-dropzone name=\"default\"></anvil-dropzone>\n"
+                       "  <anvil-component type=\"Label\" name=\"owned_label\" prop:text=\"Owned\"></anvil-component>\n"
+                       "</section>")
+        html-template (str "---\n"
+                           "custom_component: true\n"
+                           "custom_component_container: true\n"
+                           "---\n"
+                           html-body)]
+    (try
+      (write-text! tmp-dir "client_code/HtmlPackage/__init__.py" "x = 3\n")
+      (write-text! tmp-dir "client_code/HtmlPackage/form_template.html" html-template)
+      (let [yaml (read-app-storage/get-app-yaml-from-resource-directory (-> tmp-dir .toURI .toURL) false true)
+            form (first (filter #(= "HtmlPackage" (:class_name %)) (:forms yaml)))]
+        (is (:save_as_html form))
+        (is (:is_package form))
+        (is (:custom_component form))
+        (is (:custom_component_container form))
+        (is (= "x = 3\n" (:code form)))
+        (is (= html-body (:serialized_html form)))
+        (is (= "HtmlComponent" (get-in form [:container :type])))
+        (is (= "Label" (get-in form [:components 0 :type])))
+        (is (= "owned_label" (get-in form [:components 0 :name])))
+        (is (= "Owned" (get-in form [:components 0 :properties :text])))
+        (is (string? (get-in form [:components 0 :layout_properties :dropzone]))))
+      (finally
+        (cleanup-tree! tmp-dir)))))

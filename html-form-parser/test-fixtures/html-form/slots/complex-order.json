@@ -1,0 +1,99 @@
+{
+  "name": "slots/complex-order",
+  "entrypoint": "parseContainerForm",
+  "html": "<anvil-slot name=\"slot_3\"></anvil-slot>\n<anvil-component type=\"Button\" name=\"button_1\" prop:text=\"button_1\"></anvil-component>\n<anvil-slot name=\"slot_1\"></anvil-slot>\n<anvil-component type=\"Button\" name=\"button_2\" prop:text=\"button_2\"></anvil-component>\n<anvil-slot name=\"slot_2\"></anvil-slot>\n<anvil-component type=\"Button\" name=\"button_3\" prop:text=\"button_3\"></anvil-component>\n<anvil-slot name=\"slot_4\"></anvil-slot>\n<anvil-slot name=\"slot_5\"></anvil-slot>",
+  "expected": {
+    "container": {
+      "type": "HtmlComponent",
+      "properties": {
+        "html": "<anvil-dropzone name=\"$dz_0\"></anvil-dropzone>\n<anvil-dropzone name=\"$dz_1\"></anvil-dropzone>\n<anvil-dropzone name=\"$dz_2\"></anvil-dropzone>\n<anvil-dropzone name=\"$dz_3\"></anvil-dropzone>\n<anvil-dropzone name=\"$dz_4\"></anvil-dropzone>\n<anvil-dropzone name=\"$dz_5\"></anvil-dropzone>\n<anvil-dropzone name=\"$dz_6\"></anvil-dropzone>\n<anvil-dropzone name=\"$dz_7\"></anvil-dropzone>"
+      }
+    },
+    "components": [
+      {
+        "type": "Button",
+        "name": "button_1",
+        "properties": {
+          "text": "button_1"
+        },
+        "layout_properties": {
+          "dropzone": "$dz_1"
+        }
+      },
+      {
+        "type": "Button",
+        "name": "button_2",
+        "properties": {
+          "text": "button_2"
+        },
+        "layout_properties": {
+          "dropzone": "$dz_3"
+        }
+      },
+      {
+        "type": "Button",
+        "name": "button_3",
+        "properties": {
+          "text": "button_3"
+        },
+        "layout_properties": {
+          "dropzone": "$dz_5"
+        }
+      }
+    ],
+    "serialized_html": "<anvil-slot name=\"slot_3\"></anvil-slot>\n<anvil-component type=\"Button\" name=\"button_1\" prop:text=\"button_1\"></anvil-component>\n<anvil-slot name=\"slot_1\"></anvil-slot>\n<anvil-component type=\"Button\" name=\"button_2\" prop:text=\"button_2\"></anvil-component>\n<anvil-slot name=\"slot_2\"></anvil-slot>\n<anvil-component type=\"Button\" name=\"button_3\" prop:text=\"button_3\"></anvil-component>\n<anvil-slot name=\"slot_4\"></anvil-slot>\n<anvil-slot name=\"slot_5\"></anvil-slot>",
+    "slots": {
+      "slot_1": {
+        "target": {
+          "type": "container",
+          "name": ""
+        },
+        "index": 1,
+        "set_layout_properties": {
+          "dropzone": "$dz_2"
+        }
+      },
+      "slot_2": {
+        "target": {
+          "type": "container",
+          "name": ""
+        },
+        "index": 2,
+        "set_layout_properties": {
+          "dropzone": "$dz_4"
+        }
+      },
+      "slot_3": {
+        "target": {
+          "type": "container",
+          "name": ""
+        },
+        "index": 0,
+        "set_layout_properties": {
+          "dropzone": "$dz_0"
+        }
+      },
+      "slot_4": {
+        "target": {
+          "type": "container",
+          "name": ""
+        },
+        "index": 3,
+        "set_layout_properties": {
+          "dropzone": "$dz_6"
+        }
+      },
+      "slot_5": {
+        "target": {
+          "type": "container",
+          "name": ""
+        },
+        "index": 3,
+        "set_layout_properties": {
+          "dropzone": "$dz_7"
+        }
+      }
+    }
+  },
+  "expectedSerializedHtml": "<anvil-slot name=\"slot_3\"></anvil-slot>\n<anvil-component type=\"Button\" name=\"button_1\" prop:text=\"button_1\"></anvil-component>\n<anvil-slot name=\"slot_1\"></anvil-slot>\n<anvil-component type=\"Button\" name=\"button_2\" prop:text=\"button_2\"></anvil-component>\n<anvil-slot name=\"slot_2\"></anvil-slot>\n<anvil-component type=\"Button\" name=\"button_3\" prop:text=\"button_3\"></anvil-component>\n<anvil-slot name=\"slot_4\"></anvil-slot>\n<anvil-slot name=\"slot_5\"></anvil-slot>"
+}

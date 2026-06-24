@@ -1,0 +1,42 @@
+{
+  "name": "parser/complex-props",
+  "entrypoint": "parseContainerForm",
+  "html": "<anvil-component type=\"Custom\" name=\"rich_props\" prop:text=\"Hello\" prop:count=\"42\" prop:ratio=\"3.14\" prop:maybe=\"null\" prop:enabled=\"true\" prop:str_count='\"42\"' prop:config='{\"foo\":\"bar\",\"count\":1}' prop:tags='[\"a\",\"b\"]'></anvil-component>",
+  "normalization": {
+    "dropzoneIds": false
+  },
+  "expected": {
+    "container": {
+      "type": "HtmlComponent",
+      "properties": {
+        "html": "<anvil-dropzone name=\"$dz_0\"></anvil-dropzone>"
+      }
+    },
+    "components": [
+      {
+        "type": "Custom",
+        "name": "rich_props",
+        "properties": {
+          "text": "Hello",
+          "count": 42,
+          "ratio": 3.14,
+          "maybe": null,
+          "enabled": true,
+          "str_count": "42",
+          "config": {
+            "foo": "bar",
+            "count": 1
+          },
+          "tags": [
+            "a",
+            "b"
+          ]
+        },
+        "layout_properties": {
+          "dropzone": "$dz_0"
+        }
+      }
+    ],
+    "serialized_html": "<anvil-component type=\"Custom\" name=\"rich_props\" prop:text=\"Hello\" prop:count=\"42\" prop:ratio=\"3.14\" prop:maybe=\"null\" prop:enabled=\"true\" prop:str_count='\"42\"' prop:config='{\"foo\":\"bar\",\"count\":1}' prop:tags='[\"a\",\"b\"]'></anvil-component>"
+  }
+}

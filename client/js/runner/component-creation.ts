@@ -1,9 +1,10 @@
 import {
+    Suspension,
     chainOrSuspend,
     isTrue,
     pyCall,
-    pyCallable,
     pyCallOrSuspend,
+    pyCallable,
     pyDict,
     pyException,
     pyHasAttr,
@@ -14,19 +15,24 @@ import {
     pyObject,
     pyRecursionError,
     pyStr,
-    Suspension,
     toPy,
     tryCatchOrSuspend,
 } from "@Sk";
-import { Component, LayoutProperties, setDefaultDepIdForNextComponent, ToolboxItem } from "../components/Component";
+import {
+    Component,
+    IGNORE_PROPERTY_EXCEPTIONS_KW,
+    LayoutProperties,
+    ToolboxItem,
+    setDefaultDepAppIdForNextComponent,
+} from "../components/Component";
 import { ComponentYaml, FormContainerYaml, FormYaml } from "./data";
 import { FormTemplate } from "./forms";
 import {
+    ParsedFormSpec,
+    YamlInstantiationContext,
     getAnvilComponentInstantiator,
     getNamedFormInstantiator,
-    ResolvedForm,
-    resolveFormSpec,
-    YamlInstantiationContext,
+    maybeParseCustomComponentSpecForInstantiation,
 } from "./instantiation";
 import {
     anvilMod,
@@ -46,7 +52,7 @@ const warnedAboutEventBinding = new Set();
 
 export type YamlCreationStack =
     | {
-          formSpec: ResolvedForm;
+          parsedFormSpec: ParsedFormSpec;
           prev: YamlCreationStack;
       }
     | undefined;
@@ -59,14 +65,14 @@ export const getAndCheckNextCreationStack = (formName: string, depAppId: string 
     let yamlStack = nextCreationStack;
     nextCreationStack = undefined;
     // console.log("Creating", formName, depAppId, "with stack", JSON.stringify(yamlStack));
-    if (yamlStack?.formSpec.formName === formName && yamlStack.formSpec.depId === depAppId) {
+    if (yamlStack?.parsedFormSpec.appLocalFormName === formName && yamlStack.parsedFormSpec.depAppId === depAppId) {
         // console.log("It's me!");
     } else {
         yamlStack = undefined;
     }
     let ys = yamlStack?.prev;
     while (ys) {
-        if (ys.formSpec.formName === formName && ys.formSpec.depId === depAppId) {
+        if (ys.parsedFormSpec.appLocalFormName === formName && ys.parsedFormSpec.depAppId === depAppId) {
             throw new pyRecursionError(`Cannot nest ${formName} inside itself`);
         }
         ys = ys.prev;
@@ -116,10 +122,7 @@ export function removeEventHandlers(
 
 /** We can't use the wrapped function else we break equality of event handlers
  * but we can use a proxy, this way they are python equal */
-function ensureWrappedFunctionEquality(
-    wrappedFn: pyCallable<pyObject | Suspension>,
-    originalFn: pyCallable
-) {
+function ensureWrappedFunctionEquality(wrappedFn: pyCallable<pyObject | Suspension>, originalFn: pyCallable) {
     if (wrappedFn === originalFn) return wrappedFn;
     return new Proxy(originalFn, {
         get(target, prop: PropertyKey) {
@@ -198,18 +201,18 @@ export const instantiateComponentFromYamlSpec = (
     yamlStack: YamlCreationStack,
     name?: string
 ) => {
-    if (yamlSpec.startsWith("form:")) {
-        const formSpec = resolveFormSpec(yamlSpec.substring(5), context.defaultDepId);
-        return chainOrSuspend(getNamedFormInstantiator(formSpec, context.requestingComponent), (instantiate) => {
+    const parsedFormSpec = maybeParseCustomComponentSpecForInstantiation(yamlSpec, context.defaultDepAppId);
+    if (parsedFormSpec) {
+        return chainOrSuspend(getNamedFormInstantiator(parsedFormSpec, context.requestingComponent), (instantiate) => {
             // Tell this component it was created by YAML from this app, so if it has any form
             // properties it knows how to look them up
-            setDefaultDepIdForNextComponent(context.defaultDepId);
-            nextCreationStack = { formSpec, prev: yamlStack };
+            setDefaultDepAppIdForNextComponent(context.defaultDepAppId);
+            nextCreationStack = { parsedFormSpec, prev: yamlStack };
             return instantiate(jsObjToKws(properties), name);
         });
     } else {
         const instantiate = getAnvilComponentInstantiator(context, yamlSpec);
-        setDefaultDepIdForNextComponent(context.defaultDepId);
+        setDefaultDepAppIdForNextComponent(context.defaultDepAppId);
         return instantiate(jsObjToKws(properties), name);
     }
 };
@@ -217,7 +220,7 @@ export const instantiateComponentFromYamlSpec = (
 function createComponents(
     formYaml: FormYaml,
     pyForm: Component,
-    defaultDepId: string | null,
+    defaultDepAppId: string | null,
     setupHandlers: boolean,
     yamlStack: YamlCreationStack,
     rootComponent?: Component
@@ -239,7 +242,7 @@ function createComponents(
     const instantiationContext: YamlInstantiationContext = {
         requestingComponent: pyForm,
         fromYaml: true,
-        defaultDepId,
+        defaultDepAppId,
     };
     const setupResult: SetupResult = { components: {}, orphanedComponents: [], form: pyForm };
     const setupComponent = (
@@ -255,7 +258,7 @@ function createComponents(
                     instantiateComponentFromYamlSpec(
                         instantiationContext,
                         yaml.type,
-                        { __ignore_property_exceptions: true, ...yaml.properties },
+                        { [IGNORE_PROPERTY_EXCEPTIONS_KW]: true, ...yaml.properties },
                         yamlStack,
                         yaml.name
                     ),
@@ -381,7 +384,10 @@ function createComponents(
                 ([nameA, { index: indexA }], [nameB, { index: indexB }]) =>
                     indexA === indexB ? nameA.localeCompare(nameB, "en") : indexA - indexB
             );
-            for (const [name, { set_layout_properties, one_component, template, target, index }] of sortedSlots) {
+            for (const [
+                name,
+                { set_layout_properties, one_component, placeholder_text, template, target, index },
+            ] of sortedSlots) {
                 let getContainer: () => Suspension | pyObject;
                 if (target.type === "container") {
                     const pyContainer = target.name ? setupResult.components[target.name]?.component : pyForm;
@@ -406,11 +412,15 @@ function createComponents(
                 }
                 let templateToolboxItem: ToolboxItem | undefined;
                 if (template) {
+                    const templateParsedFormSpec = maybeParseCustomComponentSpecForInstantiation(
+                        template.type,
+                        defaultDepAppId
+                    );
                     templateToolboxItem = {
                         component: {
                             ...template,
-                            type: template.type.startsWith("form:")
-                                ? resolveFormSpec(template.type.substring(5), defaultDepId).qualifiedClassName
+                            type: templateParsedFormSpec
+                                ? templateParsedFormSpec.packageQualifiedFormName
                                 : `anvil.${template.type}`,
                         },
                         title: "Template",
@@ -423,6 +433,9 @@ function createComponents(
                     !!one_component,
                     templateToolboxItem
                 );
+                if (placeholder_text) {
+                    slot._slotState.placeholderText = placeholder_text;
+                }
                 setupResult.slots[name] = slot;
 
                 // Make sure slots in the same container coexist happily (earlier slots affect insertion index of later slots)
@@ -477,14 +490,14 @@ function createComponents(
 export function setupFormComponents(
     formYaml: FormYaml,
     pyForm: Component,
-    defaultDepId: string | null,
+    defaultDepAppId: string | null,
     yamlStack: YamlCreationStack,
     setupHandlers = true,
     rootComponent?: Component
 ) {
     const pyFormDict = Sk.abstr.lookupSpecial(pyForm, pyStr.$dict) as pyDict;
     return chainOrSuspend(
-        createComponents(formYaml, pyForm, defaultDepId, setupHandlers, yamlStack, rootComponent),
+        createComponents(formYaml, pyForm, defaultDepAppId, setupHandlers, yamlStack, rootComponent),
         (setupResult: SetupResult) => {
             for (const [name, { component }] of Object.entries(setupResult.components)) {
                 const pyName = new pyStr(name);

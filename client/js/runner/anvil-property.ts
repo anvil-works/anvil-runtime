@@ -42,6 +42,8 @@ const validTypes: PropertyType[] = [
     "number",
     "boolean",
     "text[]",
+    "classes",
+    "style",
     "enum",
     "form",
     "object",

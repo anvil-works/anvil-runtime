@@ -27,6 +27,7 @@ import {
     s_anvil_events,
     s_anvil_get_container_design_info,
     s_anvil_get_interactions,
+    s_anvil_get_property_value_overrides,
     s_anvil_get_section_dom_element,
     s_anvil_get_sections,
     s_anvil_get_unset_property_values,
@@ -137,6 +138,11 @@ const anvilHookPyWrapperDescriptors: Partial<Record<AnvilKeys, WrapperDescriptor
     getUnsetPropertyValues: {
         $name: "_anvil_get_unset_property_values_",
         $wrapper: wrapNoArgs("_anvil_get_unset_property_values_"),
+        $flags: NoArgs,
+    },
+    getPropertyValueOverrides: {
+        $name: "_anvil_get_property_value_overrides_",
+        $wrapper: wrapNoArgs("_anvil_get_property_value_overrides_"),
         $flags: NoArgs,
     },
     getContainerDesignInfo: {
@@ -325,6 +331,7 @@ const jsCallWrappers = {
     setSectionPropertyValues: noSuspensionWrapper,
     getInteractions: noSuspensionWrapper,
     getUnsetPropertyValues: noSuspensionWrapper,
+    getPropertyValueOverrides: noSuspensionWrapper,
 };
 
 const jsToPyName = {
@@ -342,6 +349,7 @@ const jsToPyName = {
     events: s_anvil_events,
     getInteractions: s_anvil_get_interactions,
     getUnsetPropertyValues: s_anvil_get_unset_property_values,
+    getPropertyValueOverrides: s_anvil_get_property_value_overrides,
 };
 
 function setUpHookProxy(self: Component, cls: ComponentConstructor) {
@@ -391,6 +399,7 @@ const specNameToHookName: Record<keyof AnvilHookSpec, keyof AnvilHooks> = {
     updateDesignName: "updateDesignName",
     getInteractions: "getInteractions",
     getUnsetPropertyValues: "getUnsetPropertyValues",
+    getPropertyValueOverrides: "getPropertyValueOverrides",
     getContainerDesignInfo: "getContainerDesignInfo",
     updateLayoutProperties: "updateLayoutProperties",
     getSections: "getSections",

@@ -1,0 +1,24 @@
+{
+  "name": "layout/minimal",
+  "entrypoint": "parseLayoutForm",
+  "html": "<anvil-form layout=\"form:layouts.main\">\n    <anvil-block slot=\"main\">\n        <anvil-component type=\"Label\" name=\"lbl_title\" prop:text=\"Welcome\"></anvil-component>\n    </anvil-block>\n</anvil-form>",
+  "normalization": {
+    "dropzoneIds": false
+  },
+  "expected": {
+    "layout": {
+      "type": "form:layouts.main"
+    },
+    "components_by_slot": {
+      "main": [
+        {
+          "type": "Label",
+          "name": "lbl_title",
+          "properties": {
+            "text": "Welcome"
+          }
+        }
+      ]
+    }
+  }
+}

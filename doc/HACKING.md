@@ -20,6 +20,8 @@ The Runtime and App Server are split up into a few modules. Broadly, client code
 
   * `server/app-server/` is the Anvil App Server, a standalone server that uses the Runtime library to serve a single Anvil app from the local filesystem.
 
+* The `html-form-parser/` directory contains the shared HTML form template parser. The App Server uses its JVM source to load `.html` form templates; its ClojureScript/npm build is used by the IDE/parser tests and is not part of App Server packaging.
+
 
 ## Build Instructions
 
@@ -51,6 +53,8 @@ Next, build the server components and produce a Python package ready for distrib
 $ cd ../packaging/app-server
 $ ./build-all
 ```
+
+The packaging script uses the parser's JVM source through `server/core`; it does not build the parser's ClojureScript/npm package.
 
 And now you can install the app-server:
 ```bash

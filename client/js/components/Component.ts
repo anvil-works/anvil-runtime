@@ -70,6 +70,8 @@ export function getPyParent(pyComponent: Component) {
 
 export const isComponent = (c: any): c is Component => !!c?.anvil$hooks;
 
+export const IGNORE_PROPERTY_EXCEPTIONS_KW = "__ignore_property_exceptions";
+
 export interface ComponentTag extends pyObject {
     $d: pyDict;
 }
@@ -138,21 +140,21 @@ function initComponentSubclass(cls: ComponentConstructor) {
     return pyNone;
 }
 
-let defaultDepId: string | undefined | null;
+let defaultDepAppId: string | undefined | null;
 let onNextInstantiation: ((c: Component) => void) | undefined;
 
-export const setDefaultDepIdForNextComponent = (depId: string | null) => {
-    defaultDepId = depId;
+export const setDefaultDepAppIdForNextComponent = (depAppId: string | null) => {
+    defaultDepAppId = depAppId;
 }; // call immediately before instantiating a component
-export const getDefaultDepIdForComponent = (component: Component | undefined) =>
-    component?._Component.defaultDepId ?? null;
+export const getDefaultDepAppIdForComponent = (component: Component | undefined) =>
+    component?._Component.defaultDepAppId ?? null;
 export const runOnNextInstantiation = (f: (c: Component) => void) => {
     onNextInstantiation = f;
 };
 
 interface ComponentParent {
     pyParent: Component;
-    remove: (() => void)[];
+    remove: (() => void | Suspension)[];
     setVisibility?: (v: boolean) => void;
 }
 
@@ -161,7 +163,7 @@ interface ComponentState {
     eventHandlers: { [eventName: string]: pyCallable<pyObject | Suspension>[] };
     parent?: ComponentParent;
     tag: pyObject;
-    defaultDepId: string | null;
+    defaultDepAppId: string | null;
     unwrappedHooks?: any;
     pageState: {
         ancestorsMounted: boolean;
@@ -208,6 +210,8 @@ export interface PropertyDescriptionBase {
 
 export type StringPropertyType = "string";
 export type StringListPropertyType = "text[]"; // Consistency is the last resort of the unimaginative.
+export type ClassesPropertyType = "classes";
+export type StylePropertyType = "style";
 export type NumberPropertyType = "number";
 export type BooleanPropertyType = "boolean";
 export type FormPropertyType = "form";
@@ -225,6 +229,8 @@ export type SpacingPropertyType = "spacing";
 export type PropertyType =
     | StringPropertyType
     | StringListPropertyType
+    | ClassesPropertyType
+    | StylePropertyType
     | EnumPropertyType
     | NumberPropertyType
     | BooleanPropertyType
@@ -247,6 +253,12 @@ export interface StringPropertyDescription extends PropertyDescriptionBase {
 }
 export interface StringListPropertyDescription extends PropertyDescriptionBase {
     type: StringListPropertyType;
+}
+export interface ClassesPropertyDescription extends PropertyDescriptionBase {
+    type: ClassesPropertyType;
+}
+export interface StylePropertyDescription extends PropertyDescriptionBase {
+    type: StylePropertyType;
 }
 export interface NumberPropertyDescription extends PropertyDescriptionBase {
     type: NumberPropertyType;
@@ -301,6 +313,8 @@ export type EnumPropertyDescription = PropertyDescriptionBase & {
 export type PropertyDescription<T extends PropertyType = PropertyType> = { type: T } & (
     | StringPropertyDescription
     | StringListPropertyDescription
+    | ClassesPropertyDescription
+    | StylePropertyDescription
     | EnumPropertyDescription
     | NumberPropertyDescription
     | BooleanPropertyDescription
@@ -319,6 +333,8 @@ export type PropertyDescription<T extends PropertyType = PropertyType> = { type:
 
 type StringPropertyValue = string;
 type StringListPropertyValue = string[];
+type ClassesPropertyValue = string[];
+type StylePropertyValue = string;
 type NumberPropertyValue = number;
 type BooleanPropertyValue = boolean;
 type FormPropertyValue = string;
@@ -348,6 +364,10 @@ export type PropertyValue<T extends PropertyType> =
           ? StringPropertyValue
           : T extends StringListPropertyType
           ? StringListPropertyValue
+          : T extends ClassesPropertyType
+          ? ClassesPropertyValue
+          : T extends StylePropertyType
+          ? StylePropertyValue
           : T extends NumberPropertyType
           ? NumberPropertyValue
           : T extends BooleanPropertyType
@@ -554,6 +574,7 @@ export interface AnvilHookSpec<T extends Component = Component> {
     updateDesignName?(this: T, name: string): void;
     getInteractions?(this: T): Interaction[];
     getUnsetPropertyValues?(this: T): UnsetPropertyValues;
+    getPropertyValueOverrides?(this: T): PropertyValueUpdates;
     getContainerDesignInfo?(this: T, forChild: Component): ContainerDesignInfo;
     updateLayoutProperties?(
         this: T,
@@ -580,6 +601,7 @@ export interface AnvilHooks extends Partial<HasRelevantHooks> {
     updateDesignName?(name: string): void;
     getInteractions?(): Interaction[];
     getUnsetPropertyValues?(): UnsetPropertyValues;
+    getPropertyValueOverrides?(): PropertyValueUpdates;
     getContainerDesignInfo?(forChild: Component): ContainerDesignInfo;
     updateLayoutProperties?(
         forChild: Component,
@@ -619,7 +641,7 @@ export interface Component extends pyObject {
     ): Suspension | pyObject;
     $verifyEventName(this: Component, pyEventName: pyStr, msg: string): string;
     $verifyCallable(this: Component, eventName: string, pyHandler: pyObject): void;
-    anvilComponent$onRemove(this: Component, remove: () => void): void;
+    anvilComponent$onRemove(this: Component, remove: () => void | Suspension): void;
     /**
      * Private JS method to register a component with its form host.
      * This could later be exposed as a Python API if needed.
@@ -650,13 +672,13 @@ export interface ToolboxIcon {
     dark?: string;
 }
 
-export type CreateForm = ({ container: FullyQualifiedPackageName } | { layout: FullyQualifiedPackageName }) & {
+export type CreateForm = ({ container: ToolboxComponentType } | { layout: ToolboxComponentType }) & {
     className?: string;
     properties?: ComponentProperties;
     // TODO: components? Do we want to support adding components to newly-created forms? Probably.
 };
 
-export type FullyQualifiedPackageName = string;
+export type ToolboxComponentType = string;
 
 export interface CustomComponentToolboxItem {
     hidden?: boolean;
@@ -666,7 +688,7 @@ export interface CustomComponentToolboxItem {
 }
 
 export interface ToolboxItemComponent {
-    type: FullyQualifiedPackageName;
+    type: ToolboxComponentType;
     name?: string; // If not provided, will be inferred from type.
     properties?: ComponentProperties;
     layout_properties?: LayoutProperties;
@@ -806,11 +828,11 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
                 allowedEvents,
                 eventHandlers: {},
                 tag: new ComponentTag(),
-                defaultDepId: defaultDepId as string,
+                defaultDepAppId: defaultDepAppId as string,
                 pageState,
                 fallbackDomElement: null,
             };
-            defaultDepId = undefined;
+            defaultDepAppId = undefined;
             setupInstanceHooks(self, cls);
 
             if (onNextInstantiation) {
@@ -851,6 +873,9 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
                 return [];
             },
             getUnsetPropertyValues() {
+                return {};
+            },
+            getPropertyValueOverrides() {
                 return {};
             },
         },
@@ -903,7 +928,7 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
                 return pyNone;
             }
         },
-        anvilComponent$onRemove(remove: () => void) {
+        anvilComponent$onRemove(remove: () => void | Suspension) {
             this._Component.parent?.remove.push(remove);
         },
     },

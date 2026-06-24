@@ -1,0 +1,18 @@
+{
+  "name": "fragments/dom-node-attribute",
+  "entrypoint": "parseContainerForm",
+  "html": "<button anvil:on-dom:click=\"self._on_click\">Click</button>",
+  "normalization": {
+    "dropzoneIds": false
+  },
+  "expected": {
+    "container": {
+      "type": "HtmlComponent",
+      "properties": {
+        "html": "<button anvil:on-dom:click=\"self._on_click\" anvil:dom-node>Click</button>"
+      }
+    },
+    "components": [],
+    "serialized_html": "<button anvil:on-dom:click=\"self._on_click\">Click</button>"
+  }
+}

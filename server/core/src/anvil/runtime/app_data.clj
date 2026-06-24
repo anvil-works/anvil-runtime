@@ -363,6 +363,19 @@
        (apply deep-merge)
        sanitize-import-maps))
 
+(defn- clean-runtime-forms [forms]
+  (mapv #(dissoc % :save_as_html :serialized_html) (or forms [])))
+
+(defn- clean-runtime-dep [dep]
+  (if (contains? dep :forms)
+    (update dep :forms clean-runtime-forms)
+    dep))
+
+(defn- clean-runtime-app-map [app-map]
+  (-> app-map
+      (update :forms clean-runtime-forms)
+      (update :dependency_code #(some->> % (map-kv-vals (fn [_ dep] (clean-runtime-dep dep)))))))
+
 (defn sanitised-app-and-style-for-client
   ([id version-spec] (sanitised-app-and-style-for-client id version-spec nil {:allow-errors? true}))
   ([id version-spec app-session-state {:keys [allow-errors?] :as flags}]
@@ -375,6 +388,7 @@
 
      [app-info
       (-> (select-keys yaml [:name :package_name :forms :modules :startup :startup_form :services :theme :dependency_code :dependency_order :dependency_ids :allow_embedding :metadata :runtime_options :config :client_init_module])
+          clean-runtime-app-map
           (update-in [:runtime_options] only-version)
           (update-in [:theme] (fn [theme]
                                 {:html

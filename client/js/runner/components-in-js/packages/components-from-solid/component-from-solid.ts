@@ -21,6 +21,7 @@ import {
     ComponentConstructor,
     CustomComponentSpec,
     EventDescription,
+    IGNORE_PROPERTY_EXCEPTIONS_KW,
     PropertyDescription,
 } from "../../../../components/Component";
 import { Container } from "../../../../components/Container";
@@ -104,7 +105,7 @@ function mkComponentClass({
                     for (let i = 0; i < kws.length; i += 2) {
                         const k = kws[i];
                         const v = kws[i + 1] as pyObject;
-                        if (k !== "__ignore_property_exceptions") {
+                        if (k !== IGNORE_PROPERTY_EXCEPTIONS_KW) {
                             self.tp$setattr(new pyStr(k), v);
                         }
                     }

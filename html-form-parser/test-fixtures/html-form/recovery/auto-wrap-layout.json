@@ -1,0 +1,36 @@
+{
+  "name": "recovery/auto-wrap-layout",
+  "entrypoint": "parseLayoutForm",
+  "html": "<div>\n  <anvil-component type=\"Label\" name=\"outside\" prop:text=\"Recovered\"></anvil-component>\n</div>",
+  "normalization": {
+    "dropzoneIds": false
+  },
+  "expected": {
+    "layout": {
+      "type": "UnknownLayout"
+    },
+    "components_by_slot": {
+      "$unknown-slot-1": [
+        {
+          "type": "HtmlComponent",
+          "name": "$component_1",
+          "properties": {
+            "html": "<div>\n  <anvil-dropzone name=\"$dz_0\"></anvil-dropzone>\n</div>"
+          },
+          "components": [
+            {
+              "type": "Label",
+              "name": "outside",
+              "properties": {
+                "text": "Recovered"
+              },
+              "layout_properties": {
+                "dropzone": "$dz_0"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

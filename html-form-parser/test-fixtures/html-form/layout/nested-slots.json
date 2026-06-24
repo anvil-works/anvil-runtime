@@ -1,0 +1,60 @@
+{
+  "name": "layout/nested-slots",
+  "entrypoint": "parseLayoutForm",
+  "html": "<anvil-form layout=\"form:layouts.dashboard\">\n    <anvil-block slot=\"header\">\n        <anvil-component type=\"TextBox\" name=\"search_box\" container:width=\"200\"></anvil-component>\n        <anvil-slot name=\"actions\"></anvil-slot>\n    </anvil-block>\n    <anvil-block slot=\"body\">\n        <anvil-component type=\"FlowPanel\" name=\"main_panel\">\n            <anvil-slot name=\"primary\"></anvil-slot>\n            <anvil-slot name=\"secondary\" container:width=\"200\"></anvil-slot>\n        </anvil-component>\n    </anvil-block>\n</anvil-form>",
+  "normalization": {
+    "dropzoneIds": false
+  },
+  "expected": {
+    "layout": {
+      "type": "form:layouts.dashboard"
+    },
+    "components_by_slot": {
+      "header": [
+        {
+          "type": "TextBox",
+          "name": "search_box",
+          "properties": {},
+          "layout_properties": {
+            "width": 200
+          }
+        }
+      ],
+      "body": [
+        {
+          "type": "FlowPanel",
+          "name": "main_panel",
+          "properties": {}
+        }
+      ]
+    },
+    "slots": {
+      "actions": {
+        "target": {
+          "type": "slot",
+          "name": "header"
+        },
+        "index": 1,
+        "set_layout_properties": {}
+      },
+      "primary": {
+        "target": {
+          "type": "container",
+          "name": "main_panel"
+        },
+        "index": 0,
+        "set_layout_properties": {}
+      },
+      "secondary": {
+        "target": {
+          "type": "container",
+          "name": "main_panel"
+        },
+        "index": 0,
+        "set_layout_properties": {
+          "width": 200
+        }
+      }
+    }
+  }
+}

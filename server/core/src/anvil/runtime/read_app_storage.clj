@@ -1,6 +1,7 @@
 (ns anvil.runtime.read-app-storage
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [anvil.runtime.html-form-template :as html-form-template]
             [anvil.util :as util]
             [clj-yaml.core :as yaml]
             [lazy-map.core :refer [lazy-map]]
@@ -136,22 +137,6 @@ If you want to get to the basics as quickly as possible, each section of this do
 (defn gen-item-uid []
   (random/base32 20))
 
-(defn parse-html-with-frontmatter
-  "Parse HTML file with optional YAML frontmatter.
-   Returns map with form configuration.
-   Format: ---\\n<yaml>\\n---\\n<html>"
-  [^bytes html-bytes]
-  (let [html-str (String. html-bytes)
-        ;; Regex to match frontmatter: ---\n<yaml>\n---\n<html>
-        frontmatter-pattern #"(?s)^---\s*\n(.*?)\n---\s*\n(.*)$"
-        [_ yaml-str html-content] (re-matches frontmatter-pattern html-str)
-        frontmatter (when yaml-str (yaml/parse-string yaml-str))
-        ;; If regex matched, use html-content (even if empty), otherwise use full html-str
-        html (if yaml-str html-content html-str)]
-    (-> frontmatter
-        (assoc :serialized_html html)
-        (assoc :save_as_html true))))
-
 (defrecord TreeFile [bytes hash])
 
 (defmulti resource-directory-to-map #(keyword (.getProtocol %)))
@@ -216,7 +201,7 @@ If you want to get to the basics as quickly as possible, each section of this do
   (when-let [template-b (or (get-bytes tree html-path)
                             (get-bytes tree yaml-path))]
     (if (get-bytes tree html-path)
-      (parse-html-with-frontmatter template-b)
+      (html-form-template/parse-html-template-bytes template-b)
       (util/parse-yaml-bytes template-b))))
 
 (defn- tree-dir? [entry]

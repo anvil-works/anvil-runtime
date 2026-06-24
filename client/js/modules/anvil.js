@@ -30,6 +30,7 @@ import {decoratedEventHandlers, notifyComponentMounted, notifyComponentUnmounted
 import {
     anvilServerMod,
     funcFastCall,
+    iterKws,
     kwsToObj,
     objToKws,
     pyPropertyFromGetSet,
@@ -358,7 +359,7 @@ function anvil(appOrigin, uncaughtExceptions) {
         console.log("Checking layout compatibility between", aLayout, "and", bLayout);
         return aLayout.type === bLayout.type &&
             (aLayout.type === "form"
-                ? bLayout.formSpec.qualifiedClassName === aLayout.formSpec.qualifiedClassName
+                ? bLayout.parsedFormSpec.packageQualifiedFormName === aLayout.parsedFormSpec.packageQualifiedFormName
                 : aLayout.type === "builtin"
                     ? bLayout.name === aLayout.name
                     : bLayout.constructor === aLayout.constructor);
@@ -405,8 +406,7 @@ function anvil(appOrigin, uncaughtExceptions) {
                         ...(function* () {
                             const {kwargs} = pyForm._withLayout;
                             const oldFormKwargs = kwsToObj(oldForm._withLayout.kwargs);
-                            for (let i=0; i < kwargs.length; i += 2) {
-                                const k = kwargs[i], v = kwargs[i+1];
+                            for (const [k, v] of iterKws(kwargs)) {
                                 yield () => Sk.abstr.sattr(pyLayout, new pyStr(k), v, true);
                                 delete oldFormKwargs[k];
                             }

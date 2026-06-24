@@ -18,11 +18,9 @@ import {
     pyNone,
     pyObject,
     pyStr,
-    toPy,
     tryCatchOrSuspend,
 } from "@Sk";
 import PyDefUtils from "PyDefUtils";
-import type { ComponentHelpers } from "@runtime/components";
 /*#
 id: repeatingpanel
 docs_url: /docs/client/components/repeating-panel
@@ -125,7 +123,6 @@ interface RepeatingPanelAnvil {
     overrideParentObj?: RepeatingPanel;
     itemCache: pyObject[];
     componentCache: any[];
-    defaultAppPackage?: string;
     pagination: {
         startAfter: any;
         rowQuota: number;
@@ -139,14 +136,25 @@ interface RepeatingPanelAnvil {
     pyIterator?: pyIterator<pyObject>;
     constructItemTemplate?: (pyItem: any) => any;
     templateFormName?: string;
-    missingDependency?: boolean;
     dataGrid?: DataGrid;
     mutex?: Mutex;
 }
 
 interface RepeatingPanel extends ClassicComponent<RepeatingPanelAnvil> {}
 
-const RepeatingPanelFactory = (pyModule: PyModMap, componentHelpers: ComponentHelpers) => {
+const DEFAULT_DEP_APP_ID_KEY = new pyStr("$_default_dep_app_id");
+
+const popDefaultDepAppId = (pyDictData: pyDict): string | null => {
+    try {
+        const value = pyDictData.mp$subscript(DEFAULT_DEP_APP_ID_KEY);
+        Sk.abstr.objectDelItem(pyDictData, DEFAULT_DEP_APP_ID_KEY);
+        return checkString(value) ? value.toString() : null;
+    } catch (_) {
+        return null;
+    }
+};
+
+const RepeatingPanelFactory = (pyModule: PyModMap) => {
     const ClassicComponent = pyModule["ClassicComponent"] as ClassicComponentConstructor;
     const ClassicContainer = pyModule["ClassicContainer"] as ClassicComponentConstructor;
 
@@ -162,9 +170,7 @@ const RepeatingPanelFactory = (pyModule: PyModMap, componentHelpers: ComponentHe
                     description: "The name of the form to repeat for every item",
                     pyVal: true,
                     set(s, e, v) {
-                        return lockingCall(s, () =>
-                            window.anvilRuntimeVersion === 2 ? setItemTemplateV2(s, v) : setItemTemplateV3(s, v)
-                        );
+                        return lockingCall(s, () => setItemTemplate(s, v));
                     },
                     important: true,
                 },
@@ -207,14 +213,6 @@ const RepeatingPanelFactory = (pyModule: PyModMap, componentHelpers: ComponentHe
                 self._anvil.itemCache = [];
                 self._anvil.componentCache = [];
 
-                // Are we being instantiated from YAML? If so, remember which is "our" app package so we can import
-                // from it when given ambiguous item_template strings.
-                const dependencyTrace = componentHelpers.newPythonComponent.dependencyTrace;
-                if (dependencyTrace?.depId) {
-                    // NB: window.anvilAppDependencies isn't defined in the (old) designer
-                    self._anvil.defaultAppPackage = window.anvilAppDependencies?.[dependencyTrace.depId]?.package_name;
-                }
-
                 self._anvil.pagination = {
                     startAfter: null,
                     rowQuota: Infinity,
@@ -252,19 +250,28 @@ const RepeatingPanelFactory = (pyModule: PyModMap, componentHelpers: ComponentHe
             });
 
             $loc["__serialize__"] = PyDefUtils.mkSerializePreservingIdentity((self: RepeatingPanel) => {
-                const v = [];
+                const v: pyObject[] = [];
                 Object.entries(self._anvil.props).forEach(([propName, propVal]) => {
                     v.push(new pyStr(propName), propVal);
                 });
-                v.push(new pyStr("_default_app_package"), toPy(self._anvil.defaultAppPackage ?? null));
+                // item_template is a formPropertySpec. When it is app-local, such
+                // as "RowTemplate", it resolves relative to the app that created
+                // this RepeatingPanel instance. Preserve that app context across
+                // RepeatingPanel serialization round trips.
+                if (self._Component.defaultDepAppId) {
+                    v.push(DEFAULT_DEP_APP_ID_KEY, new pyStr(self._Component.defaultDepAppId));
+                }
                 return new pyDict(v);
             });
 
             $loc["__new_deserialized__"] = PyDefUtils.mkNewDeserializedPreservingIdentity(
                 (self: RepeatingPanel, pyData: pyObject) => {
-                    const pop = pyData.tp$getattr<pyCallable>(new pyStr("pop"));
-                    self._anvil.defaultAppPackage = pyCall(pop, [new pyStr("_default_app_package"), pyNone]).valueOf();
-                    PyDefUtils.setAttrsFromDict(self, pyData);
+                    const pyDictData = pyData as pyDict;
+                    const defaultDepAppId = popDefaultDepAppId(pyDictData);
+                    if (defaultDepAppId) {
+                        self._Component.defaultDepAppId = defaultDepAppId;
+                    }
+                    PyDefUtils.setAttrsFromDict(self, pyDictData);
                 }
             );
         },
@@ -367,11 +374,7 @@ const RepeatingPanelFactory = (pyModule: PyModMap, componentHelpers: ComponentHe
             // We have no template. It's either none, or we failed to find one based on the name
             pyCall(self._anvil.pyHiddenContainer.tp$getattr<pyCallable>(s_clear));
             if (self._anvil.templateFormName) {
-                let message = "";
-                if (self._anvil.missingDependency) {
-                    message = "Dependency missing: ";
-                }
-                message += "No such form '" + self._anvil.templateFormName + "'";
+                const message = "No such form '" + self._anvil.templateFormName + "'";
 
                 const pyC = pyCall(pyModule["InvalidComponent"], [], ["text", new pyStr(message)]);
                 return chainOrSuspend(addComponent(pyC as TemplateInstance), () => [0, null, true]);
@@ -681,76 +684,7 @@ const RepeatingPanelFactory = (pyModule: PyModMap, componentHelpers: ComponentHe
         }
     };
 
-    // either the template is None, an empty str, a str, or Component
-    // assign the templateFormName, constructItemTemplate and calls repaginate
-    const setItemTemplateV2 = (s: RepeatingPanel, v: any) => {
-        if (!isTrue(v)) {
-            s._anvil.templateFormName = "";
-            s._anvil.constructItemTemplate = undefined;
-            return repaginateWithParent(s);
-        } else if (checkString(v)) {
-            // Ideally, we would check for isinstance(anvil.Component), but anvil.Component is magically different in dependencies...
-            v = v.toString();
-
-            s._anvil.templateFormName = v;
-            s._anvil.constructItemTemplate = undefined;
-
-            if (ANVIL_IN_DESIGNER) {
-                pyCall(s.tp$getattr<pyCallable>(new pyStr("_refresh_form")));
-                return;
-            }
-
-            s._anvil.missingDependency = false;
-
-            let [, logicalDepId, className] = v.match(/^(?:([^:]*):)?([^:]*)$/) || [];
-            const depId = logicalDepId ? window.anvilAppDependencyIds[logicalDepId] : null;
-            const appPackage = depId
-                ? window.anvilAppDependencies[depId]?.package_name
-                : s._anvil.defaultAppPackage || window.anvilAppMainPackage;
-            if (logicalDepId && (!depId || !appPackage)) {
-                console.error(
-                    "Dependency not found when setting RepeatingPanel template: ",
-                    logicalDepId,
-                    "->",
-                    depId,
-                    "->",
-                    appPackage
-                );
-                s._anvil.missingDependency = true;
-                return;
-            }
-            const qualifiedFormName = `${appPackage}.${className}`;
-            return chainOrSuspend(
-                tryCatchOrSuspend(
-                    () =>
-                        chainOrSuspend(Sk.importModule(qualifiedFormName, false, true), () => {
-                            const dots = qualifiedFormName.split(".").slice(1);
-                            const className = dots[dots.length - 1];
-
-                            const pyFormMod = Sk.sysmodules.mp$subscript(new pyStr(qualifiedFormName));
-                            const pyFormClass = pyFormMod?.tp$getattr(new pyStr(className)) as pyCallable;
-
-                            s._anvil.constructItemTemplate = (pyItem: pyObject) =>
-                                pyCallOrSuspend(pyFormClass, [], ["item", pyItem]);
-                        }),
-                    function catchErr(e) {
-                        console.error(e);
-                        if (window.onerror) {
-                            window.onerror(undefined, undefined, undefined, undefined, e);
-                        }
-                    }
-                ),
-                () => repaginateWithParent(s)
-            );
-        } else {
-            s._anvil.templateFormName = "";
-            s._anvil.constructItemTemplate = (pyItem) => pyCallOrSuspend(v, [], ["item", pyItem]);
-            return repaginateWithParent(s);
-        }
-    };
-
-    // v3 runtime has a much nicer way of dealing with this
-    const setItemTemplateV3 = (self: RepeatingPanel, template: any) => {
+    const setItemTemplate = (self: RepeatingPanel, template: any) => {
         self._anvil.constructItemTemplate = undefined;
 
         if (!isTrue(template)) {
@@ -768,7 +702,6 @@ const RepeatingPanelFactory = (pyModule: PyModMap, componentHelpers: ComponentHe
             tryCatchOrSuspend(
                 () =>
                     chainOrSuspend(getFormInstantiator({ requestingComponent: self }, template), (instantiate) => {
-                        console.log("Got instantiator:", instantiate);
                         self._anvil.constructItemTemplate = (pyItem) => instantiate(["item", pyItem]);
                     }),
                 (err) => {

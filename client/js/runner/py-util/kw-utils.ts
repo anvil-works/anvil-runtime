@@ -1,6 +1,16 @@
 import type { Kws, pyDict, pyObject, pyStr } from "@Sk";
 import { toJs, toPy } from "@Sk";
 
+/** iterates over a Kws array as [keyword, pyObject value] pairs */
+export function* iterKws(kws?: Kws): IterableIterator<[string, pyObject]> {
+    if (kws === undefined) {
+        return;
+    }
+    for (let i = 0; i < kws.length; i += 2) {
+        yield [kws[i] as string, kws[i + 1] as pyObject] as const;
+    }
+}
+
 /** takes a Kws array and converts to an object with pyObject values */
 export function kwsToObj(kws?: Kws): Record<string, pyObject> {
     const rv: Record<string, pyObject> = {};

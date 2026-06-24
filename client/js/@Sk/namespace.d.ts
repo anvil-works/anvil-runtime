@@ -71,6 +71,7 @@ import {
     pyIntConstructor,
     pyIterable,
     pyIterator,
+    pyIteratorFactoryType,
     pyList,
     pyListConstructor,
     pyMappingProxyConstructor,
@@ -391,6 +392,8 @@ export namespace Sk {
             cell?: any,
             kws?: Kws
         ): pyNewableType<T>;
+
+        const iterator: pyIteratorFactoryType;
     }
 
     export namespace ffi {

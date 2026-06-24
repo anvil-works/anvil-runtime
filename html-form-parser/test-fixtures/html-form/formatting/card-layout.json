@@ -1,0 +1,45 @@
+{
+  "name": "formatting/card-layout",
+  "entrypoint": "parseContainerForm",
+  "html": "<anvil-component type=\"form:_Components.Card\" name=\"card_1\">\n    <anvil-component type=\"form:_Components.Card.CardContentContainer\" name=\"card_content_container_1\" container:slot=\"card-content-slot\"></anvil-component>\n    <anvil-component type=\"form:_Components.Button\" name=\"button_1\" prop:text=\"button 24\" container:slot=\"card-content-slot\"></anvil-component>\n</anvil-component>",
+  "expected": {
+    "container": {
+      "type": "HtmlComponent",
+      "properties": {
+        "html": "<anvil-dropzone name=\"$dz_0\"></anvil-dropzone>"
+      }
+    },
+    "components": [
+      {
+        "type": "form:_Components.Card",
+        "name": "card_1",
+        "properties": {},
+        "layout_properties": {
+          "dropzone": "$dz_0"
+        },
+        "components": [
+          {
+            "type": "form:_Components.Card.CardContentContainer",
+            "name": "card_content_container_1",
+            "properties": {},
+            "layout_properties": {
+              "slot": "card-content-slot"
+            }
+          },
+          {
+            "type": "form:_Components.Button",
+            "name": "button_1",
+            "properties": {
+              "text": "button 24"
+            },
+            "layout_properties": {
+              "slot": "card-content-slot"
+            }
+          }
+        ]
+      }
+    ],
+    "serialized_html": "<anvil-component type=\"form:_Components.Card\" name=\"card_1\">\n    <anvil-component type=\"form:_Components.Card.CardContentContainer\" name=\"card_content_container_1\" container:slot=\"card-content-slot\"></anvil-component>\n    <anvil-component type=\"form:_Components.Button\" name=\"button_1\" prop:text=\"button 24\" container:slot=\"card-content-slot\"></anvil-component>\n</anvil-component>"
+  },
+  "expectedSerializedHtml": "<anvil-component type=\"form:_Components.Card\" name=\"card_1\">\n    <anvil-component type=\"form:_Components.Card.CardContentContainer\" name=\"card_content_container_1\" container:slot=\"card-content-slot\"></anvil-component>\n    <anvil-component type=\"form:_Components.Button\" name=\"button_1\" prop:text=\"button 24\" container:slot=\"card-content-slot\"></anvil-component>\n</anvil-component>"
+}

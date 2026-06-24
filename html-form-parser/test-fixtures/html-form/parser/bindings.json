@@ -1,0 +1,40 @@
+{
+  "name": "parser/bindings",
+  "entrypoint": "parseContainerForm",
+  "html": "<anvil-component type=\"Button\" name=\"button_1\" prop:text=\"Click me\" container:index=\"2\" bind:text=\"item.text\" on:click=\"self.on_click\"></anvil-component>",
+  "normalization": {
+    "dropzoneIds": false
+  },
+  "expected": {
+    "container": {
+      "type": "HtmlComponent",
+      "properties": {
+        "html": "<anvil-dropzone name=\"$dz_0\"></anvil-dropzone>"
+      }
+    },
+    "components": [
+      {
+        "type": "Button",
+        "name": "button_1",
+        "properties": {
+          "text": "Click me"
+        },
+        "layout_properties": {
+          "index": 2,
+          "dropzone": "$dz_0"
+        },
+        "event_bindings": {
+          "click": "on_click"
+        },
+        "data_bindings": [
+          {
+            "property": "text",
+            "code": "item.text"
+          }
+        ]
+      }
+    ],
+    "serialized_html": "<anvil-component type=\"Button\" name=\"button_1\" prop:text=\"Click me\" container:index=\"2\" bind:text=\"item.text\" on:click=\"self.on_click\"></anvil-component>"
+  },
+  "expectedSerializedHtml": "<anvil-component type=\"Button\" name=\"button_1\" prop:text=\"Click me\" on:click=\"self.on_click\" bind:text=\"item.text\" container:index=\"2\"></anvil-component>"
+}

@@ -120,6 +120,7 @@ export const {
         asyncToPromise: suspensionToPromise,
         promiseToSuspension,
         iterFor: pyIterFor,
+        iterator: pyIteratorFactory,
     },
     abstr: {
         buildNativeClass,
@@ -239,6 +240,10 @@ export interface pyIterable<T = pyObject> extends pyObject {
 
 export interface pyIterator<T = pyObject> extends pyIterable<T> {
     tp$iternext(): T | undefined;
+}
+
+export interface pyIteratorFactoryType extends pyType<pyIterator> {
+    new <T extends pyObject>(iterFn: () => T | undefined): pyIterator<T>;
 }
 
 export interface pySuperConstructor extends pyType<pySuper> {

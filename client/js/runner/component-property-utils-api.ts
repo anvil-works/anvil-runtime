@@ -62,15 +62,15 @@ export const PyInstantiatorFunction: PyInstantiatorFunctionConstructor = buildNa
             },
             tp$richcompare(other, op) {
                 if (op === "Eq") {
-                    const mySpec = this.anvil$underlyingInstantiator.anvil$instantiatorForForm;
-                    const otherSpec =
+                    const myParsedFormSpec = this.anvil$underlyingInstantiator.anvil$parsedFormSpec;
+                    const otherParsedFormSpec =
                         other instanceof PyInstantiatorFunction &&
-                        other.anvil$underlyingInstantiator.anvil$instantiatorForForm;
+                        other.anvil$underlyingInstantiator.anvil$parsedFormSpec;
                     return !!(
-                        mySpec &&
-                        otherSpec &&
-                        mySpec.depId === otherSpec.depId &&
-                        mySpec.formName === otherSpec.formName
+                        myParsedFormSpec &&
+                        otherParsedFormSpec &&
+                        myParsedFormSpec.depAppId === otherParsedFormSpec.depAppId &&
+                        myParsedFormSpec.appLocalFormName === otherParsedFormSpec.appLocalFormName
                     );
                 } else {
                     return pyNotImplemented;

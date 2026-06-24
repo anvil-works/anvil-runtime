@@ -1,0 +1,40 @@
+{
+  "name": "slots/top-level",
+  "entrypoint": "parseContainerForm",
+  "html": "<div class=\"layout\">\n    <anvil-slot name=\"body\"></anvil-slot>\n    <anvil-slot name=\"header\"></anvil-slot>\n</div>",
+  "normalization": {
+    "dropzoneIds": false
+  },
+  "expected": {
+    "container": {
+      "type": "HtmlComponent",
+      "properties": {
+        "html": "<div class=\"layout\">\n    <anvil-dropzone name=\"$dz_0\"></anvil-dropzone>\n    <anvil-dropzone name=\"$dz_1\"></anvil-dropzone>\n</div>"
+      }
+    },
+    "components": [],
+    "serialized_html": "<div class=\"layout\">\n    <anvil-slot name=\"body\"></anvil-slot>\n    <anvil-slot name=\"header\"></anvil-slot>\n</div>",
+    "slots": {
+      "body": {
+        "target": {
+          "type": "container",
+          "name": ""
+        },
+        "index": 0,
+        "set_layout_properties": {
+          "dropzone": "$dz_0"
+        }
+      },
+      "header": {
+        "target": {
+          "type": "container",
+          "name": ""
+        },
+        "index": 0,
+        "set_layout_properties": {
+          "dropzone": "$dz_1"
+        }
+      }
+    }
+  }
+}

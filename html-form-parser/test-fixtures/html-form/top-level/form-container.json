@@ -1,0 +1,26 @@
+{
+  "name": "top-level/form-container",
+  "entrypoint": "parseContainerForm",
+  "html": "<anvil-form type=\"LinearPanel\" name=\"main_panel\" prop:spacing=\"medium\">\n    <anvil-component type=\"Button\" name=\"button_1\" prop:text=\"Click\"></anvil-component>\n</anvil-form>",
+  "normalization": {
+    "dropzoneIds": false
+  },
+  "expected": {
+    "container": {
+      "type": "LinearPanel",
+      "properties": {
+        "spacing": "medium"
+      }
+    },
+    "components": [
+      {
+        "type": "Button",
+        "name": "button_1",
+        "properties": {
+          "text": "Click"
+        }
+      }
+    ],
+    "serialized_html": "<anvil-form type=\"LinearPanel\" name=\"main_panel\" prop:spacing=\"medium\">\n    <anvil-component type=\"Button\" name=\"button_1\" prop:text=\"Click\"></anvil-component>\n</anvil-form>"
+  }
+}

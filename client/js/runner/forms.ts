@@ -8,6 +8,7 @@ import {
     chainOrSuspend,
     checkArgsLen,
     checkOneArg,
+    isTrue,
     iterForOrSuspend,
     lookupSpecial,
     promiseToSuspension,
@@ -20,6 +21,7 @@ import {
     pyDict,
     pyFunc,
     pyImportError,
+    pyIsInstance,
     pyIter,
     pyKeyError,
     pyList,
@@ -38,6 +40,7 @@ import {
     Component,
     ComponentConstructor,
     EventDescription,
+    IGNORE_PROPERTY_EXCEPTIONS_KW,
     PropertyDescription,
     PropertyDescriptionBase,
     raiseWritebackEventOrSuspend,
@@ -50,21 +53,25 @@ import {
     removeEventHandlers,
     setupFormComponents,
 } from "./component-creation";
+import { LEGACY_CUSTOM_COMPONENT_SPEC_PREFIX } from "./component-specs";
 import {
-    hooks,
     type ComponentYaml,
     type CustomComponentEvents,
     type DataBindingYaml,
     type FormContainerYaml,
     type FormLayoutYaml,
     type FormYaml,
+    hooks,
 } from "./data";
 import { BindingError, CustomAnvilError, isCustomAnvilError } from "./error-handling";
-import { getAnvilComponentClass, getFormClassObject, resolveFormSpec } from "./instantiation";
-// for type stub
-import { parseSerializedHtml } from "@runtime/html-form/parser";
+import {
+    getAnvilComponentClass,
+    getFormClassObject,
+    maybeParseCustomComponentSpecForInstantiation,
+} from "./instantiation";
 import {
     PyModMap,
+    anvilMod,
     funcFastCall,
     jsObjToKws,
     kwsToObj,
@@ -244,36 +251,6 @@ const propNameMap = [
     ["hidden", "hidden"],
     ["deprecated", "deprecated"],
 ] as const;
-
-function ensureHtmlFormParsed(yaml: FormYaml) {
-    if (!ANVIL_IN_DESIGNER) {
-        if (!yaml.save_as_html) {
-            return;
-        }
-    } else {
-        // @ts-expect-error - edit_as_html is a designer only flag
-        if (!yaml.save_as_html && !yaml.edit_as_html) {
-            return;
-        }
-    }
-
-    const serializedHtml = yaml.serialized_html ?? "";
-    // Runtime rendering doesn’t need (and can’t afford) HTML normalization; leave whitespace untouched.
-    const parsed = parseSerializedHtml(serializedHtml, { normalizeHtml: false });
-
-    if (parsed.kind === "layout") {
-        yaml.layout = parsed.layout;
-        yaml.components_by_slot = parsed.components_by_slot;
-        delete yaml.container;
-        delete yaml.components;
-    } else {
-        yaml.container = parsed.container;
-        yaml.components = parsed.components;
-        delete yaml.layout;
-        delete yaml.components_by_slot;
-    }
-    yaml.slots = parsed.slots;
-}
 
 function cleanPropertyDescription(property: NonNullable<FormYaml["properties"]>[number]): PropertyDescription {
     const cleaned = {} as PropertyDescription;
@@ -633,9 +610,17 @@ export const ITEM_PROPERTY = {
     description: "A dictionary-like object connected to this form",
 } as const;
 
+function isHtmlCustomContainerCarrier(yaml: FormYaml, c: Component) {
+    if (!yaml.custom_component_container) {
+        return false;
+    }
+    const containerType = yaml.container?.type;
+    return containerType === "HtmlTemplate" || containerType === "HtmlComponent";
+}
+
 function setupDropHooks(yaml: FormYaml, c: Component) {
     const oldEnableDropMode = c.anvil$hooks.enableDropMode;
-    if (yaml.custom_component_container) {
+    if (isHtmlCustomContainerCarrier(yaml, c)) {
         // Custom container support. It's a hack for a special case.
         //
         // Custom containers are designer-created custom components that also expose the container behaviour of their root
@@ -670,7 +655,7 @@ function setupDropHooks(yaml: FormYaml, c: Component) {
             );
     } else {
         c.anvil$hooks.enableDropMode = (dropping, flags) =>
-            flags?.asComponent ? [] : oldEnableDropMode?.(dropping, flags) ?? [];
+            flags?.asComponent ? [] : (oldEnableDropMode?.(dropping, flags) ?? []);
     }
 }
 
@@ -754,14 +739,20 @@ export const createFormTemplateClass = (
     anvilModule: PyModMap,
     moduleName: string
 ): FormTemplateConstructor | Suspension => {
-    ensureHtmlFormParsed(yaml);
+    const containerParsedFormSpec = yaml.container
+        ? maybeParseCustomComponentSpecForInstantiation(yaml.container.type, depAppId)
+        : null;
     const pyBase = yaml.container
         ? getAnvilComponentClass(anvilModule, yaml.container.type) ||
-          getFormClassObject(resolveFormSpec(yaml.container.type.substring(5), depAppId))
+          (containerParsedFormSpec ? getFormClassObject(containerParsedFormSpec) : undefined)
         : WithLayout;
 
     if (pyBase === undefined) {
-        throw new pyImportError("Failed to import form " + yaml.container!.type.substring(5));
+        const containerType = yaml.container!.type;
+        const displayType = containerType.startsWith(LEGACY_CUSTOM_COMPONENT_SPEC_PREFIX)
+            ? containerType.substring(LEGACY_CUSTOM_COMPONENT_SPEC_PREFIX.length)
+            : containerType;
+        throw new pyImportError("Failed to import form " + displayType);
     }
 
     return chainOrSuspend(pyBase, (pyBase: ComponentConstructor) => {
@@ -785,7 +776,7 @@ export const createFormTemplateClass = (
 
         const kwargs = [];
         if (yaml.layout) {
-            kwargs.push("layout", { type: yaml.layout.type, defaultDepId: depAppId });
+            kwargs.push("layout", { type: yaml.layout.type, defaultDepAppId: depAppId });
         }
         if (yaml.custom_component || yaml.slots) {
             kwargs.push("metaclass", MetaCustomComponent);
@@ -827,7 +818,7 @@ export const createFormTemplateClass = (
                 }
                 const subYaml = yaml.container || (yaml.layout as FormContainerYaml | FormLayoutYaml);
                 const baseConstructionKwargs: Kws = jsObjToKws({
-                    __ignore_property_exceptions: true,
+                    [IGNORE_PROPERTY_EXCEPTIONS_KW]: true,
                     ...(subYaml.properties || {}),
                 });
                 const baseNew = Sk.abstr.typeLookup<pyCallable>(pyBase, Sk.builtin.str.$new);
@@ -1020,7 +1011,7 @@ export const createFormTemplateClass = (
 
                     let anvilProps: PropertyDescriptionBase[];
                     const shouldInstantiateProp = (propName: string) => {
-                        if (propName === "__ignore_property_exceptions") return false;
+                        if (propName === IGNORE_PROPERTY_EXCEPTIONS_KW) return false;
                         if (validKwargs.has(propName)) return true;
                         anvilProps ??= self.anvil$hooks.properties ?? [];
                         if (anvilProps.some(({ name }) => name === propName)) return true;
@@ -1044,7 +1035,21 @@ export const createFormTemplateClass = (
                         ...propAttrs.map(
                             ([propName, pyPropVal]) =>
                                 () =>
-                                    self.tp$setattr(new Sk.builtin.str(propName), pyPropVal, true)
+                                    tryCatchOrSuspend(
+                                        () => self.tp$setattr(new Sk.builtin.str(propName), pyPropVal, true),
+                                        (e) => {
+                                            if (e instanceof pyBaseException && e.args.v[0] instanceof pyStr) {
+                                                const originalMessage = e.args.v[0].toString();
+                                                // this error message is not very helpful, so we replace it with a more helpful one
+                                                e.args.v[0] = new pyStr(
+                                                    `Error initialising property '${propName}' on ${
+                                                        yaml.class_name || className
+                                                    }: ${originalMessage}`
+                                                );
+                                            }
+                                            throw e;
+                                        }
+                                    )
                         ),
                         () => {
                             self.anvil$formState.refreshOnItemSet = true;

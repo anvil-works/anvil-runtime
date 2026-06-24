@@ -1,0 +1,34 @@
+{
+  "name": "slots/named-container",
+  "entrypoint": "parseContainerForm",
+  "html": "<div>\n    <anvil-component type=\"LinearPanel\" name=\"content_panel\">\n        <anvil-slot name=\"main\"></anvil-slot>\n    </anvil-component>\n</div>",
+  "expected": {
+    "container": {
+      "type": "HtmlComponent",
+      "properties": {
+        "html": "<div>\n    <anvil-dropzone name=\"$dz_0\"></anvil-dropzone>\n</div>"
+      }
+    },
+    "components": [
+      {
+        "type": "LinearPanel",
+        "name": "content_panel",
+        "properties": {},
+        "layout_properties": {
+          "dropzone": "$dz_0"
+        }
+      }
+    ],
+    "serialized_html": "<div>\n    <anvil-component type=\"LinearPanel\" name=\"content_panel\">\n        <anvil-slot name=\"main\"></anvil-slot>\n    </anvil-component>\n</div>",
+    "slots": {
+      "main": {
+        "target": {
+          "type": "container",
+          "name": "content_panel"
+        },
+        "index": 0,
+        "set_layout_properties": {}
+      }
+    }
+  }
+}

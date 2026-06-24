@@ -34,12 +34,11 @@ import {
     addEventHandler,
     raiseEventOrSuspend,
 } from "../components/Component";
-import { data } from "./data";
 import {
-    ResolvedForm,
+    ParsedFormSpec,
     getAnvilComponentInstantiator,
     getNamedFormInstantiator,
-    resolveFormSpec,
+    maybeParseCustomComponentSpecForInstantiation,
 } from "./instantiation";
 import {
     anvilMod,
@@ -99,8 +98,12 @@ interface SlotState extends HasRelevantHooks {
     lastUse: null | pyObject;
     canAddComponent: () => boolean;
     templateSpec?: ToolboxItem;
+    placeholderText?: string;
     // TODO I tried to be clever with Typescript type merging and it didn't work, so sticking this into the runtime
     templateComponent?: Component;
+    placeholderComponent?: Component;
+    ensurePlaceholder?: () => void | Suspension;
+    removePlaceholder: () => pyObject | Suspension;
     earlierSlots: Slot[];
     calculateOffset(): number;
 }
@@ -128,6 +131,15 @@ function mkSlotState(
         canAddComponent() {
             return this.components.length === 0 || !this.oneComponent;
         },
+        removePlaceholder() {
+            const placeholder = this.placeholderComponent;
+            if (!placeholder) {
+                return pyNone;
+            }
+            this.placeholderComponent = undefined;
+            const pyRemoveFromParent = Sk.abstr.gattr(placeholder, s_remove_from_parent) as pyCallable;
+            return Sk.misceval.callsimOrSuspendArray(pyRemoveFromParent);
+        },
         fillCache() {
             return (
                 this.cache ||
@@ -147,6 +159,9 @@ function mkSlotState(
             let offset = 0;
             for (const s of this.earlierSlots) {
                 offset += s._slotState.components.length;
+                if (s._slotState.placeholderComponent) {
+                    offset += 1;
+                }
             }
             return offset;
         },
@@ -260,7 +275,7 @@ export const Slot: SlotConstructor = Sk.abstr.buildNativeClass("anvil.Slot", {
                 pyObject,
                 pyObject,
                 pyObject,
-                pyObject | undefined
+                pyObject | undefined,
             ];
             const insertionIndex = toJs(pyInsertionIndex);
             if (typeof insertionIndex !== "number") {
@@ -314,12 +329,16 @@ export const Slot: SlotConstructor = Sk.abstr.buildNativeClass("anvil.Slot", {
                 _slotState.lastUse = pyComponent;
 
                 return chainOrSuspend(
-                    _slotState.fillCache(),
+                    _slotState.removePlaceholder(),
+                    () => _slotState.fillCache(),
                     ({ pyAddComponent }) => Sk.misceval.callsimOrSuspendArray(pyAddComponent, [pyComponent], nextKws),
                     () => {
                         // Add it to components
                         pyComponent.anvilComponent$onRemove(() => {
                             _slotState.components = _slotState.components.filter((c) => c !== pyComponent);
+                            if (_slotState.components.length === 0) {
+                                return _slotState.ensurePlaceholder?.();
+                            }
                         });
                         _slotState.components.push(pyComponent);
                         return pyNone;
@@ -386,23 +405,12 @@ export const Slot: SlotConstructor = Sk.abstr.buildNativeClass("anvil.Slot", {
 ["offset_by_slot"];
 /*!defClass(anvil,Slot)!*/
 
-export function getComponentClass(typeSpec: string, defaultDepId: string): ComponentConstructor | Suspension {
-    const customComponentMatch = typeSpec.match(/^form:(?:([^:]+):)?([^:]*)$/);
-    if (!customComponentMatch) {
+export function getComponentClass(typeSpec: string, defaultDepAppId: string): ComponentConstructor | Suspension {
+    const parsedFormSpec = maybeParseCustomComponentSpecForInstantiation(typeSpec, defaultDepAppId);
+    if (!parsedFormSpec) {
         return anvilMod[typeSpec] as ComponentConstructor;
     }
-    const [_, logicalDepId, formName] = customComponentMatch;
-    const depId = logicalDepId ? data.logicalDepIds[logicalDepId] : null;
-    const appPackage = depId
-        ? data.app.dependency_code[depId].package_name
-        : defaultDepId
-        ? data.app.dependency_code[defaultDepId].package_name
-        : data.appPackage;
-    if (!appPackage) {
-        throw `Missing dependency with ID "${depId || logicalDepId}"`;
-    }
-    const [__, pkgPrefix, className] = formName.match(/^(.+\.)?([^.]+)$/)!;
-    const formModuleName = `${appPackage}.${pkgPrefix || ""}${className}`;
+    const formModuleName = parsedFormSpec.packageQualifiedFormName;
 
     return chainOrSuspend(
         tryCatchOrSuspend(
@@ -414,7 +422,7 @@ export function getComponentClass(typeSpec: string, defaultDepId: string): Compo
                 throw `Error importing ${formModuleName}: ${strError(exception)}`;
             }
         ),
-        () => importFrom<ComponentConstructor>(formModuleName, className)
+        () => importFrom<ComponentConstructor>(formModuleName, parsedFormSpec.leafName)
     );
 }
 
@@ -422,7 +430,7 @@ type InstantiateFn = (kwargs?: Kws, pathId?: string | number) => Component | Sus
 
 interface LayoutSubclassHooks {
     layout:
-        | { type: "form"; formSpec: ResolvedForm }
+        | { type: "form"; parsedFormSpec: ParsedFormSpec }
         | { type: "builtin"; name: string }
         | { type: "constructor"; constructor: pyCallable };
 }
@@ -568,7 +576,7 @@ export const WithLayout: WithLayoutConstructor = Sk.abstr.buildNativeClass("anvi
         __init_subclass__: {
             $meth(args: Args, kws?: Kws) {
                 const kwMap = kwsToObj(kws);
-                type LayoutFromYaml = { type: string; defaultDepId: string };
+                type LayoutFromYaml = { type: string; defaultDepAppId: string };
                 type Layout = ComponentConstructor | LayoutFromYaml | undefined;
 
                 const fromYaml = (layoutClass: Layout): layoutClass is LayoutFromYaml => {
@@ -581,12 +589,10 @@ export const WithLayout: WithLayoutConstructor = Sk.abstr.buildNativeClass("anvi
                     // This is a YAML spec passed from form.ts
                     // Delay the actual type lookup until the first one gets instantiated; otherwise you might try to look up
                     // a form template that hasn't been created yet. Not an issue for layouts created directly in Python.
-                    const { type, defaultDepId } = layoutClass;
-                    const isForm = type.startsWith("form:");
+                    const { type, defaultDepAppId } = layoutClass;
+                    const parsedFormSpec = maybeParseCustomComponentSpecForInstantiation(type, defaultDepAppId);
                     this._withLayoutSubclass = {
-                        layout: isForm
-                            ? { type: "form", formSpec: resolveFormSpec(type.substring(5), defaultDepId) }
-                            : { type: "builtin", name: type },
+                        layout: parsedFormSpec ? { type: "form", parsedFormSpec } : { type: "builtin", name: type },
                     };
                 } else if (
                     layoutClass &&
@@ -630,10 +636,13 @@ export const WithLayout: WithLayoutConstructor = Sk.abstr.buildNativeClass("anvi
                     () =>
                         chainOrSuspend(
                             l.type === "form"
-                                ? getNamedFormInstantiator(l.formSpec, this)
+                                ? getNamedFormInstantiator(l.parsedFormSpec, this)
                                 : l.type === "builtin"
-                                ? getAnvilComponentInstantiator({ fromYaml: false, requestingComponent: this }, l.name)
-                                : (kws?: Kws) => pyCallOrSuspend(l.constructor, [], kws),
+                                  ? getAnvilComponentInstantiator(
+                                        { fromYaml: false, requestingComponent: this },
+                                        l.name
+                                    )
+                                  : (kws?: Kws) => pyCallOrSuspend(l.constructor, [], kws),
                             (instantiate) => instantiate(kwargs) as Component,
                             (pyL) => {
                                 this._withLayout.pyLayout = pyL;

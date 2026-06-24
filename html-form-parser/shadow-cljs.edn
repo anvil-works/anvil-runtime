@@ -1,0 +1,28 @@
+{:lein {:profile "+cljs"}
+ :builds
+ {:parser
+  {:target :esm
+   :devtools {:enabled false}
+   :output-dir "dist"
+   :modules
+   {:index
+    {:exports
+     {parseSerializedHtml anvil.html-form.api/parseSerializedHtml
+      parseLayoutForm anvil.html-form.api/parseLayoutForm
+      parseContainerForm anvil.html-form.api/parseContainerForm
+      buildSelectionNameMaps anvil.html-form.api/buildSelectionNameMaps
+      extractDomNodeNames anvil.html-form.api/extractDomNodeNames
+      extractDomNodeRefs anvil.html-form.api/extractDomNodeRefs
+      serializeFormContainerWithResult anvil.html-form.api/serializeFormContainerWithResult
+      serializeFormContainer anvil.html-form.api/serializeFormContainer
+      serializeFormLayoutWithResult anvil.html-form.api/serializeFormLayoutWithResult
+      serializeFormLayout anvil.html-form.api/serializeFormLayout
+      serializeFormTemplateHtml anvil.html-form.api/serializeFormTemplateHtml
+      parseFormTemplateSource anvil.html-form.api/parseFormTemplateSource
+      buildFormTemplateSavePayload anvil.html-form.api/buildFormTemplateSavePayload
+      copyFormYamlWithCanonicalizedFormSpecs anvil.html-form.api/copyFormYamlWithCanonicalizedFormSpecs
+      copyFormYamlWithRewrittenFormSpecs anvil.html-form.api/copyFormYamlWithRewrittenFormSpecs
+      setDefaultDropzoneNameGenerator anvil.html-form.api/setDefaultDropzoneNameGenerator
+      createDeterministicDropzoneNameGenerator anvil.html-form.api/createDeterministicDropzoneNameGenerator
+      createHashBasedDropzoneNameGenerator anvil.html-form.api/createHashBasedDropzoneNameGenerator
+      hashString anvil.html-form.api/hashString}}}}}}

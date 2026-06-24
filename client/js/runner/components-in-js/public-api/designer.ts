@@ -76,6 +76,7 @@ export function requestFormPropertyChange() {
 export interface InlineEditingOptions {
     onFinished?: () => void;
     sectionId?: string | null;
+    getPropertyValue?: (element: HTMLElement, text: string | null) => any;
 }
 
 export function startInlineEditing(

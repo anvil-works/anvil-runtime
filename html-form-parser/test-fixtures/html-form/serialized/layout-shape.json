@@ -1,0 +1,16 @@
+{
+  "name": "serialized/layout-shape",
+  "entrypoint": "parseSerializedHtml",
+  "html": "<anvil-form layout=\"form:layouts.main\"><anvil-block slot=\"main\"></anvil-block></anvil-form>",
+  "normalization": {
+    "dropzoneIds": false
+  },
+  "expected": {
+    "layout": {
+      "type": "form:layouts.main"
+    },
+    "components_by_slot": {
+      "main": []
+    }
+  }
+}

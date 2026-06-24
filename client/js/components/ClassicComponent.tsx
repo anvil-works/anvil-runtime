@@ -35,6 +35,7 @@ import {
     PyModMap,
     funcFastCall,
     initNativeSubclass,
+    iterKws,
     kwsToObj,
     s_init_subclass,
     s_x_anvil_classic_hide,
@@ -49,6 +50,7 @@ import {
     ComponentConstructor,
     ContainerDesignInfo,
     EventDescription,
+    IGNORE_PROPERTY_EXCEPTIONS_KW,
     Interaction,
     PropertyDescription,
     StringPropertyDescription,
@@ -424,13 +426,9 @@ const ClassicComponentFactory = (pyModule: PyModMap) => {
                 }
                 const _anvil = (self._anvil = createAnvil(self));
 
-                kwargs = kwargs || [];
                 const propsToInit: Record<string, pyObject> = {};
-                for (let i = 0; i < kwargs.length; i += 2) {
-                    const key = kwargs[i];
-                    if (typeof key === "string") {
-                        propsToInit[key] = kwargs[i + 1] as pyObject;
-                    }
+                for (const [key, val] of iterKws(kwargs)) {
+                    propsToInit[key] = val;
                 }
 
                 const {
@@ -525,19 +523,16 @@ const ClassicComponentFactory = (pyModule: PyModMap) => {
                 if (ANVIL_IN_DESIGNER || designerApi.inDesigner) {
                     return;
                 }
-                kwargs = kwargs || [];
-                let __ignore_property_exceptions = false;
+                let ignorePropertyExceptions = false;
                 const badKwargs: string[] = [];
                 const chainFns: Array<() => void | Suspension | pyObject> = [];
                 const readOnly: string[] = [];
                 const props = this._anvil.props;
                 const propMap = this._anvil.propMap;
-                for (let i = 0; i < kwargs.length; i += 2) {
-                    const propName = kwargs[i] as string;
-                    const propVal = kwargs[i + 1] as pyObject;
+                for (const [propName, propVal] of iterKws(kwargs)) {
                     if (propVal !== props[propName]) {
-                        if (propName === "__ignore_property_exceptions") {
-                            __ignore_property_exceptions = true;
+                        if (propName === IGNORE_PROPERTY_EXCEPTIONS_KW) {
+                            ignorePropertyExceptions = true;
                             // this will be true for every anvil yaml component so check this first
                         } else if (!(propName in propMap)) {
                             badKwargs.push(propName);
@@ -548,7 +543,7 @@ const ClassicComponentFactory = (pyModule: PyModMap) => {
                         }
                     }
                 }
-                if (!__ignore_property_exceptions && (badKwargs.length || readOnly.length)) {
+                if (!ignorePropertyExceptions && (badKwargs.length || readOnly.length)) {
                     let msg = typeName(this);
                     if (badKwargs.length) {
                         msg += " got unexpected keyword argument(s): " + badKwargs.map((x) => "'" + x + "'").join(", ");

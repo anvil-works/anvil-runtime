@@ -3,6 +3,7 @@
   :repositories {"anvil" "file:../maven_repository"}
   :mirrors {"central" {:name "central"
                        :url "https://maven-central-eu.storage-download.googleapis.com/maven2"}}
+  :source-paths ["src" "../../html-form-parser/src"]
   :managed-dependencies [[org.clojure/clojure "1.12.0"]
 
                          [com.fasterxml.jackson.core/jackson-core "2.18.6"]
@@ -45,6 +46,7 @@
                  [crypto-random "1.2.1"]
                  [clj-commons/clj-yaml "1.0.27"]
                  [digest "1.4.4"]
+                 [org.jsoup/jsoup "1.22.2"]
 
                  [org.clojure/data.codec "0.1.0"]
 

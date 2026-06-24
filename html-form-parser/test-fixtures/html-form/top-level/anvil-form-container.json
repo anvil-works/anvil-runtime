@@ -1,0 +1,32 @@
+{
+  "name": "top-level/anvil-form-container",
+  "entrypoint": "parseContainerForm",
+  "html": "<anvil-form container=\"ColumnPanel\" name=\"ignored\" prop:spacing=\"10\" bind:visible=\"self.show\" on:show=\"self.on_show\">\n    <anvil-component type=\"Label\" name=\"lbl\" prop:text=\"'Hello'\"></anvil-component>\n</anvil-form>",
+  "expected": {
+    "container": {
+      "type": "ColumnPanel",
+      "properties": {
+        "spacing": 10
+      },
+      "event_bindings": {
+        "show": "on_show"
+      },
+      "data_bindings": [
+        {
+          "property": "visible",
+          "code": "self.show"
+        }
+      ]
+    },
+    "components": [
+      {
+        "type": "Label",
+        "name": "lbl",
+        "properties": {
+          "text": "'Hello'"
+        }
+      }
+    ],
+    "serialized_html": "<anvil-form container=\"ColumnPanel\" name=\"ignored\" prop:spacing=\"10\" bind:visible=\"self.show\" on:show=\"self.on_show\">\n    <anvil-component type=\"Label\" name=\"lbl\" prop:text=\"'Hello'\"></anvil-component>\n</anvil-form>"
+  }
+}

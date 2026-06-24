@@ -20,13 +20,23 @@ import {
     toPy,
 } from "@Sk";
 import PyDefUtils from "PyDefUtils";
-import type { Component, ComponentConstructor, Section, StringPropertyDescription } from "../components/Component";
+import type { Component, ComponentConstructor, Section } from "../components/Component";
 
 const NOT_AVAILABLE = (...args: any[]) => {
     throw new Error("UI designer not available");
 };
 
 export type SectionUpdates = { [id: string]: Partial<Omit<Section, "id">> | null };
+export interface InlineEditableProperty {
+    name: string;
+    multiline?: boolean;
+}
+
+export interface InlineEditingOptions {
+    onFinished?: () => void;
+    sectionId?: string | null;
+    getPropertyValue?: (element: HTMLElement, text: string | null) => any;
+}
 
 interface DesignerApi {
     inDesigner: boolean;
@@ -41,9 +51,9 @@ interface DesignerApi {
     startEditingForm(pyComponent: Component, formId: string): void;
     startInlineEditing(
         pyComponent: Component,
-        prop: StringPropertyDescription,
+        prop: InlineEditableProperty,
         element: HTMLElement,
-        options: { onFinished?: () => void; sectionId?: string | null }
+        options: InlineEditingOptions
     ): void;
     registerInteraction(
         pyComponent: Component,
@@ -208,7 +218,7 @@ setUpModuleMethods("designer", pyDesignerApi, {
 
             return chainOrSuspend(toJs(domElement) || pyComponent.anvil$hooks.setupDom(), (element: HTMLElement) => {
                 return wrapMaybePromise(
-                    designerApi.startInlineEditing(pyComponent, { name: toJs(propertyName), type: "string" }, element, {
+                    designerApi.startInlineEditing(pyComponent, { name: toJs(propertyName) }, element, {
                         onFinished,
                     })
                 );

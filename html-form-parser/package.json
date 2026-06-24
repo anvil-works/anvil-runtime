@@ -1,0 +1,46 @@
+{
+  "name": "@anvil-works/form-template-parser",
+  "version": "0.0.2",
+  "private": false,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "src/index.d.ts",
+  "files": [
+    "dist",
+    "src/index.d.ts"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "shadow-cljs release parser",
+    "build-dev": "shadow-cljs compile parser",
+    "dev": "shadow-cljs watch parser",
+    "watch": "shadow-cljs watch parser",
+    "clean": "rm -rf dist .shadow-cljs",
+    "test": "pnpm test:jvm && pnpm test:js",
+    "test:jvm": "lein test anvil.html-form.fixtures-test",
+    "test:js": "rstest test",
+    "bench": "tsx scripts/bench.ts",
+    "bench:cljs": "tsx scripts/bench.ts",
+    "bench:jvm": "lein with-profile +bench run -m anvil.html-form.bench",
+    "generate-runtime-bench-fixtures": "tsx scripts/generate-runtime-bench-fixtures.ts",
+    "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {
+    "entities": "6.0.1",
+    "parse5": "7.3.0",
+    "yaml": "2.8.3"
+  },
+  "devDependencies": {
+    "@rstest/core": "^0.6.2",
+    "shadow-cljs": "^3.2.1",
+    "tsx": "^4.20.5"
+  }
+}

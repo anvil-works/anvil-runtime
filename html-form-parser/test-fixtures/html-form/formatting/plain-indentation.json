@@ -1,0 +1,19 @@
+{
+  "name": "formatting/plain-indentation",
+  "entrypoint": "parseContainerForm",
+  "html": "<div class=\"content\">\n    <h1>Hello</h1>\n    <p>Welcome to my form.</p>\n</div>",
+  "normalization": {
+    "dropzoneIds": false
+  },
+  "expected": {
+    "container": {
+      "type": "HtmlComponent",
+      "properties": {
+        "html": "<div class=\"content\">\n    <h1>Hello</h1>\n    <p>Welcome to my form.</p>\n</div>"
+      }
+    },
+    "components": [],
+    "serialized_html": "<div class=\"content\">\n    <h1>Hello</h1>\n    <p>Welcome to my form.</p>\n</div>"
+  },
+  "expectedSerializedHtml": "<div class=\"content\">\n    <h1>Hello</h1>\n    <p>Welcome to my form.</p>\n</div>"
+}

@@ -8,6 +8,12 @@
 ; Default buckets to use for request and query durations
 (def DEFAULT-BUCKETS [0.001 0.002 0.004 0.007 0.010 0.05 0.1 0.2 0.5 1 2 5 10 20 60 120])
 
+; Buckets for the worker-queue latency probe: dense in 10us-100ms, sparse above
+; (once we're in unit seconds the worker pool is effectively dead anyway).
+(def QUEUE-PROBE-BUCKETS [0.00001 0.00002 0.00005 0.0001 0.0002 0.0005
+                          0.001 0.002 0.005 0.01 0.02 0.05 0.1
+                          0.5 1 5])
+
 (ExemplarConfig/enableExemplars)
 
 ;;; PATCH iapetos to produce latest prometheus text format (with support for exemplars)
@@ -67,6 +73,7 @@
                               (prometheus/gauge :api/max-thread-pool-size-total)
                               (prometheus/gauge :api/task-queue-length-total) ;; TODO: Max, avg
                               (prometheus/histogram :api/task-queue-wait-seconds {:buckets DEFAULT-BUCKETS})
+                              (prometheus/histogram :api/task-queue-probe-wait-seconds {:buckets QUEUE-PROBE-BUCKETS})
                               (prometheus/histogram :api/task-execution-seconds {:buckets DEFAULT-BUCKETS
                                                                                  :labels  #{:type :name}})
 

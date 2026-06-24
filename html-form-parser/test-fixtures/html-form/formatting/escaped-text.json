@@ -1,0 +1,19 @@
+{
+  "name": "formatting/escaped-text",
+  "entrypoint": "parseContainerForm",
+  "html": "<button type=\"button\" anvil:dom-node=\"hero_button\" class=\"primary-action\">&lt;div&gt;foo&lt;/div&gt;</button>",
+  "normalization": {
+    "dropzoneIds": false
+  },
+  "expected": {
+    "container": {
+      "type": "HtmlComponent",
+      "properties": {
+        "html": "<button type=\"button\" anvil:dom-node=\"hero_button\" class=\"primary-action\">&lt;div&gt;foo&lt;/div&gt;</button>"
+      }
+    },
+    "components": [],
+    "serialized_html": "<button type=\"button\" anvil:dom-node=\"hero_button\" class=\"primary-action\">&lt;div&gt;foo&lt;/div&gt;</button>"
+  },
+  "expectedSerializedHtml": "<button type=\"button\" anvil:dom-node=\"hero_button\" class=\"primary-action\">&lt;div&gt;foo&lt;/div&gt;</button>"
+}

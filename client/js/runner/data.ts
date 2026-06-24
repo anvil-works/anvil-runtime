@@ -1,5 +1,4 @@
 // data.ts: Store the actual app YAML.
-
 import type {
     Component,
     CustomComponentToolboxItem,
@@ -7,7 +6,7 @@ import type {
     DesignerHint,
     ToolboxSection,
 } from "@runtime/components/Component";
-import type { pyObject, pyFunc } from "../@Sk";
+import type { pyFunc, pyObject } from "../@Sk";
 
 export interface DataBindingYaml {
     code: string;
@@ -54,6 +53,7 @@ export interface SlotDefYaml {
     target: SlotTarget;
     set_layout_properties?: { [prop: string]: any };
     one_component?: boolean;
+    placeholder_text?: string;
     template?: ComponentYaml; // TODO: Not actually true. Templates don't have names.
     index: number;
 }
@@ -285,7 +285,10 @@ interface Data {
     appId: string;
     appPackage: string;
     dependencyPackages: { [depId: string]: string };
+    depAppIdByPackageName: { [packageName: string]: string };
     logicalDepIds: { [logicalDepId: string]: string };
+    logicalDepIdByDepAppId: { [depAppId: string]: string };
+    appLocalFormNamesByDepAppId: { local: Set<string>; [depAppId: string]: Set<string> };
     appOrigin: string;
     appStartupData?: any;
     deserializedFormArgs?: any[];
@@ -323,27 +326,50 @@ window.anvilRuntimeVersion = 3; // At some point we may need to load this from t
 
 export type SetDataParams = Pick<Data, "app" | "appId" | "appOrigin" | "appStartupData"> & ServerParams;
 
+const derivedAppContentData = (
+    app: Pick<AppContentWithDeps, "forms" | "dependency_code" | "dependency_ids" | "package_name">,
+    logicalDepIdsOverride?: Data["logicalDepIds"]
+) => {
+    const appPackage = app.package_name || "main_package";
+    const dependencyPackages = Object.fromEntries(
+        Object.entries(app.dependency_code ?? {})
+            .map(([depAppId, { package_name }]) => [depAppId, package_name])
+            .filter(([_depAppId, package_name]) => package_name !== undefined)
+    );
+
+    const depAppIdByPackageName = Object.fromEntries(
+        Object.entries(dependencyPackages).map(([depAppId, packageName]) => [packageName, depAppId])
+    );
+    const logicalDepIds = logicalDepIdsOverride ?? app.dependency_ids ?? {};
+    const logicalDepIdByDepAppId = Object.fromEntries(
+        Object.entries(logicalDepIds).map(([logicalDepId, depAppId]) => [depAppId, logicalDepId])
+    );
+    const appLocalFormNamesByDepAppId: Data["appLocalFormNamesByDepAppId"] = {
+        local: new Set((app.forms ?? []).map(({ class_name }) => class_name)),
+    };
+    for (const [depAppId, depApp] of Object.entries(app.dependency_code ?? {})) {
+        appLocalFormNamesByDepAppId[depAppId] = new Set((depApp.forms ?? []).map(({ class_name }) => class_name));
+    }
+
+    return { appPackage, dependencyPackages, depAppIdByPackageName, logicalDepIds, logicalDepIdByDepAppId, appLocalFormNamesByDepAppId };
+};
+
 export function temporaryHackSetupData(d: Partial<Data>) {
-    data = d as Data;
+    const derivedData = d.app ? derivedAppContentData(d.app, d.logicalDepIds) : {};
+    data = { ...derivedData, ...d } as Data;
     window.debugAnvilData = data;
     window.anvilAppMainPackage = data.appPackage;
 }
 
 export function setData({ app, appId, appOrigin, ...serverParams }: SetDataParams) {
-    const dependencyPackages = Object.fromEntries(
-        Object.entries(app.dependency_code)
-            .map(([id, { package_name }]) => [id, package_name])
-            .filter(([_id, package_name]) => package_name !== undefined)
-    );
+    const derivedData = derivedAppContentData(app);
 
     data = {
         app,
         appId,
         appOrigin,
         serverParams,
-        appPackage: app.package_name || "main_package",
-        dependencyPackages,
-        logicalDepIds: app.dependency_ids,
+        ...derivedData,
     };
 
     //used by RepeatingPanel

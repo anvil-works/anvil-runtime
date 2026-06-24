@@ -1,0 +1,21 @@
+{
+  "name": "parser/root-styling",
+  "entrypoint": "parseContainerForm",
+  "html": "<div class=\"card primary\" style=\"color: red; margin-top: 4px\"><span>Hi</span></div>",
+  "options": {
+    "extractRootStyling": true
+  },
+  "expected": {
+    "container": {
+      "type": "HtmlComponent",
+      "properties": {
+        "html": "<div class=\"card primary\" style=\"color: red; margin-top: 4px\"><span>Hi</span></div>",
+        "classes": ["card", "primary"],
+        "style": "color: red; margin-top: 4px"
+      }
+    },
+    "components": [],
+    "serialized_html": "<div class=\"card primary\" style=\"color: red; margin-top: 4px\"><span>Hi</span></div>"
+  },
+  "expectedSerializedHtml": "<div class=\"card primary\" style=\"color: red; margin-top: 4px\"><span>Hi</span></div>"
+}

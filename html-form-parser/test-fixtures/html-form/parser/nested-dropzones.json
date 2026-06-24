@@ -1,0 +1,27 @@
+{
+  "name": "parser/nested-dropzones",
+  "entrypoint": "parseContainerForm",
+  "html": "<div class=\"with-nested\">\n    <anvil-dropzone name=\"dz-outer\">\n        <anvil-dropzone name=\"dz-inner\"></anvil-dropzone>\n    </anvil-dropzone>\n    <anvil-component type=\"Label\" name=\"status\" prop:text=\"OK\"></anvil-component>\n</div>",
+  "expected": {
+    "container": {
+      "type": "HtmlComponent",
+      "properties": {
+        "html": "<div class=\"with-nested\">\n    <anvil-dropzone name=\"dz-outer\">\n        <anvil-dropzone name=\"dz-inner\"></anvil-dropzone>\n    </anvil-dropzone>\n    <anvil-dropzone name=\"$dz_0\"></anvil-dropzone>\n</div>"
+      }
+    },
+    "components": [
+      {
+        "type": "Label",
+        "name": "status",
+        "properties": {
+          "text": "OK"
+        },
+        "layout_properties": {
+          "dropzone": "$dz_0"
+        }
+      }
+    ],
+    "serialized_html": "<div class=\"with-nested\">\n    <anvil-dropzone name=\"dz-outer\">\n        <anvil-dropzone name=\"dz-inner\"></anvil-dropzone>\n    </anvil-dropzone>\n    <anvil-component type=\"Label\" name=\"status\" prop:text=\"OK\"></anvil-component>\n</div>"
+  },
+  "expectedSerializedHtml": "<div class=\"with-nested\">\n    <anvil-dropzone name=\"dz-outer\">\n    </anvil-dropzone>\n    <anvil-component type=\"Label\" name=\"status\" prop:text=\"OK\"></anvil-component>\n</div>"
+}
