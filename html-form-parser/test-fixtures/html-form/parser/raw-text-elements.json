@@ -1,0 +1,19 @@
+{
+  "name": "parser/raw-text-elements",
+  "entrypoint": "parseContainerForm",
+  "html": "<style>.card > .title { color: red }</style>\n<script>if (1 < 2) { console.log(\"a & b\"); }</script>\n<div class=\"card\"><span class=\"title\">Hello</span></div>",
+  "normalization": {
+    "dropzoneIds": false
+  },
+  "expected": {
+    "container": {
+      "type": "HtmlComponent",
+      "properties": {
+        "html": "<style>.card > .title { color: red }</style>\n<script>if (1 < 2) { console.log(\"a & b\"); }</script>\n<div class=\"card\"><span class=\"title\">Hello</span></div>"
+      }
+    },
+    "components": [],
+    "serialized_html": "<style>.card > .title { color: red }</style>\n<script>if (1 < 2) { console.log(\"a & b\"); }</script>\n<div class=\"card\"><span class=\"title\">Hello</span></div>"
+  },
+  "expectedSerializedHtml": "<style>.card > .title { color: red }</style>\n<script>if (1 < 2) { console.log(\"a & b\"); }</script>\n<div class=\"card\"><span class=\"title\">Hello</span></div>"
+}

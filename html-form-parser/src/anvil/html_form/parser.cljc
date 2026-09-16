@@ -8,7 +8,8 @@
                      get-single-root-element has-renderable-content?
                      lower-tag-name mutable-list mutable-list-value
                      normalize-fragment-html parse-attribute-value
-                     render-element state state-reset! state-swap!
+                     raw-text-content raw-text-element? render-element state
+                     state-reset! state-swap!
                      string-list-value strip-anvil-prefix strip-self-prefix
                      whitespace-or-comment? writeback-prefix yaml-key]]
             [clojure.string :as str]))
@@ -336,7 +337,9 @@
         ;; metadata; the metadata now lives on the HtmlComponent.
         element-html (render-element (raw/tag-name element)
                                      (filter-anvil-attributes element-attrs)
-                                     (:html child-result))
+                                     (if (raw-text-element? element)
+                                       (raw-text-content element)
+                                       (:html child-result)))
         fragment-properties (maybe-extract-root-styling
                               context
                               (assoc (:properties metadata)
@@ -418,6 +421,14 @@
               (append! components component)
               (increment-component-count context slot-target)
               (append! parts (str "<anvil-dropzone name=\"" resolved-name "\"></anvil-dropzone>")))
+
+            (raw-text-element? element)
+            ;; <script>/<style> bodies are raw text: they hold no liftable
+            ;; parser elements, and escaping them would change what the browser
+            ;; sees.
+            (append! parts (render-element (raw/tag-name element)
+                                           (raw/attrs element)
+                                           (raw-text-content element)))
 
             :else
             ;; Ordinary DOM stays in the fragment, but its children may contain
@@ -707,7 +718,9 @@
               rendered (render-nodes (raw/child-nodes element) context root-target {:parent-is-fragment true})
               element-html (render-element (lower-tag-name element)
                                            (filter-anvil-attributes (raw/attrs element))
-                                           (:html rendered))]
+                                           (if (raw-text-element? element)
+                                             (raw-text-content element)
+                                             (:html rendered)))]
           (state-reset! components (:components rendered))
           (state-swap! container-properties assoc
                        :html (if (:normalize-html context)

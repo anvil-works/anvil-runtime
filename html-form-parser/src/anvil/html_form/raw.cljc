@@ -1,7 +1,8 @@
 (ns anvil.html-form.raw
   #?(:cljs (:require ["parse5" :as parse5]))
   #?(:clj (:import (org.jsoup Jsoup)
-                   (org.jsoup.nodes Attribute Comment Element Node TextNode))))
+                   (org.jsoup.nodes Attribute Comment DataNode Element Node
+                                    TextNode))))
 
 #?(:clj
    (defn parse-fragment
@@ -53,7 +54,11 @@
      :cljs (if (map? attr) (:value attr) (.-value attr))))
 
 (defn text-value [node]
-  #?(:clj (.getWholeText ^TextNode node)
+  ;; jsoup holds <script>/<style> bodies in DataNode ("#data"); parse5 reports
+  ;; the same characters as an ordinary text node.
+  #?(:clj (if (instance? DataNode node)
+            (.getWholeData ^DataNode node)
+            (.getWholeText ^TextNode node))
      :cljs (.-value node)))
 
 (defn comment-data [node]

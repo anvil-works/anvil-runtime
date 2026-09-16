@@ -3,10 +3,12 @@
             [anvil.html-form.parser :as parser]
             [anvil.html-form.shared
              :refer [add-attrs-to-root-element anvil-component? anvil-dropzone?
-                     append! attr ensure-dom-node-attribute escape-html-text format-attribute
+                     append! attr element-inner-html ensure-dom-node-attribute
+                     escape-html-text format-attribute
                      get-single-root-element is-generated-dropzone-name?
                      json-literal? json-parseable? mutable-list
-                     mutable-list-value normalize-fragment-html render-element
+                     mutable-list-value normalize-fragment-html
+                     raw-text-content raw-text-element? render-element
                      serialize-node state state-reset! state-swap! string-list-value
                      whitespace-or-comment? with-attr without-attrs]]
             [clojure.string :as str]
@@ -181,7 +183,7 @@
                          (without-attrs current ["style"]))))]
     (render-element (raw/tag-name node)
                     node-attrs
-                    (apply str (map serialize-node (raw/child-nodes node))))))
+                    (element-inner-html node))))
 
 (defn- apply-root-html-attributes
   ([html attrs] (apply-root-html-attributes html attrs default-indent-step))
@@ -593,10 +595,14 @@
   (append! parts
            (render-element (raw/tag-name element)
                            (raw/attrs element)
-                           (serialize-replacement-nodes (raw/child-nodes element)
-                                                        (str parent-indent (:indent-step replacement-state default-indent-step))
-                                                        false
-                                                        replacement-state))))
+                           (if (raw-text-element? element)
+                             ;; <script>/<style> bodies are raw text: no nested
+                             ;; dropzones to replace, and no escaping.
+                             (raw-text-content element)
+                             (serialize-replacement-nodes (raw/child-nodes element)
+                                                          (str parent-indent (:indent-step replacement-state default-indent-step))
+                                                          false
+                                                          replacement-state)))))
 
 (defn- append-replacement-node! [parts node nodes index parent-indent parent-dropzone? replacement-state]
   (cond

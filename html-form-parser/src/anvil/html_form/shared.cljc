@@ -17,6 +17,12 @@
   #{"area" "base" "br" "col" "embed" "hr" "img" "input" "link" "meta"
     "param" "source" "track" "wbr"})
 
+;; HTML parsers keep the bodies of these elements as raw text, and browsers do
+;; not decode character references inside them, so their content has to be
+;; emitted exactly as it was written.
+(def raw-text-elements
+  #{"script" "style"})
+
 (defn state [value]
   #?(:clj (volatile! value)
      :cljs (volatile! value)))
@@ -230,6 +236,7 @@
 (defn anvil-component? [element] (= "anvil-component" (lower-tag-name element)))
 (defn anvil-block? [element] (= "anvil-block" (lower-tag-name element)))
 (defn anvil-form? [element] (= "anvil-form" (lower-tag-name element)))
+(defn raw-text-element? [element] (contains? raw-text-elements (lower-tag-name element)))
 
 (defn whitespace-text? [node]
   (and (= "#text" (raw/node-name node))
@@ -359,6 +366,18 @@
       (str open " />")
       (str open ">" inner-html "</" tag-name ">"))))
 
+(declare serialize-node)
+
+(defn raw-text-content [element]
+  ;; The JVM parser reports raw text as "#data" nodes and the browser parser as
+  ;; "#text" nodes. Both hold the original characters, so join them unescaped.
+  (apply str (map raw/text-value (raw/child-nodes element))))
+
+(defn element-inner-html [element]
+  (if (raw-text-element? element)
+    (raw-text-content element)
+    (apply str (map serialize-node (raw/child-nodes element)))))
+
 (defn serialize-node [node]
   (cond
     (= "#text" (raw/node-name node))
@@ -370,7 +389,7 @@
     (raw/element? node)
     (render-element (raw/tag-name node)
                     (raw/attrs node)
-                    (apply str (map serialize-node (raw/child-nodes node))))
+                    (element-inner-html node))
 
     :else
     ""))
@@ -437,7 +456,7 @@
                            attrs)]
     (render-element (raw/tag-name node)
                     node-attrs
-                    (apply str (map serialize-node (raw/child-nodes node))))))
+                    (element-inner-html node))))
 
 (defn add-attrs-to-root-element
   ([html attrs] (add-attrs-to-root-element html attrs "    "))
