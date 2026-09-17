@@ -23,7 +23,7 @@
 
 (defn throw-need-own-app-id! []
   (throw+ {:anvil/server-error "To get Microsoft API tokens, you need to supply your own Application ID and secret"
-           :docId              "microsoft"
+           :docUrl              "/integrations/microsoft"
            :docLinkTitle       "Learn more about Microsoft API credentials"}))
 
 (defn get-ensuring-application-id [key]

@@ -2,6 +2,7 @@ import { defer, Deferred, generateUUID, globalSuppressLoading } from "@runtime/u
 import { anvilServerMod } from "@runtime/runner/py-util";
 import { Args, Kws, promiseToSuspension, pyObject, pyRuntimeError, pyStr, Suspension } from "@Sk";
 import PyDefUtils from "PyDefUtils";
+import { signalConnectionState } from "./connection-state";
 import { PROTOCOL_VERSION } from "./constants";
 import { diagnosticData, diagnosticRequest } from "./diagnostics";
 import { ErrorData, ResponseData } from "./handlers";
@@ -367,6 +368,7 @@ let executeCall = async (
         console.error(e);
         if (e instanceof WebsocketFallback) {
             console.log("Falling back to HTTP");
+            signalConnectionState("none");
             executeCall = executeCallHttp;
             deleteOutstandingRequest(requestId);
             return executeCallHttp(request, serializedCallPromise, blobContent, suppressLoading);

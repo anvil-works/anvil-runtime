@@ -95,6 +95,12 @@ def run():
             _serialise.process_media_error(msg)
         elif type is None and ("response" in msg or "error" in msg):
             _threaded_server.IncomingResponse(msg)
+        elif type is None and ("debuggers" in msg or "debugger" in msg):
+            # A breakpoint was hit in a server function called (possibly transitively, e.g. via a
+            # nested anvil.server.call) by this process. We have no interactive debugger session on
+            # this side of that call, so just ignore the pause notification and keep waiting for the
+            # real response.
+            pass
         else:
             print("Downlink worker socket got unrecognised message: "+repr(msg))
             sys.stdout.flush()

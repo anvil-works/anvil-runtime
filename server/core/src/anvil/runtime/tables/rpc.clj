@@ -69,7 +69,7 @@
                                                 (not rpc-util/*client-request?*) "server"
                                                 (rpc-util/have-live-object-permission? "cwrite") "client or server"
                                                 :else "client") " code.")
-                     :docId              "data_tables_permissions"
+                     :docUrl              "/data-tables/data-security#permissions"
                      :docLinkTitle       "Learn about Data Table permissions"}))))
       (throw+ (general-tables-error "This table cannot be written or searched by this app")))))
 
@@ -1059,7 +1059,7 @@
               (export-as-csv-v1 table-id query-obj cols escape-for-excel?))))))))
 
 (defn get-stored-media [object-id]
-  (with-table-transaction
+  (with-relaxed-table-transaction
     (let [object-id (as-int object-id)
           media (first (jdbc/query (db) ["SELECT content_type, name, data from app_storage_media WHERE object_id = ?" object-id]))]
       (cond

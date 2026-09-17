@@ -6,6 +6,6 @@
              :cljs {:dependencies [[org.clojure/clojurescript "1.12.42"]
                                     [thheller/shadow-cljs "3.2.1"]]}}
   :dependencies [[org.clojure/clojure "1.12.0"]
-                 [org.clojure/data.json "0.2.5"]
-                 [org.jsoup/jsoup "1.22.2"]
+                 [org.clojure/data.json "2.5.2"]
+                 [org.jsoup/jsoup "1.23.1"]
                  [clj-commons/clj-yaml "1.0.27"]])

@@ -71,9 +71,13 @@
                               (prometheus/gauge :api/active-worker-threads-total) ;; TODO: Max, avg
                               (prometheus/gauge :api/waiting-worker-threads-total) ;; TODO: Max, avg
                               (prometheus/gauge :api/max-thread-pool-size-total)
+                              (prometheus/gauge :api/active-git-pull-worker-threads-total)
+                              (prometheus/gauge :api/waiting-git-pull-worker-threads-total)
+                              (prometheus/gauge :api/git-pull-worker-threads-total)
                               (prometheus/gauge :api/task-queue-length-total) ;; TODO: Max, avg
                               (prometheus/histogram :api/task-queue-wait-seconds {:buckets DEFAULT-BUCKETS})
                               (prometheus/histogram :api/task-queue-probe-wait-seconds {:buckets QUEUE-PROBE-BUCKETS})
+                              (prometheus/counter :api/task-queue-overflow-total)
                               (prometheus/histogram :api/task-execution-seconds {:buckets DEFAULT-BUCKETS
                                                                                  :labels  #{:type :name}})
 
@@ -112,6 +116,13 @@
                               (prometheus/counter :api/downlink-calls-completed-total {:labels #{:succeeded}})
                               (prometheus/counter :api/background-tasks-started-total)
                               (prometheus/counter :api/background-tasks-responded-total {:labels #{:succeeded}})
+
+                              (prometheus/counter :api/agent-model-proxy-requests-total {:labels #{:outcome}})
+                              (prometheus/counter :api/agent-model-proxy-credits-total)
+                              (prometheus/counter :api/agent-model-proxy-untallied-streams-total {:labels #{:reason}})
+                              (prometheus/counter :api/agent-model-proxy-unknown-usage-total)
+                              (prometheus/counter :api/agent-model-proxy-drained-streams-total {:labels #{:charged}})
+                              (prometheus/counter :api/agent-model-proxy-upstream-errors-total {:labels #{:status :code}})
 
                               (prometheus/counter :api/downlink-launches-total {:labels #{:downlink-server}})
                               (prometheus/counter :api/downlink-rate-limit-launch-delayed-total {:labels #{:downlink-server}})

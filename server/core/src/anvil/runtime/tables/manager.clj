@@ -33,7 +33,8 @@
                            :client_hidden boolean?
                            :init (constantly true)
                            :sql_name string?
-                           :indexes [{:type #{"b_tree" "trigram" "full_text" "gin"}}]}
+                           :indexes [{:type #{"b_tree" "trigram" "full_text" "gin"}}]
+                           :on_delete #{"set_null" "cascade" "restrict"}}
                           col-spec))
 
 (defn create-table! [table-mapping storage name python_name server-access client-access]
@@ -95,7 +96,11 @@
                                 (-> (fn [columns col-id]
                                       (assert (keyword? col-id) "col-id must be a keyword")
                                       (log/trace "Updating" col-id "in" columns)
-                                      (apply update columns col-id update-fn args))
+                                      (if-not (get columns col-id)
+                                        (do
+                                          (log/warn "update-date-after-column-change! attempted to update nonexistent column" col-id "in table" table-id)
+                                          columns)
+                                        (apply update columns col-id update-fn args)))
                                     (reduce columns added-col-ids)))]
     (worker-pool/with-expanding-threadpool-when-slow
       (try
@@ -162,7 +167,7 @@
 
     new-cols))
 
-(defn table-update-column! [db-c table-id col-id-kw {:keys [name client_hidden admin_ui indexes] :as col-spec-update}]
+(defn table-update-column! [db-c table-id col-id-kw {:keys [name client_hidden on_delete admin_ui indexes] :as col-spec-update}]
   (let [[table-record reindexed?]
         (util/with-db-transaction [db-c db-c :repeatable-read]
           (let [{:keys [storage] :as table-record} (tables-util/load-table-record db-c table-id)
@@ -170,14 +175,25 @@
                 _ (when-not old-col
                     (throw+ {:anvil/server-error (format "No column with ID %s in %s"
                                                          (util/preserve-slashes col-id-kw) (:name table-record))}))
+
+                _ (when (and (not (:split storage))
+                             (contains? col-spec-update :on_delete))
+                    (throw+ {:anvil/server-error (format "Cannot set ON DELETE for a column of a table in unified storage.")}))
+
                 new-col (merge old-col col-spec-update)
+                new-col (if (nil? on_delete)
+                          (dissoc new-col :on_delete)
+                          new-col)
                 table-record (assoc-in table-record [:columns col-id-kw] new-col)
                 renamed? (not= (:name old-col) (:name new-col))
                 reindexed? (not= (:indexes old-col) (:indexes new-col))
+                on-delete-changed? (not= (:on_delete old-col) (:on_delete new-col))
                 table-record (if (and (:split storage) renamed?)
                                (split-table-manager/do-rename-column! db-c table-record col-id-kw old-col)
                                table-record)
                 table-record (tables-util/normalise-indexes table-record)]
+            (when (and (:split storage) on-delete-changed?)
+              (split-table-manager/do-update-column-on-delete! db-c table-record col-id-kw))
             (tables-util/save-table-record! db-c table-record)
             (tables-util/update-table-views! db-c table-record)
             [table-record reindexed?]))]

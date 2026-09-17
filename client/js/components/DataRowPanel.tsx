@@ -14,9 +14,10 @@ import {
     tryCatchOrSuspend,
 } from "@Sk";
 import PyDefUtils from "PyDefUtils";
-import { ClassicComponentConstructor, getDomPyComponent } from "./ClassicComponent";
+import type { ClassicComponentConstructor } from "./ClassicComponent";
 import { ClassicContainer } from "./ClassicContainer";
 import { Component, notifyVisibilityChange } from "./Component";
+import { getDomPyComponent } from "./component-dom";
 import { validateChild } from "./Container";
 import type { DataGrid } from "./DataGrid";
 import { Done, PaginateFn } from "./Paginator";

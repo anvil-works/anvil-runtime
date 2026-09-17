@@ -6,19 +6,22 @@
   :source-paths ["src" "../../html-form-parser/src"]
   :managed-dependencies [[org.clojure/clojure "1.12.0"]
 
-                         [com.fasterxml.jackson.core/jackson-core "2.18.6"]
-                         [com.fasterxml.jackson.core/jackson-databind "2.18.6"]
-                         [com.fasterxml.jackson.dataformat/jackson-dataformat-cbor "2.18.6"]
-                         [com.fasterxml.jackson.dataformat/jackson-dataformat-smile "2.18.6"]
+                         [com.fasterxml.jackson.core/jackson-core "2.22.1"]
+                         [com.fasterxml.jackson.core/jackson-databind "2.22.1"]
+                         [com.fasterxml.jackson.dataformat/jackson-dataformat-cbor "2.22.1"]
+                         [com.fasterxml.jackson.dataformat/jackson-dataformat-smile "2.22.1"]
 
                          [dnsjava/dnsjava "3.6.0"]  ; 3.4.1 required by apache-jdkim is vulnerable.
-                         [org.apache.james/apache-mime4j-core "0.8.10"]  ; 0.8.3 required by apache-jdkim is vulnerable.
+                         [org.apache.james/apache-mime4j-core "0.8.10"]  ; 0.7 required by apache-jdkim is vulnerable.
 
                          [com.google.protobuf/protobuf-java "4.27.5"]
 
                          [commons-fileupload "1.6.0"]
                          [org.apache.commons/commons-fileupload2-core "2.0.0-M4"]
                          [commons-codec "1.19.0"]
+                         [xerces/xercesImpl "2.12.2"]  ; 2.8.1 required by nekohtml is vulnerable.
+                         [org.apache.httpcomponents/httpclient "4.5.14"]  ; 4.5.2 required by clj-http is vulnerable.
+
                          [commons-io/commons-io "2.17.0"]
                          [org.apache.commons/commons-compress "1.28.0"]
                          [org.apache.commons/commons-lang3 "3.18.0"]  ; commons-compress-1.28.0 requires lang3-3.18.0
@@ -39,19 +42,19 @@
                  [clj-commons/friend "0.3.199"]
 
                  [clojusc/friend-oauth2 "0.2.0" :exclusions [clojusc/twig ring/ring-jetty-adapter ch.qos.logback/logback-classic]]
-                 [org.clojure/data.json "0.2.5"]
+                 [org.clojure/data.json "2.5.2"]
                  [org.clojure/data.xml "0.0.8"]
                  [org.clojure/data.zip "0.1.1"]
                  [org.senatehouse/http-kit "2.5.0-httpsfix-1.2"]
                  [crypto-random "1.2.1"]
                  [clj-commons/clj-yaml "1.0.27"]
                  [digest "1.4.4"]
-                 [org.jsoup/jsoup "1.22.2"]
+                 [org.jsoup/jsoup "1.23.1"]
 
                  [org.clojure/data.codec "0.1.0"]
 
                  [org.clojure/java.jdbc "0.7.10"]
-                 [org.postgresql/postgresql "42.7.11"]
+                 [org.postgresql/postgresql "42.7.13"]
 
                  [javax.mail/mail "1.4.4"]
 
@@ -92,7 +95,7 @@
                  [io.prometheus/simpleclient_hotspot "0.12.0"]
                  [clj-commons/iapetos "0.1.14"]
                  [net.ttddyy/datasource-proxy "1.5.1"]
-                 [com.mchange/c3p0 "0.12.0"]
+                 [com.mchange/c3p0 "0.14.1"]
 
                  [malabarba/lazy-map "1.3"]
 
@@ -102,7 +105,7 @@
                  [olical/crawlers "0.2.0"]
 
                  [io.opentelemetry/opentelemetry-sdk]]
-  :bom {:import [[io.opentelemetry/opentelemetry-bom "1.62.0"]]}
+  :bom {:import [[io.opentelemetry/opentelemetry-bom "1.63.0"]]}
   :jvm-opts ["-Dfile.encoding=UTF-8"]
   :plugins [[com.github.anvil-works/lein-aot-order "0.1.1-anvil"]
             [lein-bom "0.2.0-SNAPSHOT"]]

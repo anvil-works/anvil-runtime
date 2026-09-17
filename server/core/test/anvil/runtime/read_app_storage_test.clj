@@ -96,7 +96,7 @@
 (deftest get-app-yaml-from-resource-directory-parses-html-form-templates
   (let [[_ tmp-dir] (fixture-tree)
         html (str "<h1>Title</h1>\n"
-                  "<anvil-component type=\"Button\" name=\"button_1\" prop:text=\"Go\"></anvil-component>")]
+                  "<anvil-component type=\"Label\" name=\"stat_label\" prop:text=\"1,370+\"></anvil-component>")]
     (try
       (write-text! tmp-dir "forms/HtmlForm.py" "x = 2\n")
       (write-text! tmp-dir "forms/HtmlForm.html" html)
@@ -106,8 +106,8 @@
         (is (= "x = 2\n" (:code form)))
         (is (= html (:serialized_html form)))
         (is (= "HtmlComponent" (get-in form [:container :type])))
-        (is (= "Button" (get-in form [:components 0 :type])))
-        (is (= "Go" (get-in form [:components 0 :properties :text]))))
+        (is (= "Label" (get-in form [:components 0 :type])))
+        (is (= "1,370+" (get-in form [:components 0 :properties :text]))))
       (finally
         (cleanup-tree! tmp-dir)))))
 

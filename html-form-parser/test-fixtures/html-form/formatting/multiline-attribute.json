@@ -1,0 +1,29 @@
+{
+  "name": "formatting/multiline-attribute",
+  "entrypoint": "parseContainerForm",
+  "html": "<anvil-form container=\"ColumnPanel\">\n    <anvil-component type=\"FlowPanel\" name=\"flow\">\n        <anvil-component type=\"Label\" name=\"label\" prop:text=\"first\nsecond\"></anvil-component>\n    </anvil-component>\n</anvil-form>",
+  "expected": {
+    "container": {
+      "type": "ColumnPanel",
+      "properties": {}
+    },
+    "components": [
+      {
+        "type": "FlowPanel",
+        "name": "flow",
+        "properties": {},
+        "components": [
+          {
+            "type": "Label",
+            "name": "label",
+            "properties": {
+              "text": "first\nsecond"
+            }
+          }
+        ]
+      }
+    ],
+    "serialized_html": "<anvil-form container=\"ColumnPanel\">\n    <anvil-component type=\"FlowPanel\" name=\"flow\">\n        <anvil-component type=\"Label\" name=\"label\" prop:text=\"first\nsecond\"></anvil-component>\n    </anvil-component>\n</anvil-form>"
+  },
+  "expectedSerializedHtml": "<anvil-form container=\"ColumnPanel\">\n    <anvil-component type=\"FlowPanel\" name=\"flow\">\n        <anvil-component type=\"Label\" name=\"label\" prop:text=\"first\nsecond\"></anvil-component>\n    </anvil-component>\n</anvil-form>"
+}

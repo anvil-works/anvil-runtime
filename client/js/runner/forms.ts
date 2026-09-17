@@ -20,6 +20,7 @@ import {
     pyCallable,
     pyDict,
     pyFunc,
+    pyHasAttr,
     pyImportError,
     pyIsInstance,
     pyIter,
@@ -437,9 +438,7 @@ const setupDataBindingWritebackListeners = (pyForm: FormTemplate, dataBindings: 
             binding.pyComponent = pyComponent;
             binding.componentName = componentName;
             if (binding.writeback) {
-                const handler = new pyFunc(
-                    PyDefUtils.withRawKwargs(() => promiseToSuspension(writeBackChildBoundData(binding, pyComponent)))
-                );
+                const handler = funcFastCall(() => promiseToSuspension(writeBackChildBoundData(binding, pyComponent)));
 
                 pyCall((pyComponent as Component).tp$getattr(s_add_event_handler)!, [
                     new pyStr("x-anvil-write-back-" + binding.property),
@@ -649,7 +648,7 @@ function setupDropHooks(yaml: FormYaml, c: Component) {
         const slotAddComponent = slot.tp$getattr(s_add_component) as pyCallable;
         c.$d.mp$ass_subscript(s_add_component, slotAddComponent);
         c.anvil$hooks.enableDropMode = (dropping, flags) =>
-            (oldEnableDropMode?.(dropping, flags) ?? []).filter(
+            (oldEnableDropMode?.(dropping, { ...flags, asCustomComponentContainer: true }) ?? []).filter(
                 ({ dropInfo: { minChildIdx } = {} }) =>
                     minChildIdx === undefined || minChildIdx <= slot._slotState.components.length
             );
@@ -770,6 +769,7 @@ export const createFormTemplateClass = (
 
         const dataBindings = setupDataBindings(yaml);
         const componentNames = getComponentNames(yaml);
+        const duplicatePlaceholdersByForm = new WeakMap<FormTemplate, SetupResult["duplicatePlaceholdersByYaml"]>();
 
         // "item" is a special descriptor that triggers the underlying descriptor on write if there is one.
         const pyBaseItem = pyBase.$typeLookup(s_item);
@@ -800,7 +800,10 @@ export const createFormTemplateClass = (
                             return chainOrSuspend(
                                 null,
                                 () => refreshDataBindings(yaml, pyForm, layoutBindings),
-                                () => addFormComponentsToLayout(yaml, pyForm, pyLayout),
+                                () =>
+                                    addFormComponentsToLayout(yaml, pyForm, pyLayout, {
+                                        duplicatePlaceholdersByYaml: duplicatePlaceholdersByForm.get(pyForm),
+                                    }),
                                 () => pyNone
                             );
                         },
@@ -857,23 +860,28 @@ export const createFormTemplateClass = (
                     });
                 };
 
-                $loc["__new__"] = new Sk.builtin.func(
-                    PyDefUtils.withRawKwargs((kws: Kws, cls: FormTemplateConstructor) =>
-                        chainOrSuspend(skeletonNew(cls), (c) => {
-                            const yamlStack = getAndCheckNextCreationStack(yaml.class_name, depAppId);
-                            return commonSetup(c, (c: FormTemplate) =>
-                                chainOrSuspend(setupFormComponents(yaml, c, depAppId, yamlStack), (setupResult) => {
+                $loc["__new__"] = funcFastCall((args, _kws) => {
+                    const [cls] = args as Args<[FormTemplateConstructor]>;
+                    return chainOrSuspend(skeletonNew(cls), (c) => {
+                        const yamlStack = getAndCheckNextCreationStack(yaml.class_name, depAppId);
+                        return commonSetup(c, (c: FormTemplate) =>
+                            chainOrSuspend(
+                                setupFormComponents(yaml, c, { defaultDepAppId: depAppId, yamlStack }),
+                                (setupResult) => {
+                                    if (setupResult.duplicatePlaceholdersByYaml.size) {
+                                        duplicatePlaceholdersByForm.set(c, setupResult.duplicatePlaceholdersByYaml);
+                                    }
                                     if (setupResult.slots) {
                                         for (const [name, slot] of Object.entries(setupResult.slots)) {
                                             c.anvil$formState.slotDict.mp$ass_subscript(new pyStr(name), slot);
                                         }
                                     }
                                     setupDropHooks(yaml, c);
-                                })
-                            );
-                        })
-                    )
-                );
+                                }
+                            )
+                        );
+                    });
+                });
 
                 $loc["__new_deserialized__"] = PyDefUtils.mkNewDeserializedPreservingIdentity(
                     (self: FormTemplate, pyData: pyDict, _pyGlobalData: any) => {
@@ -1182,13 +1190,26 @@ export const createFormTemplateClass = (
                 ) {
                     const name = Sk.ffi.toJs(pyName);
                     if (componentNames.has(name)) {
-                        throw new Sk.builtin.AttributeError(
-                            "Cannot set attribute '" +
-                                name +
-                                "' on '" +
-                                self.tp$name +
-                                "' form. There is already a component with this name."
-                        );
+                        const assignmentError = (hasText: boolean) =>
+                            new Sk.builtin.AttributeError(
+                                "Cannot set attribute '" +
+                                    name +
+                                    "' on '" +
+                                    self.tp$name +
+                                    "' form. There is already a component with this name. " +
+                                    (hasText
+                                        ? "Did you mean to assign to one of its properties, such as 'self." +
+                                          name +
+                                          ".text'?"
+                                        : "Did you mean to assign to one of its properties?")
+                            );
+                        const component = self.$d?.quick$lookup(pyName);
+                        if (component === undefined) {
+                            throw assignmentError(false);
+                        }
+                        return chainOrSuspend(pyHasAttr(component, new pyStr("text")), (hasText) => {
+                            throw assignmentError(isTrue(hasText));
+                        });
                     }
                     return chainOrSuspend(Sk.generic.setAttr.call(self, pyName, pyValue, true), () => pyNone);
                 });

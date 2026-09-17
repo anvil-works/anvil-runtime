@@ -191,16 +191,6 @@ export interface ClassicComponent<Anvil extends Record<string, any> = any> exten
 
 interface ComponentTag extends pyObjectWithDict {}
 
-export const ANVIL_PY_COMPONENT_PROP = "__anvilPyComponent" as const;
-
-export function setDomPyComponent(domNode: HTMLElement, pyComponent: unknown) {
-    (domNode as any)[ANVIL_PY_COMPONENT_PROP] = pyComponent;
-}
-
-export function getDomPyComponent<T = unknown>(domNode: Element | null | undefined): T | undefined {
-    return (domNode as any)?.[ANVIL_PY_COMPONENT_PROP] as T | undefined;
-}
-
 const ClassicComponentFactory = (pyModule: PyModMap) => {
     // TODO: pyModule["ComponentTag"] = ComponentTag
     pyModule["ComponentTag"] = buildPyClass<ComponentTag>(
@@ -485,8 +475,6 @@ const ClassicComponentFactory = (pyModule: PyModMap) => {
                 _anvil.domNode = domNode;
 
                 domNode.classList.add("anvil-component"); // this is a relatively slow operation
-                setDomPyComponent(domNode, self);
-                element.data("anvil-py-component", self);
                 // These may have already been set if we created this component in the designer, but
                 // we need to set them if we created this component at runtime. No harm setting them
                 // twice, so just do it.

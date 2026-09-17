@@ -59,6 +59,13 @@ class ErrorLoadingUserCode(Exception):
         Exception.__init__(self, "Error loading user code: " + str(exc))
 
 
+def _unsupported_script_input(prompt=""):
+    raise EOFError(
+        "Anvil Scripts do not have interactive standard input. "
+        "Pass values as Script arguments, or collect input in a Form."
+    )
+
+
 # Our jobs:
 #
 # 1. Assemble a virtual filesystem corresponding to an app's source code
@@ -107,14 +114,48 @@ class SimpleLoader(object):
 
 def mk_script_fn(script_name, script_code):
     def run_script(*args):
-        if not all(type(arg) is str for arg in args):
-            raise ValueError("Only string arguments can be passed to scripts")
+        import anvil.script
+        import anvil.media
         old_argv = sys.argv
-        sys.argv = args
+        # CPython convention: argv[0] is the script name. Launch args go into argv[1:] as-is,
+        # even if they aren't strings (scripts accept any portable value) - except Media
+        # objects, which are written to temporary files so argv gets the filename.
+        # anvil.script.args always gets the original values, Media objects included.
+        temp_files = []
         try:
-            do_exec(compile(script_code, script_name + ".py", 'exec'), {"__name__": "__main__"})
+            argv = [script_name]
+            for arg in args:
+                if isinstance(arg, anvil.Media):
+                    tf = anvil.media.TempFile(arg)
+                    temp_files.append(tf)
+                    argv.append(tf.__enter__())
+                else:
+                    argv.append(arg)
+            sys.argv = argv
+            anvil.script.args = args
+            anvil.script.return_value = None
+            try:
+                # Shadow input in the script globals without mutating process-global builtins.
+                # Supplying a copied __builtins__ dictionary enables restricted mode in Python 2.
+                do_exec(
+                    compile(script_code, script_name + ".py", 'exec'),
+                    {"__name__": "__main__", "input": _unsupported_script_input},
+                )
+                return anvil.script.return_value
+            except SystemExit as e:
+                # exit()/sys.exit() is a legitimate way for a script to finish: 0/None is success
+                # (still returning anvil.script.return_value), anything else is an error.
+                code = e.code
+                if code is None or code == 0:
+                    return anvil.script.return_value
+                raise anvil.server.ScriptExitError(
+                    "Script exited with status %s" % code if isinstance(code, int) else str(code))
         finally:
             sys.argv = old_argv
+            anvil.script.args = ()
+            anvil.script.return_value = None
+            for tf in temp_files:
+                tf.__exit__(None, None, None)
     return run_script
 
 
@@ -325,15 +366,14 @@ def handle_incoming_call(msg, send_to_host, start_time=None, ready_time=None):
                 raise _threaded_server.SendNoResponse
 
         elif msg["type"] == "REPL_COMMAND":
-            # adding __package__ allows relative imports to work in the repl
-            # we add the repl scope now if it doesn't exist
-            # since we don't have the package name when we launch the repl
-            # for convenience we include anvil (which also adds anvil.server)
-            scope = repl_scopes.setdefault(
-                msg["repl"], {"anvil": anvil, "__package__": module_finder.get_main_package() or None}
-            )
-
             def run_fn():
+                # Adding __package__ allows relative imports to work in the repl.
+                # For convenience we include anvil (which also adds anvil.server).
+                # Initialise the scope during execution, after app loading has supplied
+                # the package name needed for relative imports.
+                scope = repl_scopes.setdefault(
+                    msg["repl"], {"anvil": anvil, "__package__": module_finder.get_main_package() or None}
+                )
                 run_repl(msg['command'], scope)
 
         elif msg['type'] == "TERMINATE_REPL":

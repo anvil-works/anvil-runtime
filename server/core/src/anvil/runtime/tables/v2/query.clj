@@ -219,7 +219,9 @@
            [(count (set target-ids)) (long-array (set target-ids))]]))
 
       (nil? value)
-      [(str "(" (sql/COLUMN-NAME table-record col) " IS NULL)") []]
+      (if (= type "simpleObject")
+        [(str "(" (sql/COLUMN-NAME table-record col) " IS NULL OR " (sql/COLUMN-NAME table-record col) " = 'null'::jsonb)") []]
+        [(str "(" (sql/COLUMN-NAME table-record col) " IS NULL)") []])
 
       (= type "simpleObject")
       [(str "(" (sql/COLUMN-NAME table-record col) " IS NOT NULL AND " (sql/COLUMN-NAME table-record col) " @> " (sql/VALUE-SQL table-record col) ")") value]

@@ -33,10 +33,11 @@ from ._server import (register,
                       PermissionDenied,
                       ServiceNotAdded,
                       CookieError, 
-                      _FailError, 
+                      _FailError,
                       BackgroundTaskError,
                       BackgroundTaskNotFound,
                       BackgroundTaskKilled,
+                      ScriptExitError,
                       http_endpoint, 
                       wellknown_endpoint,
                       route,
@@ -438,6 +439,15 @@ def get_api_origin():
 
 def launch_background_task(fn_name, *args, **kwargs):
     return call("anvil.private.background_tasks.launch", fn_name, *args, **kwargs)
+
+
+def run_script(script_name, *args):
+    task = launch_background_task("script:" + script_name, *args)
+    delay = 0.2
+    while not task.is_completed():
+        time.sleep(delay)
+        delay = min(delay * 1.5, 1.0)
+    return task.get_return_value()
 
 
 def get_background_task(id):

@@ -1,5 +1,6 @@
 import { anvilAppOnline } from "@runtime/app_online";
 import { defer } from "@runtime/utils";
+import { signalConnectionState } from "./connection-state";
 import { diagnosticData, diagnosticEvent } from "./diagnostics";
 import { handleMessage } from "./handlers";
 import { Profile } from "./profile";
@@ -70,6 +71,7 @@ export function connect(profile?: Profile): Promise<AnvilWebSocket> {
 
     ws.onopen = () => {
         diagnosticEvent("connected");
+        signalConnectionState("connected");
         connectedProfile?.end();
         // Start keepalive heartbeat
         heartbeatIntervalDispose = heartbeatInterval(ws);
@@ -77,6 +79,7 @@ export function connect(profile?: Profile): Promise<AnvilWebSocket> {
     };
 
     const onclose = (evt: any) => {
+        signalConnectionState("lost");
         // Stop keepalive heartbeat
         heartbeatIntervalDispose();
         if (websocket === deferred.promise) {

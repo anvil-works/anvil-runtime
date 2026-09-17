@@ -1,0 +1,34 @@
+{
+  "name": "formatting/multiline-attribute-in-fragment",
+  "entrypoint": "parseContainerForm",
+  "html": "<anvil-form container=\"ColumnPanel\">\n    <div anvil:name=\"html\">\n        <!-- first\n        second -->\n        <anvil-component type=\"Label\" name=\"label\" prop:text=\"first\nsecond\"></anvil-component>\n    </div>\n</anvil-form>",
+  "expected": {
+    "container": {
+      "type": "ColumnPanel",
+      "properties": {}
+    },
+    "components": [
+      {
+        "type": "HtmlComponent",
+        "name": "html",
+        "properties": {
+          "html": "<div>\n    <!-- first\n    second -->\n    <anvil-dropzone name=\"$dz_0\"></anvil-dropzone>\n</div>"
+        },
+        "components": [
+          {
+            "type": "Label",
+            "name": "label",
+            "properties": {
+              "text": "first\nsecond"
+            },
+            "layout_properties": {
+              "dropzone": "$dz_0"
+            }
+          }
+        ]
+      }
+    ],
+    "serialized_html": "<anvil-form container=\"ColumnPanel\">\n    <div anvil:name=\"html\">\n        <!-- first\n        second -->\n        <anvil-component type=\"Label\" name=\"label\" prop:text=\"first\nsecond\"></anvil-component>\n    </div>\n</anvil-form>"
+  },
+  "expectedSerializedHtml": "<anvil-form container=\"ColumnPanel\">\n    <div anvil:name=\"html\">\n        <!-- first\n        second -->\n        <anvil-component type=\"Label\" name=\"label\" prop:text=\"first\nsecond\"></anvil-component>\n    </div>\n</anvil-form>"
+}

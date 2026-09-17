@@ -1,0 +1,19 @@
+{
+  "name": "fragments/dom-node-attribute-same-element",
+  "entrypoint": "parseContainerForm",
+  "html": "<div class=\"pipeline-row\" anvil:on-dom:click=\"self.row_click\">\n    <span anvil:dom-node=\"label_node\">Label</span>\n</div>",
+  "normalization": {
+    "dropzoneIds": false
+  },
+  "expected": {
+    "container": {
+      "type": "HtmlComponent",
+      "properties": {
+        "html": "<div class=\"pipeline-row\" anvil:on-dom:click=\"self.row_click\" anvil:dom-node>\n    <span anvil:dom-node=\"label_node\">Label</span>\n</div>"
+      }
+    },
+    "components": [],
+    "serialized_html": "<div class=\"pipeline-row\" anvil:on-dom:click=\"self.row_click\">\n    <span anvil:dom-node=\"label_node\">Label</span>\n</div>"
+  },
+  "expectedSerializedHtml": "<div class=\"pipeline-row\" anvil:on-dom:click=\"self.row_click\">\n    <span anvil:dom-node=\"label_node\">Label</span>\n</div>"
+}

@@ -4,11 +4,12 @@
              :refer [anvil-block? anvil-component? anvil-dropzone? anvil-form?
                      anvil-slot? append! append-all! attr bind-prefix
                      call-generator container-types create-context
-                     ensure-dom-node-attribute escape-html-text format-attribute
+                     ensure-dom-node-attribute normalize-dom-node-attrs
+                     format-attribute
                      get-single-root-element has-renderable-content?
                      lower-tag-name mutable-list mutable-list-value
                      normalize-fragment-html parse-attribute-value
-                     render-element state state-reset! state-swap!
+                     render-element serialize-node state state-reset! state-swap!
                      string-list-value strip-anvil-prefix strip-self-prefix
                      whitespace-or-comment? writeback-prefix yaml-key]]
             [clojure.string :as str]))
@@ -47,6 +48,7 @@
         bindings-by-property (state {})
         ordered-bindings (state [])
         layout-properties (state {})
+        designer-config (state {})
         one-component? (state false)]
     (doseq [attribute (raw/attrs element)]
       (let [name (raw/attr-name attribute)
@@ -70,6 +72,9 @@
           (str/starts-with? name "container:")
           (state-swap! layout-properties assoc (yaml-key (subs name 10)) (parse-attribute-value value))
 
+          (str/starts-with? name "designer:")
+          (state-swap! designer-config assoc (yaml-key (subs name 9)) value)
+
           (or (= name "one-component") (= name "one_component"))
           (when (or (= value "") (= "true" (str/lower-case value)))
             (state-reset! one-component? true))
@@ -83,6 +88,7 @@
      :data-bindings @ordered-bindings
      :layout-event-bindings @layout-event-bindings
      :layout-properties @layout-properties
+     :designer-config @designer-config
      :one-component @one-component?}))
 
 (defn- extract-slot-data [element]
@@ -118,7 +124,9 @@
                 (str/starts-with? attr-name "anvil:prop:")
                 (str/starts-with? attr-name "anvil:on:")
                 (and promote-dom-nodes? (str/starts-with? attr-name "anvil:on-dom:"))
-                (and promote-dom-nodes? (= attr-name "anvil:dom-node"))
+                (and promote-dom-nodes?
+                     (= attr-name "anvil:dom-node")
+                     (seq (or (raw/attr-value attribute) "")))
                 (str/starts-with? attr-name "anvil:bind:")
                 (str/starts-with? attr-name "anvil:writeback:")
                 (str/starts-with? attr-name "anvil:container:"))))
@@ -181,6 +189,184 @@
                    (str/starts-with? attr-name "anvil:on-dom:"))))
            attrs))
 
+(defn- warnings? [options]
+  (true? (:warnings options)))
+
+(def anvil-template-tags
+  #{"anvil-block" "anvil-component" "anvil-dropzone" "anvil-form" "anvil-slot"})
+
+(def supported-dom-anvil-events #{"show" "hide"})
+
+(defn- anvil-template-tag? [element]
+  (contains? anvil-template-tags (lower-tag-name element)))
+
+(defn- anvil-component-attribute? [attr-name]
+  (or (str/starts-with? attr-name "bind:")
+      (str/starts-with? attr-name "writeback:")
+      (str/starts-with? attr-name "prop:")
+      (str/starts-with? attr-name "on:")
+      (str/starts-with? attr-name "container:")
+      (str/starts-with? attr-name "designer:")))
+
+(defn- known-dom-anvil-attribute? [attr-name]
+  (or (= attr-name "anvil:name")
+      (= attr-name "anvil:dom-node")
+      (= attr-name "anvil:designer-editable-text")
+      (str/starts-with? attr-name "anvil:prop:")
+      (str/starts-with? attr-name "anvil:bind:")
+      (str/starts-with? attr-name "anvil:writeback:")
+      (str/starts-with? attr-name "anvil:container:")
+      (str/starts-with? attr-name "anvil:on-dom:")
+      (and (str/starts-with? attr-name "anvil:on:")
+           (contains? supported-dom-anvil-events (subs attr-name 9)))))
+
+(defn- attr-warning-path [element attr-name]
+  (str (lower-tag-name element) "." attr-name))
+
+(defn- warning-with-attribute-location [warning element attr-name options]
+  (cond-> warning
+    (warnings? options) (merge (or (raw/attr-source-range element attr-name) {}))))
+
+(defn- anvil-namespace-attribute-on-anvil-tag-warning [element attr-name options]
+  (let [tag-name (lower-tag-name element)]
+    (warning-with-attribute-location
+      {:code "anvil-namespace-attribute-on-anvil-tag"
+       :path (attr-warning-path element attr-name)
+       :message (str attr-name " is not valid on " tag-name
+                     "; Anvil tags use unprefixed attributes.")
+       :attr-name attr-name
+       :tag-name tag-name}
+      element
+      attr-name
+      options)))
+
+(defn- dom-anvil-on-event-unsupported-warning [element attr-name event-name options]
+  (let [tag-name (lower-tag-name element)]
+    (warning-with-attribute-location
+      {:code "dom-anvil-on-event-unsupported"
+       :path (attr-warning-path element attr-name)
+       :message (str attr-name " on plain HTML elements only supports show and hide; "
+                     "use anvil:on-dom:" event-name " for DOM events.")
+       :attr-name attr-name
+       :tag-name tag-name
+       :event-name event-name}
+      element
+      attr-name
+      options)))
+
+(defn- unknown-dom-anvil-attribute-warning [element attr-name options]
+  (let [tag-name (lower-tag-name element)]
+    (warning-with-attribute-location
+      {:code "unknown-dom-anvil-attribute"
+       :path (attr-warning-path element attr-name)
+       :message (str attr-name " is not a known Anvil attribute for plain HTML elements.")
+       :attr-name attr-name
+       :tag-name tag-name}
+      element
+      attr-name
+      options)))
+
+(defn- anvil-component-attribute-on-dom-node-warning [element attr-name options]
+  (let [tag-name (lower-tag-name element)]
+    (warning-with-attribute-location
+      {:code "anvil-component-attribute-on-dom-node"
+       :path (attr-warning-path element attr-name)
+       :message (str attr-name " is only valid on Anvil template tags; "
+                     "plain HTML elements use anvil:* metadata attributes.")
+       :attr-name attr-name
+       :tag-name tag-name}
+      element
+      attr-name
+      options)))
+
+(defn- form-spec-package-context [options]
+  (or (:form-spec-package-context options)
+      (:formSpecPackageContext options)))
+
+(defn- known-form-spec-package-names [options]
+  (let [context (form-spec-package-context options)
+        app-package-name (or (:app-package-name context)
+                             (:appPackageName context))
+        known-package-names (or (:known-package-names context)
+                                (:knownPackageNames context))
+        dependency-package-names-by-logical-dep-id
+        (or (:dependency-package-names-by-logical-dep-id context)
+            (:dependencyPackageNamesByLogicalDepId context))]
+    (set (filter some?
+                 (concat [app-package-name]
+                         known-package-names
+                         (vals dependency-package-names-by-logical-dep-id))))))
+
+(defn- unknown-form-spec-package-warning [element attr-name package-name value options]
+  (let [tag-name (lower-tag-name element)]
+    (warning-with-attribute-location
+      {:code "unknown-form-spec-package"
+       :path (attr-warning-path element attr-name)
+       :message (str value " refers to package " package-name
+                     ", which is not this app or one of its dependencies.")
+       :attr-name attr-name
+       :tag-name tag-name}
+      element
+      attr-name
+      options)))
+
+(defn- form-spec-attribute? [element attr-name]
+  (or (and (anvil-component? element)
+           (= attr-name "type"))
+      (and (anvil-form? element)
+           (or (= attr-name "container")
+               (= attr-name "layout")))))
+
+(defn- form-spec-package-warning [element attr-name value options]
+  (let [known-package-names (known-form-spec-package-names options)]
+    (when (and (seq known-package-names)
+               (form-spec-attribute? element attr-name)
+               (string? value)
+               (not (str/starts-with? value "form:")))
+      (when-let [[_ package-name] (re-matches #"^([^.]+)\..+$" value)]
+        (when-not (contains? known-package-names package-name)
+          (unknown-form-spec-package-warning element attr-name package-name value options))))))
+
+(defn- attribute-warning [element attr-name options]
+  (cond
+    (and (not (anvil-template-tag? element))
+         (anvil-component-attribute? attr-name))
+    (anvil-component-attribute-on-dom-node-warning element attr-name options)
+
+    (str/starts-with? attr-name "anvil:")
+    (if (anvil-template-tag? element)
+      (anvil-namespace-attribute-on-anvil-tag-warning element attr-name options)
+      (cond
+        (str/starts-with? attr-name "anvil:on:")
+        (let [event-name (subs attr-name 9)]
+          (when-not (contains? supported-dom-anvil-events event-name)
+            (dom-anvil-on-event-unsupported-warning element attr-name event-name options)))
+
+        (known-dom-anvil-attribute? attr-name)
+        nil
+
+        :else
+        (unknown-dom-anvil-attribute-warning element attr-name options)))))
+
+(defn- collect-attribute-warnings [nodes options]
+  (if (or (not (warnings? options))
+          (:suppress-attribute-warnings options))
+    []
+    (let [warnings (state [])]
+      (letfn [(walk [node]
+                (when (raw/element? node)
+                  (doseq [attribute (raw/attrs node)]
+                    (let [attr-name (raw/attr-name attribute)]
+                      (when-let [warning (attribute-warning node attr-name options)]
+                        (state-swap! warnings conj warning))
+                      (when-let [warning (form-spec-package-warning node attr-name (raw/attr-value attribute) options)]
+                        (state-swap! warnings conj warning))))
+                  (doseq [child (raw/active-child-nodes node)]
+                    (walk child))))]
+        (doseq [node nodes]
+          (walk node)))
+      @warnings)))
+
 (declare parse-component parse-container-children render-nodes)
 
 (defn- target-key [target]
@@ -231,7 +417,7 @@
                         (state-swap! seen conj name)
                         (append! refs {:name name
                                        :tag-name (lower-tag-name node)}))))))
-              (doseq [child (raw/child-nodes node)]
+              (doseq [child (raw/active-child-nodes node)]
                 (walk child)))]
       (walk (raw/parse-fragment html))
       (mutable-list-value refs))))
@@ -312,7 +498,8 @@
                             (assoc layout-properties :dropzone (:dropzone-name options))
                             layout-properties)
         slot-def (cond-> {:target target
-                          :index (:index options)}
+                          :index (:index options)
+                          :slot_order (count @(:slot-order context))}
                    (seq layout-properties) (assoc :set_layout_properties layout-properties)
                    (and (empty? layout-properties) (:include-empty-layout options))
                    (assoc :set_layout_properties {})
@@ -321,6 +508,12 @@
     (state-swap! (:slots context) assoc slot-name slot-def)
     (state-swap! (:slot-order context) conj {:target-key (target-key target) :slot-name slot-name})
     slot-def))
+
+(defn- render-element-children [element context slot-target options]
+  (if (raw/inert-element? element)
+    {:html (apply str (map serialize-node (raw/child-nodes element)))
+     :components []}
+    (render-nodes (raw/child-nodes element) context slot-target options)))
 
 (defn- parse-promoted-fragment [element context slot-target options]
   (let [element-attrs (raw/attrs element)
@@ -331,11 +524,11 @@
         fragment-target {:type "container" :name fragment-name}
         ;; Children of promoted DOM nodes are parsed in fragment context so
         ;; nested anvil components/slots become YAML components and dropzones.
-        child-result (render-nodes (raw/child-nodes element) context fragment-target {:parent-is-fragment true})
+        child-result (render-element-children element context fragment-target {:parent-is-fragment true})
         ;; Render the original DOM element back without parser-only anvil:*
         ;; metadata; the metadata now lives on the HtmlComponent.
         element-html (render-element (raw/tag-name element)
-                                     (filter-anvil-attributes element-attrs)
+                                     (normalize-dom-node-attrs (filter-anvil-attributes element-attrs))
                                      (:html child-result))
         fragment-properties (maybe-extract-root-styling
                               context
@@ -372,7 +565,7 @@
     (doseq [node nodes]
       (cond
         (= "#text" (raw/node-name node))
-        (append! parts (escape-html-text (raw/text-value node)))
+        (append! parts (serialize-node node))
 
         (= "#comment" (raw/node-name node))
         (append! parts (str "<!--" (raw/comment-data node) "-->"))
@@ -422,7 +615,7 @@
             :else
             ;; Ordinary DOM stays in the fragment, but its children may contain
             ;; liftable parser elements.
-            (let [child-result (render-nodes (raw/child-nodes element) context slot-target
+            (let [child-result (render-element-children element context slot-target
                                              {:parent-is-fragment parent-is-fragment})]
               (append-all! components (:components child-result))
               (append! parts (ensure-dom-node-attribute
@@ -550,7 +743,8 @@
   (let [parent-is-fragment (:parent-is-fragment options)
         dropzone-name (generate-dropzone-name context target)
         child-nodes (raw/child-nodes element)
-        {:keys [type name properties event-bindings data-bindings layout-properties]} (extract-component-data element)
+        {:keys [type name properties event-bindings data-bindings layout-properties designer-config]}
+        (extract-component-data element)
         normalized-type (strip-anvil-prefix type)
         effective-name (if (seq name) name (generate-anonymous-component-name context))
         _ (mark-component-name-used! context effective-name)
@@ -571,7 +765,8 @@
                     (seq layout-props) (assoc :layout_properties layout-props)
                     child-components (assoc :components (vec child-components))
                     (seq event-bindings) (assoc :event_bindings event-bindings)
-                    (seq data-bindings) (assoc :data_bindings data-bindings))]
+                    (seq data-bindings) (assoc :data_bindings data-bindings)
+                    (seq designer-config) (assoc :designer_config designer-config))]
     {:component component :dropzone-name dropzone-name}))
 
 (defn- detect-canonical-form [nodes]
@@ -630,7 +825,7 @@
                 (when-let [component-name (explicit-component-name node)]
                   (when (seq component-name)
                     (state-swap! names conj component-name)))
-                (doseq [child (raw/child-nodes node)]
+                (doseq [child (raw/active-child-nodes node)]
                   (walk child))))]
       (doseq [node nodes]
         (walk node)))
@@ -641,6 +836,21 @@
     (assoc (or options {})
            :reserved-component-names
            (into reserved (collect-explicit-component-names nodes)))))
+
+(defn- raw-parse-options [options]
+  (when (or (:selection-name-maps options)
+            (warnings? options)
+            (:source-locations? options))
+    {:source-locations? true}))
+
+(defn- root-html-name-ignored-warning [root-name element options]
+  (cond-> {:code "root-html-name-ignored"
+           :path "root.anvil:name"
+           :message (str "anvil:name on a single top-level plain HTML root is ignored; "
+                         "use self.classes/self.style for root styling or name a child element "
+                         "if Python needs self.<name>.")}
+    (seq root-name) (assoc :name root-name)
+    (warnings? options) (merge (or (raw/attr-source-range element "anvil:name") {}))))
 
 (defn- parse-container-form-nodes
   [html nodes container-type options]
@@ -655,6 +865,7 @@
         container-event-bindings (state nil)
         container-data-bindings (state nil)
         container-layout-properties (state nil)
+        warnings (state (collect-attribute-warnings nodes options))
         flatten-segments (fn [segments] (vec (mapcat identity segments)))
         append-segments (fn [segments]
                           (doseq [segment segments]
@@ -699,15 +910,19 @@
             (state-reset! container-type-override normalized-type))))
       (if (and (= 1 (count significant-nodes))
                (raw/element? (first significant-nodes))
+               (not (anvil-template-tag? (first significant-nodes)))
                (promotable-element? (first significant-nodes) context))
         ;; A single promoted root element becomes the HtmlComponent container
         ;; itself, not a child component, so root metadata stays on the form.
         (let [element (first significant-nodes)
               metadata (extract-promoted-fragment-data element)
-              rendered (render-nodes (raw/child-nodes element) context root-target {:parent-is-fragment true})
+              root-name (attr element "anvil:name")
+              rendered (render-element-children element context root-target {:parent-is-fragment true})
               element-html (render-element (lower-tag-name element)
-                                           (filter-anvil-attributes (raw/attrs element))
+                                           (normalize-dom-node-attrs (filter-anvil-attributes (raw/attrs element)))
                                            (:html rendered))]
+          (when (and (warnings? options) (some? root-name))
+            (state-swap! warnings conj (root-html-name-ignored-warning root-name element options)))
           (state-reset! components (:components rendered))
           (state-swap! container-properties assoc
                        :html (if (:normalize-html context)
@@ -740,14 +955,14 @@
                :serialized_html (if (:normalize-html context)
                                   (normalize-fragment-html html)
                                   html)}
-        (seq slots) (assoc :slots (into (sorted-map) slots))))))
+        (seq slots) (assoc :slots (into (sorted-map) slots))
+        (seq @warnings) (assoc :warnings @warnings)))))
 
 (defn parse-container-form
   ([html] (parse-container-form html "HtmlComponent" nil))
   ([html container-type] (parse-container-form html container-type nil))
   ([html container-type options]
-   (let [fragment (raw/parse-fragment html (when (:selection-name-maps options)
-                                             {:source-locations? true}))]
+   (let [fragment (raw/parse-fragment html (raw-parse-options options))]
      (parse-container-form-nodes html (raw/child-nodes fragment) container-type options))))
 
 (defn- layout-root? [element]
@@ -758,10 +973,6 @@
   (or (attr element "layout") (attr element "type")))
 
 (declare parse-layout-form)
-
-(defn- raw-parse-options [options]
-  (when (:selection-name-maps options)
-    {:source-locations? true}))
 
 (defn- parse-layout-form-nodes
   [html nodes options]
@@ -793,10 +1004,15 @@
     (if-not @layout-element
       ;; If a layout parse is requested without a layout root, recover by
       ;; wrapping the input in an UnknownLayout anvil-form.
-      (parse-layout-form (str "<anvil-form layout=\"UnknownLayout\">" html "</anvil-form>") options)
+      (let [warnings (collect-attribute-warnings nodes options)
+            parsed (parse-layout-form (str "<anvil-form layout=\"UnknownLayout\">" html "</anvil-form>")
+                                      (assoc options :suppress-attribute-warnings true))]
+        (cond-> parsed
+          (seq warnings) (assoc :warnings warnings)))
       (let [{:keys [properties layout-event-bindings data-bindings event-bindings]} (extract-component-data @layout-element)
             layout-type (or (layout-type-attribute @layout-element) "UnknownLayout")
             context (create-context options true html)
+            warnings (collect-attribute-warnings nodes options)
             components-by-slot (state {})
             block-names (state #{})
             duplicate-counts (state {})
@@ -853,7 +1069,8 @@
               slots @(:slots context)]
           (cond-> {:layout layout
                    :components_by_slot @components-by-slot}
-            (seq slots) (assoc :slots slots)))))))
+            (seq slots) (assoc :slots slots)
+            (seq warnings) (assoc :warnings warnings)))))))
 
 (defn parse-layout-form
   ([html] (parse-layout-form html nil))

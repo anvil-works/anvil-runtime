@@ -10,6 +10,7 @@
             [clojure.data.json :as json]
             [clojure.string :as str]
             [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]
+            [anvil.dispatcher.native-rpc-handlers.users.core :as users]
             [anvil.dispatcher.types :as types]
             [anvil.runtime.app-data :as app-data]
             [anvil.core.worker-pool :as worker-pool]
@@ -223,6 +224,55 @@
             req chunked-streams)))
 
 
+(defn- check-client-script-launch!
+  "Client code (browser or client uplink; both dispatch with :origin :client) may only launch
+   `script:` background tasks allow-listed in the app's `script_config`:
+     client_callable: true            -> anyone
+     client_callable: logged_in_user  -> requires a Users-service login in the calling session
+     absent/null/anything else       -> not client-callable
+   Throws on rejection. For `logged_in_user`, returns the id of the user we verified (which
+   may have come from a remember-me cookie rather than the session's login state)."
+  [{:keys [app] :as request} task-fn]
+  (let [[_ script-name] (re-matches #"script:(.*)" (str task-fn))]
+    (when-not script-name
+      (throw+ {:anvil/server-error "Can't launch background tasks from the client." :type "anvil.server.BackgroundTaskError"}))
+    (condp = (get-in app [:script_config (keyword script-name) :client_callable])
+      true nil
+
+      "logged_in_user"
+      (let [user-id (rpc-util/with-basic-native-bindings-from-request request
+                      (users/get-logged-in-user-id))]
+        (when-not user-id
+          (throw+ {:anvil/server-error (str "You must be logged in to run the script '" script-name "'")
+                   :type               "anvil.users.AuthenticationFailed"}))
+        user-id)
+
+      ;; absent, null, or unrecognised: server code only
+      (throw+ {:anvil/server-error (str "The script '" script-name "' cannot be launched from client code")
+               :type               "anvil.server.PermissionDenied"}))))
+
+(defn launch-request-watch-key
+  "The watch key a BG task launch should carry: explicit on the request, or inherited from
+   the launching session (either a session that watches every task it launches, eg an IDE
+   runner debug session, or a BG task session passing its own key on to nested launches)."
+  [request session-state]
+  (or (:bg-task-watch-key request)
+      (when session-state
+        (or (:watch-key-for-any-tasks-we-launch @session-state)
+            (:bg-task-watch-key @session-state)))))
+
+(defn record-bg-task-launch-event!
+  [session-state task-id task-session-id task-fn]
+  (when session-state
+    (try
+      (app-log/record-event! session-state nil "background_task_launched" nil
+                             {:task_id    task-id
+                              :session_id task-session-id
+                              :task_name  (str "task:" task-fn)}
+                             {:ensure-logged? false})
+      (catch Exception e
+        (log/warn e "Failed to record background_task_launched for task" task-id)))))
+
 (def rpc-handlers {"anvil.private.background_tasks.launch"    {:fn (fn [{{[task-fn] :args} :call, :keys [origin from-bg-task? app-id environment session-state tracing-span bg-task-timeout], :as request} return-path]
                                                                      (worker-pool/run-task! {:type :native-rpc,
                                                                                              :name ::bg-task-launch-async-for-media-wait
@@ -230,6 +280,9 @@
                                                                        (dispatcher/report-exceptions-to-return-path return-path
                                                                          ;; This is naaaasty:
                                                                          (let [request (wait-for-media request)
+                                                                               watch-key (launch-request-watch-key request session-state)
+                                                                               request (cond-> request
+                                                                                               watch-key (assoc :bg-task-watch-key watch-key))
                                                                                restrict? (app-data/abuse-caution? session-state app-id)
                                                                                return-path (assoc return-path :respond! (fn [resp]
                                                                                                                           ;; Response is always a BG task liveobject. Add its metadata to our tracing span.
@@ -238,10 +291,19 @@
                                                                                                                             (let [task-id (json/read-str response-id)
                                                                                                                                   session-id (:session_id (first (jdbc/query util/db ["SELECT session_id FROM background_tasks WHERE id = ?" task-id])))]
                                                                                                                               (tracing/merge-span-attrs tracing-span {:task_id         task-id
-                                                                                                                                                                      :task_session_id session-id})))
+                                                                                                                                                                      :task_session_id session-id})
+                                                                                                                              (record-bg-task-launch-event! session-state task-id session-id task-fn)))
                                                                                                                           (dispatcher/respond! return-path resp)))]
-                                                                           (when (= :client origin)
-                                                                             (throw+ {:anvil/server-error "Can't launch background tasks from the client." :type "anvil.server.BackgroundTaskError"}))
+                                                                           (let [verified-login-id (when (= :client origin)
+                                                                                                     (check-client-script-launch! request task-fn))
+                                                                                 request (cond-> request
+                                                                                                 ;; The re-dispatched task:script:* call keeps :origin :client (so the
+                                                                                                 ;; task shows as client-launched); this flag lets it past the
+                                                                                                 ;; dispatcher's "no scoped functions from the client" rule. It is only
+                                                                                                 ;; ever set here, after the allow-list check, and cannot arrive from
+                                                                                                 ;; the wire (wire ingress never copies unknown keys onto a request).
+                                                                                                 (= :client origin) (assoc ::client-launch-vetted-by-script-allow-list true)
+                                                                                                 verified-login-id (assoc ::verified-logged-in-user-id verified-login-id))]
 
                                                                            (when (and (= :pypy origin)
                                                                                       from-bg-task?)
@@ -286,7 +348,7 @@
                                                                                                                    (do-dispatch!)
                                                                                                                    (dispatcher/respond! return-path {:error {:message "Free users can only run two simultaneous Background Tasks."
                                                                                                                                                              :type    "anvil.server.BackgroundTaskError"}})))))}
-                                                                                                is-running?))))))))))}
+                                                                                                is-running?)))))))))))}
                    "anvil.private.background_tasks.get_by_id" (rpc-util/wrap-native-fn
                                                                 (fn [_kwargs id]
                                                                   (when rpc-util/*client-request?*
@@ -361,12 +423,21 @@
 ;; A utility function, for use in pypy and local wrapper. It sets up a new background task record,
 ;; a new session, and a return path pointing to that task. The return value of the function is (optionally) used
 ;; as the final state.
-(defn setup-background-task-context [{:keys [app-id app-origin environment scheduled-task-id tracing-span bg-task-watch-key] {func :func} :call :as request} impl cleanup-fn]
-  (let [new-session (sessions/new-session-with-state (cond-> {:app-id      app-id
+(defn setup-background-task-context [{:keys [app-id app-origin environment scheduled-task-id tracing-span bg-task-watch-key session-state] {func :func} :call :as request} impl cleanup-fn]
+  (let [;; Scripts inherit the launching session's Users login, so anvil.users.get_user()
+        ;; works inside them. (::verified-logged-in-user-id covers a client launch whose login
+        ;; was verified from a remember-me cookie rather than session login state.)
+        ;; TODO: Make this work over the crosslink, which doesn't provide a full session-state.
+        inherited-login-id nil #_(when (str/starts-with? (str func) "task:script:")
+                                   (or (when session-state
+                                         (get-in @session-state [:users :logged-in-id]))
+                                       (::verified-logged-in-user-id request)))
+        new-session (sessions/new-session-with-state (cond-> {:app-id      app-id
                                                               :app-origin  app-origin
                                                               :client      {:type :background_task}
                                                               :environment environment}
-                                                             bg-task-watch-key (assoc :bg-task-watch-key bg-task-watch-key))
+                                                             bg-task-watch-key (assoc :bg-task-watch-key bg-task-watch-key)
+                                                             inherited-login-id (assoc :users {:logged-in-id inherited-login-id}))
                                                      (merge {:func func}
                                                             (when scheduled-task-id
                                                               {:scheduled_task scheduled-task-id})))

@@ -1,9 +1,10 @@
-(ns anvil.dispatcher.native-rpc-handlers.users.v2.core-handlers-test
+(ns anvil.dispatcher.native-rpc-handlers.users.core-handlers-test
   (:require [anvil.dispatcher.native-rpc-handlers.cookies :as cookies]
-            [anvil.dispatcher.native-rpc-handlers.users.v2.core :as users-v2]
-            [anvil.dispatcher.native-rpc-handlers.users.v2.util :as user-util]
+            [anvil.dispatcher.native-rpc-handlers.users.core :as users]
+            [anvil.dispatcher.native-rpc-handlers.users.util :as user-util]
             [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]
             [anvil.util :as anvil-util]
+            [anvil.runtime.app-data :as app-data]
             [anvil.runtime.conf :as runtime-conf]
             [anvil.runtime.secrets :as secrets]
             [anvil.runtime.tables.v2.rpc :as table-rpc]
@@ -12,17 +13,17 @@
 
 
 (def provider-login-handlers
-  [{:handler users-v2/login-with-google :permission :use_google :prop :use_google}
-   {:handler users-v2/login-with-facebook :permission :use_facebook :prop :use_facebook}
-   {:handler users-v2/login-with-microsoft :permission :use_microsoft :prop :use_microsoft}
-   {:handler users-v2/login-with-saml :permission :use_saml :prop :use_saml}])
+  [{:handler users/login-with-google :permission :use_google :prop :use_google}
+   {:handler users/login-with-facebook :permission :use_facebook :prop :use_facebook}
+   {:handler users/login-with-microsoft :permission :use_microsoft :prop :use_microsoft}
+   {:handler users/login-with-saml :permission :use_saml :prop :use_saml}])
 
 
 (def provider-signup-handlers
-  [{:handler users-v2/signup-with-google :permission :use_google}
-   {:handler users-v2/signup-with-facebook :permission :use_facebook}
-   {:handler users-v2/signup-with-microsoft :permission :use_microsoft}
-   {:handler users-v2/signup-with-saml :permission :use_saml}])
+  [{:handler users/signup-with-google :permission :use_google}
+   {:handler users/signup-with-facebook :permission :use_facebook}
+   {:handler users/signup-with-microsoft :permission :use_microsoft}
+   {:handler users/signup-with-saml :permission :use_saml}])
 
 ;; Covers successful provider login handler wiring through permission checks and login!.
 ;; This matters because each provider entry must dispatch identically, and it's better covered
@@ -31,7 +32,7 @@
   (doseq [{:keys [handler permission prop]} provider-login-handlers]
     (let [seen (atom [])]
       (with-redefs [user-util/get-user-props (fn [] {prop true :table_id "users-table" :allow_signup false})
-                    users-v2/get-and-check-current-user-email-from-required-permission
+                    users/get-and-check-current-user-email-from-required-permission
                     (fn [required-permission]
                       (swap! seen conj [:required-permission required-permission])
                       "provider@login.test")
@@ -40,7 +41,7 @@
                     (fn [table-id email fetch]
                       (swap! seen conj [:table-get table-id email fetch])
                       :user-row)
-                    users-v2/login!
+                    users/login!
                     (fn [user-row remember?]
                       (swap! seen conj [:login! user-row remember?])
                       {:logged-in true})]
@@ -54,12 +55,12 @@
 (deftest social-signup-handlers-success-path
   (doseq [{:keys [handler permission]} provider-signup-handlers]
     (let [seen (atom [])]
-      (with-redefs [users-v2/get-and-check-current-user-email-from-required-permission
+      (with-redefs [users/get-and-check-current-user-email-from-required-permission
                     (fn [required-permission]
                       (swap! seen conj [:required-permission required-permission])
                       "provider@signup.test")
                     user-util/get-user-props (fn [] {permission true :table_id "users-table"})
-                    users-v2/signup-common-from-email
+                    users/signup-common-from-email
                     (fn [required-permission email user-props kws]
                       (swap! seen conj [:signup required-permission email user-props kws])
                       {:signed-up true})]
@@ -73,14 +74,14 @@
 (deftest generate-email-link-token-success-and-failure
   (binding [rpc-util/*app-id* "app-123"]
     (with-redefs [secrets/encrypt-str-with-global-key (fn [_ token] token)]
-      (let [token (users-v2/generate-email-link-token nil "token@test.com" "login")
+      (let [token (users/generate-email-link-token nil "token@test.com" "login")
             [email app-id _time kind] (.split token "#")]
         (is (= "token@test.com" email))
         (is (= "app-123" app-id))
         (is (= "login" kind)))))
   (with-redefs [secrets/encrypt-str-with-global-key (fn [& _] (throw (RuntimeException. "boom")))]
     (is (thrown? RuntimeException
-                 (users-v2/generate-email-link-token nil "token@test.com" "login")))))
+                 (users/generate-email-link-token nil "token@test.com" "login")))))
 
 ;; Covers reading the remembered login email cookie and swallowing cookie-layer failures.
 ;; This matters because login form prefill should degrade safely, and it's better covered in Clojure
@@ -90,11 +91,11 @@
                 cookies/get-cookie-val (fn [_ cookie-key]
                                          (is (= :user-table-users-table-last-email cookie-key))
                                          "cookie@test.com")]
-    (is (= "cookie@test.com" (users-v2/get-last-login-email nil))))
+    (is (= "cookie@test.com" (users/get-last-login-email nil))))
 
   (with-redefs [user-util/get-user-props (fn [] {:table_id "users-table" :share_login_status false})
                 cookies/get-cookie-val (fn [& _] (throw+ {:anvil/cookie-error true}))]
-    (is (nil? (users-v2/get-last-login-email nil)))))
+    (is (nil? (users/get-last-login-email nil)))))
 
 ;; Covers logout cleanup with and without a remember-me token present.
 ;; This matters because logout must clear the right local state in both cases, and it's better
@@ -102,12 +103,12 @@
 (deftest logout-handles-token-and-no-token
   (let [calls (atom [])]
     (with-redefs [user-util/get-user-props (fn [] {:table_id "users-table" :share_login_status false})
-                  users-v2/remove-login-session-data (fn [] (swap! calls conj :remove-login-session-data))
-                  users-v2/get-remember-me-token-hash-from-cookie (fn [_] "token-hash")
-                  users-v2/remove-remember-me-cookie (fn [_] (swap! calls conj :remove-remember-me-cookie))
-                  users-v2/remove-remember-me-token-hash (fn [_ token-hash] (swap! calls conj [:remove-remember-me-token-hash token-hash]))
+                  users/remove-login-session-data (fn [] (swap! calls conj :remove-login-session-data))
+                  users/get-remember-me-token-hash-from-cookie (fn [_] "token-hash")
+                  users/remove-remember-me-cookie (fn [_] (swap! calls conj :remove-remember-me-cookie))
+                  users/remove-remember-me-token-hash (fn [_ token-hash] (swap! calls conj [:remove-remember-me-token-hash token-hash]))
                   rpc-util/invalidate-client-objects! (fn [] (swap! calls conj :invalidate-client-objects!))]
-      (is (nil? (users-v2/logout {:invalidate_client_objects true})))
+      (is (nil? (users/logout {:invalidate_client_objects true})))
       (is (= [:invalidate-client-objects!
               :remove-login-session-data
               :remove-remember-me-cookie
@@ -116,12 +117,12 @@
 
   (let [calls (atom [])]
     (with-redefs [user-util/get-user-props (fn [] {:table_id "users-table" :share_login_status false})
-                  users-v2/remove-login-session-data (fn [] (swap! calls conj :remove-login-session-data))
-                  users-v2/get-remember-me-token-hash-from-cookie (fn [_] nil)
-                  users-v2/remove-remember-me-cookie (fn [_] (swap! calls conj :remove-remember-me-cookie))
-                  users-v2/remove-remember-me-token-hash (fn [_ _] (swap! calls conj :remove-remember-me-token-hash))
+                  users/remove-login-session-data (fn [] (swap! calls conj :remove-login-session-data))
+                  users/get-remember-me-token-hash-from-cookie (fn [_] nil)
+                  users/remove-remember-me-cookie (fn [_] (swap! calls conj :remove-remember-me-cookie))
+                  users/remove-remember-me-token-hash (fn [_ _] (swap! calls conj :remove-remember-me-token-hash))
                   rpc-util/invalidate-client-objects! (fn [] (swap! calls conj :invalidate-client-objects!))]
-      (is (nil? (users-v2/logout {})))
+      (is (nil? (users/logout {})))
       (is (= [:remove-login-session-data] @calls)))))
 
 ;; Covers the runtime-config-driven MFA type list with and without Twilio configured.
@@ -129,18 +130,18 @@
 ;; covered in Clojure because Python tests don't expose this helper's exact config-dependent return values.
 (deftest get-enabled-mfa-types-with-and-without-twilio
   (with-redefs [runtime-conf/twilio-config nil]
-    (is (= ["totp" "fido"] (vec (users-v2/get-enabled-mfa-types nil)))))
+    (is (= ["totp" "fido"] (vec (users/get-enabled-mfa-types nil)))))
   (with-redefs [runtime-conf/twilio-config {:verify-service-id "service"}]
-    (is (= ["totp" "fido" "twilio-verify"] (vec (users-v2/get-enabled-mfa-types nil))))))
+    (is (= ["totp" "fido" "twilio-verify"] (vec (users/get-enabled-mfa-types nil))))))
 
 
 (deftest get-current-user-uses-remember-me-path-when-allowed
   (with-redefs [user-util/get-user-props (fn [] {:table_id "users-table" :allow_remember_me true :require_mfa false :use_email false})
                 table-rpc/validate-fetch-request identity
-                users-v2/get-user-from-session (fn [_ _] nil)
-                users-v2/check-whether-mfa-required (fn [_] nil)
-                users-v2/get-user-from-remember-me (fn [_ _] :remembered-user)]
-    (is (= :remembered-user (users-v2/get-current-user {:allow_remembered true :fetch {:email true}})))))
+                users/get-user-from-session (fn [_ _] nil)
+                users/check-whether-mfa-required (fn [_] nil)
+                users/get-user-from-remember-me (fn [_ _] :remembered-user)]
+    (is (= :remembered-user (users/get-current-user {:allow_remembered true :fetch {:email true}})))))
 
 ;; Covers the expiry check on token login without going through live encrypted-token plumbing.
 ;; This matters because Python tests cover broader token-login behavior, but this exact stale-token
@@ -148,14 +149,14 @@
 (deftest do-login-with-token-rejects-expired-token
   (let [session-state (atom {})
         old-ms (- (System/currentTimeMillis) (* 11 60 1000))]
-    (with-redefs [users-v2/get-decrypted-token (fn [_token]
+    (with-redefs [users/get-decrypted-token (fn [_token]
                                                  {:email "good@user.com"
                                                   :token-app-id "app-123"
                                                   :token-time (str old-ms)
                                                   :token-type "login"})
                   user-util/get-user-props (fn [] {:table_id "users-table" :use_token true})
                   user-util/table-get-from-email-check-enabled-and-validate (fn [_table-id _email _fetch] :user-row)]
-      (is (nil? (users-v2/do-login-with-token {:id "app-123" :content {}}
+      (is (nil? (users/do-login-with-token {:id "app-123" :content {}}
                                               :dev
                                               session-state
                                               "token"
@@ -168,14 +169,14 @@
 (deftest do-login-with-token-rejects-expired-password-reset-token
   (let [session-state (atom {})
         old-ms (- (System/currentTimeMillis) (* 11 60 1000))]
-    (with-redefs [users-v2/get-decrypted-token (fn [_token]
+    (with-redefs [users/get-decrypted-token (fn [_token]
                                                  {:email "good@user.com"
                                                   :token-app-id "app-123"
                                                   :token-time (str old-ms)
                                                   :token-type "pw-reset"})
                   user-util/get-user-props (fn [] {:table_id "users-table" :use_token true})
                   user-util/table-get-from-email-check-enabled-and-validate (fn [_table-id _email _fetch] :user-row)]
-      (is (nil? (users-v2/do-login-with-token {:id "app-123" :content {}}
+      (is (nil? (users/do-login-with-token {:id "app-123" :content {}}
                                               :dev
                                               session-state
                                               "token"
@@ -187,14 +188,14 @@
 ;; is better asserted in Clojure where we can inject the parsed token contents directly.
 (deftest do-login-with-token-rejects-unknown-token-type
   (let [session-state (atom {})]
-    (with-redefs [users-v2/get-decrypted-token (fn [_token]
+    (with-redefs [users/get-decrypted-token (fn [_token]
                                                  {:email "good@user.com"
                                                   :token-app-id "app-123"
                                                   :token-time (str (System/currentTimeMillis))
                                                   :token-type "unknown-kind"})
                   user-util/get-user-props (fn [] {:table_id "users-table" :use_token true})
                   user-util/table-get-from-email-check-enabled-and-validate (fn [_table-id _email _fetch] :user-row)]
-      (is (nil? (users-v2/do-login-with-token {:id "app-123" :content {}}
+      (is (nil? (users/do-login-with-token {:id "app-123" :content {}}
                                               :dev
                                               session-state
                                               "token"
@@ -210,14 +211,14 @@
   (binding [rpc-util/*session-state* (atom {:users {:logged-in-id "[users-table,1]"}})]
     (with-redefs [user-util/get-user-props (fn [] {:table_id "users-table"})
                   user-util/table-get-row-by-id (fn [_ _] :user-row)
-                  users-v2/check-password-hash (fn [_ _] true)
+                  users/check-password-hash (fn [_ _] true)
                   user-util/get-in-user-row (fn [_ k & [_default]]
                                               (case k
                                                 :mfa []
                                                 nil))
                   user-util/update-user-row-creating-cols-as-necessary (fn [& _] (is false "Should not update row"))]
       (try+
-        (users-v2/add-mfa-method nil "password" {:type "unsupported" :id "bad" :serial 1} false)
+        (users/add-mfa-method nil "password" {:type "unsupported" :id "bad" :serial 1} false)
         (is false "Expected unsupported MFA type rejection")
         (catch #(= "anvil.users.AuthenticationFailed" (:type %)) e
           (is (= "MFA method not supported" (:anvil/server-error e))))))))
@@ -229,14 +230,14 @@
   (binding [rpc-util/*session-state* (atom {:users {:logged-in-id "[users-table,1]"}})]
     (with-redefs [user-util/get-user-props (fn [] {:table_id "users-table"})
                   user-util/table-get-row-by-id (fn [_ _] :user-row)
-                  users-v2/check-password-hash (fn [_ _] true)
+                  users/check-password-hash (fn [_ _] true)
                   user-util/get-in-user-row (fn [_ k & [_default]]
                                               (case k
                                                 :mfa [{:type "totp" :id "dup" :serial 1}]
                                                 nil))
                   user-util/update-user-row-creating-cols-as-necessary (fn [& _] (is false "Should not update row"))]
       (try+
-        (users-v2/add-mfa-method nil "password" {:type "totp" :id "dup" :serial 2} false)
+        (users/add-mfa-method nil "password" {:type "totp" :id "dup" :serial 2} false)
         (is false "Expected duplicate MFA id rejection")
         (catch #(= "anvil.users.AuthenticationFailed" (:type %)) e
           (is (= "MFA method already exists" (:anvil/server-error e))))))))
@@ -246,12 +247,12 @@
 ;; place to verify this internal dispatch table stays aligned for every supported MFA type.
 (deftest check-mfa-methods-dispatches-by-type
   (let [called (atom [])]
-    (with-redefs [users-v2/check-mfa-totp (fn [_ _ _] (swap! called conj :totp))
-                  users-v2/check-mfa-fido (fn [_ _ _] (swap! called conj :fido))
-                  users-v2/check-mfa-twilio-verify (fn [_ _ _] (swap! called conj :twilio))]
-      (#'users-v2/check-mfa-methods {} :user-row {:mfa-type "totp" :matching-mfa-methods [{}]})
-      (#'users-v2/check-mfa-methods {} :user-row {:mfa-type "fido" :matching-mfa-methods [{}]})
-      (#'users-v2/check-mfa-methods {} :user-row {:mfa-type "twilio-verify" :matching-mfa-methods [{}]})
+    (with-redefs [users/check-mfa-totp (fn [_ _ _] (swap! called conj :totp))
+                  users/check-mfa-fido (fn [_ _ _] (swap! called conj :fido))
+                  users/check-mfa-twilio-verify (fn [_ _ _] (swap! called conj :twilio))]
+      (#'users/check-mfa-methods {} :user-row {:mfa-type "totp" :matching-mfa-methods [{}]})
+      (#'users/check-mfa-methods {} :user-row {:mfa-type "fido" :matching-mfa-methods [{}]})
+      (#'users/check-mfa-methods {} :user-row {:mfa-type "twilio-verify" :matching-mfa-methods [{}]})
       (is (= [:totp :fido :twilio] @called)))))
 
 ;; Covers storing partial-login session state when MFA is required after password validation.
@@ -271,9 +272,9 @@
                                                 nil))
                   anvil.util/bcrypt-checkpw (fn [_ _] true)
                   user-util/user-row->v1-id-str (fn [_] "[users-table,1]")
-                  users-v2/login! (fn [& _] :unexpected-login!)]
+                  users/login! (fn [& _] :unexpected-login!)]
       (try+
-        (users-v2/login-with-email {:remember false :fetch {:email true}} "user@test.com" "password")
+        (users/login-with-email {:remember false :fetch {:email true}} "user@test.com" "password")
         (is false "Expected MFARequired")
         (catch #(= "anvil.users.MFARequired" (:type %)) _
           (is (= "[users-table,1]" (get-in @rpc-util/*session-state* [:users :partial-logged-in-id]))))))))
@@ -285,7 +286,7 @@
   (doseq [{:keys [handler permission prop]} provider-login-handlers]
     (let [lookups (atom 0)]
       (with-redefs [user-util/get-user-props (fn [] {prop true :table_id "users-table" :allow_signup false})
-                    users-v2/get-and-check-current-user-email-from-required-permission
+                    users/get-and-check-current-user-email-from-required-permission
                     (fn [_required-permission]
                       (throw+ {:anvil/server-error "User is not logged in with provider"}))
                     user-util/table-get-from-email-check-enabled-and-validate
@@ -308,13 +309,13 @@
   (doseq [{:keys [handler permission prop]} provider-login-handlers]
     (let [seen (atom [])]
       (with-redefs [user-util/get-user-props (fn [] {prop true :table_id "users-table" :allow_signup true})
-                    users-v2/get-and-check-current-user-email-from-required-permission
+                    users/get-and-check-current-user-email-from-required-permission
                     (fn [required-permission]
                       (swap! seen conj [:required-permission required-permission])
                       "provider@signup-login.test")
                     table-rpc/validate-fetch-request identity
                     user-util/table-get-from-email-check-enabled-and-validate (fn [_ _ _] nil)
-                    users-v2/signup-common-from-email
+                    users/signup-common-from-email
                     (fn [required-permission email user-props kws]
                       (swap! seen conj [:signup required-permission email user-props kws])
                       {:signed-up true})]
@@ -328,10 +329,10 @@
 (deftest social-signup-account-link-collision
   (doseq [{:keys [handler permission]} provider-signup-handlers]
     (let [calls (atom 0)]
-      (with-redefs [users-v2/get-and-check-current-user-email-from-required-permission
+      (with-redefs [users/get-and-check-current-user-email-from-required-permission
                     (fn [_required-permission] "provider@collision.test")
                     user-util/get-user-props (fn [] {permission true :table_id "users-table" :allow_signup true})
-                    users-v2/signup-common-from-email
+                    users/signup-common-from-email
                     (fn [_required-permission _email _user-props _kws]
                       (swap! calls inc)
                       (throw+ {:anvil/server-error "This user already exists" :type "anvil.users.UserExists"}))]
@@ -350,9 +351,22 @@
 (deftest generate-email-link-token-allows-empty-email-and-kind
   (binding [rpc-util/*app-id* "app-123"]
     (with-redefs [secrets/encrypt-str-with-global-key (fn [_ token] token)]
-      (let [token (users-v2/generate-email-link-token nil "" "")
+      (let [token (users/generate-email-link-token nil "" "")
             [email app-id _time kind] (.split token "#")]
         (is (= "" email))
         (is (= "app-123" app-id))
         ;; Java split drops trailing empty segments when limit is omitted.
         (is (nil? kind))))))
+
+(deftest export-and-remap-preserve-user-table-configuration
+  (doseq [[configured-table expected-table] [["users" "users"] [42 84]]]
+    (let [app {:services [{:source "/runtime/services/anvil/users.yml"
+                          :client_config {:use_email true}
+                          :server_config {:user_table configured-table}}]}]
+      (with-redefs [app-data/get-app-info-insecure identity
+                    app-data/get-app (fn [_ _] {:content app})]
+        (is (= app (users/export-with-table app "app" {:branch "master"})))
+        (is (= expected-table
+               (-> (or (user-util/remap-user-table "app" {:branch "master"} app {42 {:new-id 84}})
+                       app)
+                   :services first :server_config :user_table)))))))

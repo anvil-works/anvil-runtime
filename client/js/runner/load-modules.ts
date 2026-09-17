@@ -12,6 +12,7 @@ import imageModule from "../modules/image";
 import jsModule from "../modules/js";
 import mediaModule from "../modules/media";
 import reModule from "../modules/regex";
+import scriptModule from "../modules/script";
 import server from "../modules/server";
 import shapesModule from "../modules/shapes";
 import tzModule from "../modules/tz";
@@ -49,6 +50,8 @@ function loadOrdinaryModulesReturningAnvilModule() {
     provideLoggingImpl(serverModuleAndLog.log);
     registerServerCallSuspension = serverModuleAndLog.registerServerCallSuspension;
     PyDefUtils.loadModule("anvil.server", serverModuleAndLog.pyMod);
+
+    PyDefUtils.loadModule("anvil.script", scriptModule());
 
     PyDefUtils.loadModule("anvil.http", httpModule());
 

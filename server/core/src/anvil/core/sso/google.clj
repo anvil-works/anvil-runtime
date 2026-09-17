@@ -9,15 +9,26 @@
             [ring.util.codec])
   (:import (java.util Date)))
 
+(defn- scope-requested? [scope requested-scope]
+  (contains? (set (.split ^String (or scope "") " ")) requested-scope))
+
 (defn get-login-url [client-id redirect-uri scope request-offline]
-  (let [csrf-token (random/hex 60)]
+  ;; request-offline: when true, requests a refresh token by setting access_type=offline.
+  ;; This allows the server to access Google APIs when the user is not present (e.g., App Files).
+  (let [csrf-token (random/hex 60)
+        requests-drive-file-scope? (scope-requested? scope "https://www.googleapis.com/auth/drive.file")
+        ;; Google requires prompt=consent for drive.file scope (as of April 2026)
+        ;; https://developers.google.com/workspace/drive/picker/guides/web-picker
+        prompt (cond
+                 request-offline "consent select_account"
+                 requests-drive-file-scope? "consent"
+                 :else "")]
      ;; Generate a redirect to Google, including our app info
      [(str "https://accounts.google.com/o/oauth2/auth?"
            (ring.util.codec/form-encode {:redirect_uri  redirect-uri
                                          :response_type "code"
                                          :access_type   (if request-offline "offline" "online")
-                                         ;:approval_prompt (if request-offline "force" "auto") ;; This isn't valid for Google any more, apparently. We should replace it with 'prompt=' https://developers.google.com/identity/protocols/oauth2/openid-connect#authenticationuriparameters
-                                         :prompt        (if request-offline "consent select_account" "")
+                                         :prompt        prompt
                                          :scope         scope
                                          :state         csrf-token
                                          :client_id     client-id}))
@@ -84,5 +95,3 @@
                                           (str " (" (:error body) "; " (:error_description body) ")")))}))
 
     body))
-
-

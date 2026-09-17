@@ -1,6 +1,6 @@
 {
   "name": "@anvil-works/form-template-parser",
-  "version": "0.0.2",
+  "version": "0.0.5",
   "private": false,
   "type": "module",
   "main": "dist/index.js",

@@ -3,10 +3,16 @@ import { PyModMap, s_x_anvil_dom_node_changed } from "@runtime/runner/py-util";
 import { chainOrSuspend, pyCallable, pyCallOrSuspend, pyNone, pyObject, pyStr } from "@Sk";
 import PyDefUtils from "PyDefUtils";
 import { getRandomStr } from "../utils";
-import { ClassicComponentConstructor } from "./ClassicComponent";
+import type { ClassicComponent, ClassicComponentConstructor } from "./ClassicComponent";
 import { ClassicContainer } from "./ClassicContainer";
 import { addEventHandler, Component, removeEventHandler } from "./Component";
+import { findComponentElements, getDomPyComponent } from "./component-dom";
 import { indexInRange, validateChild } from "./Container";
+import {
+    ColumnPanelDesignerData,
+    applyColumnPanelDesignerData,
+    decrementDesignerChildIndicesAfterRemoval,
+} from "./column-panel-designer-data";
 import { isInvisibleComponent } from "./helpers";
 
 /*#
@@ -163,6 +169,7 @@ export interface ColumnPanelAnvil {
     rows: Record<string, RowContainer>;
     cols: Record<string, ColContainer>;
     componentColumnContainers: WeakMap<Component, PanelContainer>;
+    designerDataByComponent: WeakMap<Component, ColumnPanelDesignerData>;
     generateNewLayoutProps: (basedOn: any) => any;
     setLayoutProperties: (pyChild: any, layoutProperties: any) => any;
 }
@@ -302,6 +309,7 @@ const ColumnPanelFactory = (pyModule: PyModMap) => {
                 self._anvil.cols = {};
 
                 self._anvil.componentColumnContainers = new WeakMap();
+                self._anvil.designerDataByComponent = new WeakMap();
 
                 self._anvil.generateNewLayoutProps = (basedOn) => {
                     // For now, this is pretty naive. Just create a new row/col for the component.
@@ -450,6 +458,17 @@ const ColumnPanelFactory = (pyModule: PyModMap) => {
                         self._anvil.componentColumnContainers.set(component, currentColContainer);
                         currentColContainer.appendChild(paddingElement);
                         paddingElement.appendChild(componentElement);
+                        self._anvil.designerDataByComponent.set(component, {
+                            childIdx,
+                            gridPos: gridPos?.toString() || "",
+                        });
+                        componentElement.classList.add("belongs-to-" + panelId);
+                        if (ANVIL_IN_DESIGNER) {
+                            applyColumnPanelDesignerData(
+                                componentElement,
+                                self._anvil.designerDataByComponent.get(component)!
+                            );
+                        }
                     };
 
                     if (index == null) {
@@ -487,9 +506,11 @@ const ColumnPanelFactory = (pyModule: PyModMap) => {
                         prevEl = newEl;
                         newEl.classList.add("belongs-to-" + panelId);
                         if (ANVIL_IN_DESIGNER) {
-                            newEl.dataset.anvilDesignerPanelChildIdx = childIdx;
-                            newEl.dataset.anvilDesignerPanelGridPos = gridPos;
-                            newEl.dataset.anvilDesignerColumnpanelComponent = ""; // So we can use a selector to find all components in this columnpanel later.
+                            const designerData = self._anvil.designerDataByComponent.get(component);
+                            applyColumnPanelDesignerData(
+                                newEl,
+                                designerData ?? { childIdx, gridPos: gridPos?.toString() || "" }
+                            );
                         }
                     };
 
@@ -508,18 +529,13 @@ const ColumnPanelFactory = (pyModule: PyModMap) => {
                                 const componentElement = component.anvil$hooks.domElement!;
 
                                 if (ANVIL_IN_DESIGNER) {
-                                    // Adjust the cached childIdx on all later children.
                                     const oldChildIdx = parseInt(componentElement.dataset.anvilDesignerPanelChildIdx!);
-
-                                    const selector =
-                                        "[data-anvil-designer-columnpanel-component].belongs-to-" + panelId;
-
-                                    for (const el of self._anvil.domNode.querySelectorAll<HTMLElement>(selector)) {
-                                        const currentIdx = parseInt(el.dataset.anvilDesignerPanelChildIdx!);
-                                        if (currentIdx > oldChildIdx) {
-                                            el.dataset.anvilDesignerPanelChildIdx = String(currentIdx - 1);
-                                        }
-                                    }
+                                    decrementDesignerChildIndicesAfterRemoval({
+                                        components: self._anvil.components,
+                                        designerDataByComponent: self._anvil.designerDataByComponent,
+                                        removedChildIdx: oldChildIdx,
+                                        panelId,
+                                    });
                                 }
                                 // Remove this child, it's associated wrappers and columnPanel data.
                                 componentElement.parentElement?.remove();
@@ -581,9 +597,12 @@ const ColumnPanelFactory = (pyModule: PyModMap) => {
     function updateSharedLayoutProps(self: ColumnPanel) {
         const prefix = getCssPrefix();
 
-        self._anvil.element.find(".anvil-component.belongs-to-" + self._anvil.panelId).each(function (_, el) {
+        findComponentElements(self._anvil.domNode, ".belongs-to-" + self._anvil.panelId).forEach((el) => {
             const e = $(el);
-            var c = e.data("anvil-py-component");
+            var c = getDomPyComponent<ClassicComponent>(el);
+            if (!c) {
+                return;
+            }
 
             var lps = c._anvil.layoutProps || {};
             if (lps.full_width_row) {

@@ -1,7 +1,25 @@
-import { Suspension, pyCallOrSuspend, pyCallable, pyDict, pyObject, pyStr, pyTuple } from "@Sk";
+import {
+    Suspension,
+    chainOrSuspend,
+    iterForOrSuspend,
+    objectDelItem,
+    pyCallOrSuspend,
+    pyCallable,
+    pyDict,
+    pyFunc,
+    pyIter,
+    pyList,
+    pyNone,
+    pyObject,
+    pyStr,
+    pyTuple,
+    pyValueError,
+    toJs,
+    toPy,
+} from "@Sk";
 import PyDefUtils from "PyDefUtils";
 import { getCssPrefix } from "@runtime/runner/legacy-features";
-import { PyModMap, pyDictToKws, s_add_component } from "@runtime/runner/py-util";
+import { PyModMap, funcFastCall, pyDictToKws, s_add_component } from "@runtime/runner/py-util";
 import { s_raise_event, s_remove_from_parent } from "../runner/py-util";
 import { ClassicComponent, ClassicComponentConstructor } from "./ClassicComponent";
 import { Component } from "./Component";
@@ -17,7 +35,7 @@ const ClassicContainerFactory = (pyModule: PyModMap) => {
         events: PyDefUtils.assembleGroupEvents("ClassicContainer", ["universal"]),
         locals($loc) {
             /*!defMethod(_,component)!2*/ "Add a component to this container.";
-            $loc["add_component"] = new Sk.builtin.func(function (
+            $loc["add_component"] = new pyFunc(function (
                 self: ClassicContainer,
                 pyComponent: Component,
                 jsLayoutProperties: any /* hack because Skulpt doesn't like **args params*/
@@ -26,60 +44,59 @@ const ClassicContainerFactory = (pyModule: PyModMap) => {
             });
 
             /*!defMethod(_)!2*/ ("Get a list of components in this container");
-            $loc["get_components"] = new Sk.builtin.func(function (self: ClassicContainer<{}>) {
-                return new Sk.builtin.list(self._anvil.components.map((c) => c.component));
+            $loc["get_components"] = new pyFunc(function (self: ClassicContainer<{}>) {
+                return new pyList(self._anvil.components.map((c) => c.component));
             });
 
             /*!defMethod(_)!2*/ ("Remove all components from this container");
-            $loc["clear"] = new Sk.builtin.func(function (self: ClassicContainer<{}>) {
+            $loc["clear"] = new pyFunc(function (self: ClassicContainer<{}>) {
                 self._anvil.domNode.classList.remove(getCssPrefix() + "has-components");
                 const removeFns = self._anvil.components.map(
                     ({ component }) =>
                         () =>
                             pyCallOrSuspend(component.tp$getattr<pyCallable>(s_remove_from_parent), [])
                 );
-                return Sk.misceval.chain(undefined, ...removeFns, () => Sk.builtin.none.none$);
+                return chainOrSuspend(undefined, ...removeFns, () => pyNone);
             });
 
             /*!defMethod(,event_name,**event_args)!2*/ ("Trigger the 'event_name' event on all children of this component. Any keyword arguments are passed to the handler function.");
-            $loc["raise_event_on_children"] = new Sk.builtin.func(
-                PyDefUtils.withRawKwargs(function (kwargs: any, self: ClassicContainer<{}>, pyEventName: pyStr) {
-                    const eventName = Sk.ffi.remapToJs(pyEventName);
-                    if (eventName in self._anvil.eventTypes || eventName.match(/^x-/)) {
-                        return Sk.misceval.chain(
-                            Sk.builtin.none.none$,
-                            ...self._anvil.components.map(
-                                ({ component }) =>
-                                    () =>
-                                        pyCallOrSuspend(
-                                            component.tp$getattr<pyCallable>(s_raise_event),
-                                            [pyEventName],
-                                            kwargs
-                                        )
-                            )
-                        );
-                    } else {
-                        throw new Sk.builtin.ValueError(
-                            "Cannot raise unknown event '" +
-                                eventName +
-                                "' on " +
-                                self.tp$name +
-                                " component. Custom events must have the 'x-' prefix."
-                        );
-                    }
-                })
-            );
+            $loc["raise_event_on_children"] = funcFastCall((args, kwargs = []) => {
+                const [self, pyEventName] = args as [ClassicContainer<{}>, pyStr];
+                const eventName = toJs(pyEventName);
+                if (eventName in self._anvil.eventTypes || eventName.match(/^x-/)) {
+                    return chainOrSuspend(
+                        pyNone,
+                        ...self._anvil.components.map(
+                            ({ component }) =>
+                                () =>
+                                    pyCallOrSuspend(
+                                        component.tp$getattr<pyCallable>(s_raise_event),
+                                        [pyEventName],
+                                        kwargs
+                                    )
+                        )
+                    );
+                } else {
+                    throw new pyValueError(
+                        "Cannot raise unknown event '" +
+                            eventName +
+                            "' on " +
+                            self.tp$name +
+                            " component. Custom events must have the 'x-' prefix."
+                    );
+                }
+            });
 
             $loc["__serialize__"] = PyDefUtils.mkSerializePreservingIdentity(function (self: ClassicContainer<{}>) {
-                let v = [];
-                for (let n in self._anvil.props) {
-                    v.push(new Sk.builtin.str(n), self._anvil.props[n]);
+                const v = [];
+                for (const n in self._anvil.props) {
+                    v.push(new pyStr(n), self._anvil.props[n]);
                 }
-                let d = new Sk.builtin.dict(v);
-                let components = self._anvil.components.map(
-                    (c) => new Sk.builtin.tuple([c.component, Sk.ffi.remapToPy(c.layoutProperties)])
+                const d = new pyDict(v);
+                const components = self._anvil.components.map(
+                    (c) => new pyTuple([c.component, toPy(c.layoutProperties)])
                 );
-                d.mp$ass_subscript(new Sk.builtin.str("$_components"), new Sk.builtin.list(components));
+                d.mp$ass_subscript(new pyStr("$_components"), new pyList(components));
                 return d;
             });
 
@@ -87,13 +104,13 @@ const ClassicContainerFactory = (pyModule: PyModMap) => {
                 self: ClassicContainer<{}>,
                 pyData: pyDict
             ) {
-                const component_key = new Sk.builtin.str("$_components");
+                const component_key = new pyStr("$_components");
                 const components = pyData.mp$subscript(component_key);
-                Sk.abstr.objectDelItem(pyData, component_key);
+                objectDelItem(pyData, component_key);
                 const addComponent = self.tp$getattr<pyCallable>(s_add_component);
-                return Sk.misceval.chain(PyDefUtils.setAttrsFromDict(self, pyData), () =>
-                    Sk.misceval.iterFor<pyTuple<[Component, pyDict<pyStr, pyObject>]>, pyObject>(
-                        Sk.abstr.iter(components),
+                return chainOrSuspend(PyDefUtils.setAttrsFromDict(self, pyData), () =>
+                    iterForOrSuspend<pyTuple<[Component, pyDict<pyStr, pyObject>]>, pyObject>(
+                        pyIter(components),
                         (componentTuple) => {
                             const [pyComponent, pyLayoutParams] = componentTuple.valueOf();
                             return pyCallOrSuspend(addComponent, [pyComponent], pyDictToKws(pyLayoutParams));
@@ -142,8 +159,7 @@ const ClassicContainerFactory = (pyModule: PyModMap) => {
 
         const c = { component: pyComponent, layoutProperties: jsLayoutProperties };
         const components = self._anvil.components;
-        let { index } = jsLayoutProperties;
-        index = indexInRange(index, self);
+        const index = indexInRange(jsLayoutProperties.index, self);
 
         if (typeof index === "number") {
             components.splice(index, 0, c);

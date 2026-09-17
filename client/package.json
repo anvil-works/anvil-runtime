@@ -14,7 +14,7 @@
     "@eslint/js": "9.39.4",
     "@node-rs/xxhash": "^1.7.6",
     "@rsbuild/core": "^1.0.11",
-    "@rsbuild/plugin-css-minimizer": "^1.1.0",
+    "@rsbuild/plugin-css-minimizer": "^2.0.1",
     "@rsbuild/plugin-sass": "^1.0.2",
     "@rstest/core": "^0.6.2",
     "@types/google.maps": "^3.64.0",

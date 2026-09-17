@@ -18,7 +18,7 @@
             [ring.middleware.gzip :as gzip]
             [clojure.java.io :as io])
   (:import (java.security Key KeyPairGenerator)
-           (java.sql SQLException)
+           (java.sql SQLException Timestamp)
            (javax.crypto Mac)
            (javax.crypto.spec SecretKeySpec)
            (javax.net.ssl SSLContext)
@@ -432,6 +432,8 @@
            instant))
 
 (defn iso-now [] (iso-instant (Instant/now)))
+
+(defn iso-timestamp [^Timestamp t] (iso-instant (.toInstant t)))
 
 (def geoip-db
   (delay

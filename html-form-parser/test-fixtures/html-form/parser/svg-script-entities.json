@@ -1,0 +1,16 @@
+{
+  "name": "parser/svg-script-entities",
+  "entrypoint": "parseContainerForm",
+  "html": "<svg><script>if (a &lt; b &amp;&amp; c &gt; d) { console.log(\"&amp;lt;\"); }</script></svg>",
+  "expected": {
+    "container": {
+      "type": "HtmlComponent",
+      "properties": {
+        "html": "<svg><script>if (a &lt; b &amp;&amp; c &gt; d) { console.log(\"&amp;lt;\"); }</script></svg>"
+      }
+    },
+    "components": [],
+    "serialized_html": "<svg><script>if (a &lt; b &amp;&amp; c &gt; d) { console.log(\"&amp;lt;\"); }</script></svg>"
+  },
+  "expectedSerializedHtml": "<svg><script>if (a &lt; b &amp;&amp; c &gt; d) { console.log(\"&amp;lt;\"); }</script></svg>"
+}

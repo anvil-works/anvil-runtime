@@ -261,6 +261,38 @@ describe("parseContainerForm", () => {
         expectHtmlEqual(serialized, html);
     });
 
+    it("round-trips numeric-leading Label text prop strings", () => {
+        const values = ["242k+", "3,170+", "1.2m+", "98%"];
+        const html = values
+            .map((value, index) => `<anvil-component type="Label" name="stat_${index}" prop:text="${value}"></anvil-component>`)
+            .join("\n");
+
+        const parsed = parseContainerForm(html);
+        expectComponents(
+            parsed.components,
+            values.map((value, index) => ({
+                type: "Label",
+                name: `stat_${index}`,
+                properties: { text: value },
+                layout_properties: { dropzone: `$dz_${index}` },
+            }))
+        );
+
+        values.forEach((value, index) => {
+            expect(parsed.components[index].properties.text).toBe(value);
+            expect(typeof parsed.components[index].properties.text).toBe("string");
+        });
+
+        const serialized = serializeFormContainer(parsed);
+        expectHtmlEqual(serialized, html);
+
+        const reparsed = parseSerializedHtml(serialized) as ParsedFormYaml;
+        values.forEach((value, index) => {
+            expect(reparsed.components[index].properties.text).toBe(value);
+            expect(typeof reparsed.components[index].properties.text).toBe("string");
+        });
+    });
+
     it("handles unnamed components", () => {
         const html = `<div class="wrapper">
     <anvil-component type="Button" prop:text="Click" container:index="1"></anvil-component>
@@ -300,9 +332,9 @@ describe("parseContainerForm", () => {
         expect(componentNamesFromSelectionMap(html)).toEqual(["$component_1", "$component_2"]);
     });
 
-    it("maps promoted DOM nodes with and without values", () => {
+    it("maps promoted named DOM nodes and DOM event handlers", () => {
         const html = `<span>Static</span>
-<div anvil:dom-node>without value</div>
+<div anvil:on-dom:click="self._on_click">without value</div>
 <div anvil:dom-node="foo">with value</div>`;
 
         const parsed = parseContainerForm(html, "HtmlComponent", { domNodePromotion: "annotated" });
@@ -311,10 +343,10 @@ describe("parseContainerForm", () => {
         expect(componentNamesFromSelectionMap(html)).toEqual(["$component_1", "$component_2"]);
     });
 
-    it("promotes anvil:dom-node attributes in annotated mode", () => {
+    it("promotes named anvil:dom-node attributes in annotated mode", () => {
         const html = `<div class="outer">
     <button anvil:dom-node="primary_button">Submit</button>
-    <span anvil:dom-node>Status</span>
+    <span anvil:dom-node="status">Status</span>
 </div>`;
 
         const parsed = parseContainerForm(html, "HtmlComponent", { domNodePromotion: "annotated" });
@@ -323,8 +355,20 @@ describe("parseContainerForm", () => {
         expect(parsed.components[0].properties.html).toBe(
             '<button anvil:dom-node="primary_button">Submit</button>'
         );
-        expect(parsed.components[1].properties.html).toBe("<span anvil:dom-node>Status</span>");
+        expect(parsed.components[1].properties.html).toBe('<span anvil:dom-node="status">Status</span>');
         expect(componentNamesFromSelectionMap(html)).toEqual(["$component_1", "$component_2"]);
+    });
+
+    it("does not promote empty anvil:dom-node attributes in annotated mode", () => {
+        const html = `<span>Static</span>
+<div anvil:dom-node>without value</div>`;
+
+        const parsed = parseContainerForm(html, "HtmlComponent", { domNodePromotion: "annotated" });
+
+        expect(parsed.components).toEqual([]);
+        expect(parsed.container.properties?.html).toBe(`<span>Static</span>
+<div>without value</div>`);
+        expect(componentNamesFromSelectionMap(html)).toEqual([]);
     });
 
     it("does not promote anvil:dom-node attributes without DOM promotion", () => {
@@ -336,7 +380,10 @@ describe("parseContainerForm", () => {
         const parsed = parseContainerForm(html, "HtmlComponent");
 
         expect(parsed.components).toEqual([]);
-        expect(parsed.container.properties?.html).toBe(html);
+        expect(parsed.container.properties?.html).toBe(`<div class="outer">
+    <button anvil:dom-node="primary_button">Submit</button>
+    <span>Status</span>
+</div>`);
     });
 
     it("maps anvil:on-dom elements promoted for designer selection", () => {
@@ -347,6 +394,17 @@ describe("parseContainerForm", () => {
 
         expect(componentNamesFromParsedComponents(parsed.components)).toEqual(["$component_1"]);
         expect(componentNamesFromSelectionMap(html)).toEqual(["$component_1"]);
+    });
+
+    it("adds anvil:dom-node to promoted anvil:on-dom fragments during parse", () => {
+        const html = `<span>Static</span>
+<button anvil:on-dom:click="self._on_click">Click me</button>`;
+
+        const parsed = parseContainerForm(html, "HtmlComponent", { domNodePromotion: "annotated" });
+
+        expect(parsed.components[0].properties.html).toBe(
+            `<button anvil:on-dom:click="self._on_click" anvil:dom-node>Click me</button>`
+        );
     });
 
     it("does not promote arbitrary DOM elements in annotated mode", () => {
@@ -956,6 +1014,7 @@ describe("parseContainerForm", () => {
             slot_0: {
                 target: { type: "container", name: "" },
                 index: 0,
+                slot_order: 0,
                 set_layout_properties: { dropzone: "$dz_0" },
             },
         });

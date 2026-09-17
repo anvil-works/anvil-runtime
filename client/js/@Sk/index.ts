@@ -41,6 +41,10 @@ export const {
 
         dir: pyDir,
         eval: pyEval,
+        hash: pyHash,
+        len: pyLen,
+        print: pyPrint,
+        __import__: pyImport,
 
         BaseException: pyBaseException,
         SystemExit: pySystemExit,
@@ -137,6 +141,7 @@ export const {
         typeName,
         setUpModuleMethods,
         objectSetItem,
+        objectDelItem,
         gattr: pyGetAttr,
         sattr: pySetAttr,
         objectHash: pyObjectHash,

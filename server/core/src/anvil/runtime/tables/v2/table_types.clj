@@ -72,7 +72,7 @@
       (let [first-type (get-type-from-value first-val)]
         (if (:error first-type)
           first-type
-          (if (:table_id first-type)
+          (if (= "link_single" (:type first-type))
             (if (every? #(= first-type (get-type-from-value %)) (rest json-value))
               (assoc first-type :type "link_multiple")
               {:error "All elements of a table-row list must be rows from the same table"})

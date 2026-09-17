@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@rstest/core";
-import { isOpaqueScriptError } from "@runtime/runner/py-util/error-utils";
+import { isOpaqueScriptError } from "@runtime/runner/opaque-script-error";
 
 describe("isOpaqueScriptError", () => {
     it("suppresses only empty opaque Script error reports", () => {

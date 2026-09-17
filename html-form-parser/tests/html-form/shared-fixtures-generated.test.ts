@@ -69,6 +69,21 @@ function serializeFixture(fixture: Fixture, parsed: any): string {
 }
 
 describe("shared html-form fixtures against generated parser", () => {
+    it("uses the $dz prefix for generated dropzone names consumed by runtime HtmlComponent", () => {
+        setDefaultDropzoneNameGenerator(null as any);
+        const parsed = parseContainerForm(
+            "<div><anvil-component type='Button' name='b'></anvil-component><anvil-slot name='s'></anvil-slot></div>"
+        );
+        const generatedDropzoneNames = [
+            parsed.components[0]?.layout_properties?.dropzone,
+            parsed.slots?.s?.set_layout_properties?.dropzone,
+        ];
+
+        expect(generatedDropzoneNames).toEqual(expect.arrayContaining([expect.stringMatching(/^\$dz_[a-z0-9]+$/)]));
+        expect(generatedDropzoneNames).toHaveLength(2);
+        expect(generatedDropzoneNames.every((name) => /^\$dz_[a-z0-9]+$/.test(name ?? ""))).toBe(true);
+    });
+
     it("uses JS-compatible default hash dropzone names", () => {
         setDefaultDropzoneNameGenerator(null as any);
         const parsed = parseContainerForm(

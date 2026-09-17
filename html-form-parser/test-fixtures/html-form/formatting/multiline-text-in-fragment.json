@@ -1,0 +1,32 @@
+{
+  "name": "formatting/multiline-text-in-fragment",
+  "entrypoint": "parseContainerForm",
+  "html": "<div></div>",
+  "expected": {
+    "container": {
+      "type": "HtmlComponent",
+      "properties": {
+        "html": "<div></div>"
+      }
+    },
+    "components": [],
+    "serialized_html": "<div></div>"
+  },
+  "serializerInput": {
+    "container": {
+      "type": "ColumnPanel",
+      "properties": {}
+    },
+    "components": [
+      {
+        "type": "HtmlComponent",
+        "name": "html",
+        "properties": {
+          "html": "<div>\n    <p>alpha\nbeta</p>\n    <pre><code>gamma\ndelta\n</code></pre>\n    <textarea>epsilon\nzeta\n</textarea>\n</div>"
+        },
+        "components": []
+      }
+    ]
+  },
+  "expectedSerializedHtml": "<anvil-form container=\"ColumnPanel\">\n    <div anvil:name=\"html\">\n        <p>alpha\nbeta</p>\n        <pre><code>gamma\ndelta\n</code></pre>\n        <textarea>epsilon\nzeta\n</textarea>\n    </div>\n</anvil-form>"
+}

@@ -14,7 +14,7 @@
       (str "_" RESULT)
       RESULT)))
 
-(defn- COLUMN-NAME-UNQUOTED [{:keys [id columns] :as table-record} column-id]
+(defn COLUMN-NAME-UNQUOTED [{:keys [id columns] :as table-record} column-id]
   (SANITISE (or (get-in columns [(keyword column-id) :sql_name])
                 (str "_" column-id))))
 
@@ -51,7 +51,8 @@
        " END"))
 
 (defn TO-JSON-EXPR [{:keys [id] :as table-record} col-id {:keys [type table_id] :as type-map} compat-links? compat-datetimes?]
-  (let [COLNAME (COLUMN-NAME table-record col-id)]
+  (let [COLNAME (COLUMN-NAME table-record col-id)
+        FROM-TABLE (TABLE-NAME table-record)]
     (condp = type
       "string" COLNAME
       "number" COLNAME
@@ -65,7 +66,7 @@
       "link_single" (if compat-links? (COMPAT-LINK COLNAME table_id) COLNAME)
       "link_multiple"
       (str "(SELECT COALESCE(jsonb_agg(" (if compat-links? (COMPAT-LINK "to_row" table_id) "to_row") " ORDER BY idx, to_row), '[]'::jsonb) "
-           " FROM " (LINK-TABLE-NAME table-record col-id) " WHERE from_row=_id)")
+           " FROM " (LINK-TABLE-NAME table-record col-id) " WHERE from_row= " FROM-TABLE "._id)")
       "unresolved" "NULL"
       "unresolvedArray" "'[]'::jsonb")))
 
@@ -100,3 +101,8 @@
     "datetime" [false nil nil]
     "media" [false nil nil nil]
     [nil]))
+
+(defn ON-DELETE [on-delete-spec]
+  (get {"set_null" "SET NULL"
+        "cascade" "CASCADE"
+        "restrict" "RESTRICT"} on-delete-spec "SET NULL"))

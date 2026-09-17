@@ -14,6 +14,7 @@ import {
     pyNoneType,
     pyObject,
     pyRecursionError,
+    pyRuntimeError,
     pyStr,
     toPy,
     tryCatchOrSuspend,
@@ -46,6 +47,7 @@ import {
     strError,
 } from "./py-util";
 import { Slot } from "./python-objects";
+import { compareNamedSlotDefs } from "./slot-ordering";
 import { warn } from "./warnings";
 
 const warnedAboutEventBinding = new Set();
@@ -99,8 +101,11 @@ export interface SetupResult {
             index: number;
             targetSlot?: string;
             ancestors: Component[];
+            designerConfig?: ComponentYaml["designer_config"];
         };
     };
+    /** InvalidComponents keyed by YAML so the designer can distinguish components with the same name. */
+    duplicatePlaceholdersByYaml: Map<ComponentYaml, { component: Component }>;
     orphanedComponents: string[];
     slots?: { [name: string]: Slot };
     form: Component;
@@ -217,13 +222,21 @@ export const instantiateComponentFromYamlSpec = (
     }
 };
 
+interface AddFormComponentsToLayoutOptions {
+    duplicatePlaceholdersByYaml?: ReadonlyMap<ComponentYaml, { component: Component }>;
+}
+
+export interface SetupFormComponentsOptions {
+    defaultDepAppId: string | null;
+    yamlStack: YamlCreationStack;
+    setupHandlers?: boolean;
+    rootComponent?: Component;
+}
+
 function createComponents(
     formYaml: FormYaml,
     pyForm: Component,
-    defaultDepAppId: string | null,
-    setupHandlers: boolean,
-    yamlStack: YamlCreationStack,
-    rootComponent?: Component
+    { defaultDepAppId, yamlStack, setupHandlers = true, rootComponent }: SetupFormComponentsOptions
 ) {
     const { eventHandlers: formEventHandlers } = pyForm.ob$type._ComponentClass;
 
@@ -244,24 +257,37 @@ function createComponents(
         fromYaml: true,
         defaultDepAppId,
     };
-    const setupResult: SetupResult = { components: {}, orphanedComponents: [], form: pyForm };
+    const setupResult: SetupResult = {
+        components: {},
+        duplicatePlaceholdersByYaml: new Map(),
+        orphanedComponents: [],
+        form: pyForm,
+    };
     const setupComponent = (
         yaml: ComponentYaml,
         pyAddToParent: pyObject | null,
         ancestors: Component[],
         index: number,
         targetSlot?: string
-    ): Suspension | null | pyNoneType =>
-        chainOrSuspend(
+    ): Suspension | null | pyNoneType => {
+        const existingSetup = Object.prototype.hasOwnProperty.call(setupResult.components, yaml.name)
+            ? setupResult.components[yaml.name]
+            : undefined;
+        const isDesignerDuplicate = !!existingSetup && ANVIL_IN_DESIGNER;
+        return chainOrSuspend(
             tryCatchOrSuspend(
                 () =>
-                    instantiateComponentFromYamlSpec(
-                        instantiationContext,
-                        yaml.type,
-                        { [IGNORE_PROPERTY_EXCEPTIONS_KW]: true, ...yaml.properties },
-                        yamlStack,
-                        yaml.name
-                    ),
+                    isDesignerDuplicate
+                        ? mkInvalidComponent(
+                              `Duplicate name "${yaml.name}". Click here to select the other component, then rename it.`
+                          )
+                        : instantiateComponentFromYamlSpec(
+                              instantiationContext,
+                              yaml.type,
+                              { [IGNORE_PROPERTY_EXCEPTIONS_KW]: true, ...yaml.properties },
+                              yamlStack,
+                              yaml.name
+                          ),
                 (exception) => {
                     console.error(
                         `Error instantiating ${yaml?.name}`,
@@ -280,18 +306,27 @@ function createComponents(
                 tryCatchOrSuspend(
                     () => {
                         if (yaml.name) {
-                            if (yaml.name in setupResult.components) {
+                            // Container duplicates keep their existing runner behaviour. Layout-slot
+                            // duplicates get a clearer runtime error when the layout is populated.
+                            if (
+                                !ANVIL_IN_DESIGNER &&
+                                existingSetup &&
+                                (targetSlot === undefined || existingSetup.targetSlot === undefined)
+                            ) {
                                 warn(
                                     `Warning: detected ${formYaml.class_name} has two components named "${yaml.name}". This shouldn't happen.`
                                 );
                             }
-                            setupResult.components[yaml.name] = {
-                                component: pyComponent,
-                                layoutProperties: yaml.layout_properties || {},
-                                index,
-                                ancestors,
-                                targetSlot,
-                            };
+                            if (!isDesignerDuplicate) {
+                                setupResult.components[yaml.name] = {
+                                    component: pyComponent,
+                                    layoutProperties: yaml.layout_properties || {},
+                                    index,
+                                    ancestors,
+                                    targetSlot,
+                                    designerConfig: yaml.designer_config,
+                                };
+                            }
                         }
 
                         if (setupHandlers) {
@@ -346,6 +381,9 @@ function createComponents(
                     () => pyComponent
                 ),
             (pyComponent) => {
+                if (isDesignerDuplicate) {
+                    setupResult.duplicatePlaceholdersByYaml.set(yaml, { component: pyComponent });
+                }
                 const layoutArgs: any = [];
                 if (yaml.layout_properties) {
                     for (const [k, v] of Object.entries(yaml.layout_properties)) {
@@ -365,6 +403,7 @@ function createComponents(
                 );
             }
         );
+    };
 
     // A bit late to be setting this, really, but it's mostly used for loop detection within this module, so ~\o/~
     window.anvilCurrentlyConstructingForms.push({ name: formYaml.class_name, pyForm });
@@ -380,10 +419,7 @@ function createComponents(
                 container: {},
                 slot: {},
             };
-            const sortedSlots = Object.entries(formYaml.slots).sort(
-                ([nameA, { index: indexA }], [nameB, { index: indexB }]) =>
-                    indexA === indexB ? nameA.localeCompare(nameB, "en") : indexA - indexB
-            );
+            const sortedSlots = Object.entries(formYaml.slots).sort(compareNamedSlotDefs);
             for (const [
                 name,
                 { set_layout_properties, one_component, placeholder_text, template, target, index },
@@ -487,45 +523,59 @@ function createComponents(
     }
 }
 
-export function setupFormComponents(
-    formYaml: FormYaml,
-    pyForm: Component,
-    defaultDepAppId: string | null,
-    yamlStack: YamlCreationStack,
-    setupHandlers = true,
-    rootComponent?: Component
-) {
+export function setupFormComponents(formYaml: FormYaml, pyForm: Component, options: SetupFormComponentsOptions) {
     const pyFormDict = Sk.abstr.lookupSpecial(pyForm, pyStr.$dict) as pyDict;
-    return chainOrSuspend(
-        createComponents(formYaml, pyForm, defaultDepAppId, setupHandlers, yamlStack, rootComponent),
-        (setupResult: SetupResult) => {
-            for (const [name, { component }] of Object.entries(setupResult.components)) {
-                const pyName = new pyStr(name);
-                if (isTrue(pyHasAttr(pyForm, pyName))) {
-                    Sk.builtin.print([
-                        new pyStr(
-                            `Warning: ${pyForm.tp$name} has a method or attribute '${name}' and a component called '${name}'. The method or attribute will be inaccessible. This is probably not what you want.`
-                        ),
-                    ]);
-                }
-                // add it to the dunder dict IF we have one. If pyForm was created by a YAML carrier, it might not have one.
-                if (pyFormDict) {
-                    pyFormDict.mp$ass_subscript(pyName, component);
-                }
+    return chainOrSuspend(createComponents(formYaml, pyForm, options), (setupResult: SetupResult) => {
+        for (const [name, { component }] of Object.entries(setupResult.components)) {
+            const pyName = new pyStr(name);
+            if (isTrue(pyHasAttr(pyForm, pyName))) {
+                Sk.builtin.print([
+                    new pyStr(
+                        `Warning: ${pyForm.tp$name} has a method or attribute '${name}' and a component called '${name}'. The method or attribute will be inaccessible. This is probably not what you want.`
+                    ),
+                ]);
             }
-            return setupResult;
+            // add it to the dunder dict IF we have one. If pyForm was created by a YAML carrier, it might not have one.
+            if (pyFormDict) {
+                pyFormDict.mp$ass_subscript(pyName, component);
+            }
         }
-    );
+        return setupResult;
+    });
 }
 
 // Returns a list of names of orphaned components (those that couldn't be added to their desired slot)
-export function addFormComponentsToLayout(formYaml: FormYaml, pyForm: Component, pyLayout: Component) {
-    const pyFormDict = Sk.abstr.lookupSpecial(pyForm, pyStr.$dict) as pyDict;
+export function addFormComponentsToLayout(
+    formYaml: FormYaml,
+    pyForm: Component,
+    pyLayout: Component,
+    { duplicatePlaceholdersByYaml }: AddFormComponentsToLayoutOptions = {}
+) {
+    const pyFormDict = Sk.abstr.lookupSpecial(pyForm, pyStr.$dict) as pyDict<pyStr, Component>;
     const pySlots = Sk.abstr.gattr(pyLayout, s_slots) as pyDict<pyStr, Component>;
     const orphanedComponents: string[] = [];
+    const addedComponentNames = new Set<string>();
+    const componentsBySlotEntries = Object.entries(formYaml.components_by_slot ?? []);
+    const componentsBySlot = new Map(componentsBySlotEntries);
+    const orderedSlotEntries: typeof componentsBySlotEntries = [];
+
+    // components_by_slot is an unordered mapping, but the live layout's slots are already ordered
+    // by index/slot_order. Attach components in that slot order so visual placement matches
+    // the layout's ordering instead of the YAML object's key history.
+    for (const [pySlotName] of pySlots.$items()) {
+        const slotName = pySlotName.toString();
+        const components = componentsBySlot.get(slotName);
+        if (components) {
+            orderedSlotEntries.push([slotName, components]);
+            componentsBySlot.delete(slotName);
+        }
+    }
+
+    // Preserve any stale or unknown slots so we still surface the existing error path.
+    orderedSlotEntries.push(...componentsBySlot.entries());
     return chainOrSuspend(
         null,
-        ...Object.entries(formYaml.components_by_slot ?? []).map(([slotName, components]) => () => {
+        ...orderedSlotEntries.map(([slotName, components]) => () => {
             // don't try to get the the slot if there are no components to fill it
             // it might have been deleted by the layout - TODO - need a way to clean these up from the yaml
             if (!components.length) return;
@@ -553,15 +603,21 @@ export function addFormComponentsToLayout(formYaml: FormYaml, pyForm: Component,
             const pyAddToSlot = Sk.abstr.gattr(pySlot, s_add_component);
             return chainOrSuspend(
                 null,
-                ...components.map(
-                    ({ name, layout_properties }) =>
-                        () =>
-                            pyCallOrSuspend(
-                                pyAddToSlot,
-                                [pyFormDict.mp$subscript(new pyStr(name))],
-                                jsObjToKws(layout_properties)
-                            )
-                )
+                ...components.map((yaml) => () => {
+                    const { name, layout_properties } = yaml;
+                    if (!ANVIL_IN_DESIGNER && addedComponentNames.has(name)) {
+                        throw new pyRuntimeError(
+                            `Form ${formYaml.class_name} has multiple components named "${name}" in its layout slots. Component names in layout slots must be unique.`
+                        );
+                    }
+                    addedComponentNames.add(name);
+
+                    // Name lookup selects the canonical component. Duplicate YAML entries in the designer
+                    // instead use their InvalidComponent placeholders.
+                    const component =
+                        duplicatePlaceholdersByYaml?.get(yaml)?.component ?? pyFormDict.mp$subscript(new pyStr(name));
+                    return pyCallOrSuspend(pyAddToSlot, [component], jsObjToKws(layout_properties));
+                })
             );
         }),
         () => orphanedComponents

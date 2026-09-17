@@ -700,6 +700,10 @@ class BackgroundTaskKilled(MaybeWrappedError):
     pass
 
 
+class ScriptExitError(MaybeWrappedError):
+    pass
+
+
 class PermissionDenied(MaybeWrappedError):
     pass
 
@@ -722,6 +726,8 @@ _register_exception_type("anvil.server.CookieError", CookieError)
 _register_exception_type("anvil.server._FailError", _FailError)
 _register_exception_type("anvil.server.BackgroundTaskError", BackgroundTaskError)
 _register_exception_type("anvil.server.BackgroundTaskNotFound", BackgroundTaskNotFound)
+_register_exception_type("anvil.server.BackgroundTaskKilled", BackgroundTaskKilled)
+_register_exception_type("anvil.server.ScriptExitError", ScriptExitError)
 _register_exception_type("anvil.server.PermissionDenied", PermissionDenied)
 _register_exception_type("anvil.server.ServiceNotAdded", ServiceNotAdded)
 
@@ -1237,14 +1243,17 @@ def _add_to_register(name, fn, ignore_warnings=False):
         and name not in _warnings
         and not any(name.startswith(prefix) for prefix in _ignore_prefixes)
     ):
-        prev = registrations[name]
-        print(
-            _registration_warning.format(
-                name,
-                "%s.%s" % (prev.__module__, prev.__name__),
-                "%s.%s" % (fn.__module__, fn.__name__),
+        if len(_warnings) < 5:
+            prev = registrations[name]
+            print(
+                _registration_warning.format(
+                    name,
+                    "%s.%s" % (prev.__module__, prev.__name__),
+                    "%s.%s" % (fn.__module__, fn.__name__),
+                )
             )
-        )
+        elif len(_warnings) == 5:
+            print("Warning: further duplicate registration warnings suppressed.")
         _warnings.append(name)
     registrations[name] = fn
 
@@ -1639,13 +1648,8 @@ route = functools.partial(http_endpoint, _task_prefix="route")
 def wellknown_endpoint(path, require_credentials=False, authenticate_users=False, authenticate_user=False,
                        methods=["GET","POST"], enable_cors=False, cross_site_session=False):
     def decorator(fn):
-        # Compatibility bridge: register both names until deployed servers no
-        # longer dispatch root .well-known requests to http-wellknown:/...
         @functools.wraps(fn)
         def wellknown_route_fn(**kwargs):
-            # The legacy server dispatcher strips "/.well-known" before invoking
-            # http-wellknown:/..., so preserve that request.path for route-backed
-            # wellknown_endpoint calls as well.
             api_request.path = path
             return fn(**kwargs)
 
@@ -1655,11 +1659,6 @@ def wellknown_endpoint(path, require_credentials=False, authenticate_users=False
         # Historically, paths without a leading slash registered as e.g.
         # http-wellknown:foo, which did not match normal /.well-known/foo
         # requests. Don't create a new route:/.well-knownfoo URL for those.
-
-        # TODO: Remove this legacy http-wellknown registration after the server
-        # no longer dispatches root .well-known requests to http-wellknown:/...
-        http_endpoint(path, require_credentials, authenticate_users, authenticate_user,
-                      methods, enable_cors, cross_site_session, _task_prefix="http-wellknown")(fn)
         return fn
     return decorator
 

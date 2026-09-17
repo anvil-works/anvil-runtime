@@ -49,6 +49,7 @@
           "name": ""
         },
         "index": 1,
+        "slot_order": 1,
         "set_layout_properties": {
           "dropzone": "$dz_2"
         }
@@ -59,6 +60,7 @@
           "name": ""
         },
         "index": 2,
+        "slot_order": 2,
         "set_layout_properties": {
           "dropzone": "$dz_4"
         }
@@ -69,6 +71,7 @@
           "name": ""
         },
         "index": 0,
+        "slot_order": 0,
         "set_layout_properties": {
           "dropzone": "$dz_0"
         }
@@ -79,6 +82,7 @@
           "name": ""
         },
         "index": 3,
+        "slot_order": 3,
         "set_layout_properties": {
           "dropzone": "$dz_6"
         }
@@ -89,6 +93,7 @@
           "name": ""
         },
         "index": 3,
+        "slot_order": 4,
         "set_layout_properties": {
           "dropzone": "$dz_7"
         }

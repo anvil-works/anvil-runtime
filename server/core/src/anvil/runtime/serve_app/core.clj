@@ -640,12 +640,6 @@
             (serve-http-endpoint (update request :uri #(.substring ^String % 6))
                                  nil wrap-response :http)
 
-            ;; TODO: Remove this legacy wellknown_endpoint branch after downlinks
-            ;; dual-register wellknown_endpoint as route and http-wellknown.
-            (.startsWith uri "/.well-known/")
-            (serve-http-endpoint (update request :uri #(.substring ^String % 12))
-                                 nil wrap-response :http-wellknown)
-
             (.startsWith uri "/_/")
             nil
 

@@ -1,0 +1,16 @@
+{
+  "name": "parser/template-content",
+  "entrypoint": "parseContainerForm",
+  "html": "<template><anvil-component type=\"Button\" name=\"hidden\"></anvil-component><anvil-slot name=\"hidden-slot\"></anvil-slot><anvil-dropzone name=\"default\"></anvil-dropzone><span anvil:on-dom:click=\"self.hidden\">hello &amp; goodbye</span><template><style>.a > .b { color: red; }</style></template></template>",
+  "expected": {
+    "container": {
+      "type": "HtmlComponent",
+      "properties": {
+        "html": "<template><anvil-component type=\"Button\" name=\"hidden\"></anvil-component><anvil-slot name=\"hidden-slot\"></anvil-slot><anvil-dropzone name=\"default\"></anvil-dropzone><span anvil:on-dom:click=\"self.hidden\">hello &amp; goodbye</span><template><style>.a > .b { color: red; }</style></template></template>"
+      }
+    },
+    "components": [],
+    "serialized_html": "<template><anvil-component type=\"Button\" name=\"hidden\"></anvil-component><anvil-slot name=\"hidden-slot\"></anvil-slot><anvil-dropzone name=\"default\"></anvil-dropzone><span anvil:on-dom:click=\"self.hidden\">hello &amp; goodbye</span><template><style>.a > .b { color: red; }</style></template></template>"
+  },
+  "expectedSerializedHtml": "<template><anvil-component type=\"Button\" name=\"hidden\"></anvil-component><anvil-slot name=\"hidden-slot\"></anvil-slot><anvil-dropzone name=\"default\"></anvil-dropzone><span anvil:on-dom:click=\"self.hidden\">hello &amp; goodbye</span><template><style>.a > .b { color: red; }</style></template></template>"
+}

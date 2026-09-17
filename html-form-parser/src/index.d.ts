@@ -13,6 +13,7 @@ export interface ComponentYaml {
     layout_properties?: Record<string, JsonLike>;
     event_bindings?: Record<string, string>;
     data_bindings?: DataBindingYaml[];
+    designer_config?: Record<string, string>;
     components?: ComponentYaml[];
 }
 
@@ -38,6 +39,7 @@ export interface SlotDefYaml {
         name: string;
     };
     index: number;
+    slot_order?: number;
     set_layout_properties?: Record<string, JsonLike>;
     one_component?: boolean;
     placeholder_text?: string;
@@ -73,6 +75,8 @@ export interface ParseHtmlFormOptions {
     extractRootStyling?: boolean;
     domNodePromotion?: "annotated" | "all";
     selectionNameMaps?: SelectionNameMaps;
+    warnings?: boolean;
+    formSpecPackageContext?: FormSpecPackageContext;
 }
 
 export interface SelectionNameMaps {
@@ -91,6 +95,24 @@ export interface SerializeHtmlResult {
     structuralHtmlChanged: boolean;
 }
 
+export interface ParseWarning {
+    code:
+        | "root-html-name-ignored"
+        | "dom-anvil-on-event-unsupported"
+        | "unknown-dom-anvil-attribute"
+        | "anvil-namespace-attribute-on-anvil-tag"
+        | "anvil-component-attribute-on-dom-node"
+        | "unknown-form-spec-package";
+    path: string;
+    message: string;
+    name?: string;
+    attrName?: string;
+    tagName?: string;
+    eventName?: string;
+    from?: number;
+    to?: number;
+}
+
 export interface FormSpecPackageContext {
     appPackageName?: string;
     knownPackageNames?: string[];
@@ -101,6 +123,11 @@ export interface FormSpecRewriteResult {
     /** Rewritten copy of the input form. The parser does not mutate the input object. */
     form: FormYaml;
     changed: boolean;
+}
+
+export interface PackageRename {
+    oldPackageName: string;
+    newPackageName: string;
 }
 
 export interface FormSpecRewriters {
@@ -115,12 +142,14 @@ export interface ParsedFormYaml {
     components: ComponentYaml[];
     slots?: SlotDefsYaml;
     serialized_html?: string;
+    warnings?: ParseWarning[];
 }
 
 export interface ParsedLayoutHtml {
     layout: FormLayoutYaml;
     components_by_slot: Record<string, ComponentYaml[]>;
     slots?: SlotDefsYaml;
+    warnings?: ParseWarning[];
 }
 
 export type ParsedHtmlTemplate = ParsedLayoutHtml | ParsedFormYaml;
@@ -220,6 +249,17 @@ export function buildFormTemplateSavePayload(
 export function copyFormYamlWithCanonicalizedFormSpecs(
     form: FormYaml,
     context: FormSpecPackageContext
+): FormSpecRewriteResult;
+/**
+ * Rewrite package-qualified customComponentSpec and formPropertySpec values
+ * using package rename pairs.
+ *
+ * Does not rewrite legacy `form:` specs. Does not mutate `form`; callers that
+ * want in-place updates must apply the returned `form` when `changed` is true.
+ */
+export function copyFormYamlWithRenamedPackageQualifiedFormSpecs(
+    form: FormYaml,
+    packageRenames: PackageRename[]
 ): FormSpecRewriteResult;
 /**
  * General traversal hook for callers that need to rewrite customComponentSpec

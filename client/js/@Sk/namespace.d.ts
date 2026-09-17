@@ -191,12 +191,7 @@ export namespace Sk {
             kwargs?: number,
             free?: number
         ): void;
-        function pyCheckArgsLen(
-            fnName: string,
-            args: { readonly length: number },
-            minargs: number,
-            maxargs?: number
-        ): void;
+        function pyCheckArgsLen(fnName: string, nargs: number, minargs: number, maxargs?: number): void;
         function pyCheckType(fnName: string, excTypeName: string, check: boolean): void;
 
         function round(num: pyObject, ndigits?: pyObject): pyObject;
@@ -495,7 +490,7 @@ export namespace Sk {
 
         function copyKeywordsToNamedArgs(
             funcName: string,
-            varnames: string[],
+            varnames: (string | null)[],
             args: Args,
             kws?: Kws,
             defaults?: any[]

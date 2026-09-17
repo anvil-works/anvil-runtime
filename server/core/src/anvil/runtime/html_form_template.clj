@@ -1,6 +1,7 @@
 (ns anvil.runtime.html-form-template
   (:require [anvil.html-form.core :as html-form]
-            [clj-yaml.core :as yaml]))
+            [clj-yaml.core :as yaml]
+            [medley.core :refer [update-existing]]))
 
 (def ^:private frontmatter-pattern #"(?s)^---\s*\n(.*?)\n---\s*\n(.*)$")
 
@@ -68,3 +69,30 @@
   "Serialize form YAML structurally, then add frontmatter."
   ([form-yaml] (html-form/serialize-html-template form-yaml))
   ([form-yaml options] (html-form/serialize-html-template form-yaml options)))
+
+(defn rename-package-qualified-form-specs-in-form
+  "Rewrite package-qualified form specs in a parsed form.
+
+   This is used when app YAML is saved under a different final package name.
+   Legacy customComponentSpecs such as `form:Form1` are intentionally left alone."
+  [form old-package-name new-package-name]
+  (let [{:keys [form changed?]} (html-form/rename-package-qualified-form-specs-in-form-yaml
+                                  form
+                                  old-package-name
+                                  new-package-name)
+        form (cond-> form
+               (and changed? (:save_as_html form))
+               (assoc :serialized_html (serialize-html-body form)))]
+    {:form form :changed? changed?}))
+
+(defn rename-package-qualified-form-specs-in-app-yaml
+  "Rewrite package-qualified form specs from an old app package to a new app package."
+  [yaml old-package-name new-package-name]
+  (if (or (not old-package-name)
+          (= old-package-name new-package-name))
+    yaml
+    (update-existing yaml :forms
+                     (fn [forms]
+                       (mapv #(-> (rename-package-qualified-form-specs-in-form % old-package-name new-package-name)
+                                  :form)
+                             forms)))))

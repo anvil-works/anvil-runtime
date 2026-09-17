@@ -1,11 +1,11 @@
-import { describe, it, expect } from "@rstest/core";
+import type { ParsedFormYaml } from "@anvil-works/form-template-parser";
 import {
     parseContainerForm,
     serializeFormContainer,
     serializeFormContainerWithResult,
 } from "@anvil-works/form-template-parser";
-import type { ParsedFormYaml } from "@anvil-works/form-template-parser";
-import { normalizeDropzoneNames, normalizeMultiline, normalizedHtml, expectNormalizedComponents } from "./test-utils";
+import { describe, expect, it } from "@rstest/core";
+import { normalizeDropzoneNames, normalizeMultiline, normalizedHtml } from "./test-utils";
 
 function expectHtmlEqual(actual: string, expected: string) {
     expect(normalizedHtml(actual)).toBe(normalizedHtml(expected));
@@ -62,12 +62,14 @@ describe("slot parsing and serialization", () => {
         expect(expectSlot(parsed, "header")).toEqual({
             target: { type: "container", name: "" },
             index: 0,
+            slot_order: 1,
             set_layout_properties: { dropzone: "<dropzone>" },
         });
 
         expect(expectSlot(parsed, "body")).toEqual({
             target: { type: "container", name: "" },
             index: 0,
+            slot_order: 0,
             set_layout_properties: { dropzone: "<dropzone>" },
         });
 
@@ -431,7 +433,7 @@ describe("slot parsing and serialization", () => {
     <anvil-component type="Button" name="_1" prop:text="1"></anvil-component>
     <anvil-component type="Button" name="_2" prop:text="2"></anvil-component>
     <anvil-slot name="slot_2"></anvil-slot>
-    <div anvil:dom-node>
+    <div>
         This Div
         <anvil-dropzone name="$dz_gwzda8"></anvil-dropzone>
     </div>
@@ -478,7 +480,9 @@ describe("slot parsing and serialization", () => {
         const result = serializeFormContainerWithResult(parsed, { allowReparse: true });
 
         expect(result.structuralHtmlChanged).toBe(true);
-        expect(result.html).toContain(`<anvil-component type="Button" name="button_1" prop:text="button_1"></anvil-component>`);
+        expect(result.html).toContain(
+            `<anvil-component type="Button" name="button_1" prop:text="button_1"></anvil-component>`
+        );
         expect(parsed.container.properties?.html).toContain("anvil-dropzone");
     });
 
@@ -683,12 +687,12 @@ describe("slot parsing and serialization", () => {
             },
             components: [],
             slots: {
-                beta: {
+                a: {
                     target: { type: "container", name: "" },
                     index: 0,
                     set_layout_properties: { dropzone: "dz-shared" },
                 },
-                alpha: {
+                Z: {
                     target: { type: "container", name: "" },
                     index: 0,
                     set_layout_properties: { dropzone: "dz-shared" },
@@ -704,12 +708,84 @@ describe("slot parsing and serialization", () => {
         const serialized = serializeFormContainer(parsed);
         expectHtmlEqual(
             serialized,
-            `<anvil-slot name="alpha"></anvil-slot>
-<anvil-slot name="beta"></anvil-slot>
+            `<anvil-slot name="Z"></anvil-slot>
+<anvil-slot name="a"></anvil-slot>
 <anvil-slot name="gamma"></anvil-slot>`
         );
     });
 
+    it("orders slots by slot_order before name when serializing", () => {
+        const parsed: ParsedFormYaml = {
+            container: {
+                type: "HtmlComponent",
+                properties: {
+                    html: `<anvil-dropzone name="dz-shared"></anvil-dropzone>`,
+                },
+            },
+            components: [],
+            slots: {
+                alpha: {
+                    target: { type: "container", name: "" },
+                    index: 0,
+                    slot_order: 1,
+                    set_layout_properties: { dropzone: "dz-shared" },
+                },
+                zeta: {
+                    target: { type: "container", name: "" },
+                    index: 0,
+                    slot_order: 0,
+                    set_layout_properties: { dropzone: "dz-shared" },
+                },
+            },
+        };
+
+        const serialized = serializeFormContainer(parsed);
+        expectHtmlEqual(
+            serialized,
+            `<anvil-slot name="zeta"></anvil-slot>
+<anvil-slot name="alpha"></anvil-slot>`
+        );
+        expect(serialized).not.toContain("slot_order");
+    });
+
+    it("prefers explicit slot_order over legacy unnamed ordering when mixed", () => {
+        const parsed: ParsedFormYaml = {
+            container: {
+                type: "HtmlComponent",
+                properties: {
+                    html: `<anvil-dropzone name="dz-shared"></anvil-dropzone>`,
+                },
+            },
+            components: [],
+            slots: {
+                beta: {
+                    target: { type: "container", name: "" },
+                    index: 0,
+                    set_layout_properties: { dropzone: "dz-shared" },
+                },
+                alpha: {
+                    target: { type: "container", name: "" },
+                    index: 0,
+                    slot_order: 1,
+                    set_layout_properties: { dropzone: "dz-shared" },
+                },
+                gamma: {
+                    target: { type: "container", name: "" },
+                    index: 0,
+                    slot_order: 0,
+                    set_layout_properties: { dropzone: "dz-shared" },
+                },
+            },
+        };
+
+        const serialized = serializeFormContainer(parsed);
+        expectHtmlEqual(
+            serialized,
+            `<anvil-slot name="gamma"></anvil-slot>
+<anvil-slot name="alpha"></anvil-slot>
+<anvil-slot name="beta"></anvil-slot>`
+        );
+    });
     it("does not mutate structural yaml when reparsing is disabled", () => {
         const parsed: ParsedFormYaml = {
             container: {

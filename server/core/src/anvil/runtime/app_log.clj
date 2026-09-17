@@ -10,7 +10,7 @@
 
 (defonce record-session! (fn [session log-data]))
 
-(defonce record-event! (fn [session trace-id type log-text data]
+(defonce record-event! (fn [session trace-id type log-text data & [{:keys [ensure-logged?] :or {ensure-logged? true}}]]
                          nil))
 
 (defonce record-trace! (fn [session trace-id task-name]))

@@ -47,10 +47,10 @@
         [SELECT-EXPR select-params] (SELECT-COLUMNS tables fetch-spec 0)
         [RESTRICT-EXPR restrict-params] (when restrict (query/QUERY->SQL table-record restrict))]
     (if (:split storage)
-      [(str "SELECT _id AS id, " SELECT-EXPR " AS rdata, 0 AS fid, 0 AS primary_order FROM " (split-sql/TABLE-NAME table-record) " WHERE _id = ? AND "
+      [(str "SELECT _id, " SELECT-EXPR " AS rdata, 0 AS fid, 0 AS primary_order FROM " (split-sql/TABLE-NAME table-record) " WHERE _id = ? AND "
             (or RESTRICT-EXPR "TRUE"))
        (concat select-params [row-id] restrict-params)]
-      [(str "SELECT id, " SELECT-EXPR " AS rdata, 0 AS fid, 0 AS primary_order FROM app_storage_data WHERE table_id = ? AND id = ? AND "
+      [(str "SELECT id AS _id, " SELECT-EXPR " AS rdata, 0 AS fid, 0 AS primary_order FROM app_storage_data WHERE table_id = ? AND id = ? AND "
             (or RESTRICT-EXPR "TRUE"))
        (concat select-params [table-id row-id] restrict-params)])))
 
@@ -59,17 +59,17 @@
         {:keys [storage] :as table-record} (get-in tables [table-id :table-record])
         FROM-FETCH (str "fetch_" (int fetch-id))
         [COLUMN-SQL col-params] (SELECT-COLUMNS tables fetch-spec FETCH-ID)
-        ID-COL (if (:split storage) "_id" "app_storage_data.id")
         FROM-TABLE (if (:split storage) (split-sql/TABLE-NAME table-record) "app_storage_data")
+        ID-COL (if (:split storage) (str FROM-TABLE "._id") "app_storage_data.id")
         [TABLE-ID-COND table-id-cond-args] (when-not (:split storage) ["WHERE app_storage_data.table_id=?" [table-id]])]
 
     (condp = link-type
-      "link_single" [(str "fetch_" FETCH-ID " AS (SELECT " ID-COL " AS id, " COLUMN-SQL " AS rdata, " FETCH-ID " AS fid, NULL::integer AS primary_order "
+      "link_single" [(str "fetch_" FETCH-ID " AS (SELECT " ID-COL " AS _id, " COLUMN-SQL " AS rdata, " FETCH-ID " AS fid, NULL::integer AS primary_order "
                           " FROM " FROM-FETCH " JOIN " FROM-TABLE " ON "
                           ID-COL " = (((" FROM-FETCH ".rdata->?->>'id')::jsonb)->>1)::bigint "
                           TABLE-ID-COND ")")
                      (concat col-params [col-name] table-id-cond-args)]
-      "link_multiple" [(str "fetch_" FETCH-ID " AS (SELECT " ID-COL " AS id, " COLUMN-SQL " AS rdata, " FETCH-ID " AS fid, NULL::integer AS primary_order "
+      "link_multiple" [(str "fetch_" FETCH-ID " AS (SELECT " ID-COL " AS _id, " COLUMN-SQL " AS rdata, " FETCH-ID " AS fid, NULL::integer AS primary_order "
                             " FROM (SELECT jsonb_array_elements(case jsonb_typeof(rdata->?) when 'array' then rdata->? else NULL end) AS lj FROM " FROM-FETCH ") AS links JOIN " FROM-TABLE " ON "
                             ID-COL " = (((lj->>'id')::jsonb)->>1)::bigint "
                             TABLE-ID-COND ")")
@@ -327,11 +327,11 @@
           table-data links))
 
 (defn- make-table-data [tables results fetch-spec]
-  (reduce (fn [table-data {:keys [fid id rdata]}]
+  (reduce (fn [table-data {:keys [fid _id rdata]}]
             (let [{:keys [view-key links] :as this-fetch} (get-in fetch-spec [:fetches fid])
-                  transmitted-row-data (get-transmitted-row-data tables fetch-spec table-data id rdata this-fetch)]
+                  transmitted-row-data (get-transmitted-row-data tables fetch-spec table-data _id rdata this-fetch)]
               (-> table-data
-                  (assoc-in [view-key :rows (str id)] transmitted-row-data)
+                  (assoc-in [view-key :rows (str _id)] transmitted-row-data)
                   (fill-missing-caps rdata links))))
           (:table-data fetch-spec) results))
 
@@ -368,7 +368,7 @@
 
     {:table-data          (make-table-data tables results fetch-spec)
      :this-table-view-key (get-in fetch-spec [:fetches 0 :view-key])
-     :primary-row-ids     (map :id raw-primary-results)
+     :primary-row-ids     (map :_id raw-primary-results)
      :last-primary-row    (last raw-primary-results)}))
 
 (defn get-row [tables db-c {table-id :id :as view-spec} row-id requested-cols]
@@ -503,5 +503,3 @@
         acc-data))
     cleaned-data
     (indexed (:cols cleaned-spec))))
-
-

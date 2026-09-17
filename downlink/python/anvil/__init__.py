@@ -210,3 +210,26 @@ class _AppInfo:
 app = _AppInfo(None, None)
 
 from ._components import *
+
+from ._client_side_only import _ClientSideOnly
+
+Notification = _ClientSideOnly("Notification")
+Slot = _ClientSideOnly("Slot")
+HtmlPanel = _ClientSideOnly("HtmlPanel")
+WithLayout = _ClientSideOnly("WithLayout")
+PluggableUI = _ClientSideOnly("PluggableUI")
+pluggable_ui = _ClientSideOnly("pluggable_ui")
+GoogleMap.Data = _ClientSideOnly("GoogleMap.Data")
+
+alert = _ClientSideOnly("alert")
+set_default_error_handling = _ClientSideOnly("set_default_error_handling")
+confirm = _ClientSideOnly("confirm")
+get_open_form = _ClientSideOnly("get_open_form")
+open_form = _ClientSideOnly("open_form")
+get_url_hash = _ClientSideOnly("get_url_hash")
+set_url_hash = _ClientSideOnly("set_url_hash")
+download = _ClientSideOnly("download")
+get_focused_component = _ClientSideOnly("get_focused_component")
+set_default_focus = _ClientSideOnly("set_default_focus")
+handle = _ClientSideOnly("handle")
+property_utils = _ClientSideOnly("property_utils")

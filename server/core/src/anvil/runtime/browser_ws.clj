@@ -71,8 +71,12 @@
                                 (reset! disconnect-on-idle? true)
                                 (maybe-disconnect-if-idle!))
 
-          connection {:environment @environment
+          connection {:connection-id (random/base32 21)
+                      :environment @environment
                       :app-info app-info
+                      :app-session app-session
+                      ::send-message! (fn [msg]
+                                        (serialisation/serialise-to-websocket! (assoc msg :id (str "evt" (random/base32 10))) channel true (get-session-liveobject-secret)))
                       ::disconnect-on-idle! disconnect-on-idle!
                       ::get-pending-responses (fn [] @outstanding-incoming-request-ids)}
 

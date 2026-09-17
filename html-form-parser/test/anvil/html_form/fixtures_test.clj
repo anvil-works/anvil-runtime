@@ -62,6 +62,25 @@
     (is (= "<anvil-slot name=\"body\"></anvil-slot>"
            (html-form/serialize-form-container parsed)))))
 
+(deftest numeric-leading-label-text-props-round-trip
+  (reset-dropzone-generator!)
+  (let [values ["242k+" "3,170+" "1.2m+" "98%"]
+        html (apply str
+                    (interpose
+                      "\n"
+                      (map-indexed
+                        (fn [index value]
+                          (str "<anvil-component type=\"Label\" name=\"stat_" index "\" prop:text=\"" value "\"></anvil-component>"))
+                        values)))
+        parsed (html-form/parse-container-form html)
+        serialized (html-form/serialize-form-container parsed)
+        reparsed (html-form/parse-serialized-html serialized)]
+    (is (= values (mapv #(get-in % [:properties :text]) (:components parsed))))
+    (is (every? string? (map #(get-in % [:properties :text]) (:components parsed))))
+    (is (= html serialized))
+    (is (= values (mapv #(get-in % [:properties :text]) (:components reparsed))))
+    (is (every? string? (map #(get-in % [:properties :text]) (:components reparsed))))))
+
 (deftest form-spec-rewrites-only-treat-repeating-panel-item-template-as-form-property
   (let [form {:class_name "Form1"
               :code ""

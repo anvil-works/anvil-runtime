@@ -59,6 +59,7 @@ import {
 } from "./Component";
 import type { ContainerConstructor } from "./Container";
 import { Container } from "./Container";
+import { COMPONENT_ROOT_ATTR } from "./component-dom";
 
 interface HtmlComponentState {
     _rootElement: HTMLElement | null;
@@ -100,6 +101,7 @@ const ANVIL_DESIGNER_EDITABLE_TEXT_ATTR = "anvil:designer-editable-text";
 const SPECIAL_ELEMENTS_SELECTOR = `anvil-dropzone,[${CSS.escape(ANVIL_DOM_NODE_ATTR)}],script`;
 const ANVIL_ON_DOM_ATTR = "anvil:on-dom:";
 const DEFAULT_DROPZONE_NAME = "default";
+const INTERNAL_DROPZONE_NAME_PREFIX = "$";
 const CONSTRUCTOR_PROPERTY_NAMES = ["html", "classes", "style", "attrs", "visible", "tag"] as const;
 const CONSTRUCTOR_PROPERTY_NAME_SET = new Set<string>(CONSTRUCTOR_PROPERTY_NAMES);
 const hasOwnProperty = Object.prototype.hasOwnProperty;
@@ -124,14 +126,14 @@ function dropzoneTargetsMatch(componentTarget: string | null | undefined, dropzo
 const ensureState = (instance: HtmlComponent): HtmlComponentState => {
     if (!instance._HtmlComponent) {
         const namedDomNodes = new Map<string, Element>();
-        let state: HtmlComponentState | undefined;
         const classes = new Classes(pyNone);
         const style = new Style(pyNone, () => {
+            const state = instance._HtmlComponent;
             if (ANVIL_IN_DESIGNER && state) {
                 state.designerStyleOverride = undefined;
             }
         });
-        state = instance._HtmlComponent = {
+        instance._HtmlComponent = {
             _rootElement: null,
             _activeElement: null,
             html: "",
@@ -236,15 +238,19 @@ const getActiveHtmlElementTextShape = (state: HtmlComponentState) => {
 
 const canInlineEditActiveHtmlElementText = (state: HtmlComponentState): boolean => {
     const textShape = getActiveHtmlElementTextShape(state);
-    return textShape.simple && (textShape.nonEmpty || state.activeElement.hasAttribute(ANVIL_DESIGNER_EDITABLE_TEXT_ATTR));
+    return (
+        textShape.simple && (textShape.nonEmpty || state.activeElement.hasAttribute(ANVIL_DESIGNER_EDITABLE_TEXT_ATTR))
+    );
 };
 
 const serializeDesignerHtmlElement = (element: HTMLElement): string => {
     const clone = element.cloneNode(true) as HTMLElement;
+    clone.removeAttribute(COMPONENT_ROOT_ATTR);
     Object.values(ACTIVE_CARRIER_ATTRS).forEach((attribute) => clone.removeAttribute(attribute));
     const text = clone.innerText;
-    clone.textContent = clone.textContent;
-    if (!!text.trim()) {
+    const textContent = clone.textContent;
+    clone.textContent = textContent;
+    if (text.trim()) {
         clone.removeAttribute(ANVIL_DESIGNER_EDITABLE_TEXT_ATTR);
     } else {
         clone.setAttribute(ANVIL_DESIGNER_EDITABLE_TEXT_ATTR, "");
@@ -357,6 +363,8 @@ const renderHtml = (instance: HtmlComponent) => {
     const specialElements = parser.querySelectorAll(SPECIAL_ELEMENTS_SELECTOR);
     const scriptElements: HTMLScriptElement[] = [];
     specialElements.forEach((node) => {
+        // Only HTML scripts are replayed. SVG scripts intentionally remain inert;
+        // supporting them requires namespace-aware creation and href handling in the loader.
         if (node.tagName === "SCRIPT") {
             scriptElements.push(node as HTMLScriptElement);
             return;
@@ -731,20 +739,19 @@ export const HtmlComponent: HtmlComponentConstructor = buildNativeClass("anvil.H
                 const component = args[0] as Component;
                 const layoutProps = kwsToObj(kws);
                 const dropzoneNamePy = layoutProps["dropzone"];
-                const dropzoneKey = normalizeDropzoneTarget(toJs(dropzoneNamePy)?.toString());
-                const storedDropzoneKey = storedDropzoneTarget(dropzoneKey);
+                let dropzoneKey = normalizeDropzoneTarget(toJs(dropzoneNamePy)?.toString());
                 const index = layoutProps["index"] ?? pyNone;
                 const state = ensureState(this);
                 let targetElement = state.dropzones.get(dropzoneKey);
+                if (!targetElement && dropzoneKey !== DEFAULT_DROPZONE_NAME) {
+                    dropzoneKey = DEFAULT_DROPZONE_NAME;
+                    targetElement = state.dropzones.get(dropzoneKey);
+                }
+                const storedDropzoneKey = storedDropzoneTarget(dropzoneKey);
                 targetElement ??= state.activeElement;
 
-                // TODO - decide whether to throw here or fallback to the root element
                 if (!targetElement) {
-                    throw new pyValueError(
-                        storedDropzoneKey === null
-                            ? "HtmlComponent root element is not initialised"
-                            : `Unknown HtmlComponent dropzone name '${dropzoneKey}'`
-                    );
+                    throw new pyValueError("HtmlComponent root element is not initialised");
                 }
 
                 return chainOrSuspend(component.anvil$hooks.setupDom(), (domElement: Element) => {
@@ -1249,15 +1256,23 @@ function designerEnableDropMode(self: HtmlComponent, dropping: DroppingSpecifica
         return dropZone;
     };
 
-    // If no dropzones exist, create a default one
-    if (state.dropzones.size === 0) {
-        const defaultHostElement = state.activeElement;
-        if (defaultHostElement.dataset.anvilYamlCarrier) {
-            state.dropzones.set("default", defaultHostElement);
-        }
+    const isActiveYamlCarrier = !!(self as HtmlComponent & { anvil$yamlCarrier?: { active?: boolean } })
+        .anvil$yamlCarrier?.active;
+    const hideGeneratedDropzones = !!flags?.asCustomComponentContainer && !isActiveYamlCarrier;
+    // Passive CCCs are supplied in runtime shape via openRuntimeFormItem(), so any
+    // user-authored dropzone that has been consumed by the template has already
+    // been reparsed away. The remaining $ namespace is parser/designer bookkeeping
+    // and should not be exposed as a CCC drop target.
+    const advertisedDropzones = [...state.dropzones.entries()].filter(
+        ([dropzoneName]) => !(hideGeneratedDropzones && dropzoneName.startsWith(INTERNAL_DROPZONE_NAME_PREFIX))
+    );
+
+    // If no dropzones exist in the active YAML carrier, advertise the whole component as the implicit default.
+    if (state.dropzones.size === 0 && isActiveYamlCarrier) {
+        advertisedDropzones.push([DEFAULT_DROPZONE_NAME, state.activeElement]);
     }
 
-    for (const [dropzoneName, hostElement] of state.dropzones.entries()) {
+    for (const [dropzoneName, hostElement] of advertisedDropzones) {
         if (!hostElement.isConnected) {
             continue;
         }

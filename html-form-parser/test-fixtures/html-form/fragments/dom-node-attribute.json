@@ -14,5 +14,6 @@
     },
     "components": [],
     "serialized_html": "<button anvil:on-dom:click=\"self._on_click\">Click</button>"
-  }
+  },
+  "expectedSerializedHtml": "<button anvil:on-dom:click=\"self._on_click\">Click</button>"
 }

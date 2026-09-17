@@ -80,6 +80,13 @@
     (and (not (str/blank? header-value))
          (= header-value etag))))
 
+(defn- content-disposition-for-lazy-media [name]
+  (str "attachment"
+       (when name
+         (str "; filename=\""
+              (str/replace (str name) #"[\r\n\u0000\"]" "_")
+              "\""))))
+
 (defn serve-lazy-media [manager media-key media-id nodl request]
   (log/trace "Request for media" request)
 
@@ -103,9 +110,10 @@
               (send! channel (-> {:body (.getInputStream ^Media m)}
                                  (resp/status 200)
                                  (#(if-let [l (.getLength ^Media m)] (resp/header % "Content-Length" l) %))
-                                 (resp/header "Content-Disposition" (if nodl nil (str "attachment"
-                                                                                      (when-let [name (.getName ^MediaDescriptor m)]
-                                                                                        (str ";filename=" name)))))
+                                 (cond-> (not nodl)
+                                   (resp/header "Content-Disposition"
+                                                (content-disposition-for-lazy-media
+                                                  (.getName ^MediaDescriptor m))))
                                  (resp/content-type (.getContentType ^MediaDescriptor m)))))
             (catch :anvil/server-error e
               (log/trace (:throwable &throw-context) (:anvil/server-error e))
@@ -154,7 +162,7 @@
 
   (GET ["/_/:path/:token" :path #"login|reset_password" :token #".*"] [token :as request]
     (when-let [app (get-app-from-request request)]
-      (when (user-service/do-login-with-token app (request :environment) (request :app-session) (codec/url-decode token))
+      (when (user-service/do-login-with-token app (request :environment) (request :app-session) (codec/url-decode token) nil)
         (sessions/persist! (request :app-session))
         (resp/redirect (str (:app-origin request) "?_anvil_session=" (sessions/url-token (request :app-session)))))))
 

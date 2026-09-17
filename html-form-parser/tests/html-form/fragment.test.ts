@@ -1,6 +1,6 @@
 import { describe, it, expect } from "@rstest/core";
-import { parseContainerForm, serializeFormContainer } from "@anvil-works/form-template-parser";
-import type { ComponentYaml, ParsedFormYaml } from "@anvil-works/form-template-parser";
+import { parseContainerForm, parseLayoutForm, serializeFormContainer } from "@anvil-works/form-template-parser";
+import type { ComponentYaml, ParseHtmlFormOptions, ParsedFormYaml } from "@anvil-works/form-template-parser";
 import { normalizeDropzoneNames, normalizeMultiline, normalizeComponentTree } from "./test-utils";
 
 function expectHtmlEqual(actual: string | undefined, expected: string) {
@@ -13,6 +13,127 @@ function expectComponents(actual: ComponentYaml[] | undefined, expected: Compone
     expect(normalizeComponentTree(actual)).toEqual(normalizeComponentTree(expected));
 }
 
+function expectWarningCodes(actual: ParsedFormYaml["warnings"], expected: string[]) {
+    expect(actual?.map(({ code }) => code)).toEqual(expected);
+}
+
+function parseContainerFormWithWarnings(html: string) {
+    return parseContainerForm(html, "HtmlComponent", { warnings: true });
+}
+
+const formSpecPackageContext: ParseHtmlFormOptions["formSpecPackageContext"] = {
+    appPackageName: "AppPackage",
+    knownPackageNames: ["DepPackage"],
+};
+
+function parseContainerFormWithPackageWarnings(html: string, options: ParseHtmlFormOptions = {}) {
+    return parseContainerForm(html, "HtmlComponent", {
+        warnings: true,
+        formSpecPackageContext,
+        ...options,
+    });
+}
+
+function parseLayoutFormWithPackageWarnings(html: string, options: ParseHtmlFormOptions = {}) {
+    return parseLayoutForm(html, {
+        warnings: true,
+        formSpecPackageContext,
+        ...options,
+    });
+}
+
+describe("form spec package warnings", () => {
+    it("accepts legacy form specs on component types", () => {
+        const parsed = parseContainerFormWithPackageWarnings(
+            `<anvil-component type="form:Form1" name="custom"></anvil-component>`
+        );
+
+        expect(parsed.warnings).toBeUndefined();
+    });
+
+    it("accepts app package-qualified component types", () => {
+        const parsed = parseContainerFormWithPackageWarnings(
+            `<anvil-component type="AppPackage.Form1" name="custom"></anvil-component>`
+        );
+
+        expect(parsed.warnings).toBeUndefined();
+    });
+
+    it("accepts dependency package-qualified component types", () => {
+        const parsed = parseContainerFormWithPackageWarnings(
+            `<anvil-component type="DepPackage.Form1" name="custom"></anvil-component>`
+        );
+
+        expect(parsed.warnings).toBeUndefined();
+    });
+
+    it("warns for unknown package-qualified component types", () => {
+        const parsed = parseContainerFormWithPackageWarnings(
+            `<anvil-component type="MissingPackage.Form1" name="custom"></anvil-component>`
+        );
+
+        expect(parsed.warnings).toEqual([
+            expect.objectContaining({
+                code: "unknown-form-spec-package",
+                attrName: "type",
+                tagName: "anvil-component",
+            }),
+        ]);
+    });
+
+    it("warns for unknown package-qualified form containers", () => {
+        const parsed = parseContainerFormWithPackageWarnings(
+            `<anvil-form container="MissingPackage.Container"></anvil-form>`
+        );
+
+        expect(parsed.warnings).toEqual([
+            expect.objectContaining({
+                code: "unknown-form-spec-package",
+                attrName: "container",
+                tagName: "anvil-form",
+            }),
+        ]);
+    });
+
+    it("warns for unknown package-qualified form layouts", () => {
+        const parsed = parseLayoutFormWithPackageWarnings(
+            `<anvil-form layout="MissingPackage.layouts.Main"></anvil-form>`
+        );
+
+        expect(parsed.warnings).toEqual([
+            expect.objectContaining({
+                code: "unknown-form-spec-package",
+                attrName: "layout",
+                tagName: "anvil-form",
+            }),
+        ]);
+    });
+
+    it("does not warn for plain built-in component or form specs", () => {
+        const containerParsed = parseContainerFormWithPackageWarnings(
+            `<anvil-form container="HtmlComponent">
+                <anvil-component type="Button" name="button"></anvil-component>
+            </anvil-form>`
+        );
+        const layoutParsed = parseLayoutFormWithPackageWarnings(
+            `<anvil-form layout="UnknownLayout"></anvil-form>`
+        );
+
+        expect(containerParsed.warnings).toBeUndefined();
+        expect(layoutParsed.warnings).toBeUndefined();
+    });
+
+    it("skips package validation when context is omitted", () => {
+        const parsed = parseContainerForm(
+            `<anvil-component type="MissingPackage.Form1" name="custom"></anvil-component>`,
+            "HtmlComponent",
+            { warnings: true }
+        );
+
+        expect(parsed.warnings).toBeUndefined();
+    });
+});
+
 describe("anvil: attribute support", () => {
     it("preserves designer inline text marker as raw HtmlComponent HTML", () => {
         const html = `<div>
@@ -21,7 +142,7 @@ describe("anvil: attribute support", () => {
     </anvil-component>
 </div>`;
 
-        const parsed = parseContainerForm(html);
+        const parsed = parseContainerFormWithWarnings(html);
         const fragment = parsed.components?.[0]?.components?.[0];
 
         expect(fragment?.type).toBe("HtmlComponent");
@@ -198,6 +319,7 @@ describe("anvil: attribute support", () => {
 <footer anvil:name="footer" anvil:bind:visible="self.show_footer">Footer</footer>`;
 
         const parsed = parseContainerForm(html);
+        expect(parsed.warnings).toBeUndefined();
 
         expectHtmlEqual(
             parsed.container.properties?.html,
@@ -265,7 +387,8 @@ describe("anvil: attribute support", () => {
     </anvil-component>
 </div>`;
 
-        const parsed = parseContainerForm(html);
+        const parsed = parseContainerFormWithWarnings(html);
+        expectWarningCodes(parsed.warnings, ["dom-anvil-on-event-unsupported"]);
         const serialized = serializeFormContainer(parsed);
         expect(normalizeMultiline(serialized)).toBe(normalizeMultiline(html));
     });
@@ -292,13 +415,26 @@ describe("anvil: attribute support", () => {
         <span>Static</span>
     </div>
 </div>`;
+        const attrStart = html.indexOf("anvil:name");
+        const attrEnd = html.indexOf(" ", attrStart);
 
-        const parsed = parseContainerForm(html);
+        const parsed = parseContainerFormWithWarnings(html);
         expect(parsed.container.type).toBe("HtmlComponent");
         expect(parsed.container.layout_properties).toBeUndefined();
         expect(parsed.container.properties?.width).toBeUndefined();
         expect(parsed.container.event_bindings).toEqual({ show: "on_show" });
         expect(parsed.components).toEqual([]);
+        expect(parsed.warnings).toEqual([
+            {
+                code: "root-html-name-ignored",
+                path: "root.anvil:name",
+                message:
+                    "anvil:name on a single top-level plain HTML root is ignored; use self.classes/self.style for root styling or name a child element if Python needs self.<name>.",
+                name: "ignored",
+                from: attrStart,
+                to: attrEnd,
+            },
+        ]);
         // We preserve the original element itself (not just inner content)
         expectHtmlEqual(
             parsed.container.properties?.html,
@@ -323,11 +459,57 @@ describe("anvil: attribute support", () => {
         );
     });
 
+    it("does not collect warnings by default", () => {
+        const parsed = parseContainerForm(`<article anvil:name="card">Static</article>`);
+
+        expect(parsed.warnings).toBeUndefined();
+    });
+
+    it("adds root name warning locations when warnings are requested", () => {
+        const html = `<article anvil:name="card">Static</article>`;
+        const parsed = parseContainerForm(html, "HtmlComponent", { warnings: true });
+        const attrStart = html.indexOf("anvil:name");
+        const attrEnd = html.indexOf(">", attrStart);
+
+        expect(parsed.warnings).toEqual([
+            {
+                code: "root-html-name-ignored",
+                path: "root.anvil:name",
+                message:
+                    "anvil:name on a single top-level plain HTML root is ignored; use self.classes/self.style for root styling or name a child element if Python needs self.<name>.",
+                name: "card",
+                from: attrStart,
+                to: attrEnd,
+            },
+        ]);
+    });
+
+    it("does not warn for root class and style without anvil:name", () => {
+        const parsed = parseContainerFormWithWarnings(`<article class="card" style="padding: 8px">Static</article>`);
+
+        expect(parsed.warnings).toBeUndefined();
+        expect(parsed.container.type).toBe("HtmlComponent");
+        expectHtmlEqual(
+            parsed.container.properties?.html,
+            `<article class="card" style="padding: 8px">Static</article>`
+        );
+    });
+
+    it("does not warn for top-level Anvil component names", () => {
+        const parsed = parseContainerFormWithWarnings(
+            `<anvil-component type="Label" name="card" prop:text="Card"></anvil-component>`
+        );
+
+        expect(parsed.warnings).toBeUndefined();
+        expect(parsed.components?.[0]?.name).toBe("card");
+    });
+
     it("handles self-closing void elements with anvil: attributes", () => {
         const html = `<input anvil:on:change="self._on_change" />`;
 
-        const parsed = parseContainerForm(html);
+        const parsed = parseContainerFormWithWarnings(html);
 
+        expectWarningCodes(parsed.warnings, ["dom-anvil-on-event-unsupported"]);
         expect(parsed.container.type).toBe("HtmlComponent");
         // Single top-level element becomes container metadata, not a component
         expect(parsed.components?.length).toBe(0);
@@ -344,8 +526,17 @@ describe("anvil: attribute support", () => {
     it("handles regular elements with anvil: attributes", () => {
         const html = `<button anvil:on:click="self._on_click">Click me</button>`;
 
-        const parsed = parseContainerForm(html);
+        const parsed = parseContainerFormWithWarnings(html);
 
+        expect(parsed.warnings).toEqual([
+            expect.objectContaining({
+                code: "dom-anvil-on-event-unsupported",
+                path: "button.anvil:on:click",
+                attrName: "anvil:on:click",
+                tagName: "button",
+                eventName: "click",
+            }),
+        ]);
         expect(parsed.container.type).toBe("HtmlComponent");
         // Single top-level element becomes container metadata, not a component
         expect(parsed.components?.length).toBe(0);
@@ -363,8 +554,12 @@ describe("anvil: attribute support", () => {
 <img anvil:on:click="self._on_click" />
 <br anvil:prop:visible="false" />`;
 
-        const parsed = parseContainerForm(html);
+        const parsed = parseContainerFormWithWarnings(html);
 
+        expectWarningCodes(parsed.warnings, [
+            "dom-anvil-on-event-unsupported",
+            "dom-anvil-on-event-unsupported",
+        ]);
         expect(parsed.container.type).toBe("HtmlComponent");
         expect(parsed.components?.length).toBe(3);
 
@@ -392,6 +587,142 @@ describe("anvil: attribute support", () => {
         );
     });
 
+    it("does not warn for supported plain DOM lifecycle event attributes", () => {
+        const parsed = parseContainerFormWithWarnings(
+            `<section anvil:on:show="self.show" anvil:on:hide="self.hide">Panel</section>`
+        );
+
+        expect(parsed.warnings).toBeUndefined();
+        expect(parsed.container.event_bindings).toEqual({ show: "show", hide: "hide" });
+    });
+
+    it("warns for unknown plain DOM anvil attributes", () => {
+        const parsed = parseContainerFormWithWarnings(`<div anvil:foo="bar">Static</div>`);
+
+        expect(parsed.warnings).toEqual([
+            expect.objectContaining({
+                code: "unknown-dom-anvil-attribute",
+                path: "div.anvil:foo",
+                attrName: "anvil:foo",
+                tagName: "div",
+            }),
+        ]);
+        expect(parsed.container.properties?.html).toBe('<div anvil:foo="bar">Static</div>');
+    });
+
+    it("warns for anvil namespace attributes on Anvil tags", () => {
+        const html = `<anvil-form anvil:name="form" container="HtmlComponent">
+    <anvil-component anvil:name="component" type="Label"></anvil-component>
+    <anvil-slot anvil:name="slot"></anvil-slot>
+    <anvil-block anvil:name="block"></anvil-block>
+    <anvil-dropzone anvil:name="dropzone"></anvil-dropzone>
+</anvil-form>`;
+
+        const parsed = parseContainerFormWithWarnings(html);
+
+        expect(parsed.warnings).toEqual([
+            expect.objectContaining({
+                code: "anvil-namespace-attribute-on-anvil-tag",
+                path: "anvil-form.anvil:name",
+                attrName: "anvil:name",
+                tagName: "anvil-form",
+            }),
+            expect.objectContaining({
+                code: "anvil-namespace-attribute-on-anvil-tag",
+                path: "anvil-component.anvil:name",
+                attrName: "anvil:name",
+                tagName: "anvil-component",
+            }),
+            expect.objectContaining({
+                code: "anvil-namespace-attribute-on-anvil-tag",
+                path: "anvil-slot.anvil:name",
+                attrName: "anvil:name",
+                tagName: "anvil-slot",
+            }),
+            expect.objectContaining({
+                code: "anvil-namespace-attribute-on-anvil-tag",
+                path: "anvil-block.anvil:name",
+                attrName: "anvil:name",
+                tagName: "anvil-block",
+            }),
+            expect.objectContaining({
+                code: "anvil-namespace-attribute-on-anvil-tag",
+                path: "anvil-dropzone.anvil:name",
+                attrName: "anvil:name",
+                tagName: "anvil-dropzone",
+            }),
+        ]);
+    });
+
+    it("does not treat top-level Anvil tag namespace mistakes as root DOM names", () => {
+        const parsed = parseContainerFormWithWarnings(`<anvil-component anvil:name="x" type="Label"></anvil-component>`);
+
+        expect(parsed.warnings).toEqual([
+            expect.objectContaining({
+                code: "anvil-namespace-attribute-on-anvil-tag",
+                path: "anvil-component.anvil:name",
+                attrName: "anvil:name",
+                tagName: "anvil-component",
+            }),
+        ]);
+        expect(parsed.warnings?.map(({ code }) => code)).not.toContain("root-html-name-ignored");
+        expect(parsed.components?.[0]?.type).toBe("Label");
+    });
+
+    it("adds warning locations for invalid anvil attributes when requested", () => {
+        const html = `<button anvil:on:click="self.click">Click</button>`;
+        const parsed = parseContainerForm(html, "HtmlComponent", { warnings: true });
+        const attrStart = html.indexOf("anvil:on:click");
+        const attrEnd = html.indexOf(">", attrStart);
+
+        expect(parsed.warnings).toEqual([
+            expect.objectContaining({
+                code: "dom-anvil-on-event-unsupported",
+                from: attrStart,
+                to: attrEnd,
+            }),
+        ]);
+    });
+
+    it("warns for unprefixed Anvil component attributes on plain DOM nodes", () => {
+        const html = `<div bind:text="self.item['x']">Item</div>
+<span prop:text="self.foo">Foo</span>
+<button on:click="self.click">Click</button>`;
+
+        const parsed = parseContainerFormWithWarnings(html);
+
+        expect(parsed.warnings).toEqual([
+            expect.objectContaining({
+                code: "anvil-component-attribute-on-dom-node",
+                path: "div.bind:text",
+                attrName: "bind:text",
+                tagName: "div",
+            }),
+            expect.objectContaining({
+                code: "anvil-component-attribute-on-dom-node",
+                path: "span.prop:text",
+                attrName: "prop:text",
+                tagName: "span",
+            }),
+            expect.objectContaining({
+                code: "anvil-component-attribute-on-dom-node",
+                path: "button.on:click",
+                attrName: "on:click",
+                tagName: "button",
+            }),
+        ]);
+    });
+
+    it("does not warn for supported raw DOM Anvil metadata or Anvil component bindings", () => {
+        const parsedDom = parseContainerFormWithWarnings(`<div anvil:bind:visible="self.visible">Visible</div>`);
+        const parsedComponent = parseContainerFormWithWarnings(
+            `<anvil-component type="Label" bind:text="self.item['x']"></anvil-component>`
+        );
+
+        expect(parsedDom.warnings).toBeUndefined();
+        expect(parsedComponent.warnings).toBeUndefined();
+    });
+
     it("adds anvil:dom-node attribute when anvil:on-dom: attributes are present", () => {
         const html = `<div anvil:on-dom:click="self._on_click">Click me</div>`;
 
@@ -404,6 +735,21 @@ describe("anvil: attribute support", () => {
         expect(parsed.container.properties?.html).toContain("anvil:dom-node");
         // anvil:on-dom: attributes are preserved in the HTML (not filtered)
         expect(parsed.container.properties?.html).toContain("anvil:on-dom:click");
+        expect(serializeFormContainer(parsed)).toBe(html);
+    });
+
+    it("adds anvil:dom-node to the same element as anvil:on-dom when a child has anvil:dom-node", () => {
+        const html = `<div class="pipeline-row" anvil:on-dom:click="self.row_click">
+    <span anvil:dom-node="label_node">Label</span>
+</div>`;
+
+        const parsed = parseContainerForm(html);
+
+        expect(parsed.container.properties?.html).toContain(
+            `<div class="pipeline-row" anvil:on-dom:click="self.row_click" anvil:dom-node>`
+        );
+        expect(parsed.container.properties?.html).toContain(`anvil:dom-node="label_node"`);
+        expect(serializeFormContainer(parsed)).toBe(html);
     });
 
     it("does not add anvil:dom-node if already present", () => {
@@ -416,6 +762,37 @@ describe("anvil: attribute support", () => {
         const htmlContent = parsed.container.properties?.html || "";
         const domNodeMatches = (htmlContent.match(/anvil:dom-node/g) || []).length;
         expect(domNodeMatches).toBe(1); // Should appear exactly once
+        expect(serializeFormContainer(parsed)).toBe(`<div anvil:on-dom:click="self._on_click">Click me</div>`);
+    });
+
+    it("removes empty anvil:dom-node without anvil:on-dom", () => {
+        const parsed = parseContainerForm(`<div anvil:dom-node></div>`);
+
+        expect(parsed.container.properties?.html).toBe(`<div></div>`);
+        expect(serializeFormContainer(parsed)).toBe(`<div></div>`);
+    });
+
+    it("removes empty string anvil:dom-node without anvil:on-dom", () => {
+        const parsed = parseContainerForm(`<div anvil:dom-node=""></div>`);
+
+        expect(parsed.container.properties?.html).toBe(`<div></div>`);
+        expect(serializeFormContainer(parsed)).toBe(`<div></div>`);
+    });
+
+    it("preserves named anvil:dom-node without anvil:on-dom", () => {
+        const html = `<div anvil:dom-node="foo"></div>`;
+        const parsed = parseContainerForm(html);
+
+        expect(parsed.container.properties?.html).toBe(html);
+        expect(serializeFormContainer(parsed)).toBe(html);
+    });
+
+    it("strips empty anvil:dom-node with anvil:on-dom during serialization", () => {
+        const html = `<button anvil:on-dom:click="self.click" anvil:dom-node></button>`;
+        const parsed = parseContainerForm(html);
+
+        expect(parsed.container.properties?.html).toBe(html);
+        expect(serializeFormContainer(parsed)).toBe(`<button anvil:on-dom:click="self.click"></button>`);
     });
 
     it("anvil:on-dom: does not promote element to HtmlComponent component", () => {

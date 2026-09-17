@@ -1,8 +1,8 @@
 import { buildNativeClass, checkArgsLen, pyCall, pyCallOrSuspend, pyNewableType, pyNone, pyObject, toJs } from "@Sk";
+import { cssLength } from "@runtime/PyDefUtils/styling";
 import { SpinnerLoader, appendSvgSpinner, getBodySpinner } from "@runtime/runner/loading-spinner";
 import { anvilJsMod, kwsToJsObj } from "@runtime/runner/py-util";
 import { globalSuppressLoading } from "@runtime/utils";
-import PyDefUtils from "PyDefUtils";
 
 // Transparent overlay prevents clicking
 const OVERLAY = document.createElement("div");
@@ -10,7 +10,12 @@ OVERLAY.style.cssText = "position:absolute;left:0;top:0;width:100%;height:100%;o
 
 const OVERLAY_CACHE = new WeakMap<HTMLElement, HTMLElement>();
 
-function getOrCreateOverlay(target: HTMLElement, opts: Record<string, any>) {
+interface LoadingIndicatorOptions {
+    min_height?: string | number | null;
+    [name: string]: unknown;
+}
+
+function getOrCreateOverlay(target: HTMLElement, opts: LoadingIndicatorOptions) {
     const cached = OVERLAY_CACHE.get(target);
     if (cached) {
         return cached;
@@ -26,7 +31,7 @@ function getOrCreateOverlay(target: HTMLElement, opts: Record<string, any>) {
 
     const styleMinHeight = target.style.minHeight;
     if (opts.min_height) {
-        target.style.minHeight = PyDefUtils.cssLength(opts.min_height);
+        target.style.minHeight = cssLength(opts.min_height);
     }
     const height = target.clientHeight;
     const minSize = Math.max(50, Math.min(height, target.clientWidth));
@@ -54,8 +59,12 @@ const $flags = { FastCall: true } as const;
 
 interface LoadingIndicator extends pyObject {
     _dom: HTMLElement;
-    _opt: Record<string, any>;
+    _opts: LoadingIndicatorOptions;
     _loader: SpinnerLoader;
+    $running: boolean;
+    $start(this: LoadingIndicator): void;
+    $stop(this: LoadingIndicator): void;
+    $getLoadingSpinner(this: LoadingIndicator): SpinnerLoader;
 }
 
 export const LoadingIndicator: pyNewableType<LoadingIndicator> = buildNativeClass("anvil.loading_indicator", {
@@ -109,7 +118,7 @@ export const LoadingIndicator: pyNewableType<LoadingIndicator> = buildNativeClas
         },
     },
     proto: {
-        $start(this: LoadingIndicator) {
+        $start() {
             if (this._dom === document.body) {
                 this._loader ??= getBodySpinner() ?? this.$getLoadingSpinner();
             } else {
@@ -121,14 +130,14 @@ export const LoadingIndicator: pyNewableType<LoadingIndicator> = buildNativeClas
                 globalSuppressLoading.inc();
             }
         },
-        $stop(this: LoadingIndicator) {
+        $stop() {
             if (this.$running) {
                 this.$running = false;
                 this._loader.setLoading(false);
                 globalSuppressLoading.dec();
             }
         },
-        $getLoadingSpinner(this: LoadingIndicator) {
+        $getLoadingSpinner() {
             // At the moment this returns the cached overlay if it's active
             // If we support options, we could potentially manipulate the overlay if the options change
             const overlay = getOrCreateOverlay(this._dom, this._opts);
@@ -143,7 +152,7 @@ export const LoadingIndicator: pyNewableType<LoadingIndicator> = buildNativeClas
                         this._dom.style.position = "relative";
                     }
                     if (this._opts.min_height) {
-                        this._dom.style.minHeight = PyDefUtils.cssLength(this._opts.min_height);
+                        this._dom.style.minHeight = cssLength(this._opts.min_height);
                     }
                     this._dom.appendChild(overlay);
                 },

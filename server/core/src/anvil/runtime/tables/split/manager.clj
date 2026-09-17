@@ -67,7 +67,9 @@
       ;; Else, it's a regular column
       (let [TYPE (sql/SQL-TYPE type)
             REFS (when (and (= type "liveObject") (:split (:storage @link-table)))
-                   (str "REFERENCES " (sql/TABLE-NAME @link-table) " ON DELETE SET NULL DEFERRABLE"))]
+                   (str "REFERENCES " (sql/TABLE-NAME @link-table)
+                        " ON DELETE " (sql/ON-DELETE (:on_delete column-spec))
+                        " DEFERRABLE"))]
         (jdbc/execute! db-c [(str "ALTER TABLE " (sql/TABLE-NAME table-record) " ADD COLUMN " (sql/COLUMN-NAME table-record column-id) " " TYPE " " REFS)])))
     table-record))
 
@@ -100,6 +102,29 @@
                                 " RENAME COLUMN " (sql/COLUMN-NAME old-table-record column-id)
                                 " TO " (sql/COLUMN-NAME new-table-record column-id))]))
     new-table-record))
+
+(defn do-update-column-on-delete! [db-c table-record col-id-kw]
+  (let [col-id (util/preserve-slashes col-id-kw)
+        {:keys [on_delete table_id]} (get-in table-record [:columns col-id-kw])
+        COL-NAME (sql/COLUMN-NAME-UNQUOTED table-record col-id)
+        TABLE-NAME (sql/TABLE-NAME table-record)
+        LINK-TABLE-NAME (->> table_id
+                             (tables-util/load-table-record db-c)
+                             (sql/TABLE-NAME))
+        CONSTRAINT-NAME (-> (jdbc/query db-c ["SELECT conname AS constraint_name
+                                               FROM pg_constraint
+                                                   JOIN pg_attribute ON (conrelid=attrelid AND attnum = conkey[1])
+                                               WHERE cardinality(conkey)=1
+                                                 AND conrelid = ?::regclass
+                                                 AND attname = ?" TABLE-NAME COL-NAME])
+                            (first)
+                            (:constraint_name))]
+    (jdbc/execute! db-c [(str "ALTER TABLE " TABLE-NAME
+                              " DROP CONSTRAINT " CONSTRAINT-NAME ","
+                              " ADD CONSTRAINT " CONSTRAINT-NAME
+                              "  FOREIGN KEY (" COL-NAME ")"
+                              "  REFERENCES " LINK-TABLE-NAME
+                              "  ON DELETE " (sql/ON-DELETE on_delete))])))
 
 (defn- get-index-changes-needed [db-c {:keys [all_indexes] :as table-record}]
   (let [TABLE-NAME (sql/TABLE-NAME table-record)
@@ -164,4 +189,3 @@
       (doseq [{:keys [SQL-NAME] :as index} to-create
               :let [INDEX-EXPR (GET-INDEX-EXPR table-record index)]]
         (jdbc/execute! db-c [(str "CREATE INDEX CONCURRENTLY IF NOT EXISTS " SQL-NAME " ON " INDEX-EXPR)] {:transaction? false})))))
-

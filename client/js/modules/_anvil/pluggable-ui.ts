@@ -1,30 +1,15 @@
-import { Component } from "@runtime/components/Component";
-import { getCssPrefix, usingBootstrap3 } from "@runtime/runner/legacy-features";
-import {
-    funcFastCall,
-    kwsToObj,
-    objToKws,
-    PyModMap,
-    pyPropertyFromGetSet,
-    s_add_component,
-    s_add_event_handler,
-    s_remove_event_handler,
-    s_set_event_handler,
-    s_setdefault,
-    s_update,
-} from "@runtime/runner/py-util";
 import {
     Args,
+    Kws,
     buildNativeClass,
     buildPyClass,
     chainOrSuspend,
     checkOneArg,
     isTrue,
-    Kws,
     objectRepr,
     pyCall,
-    pyCallable,
     pyCallOrSuspend,
+    pyCallable,
     pyDict,
     pyFunc,
     pyMappingProxy,
@@ -36,6 +21,23 @@ import {
     toJs,
     toPy,
 } from "@Sk";
+import { Component } from "@runtime/components/Component";
+import { getCssPrefix, usingBootstrap3 } from "@runtime/runner/legacy-features";
+import {
+    PyModMap,
+    funcFastCall,
+    kwsToObj,
+    objToKws,
+    pyPropertyFromGetSet,
+    s_add_component,
+    s_add_event_handler,
+    s_remove_event_handler,
+    s_set_event_handler,
+    s_setdefault,
+    s_update,
+} from "@runtime/runner/py-util";
+
+export interface PluggableUIObject extends pyMappingProxy {}
 
 const hooks = new pyDict<pyStr, pyObject>();
 
@@ -77,7 +79,7 @@ const checkProvideArgs = (args: pyObject[], kws?: Kws) => {
     return [packageName, updates as pyDict<pyStr, pyObject>, items] as const;
 };
 
-const PluggableUI = buildNativeClass("anvil.PluggableUI", {
+const PluggableUI = buildNativeClass<pyNewableType<PluggableUIObject>>("anvil.PluggableUI", {
     // This is pretty directly cargo-culted from anvil.app.theme_colors:
     base: pyMappingProxy,
     constructor: function PluggableUI() {

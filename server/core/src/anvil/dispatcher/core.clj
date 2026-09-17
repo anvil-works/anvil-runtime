@@ -201,7 +201,12 @@
         (respond! return-path {:error {:type    "anvil.server.StackOverflow",
                                        :message (str "Too many nested anvil.server.call()s")}}))
 
-      (and (re-matches #".*:.*" func) (= :client origin))
+      (and (re-matches #".*:.*" func) (= :client origin)
+           ;; ...except a task:script:* launch that the background_tasks launch handler has
+           ;; already vetted against the app's script_config allow-list. That flag is only ever
+           ;; set server-side, on the vetted re-dispatch; it cannot arrive from the wire.
+           (not (and (.startsWith func "task:script:")
+                     (:anvil.dispatcher.background-tasks/client-launch-vetted-by-script-allow-list request))))
       (do
         (log/debug "Denied client access to scoped function" (pr-str func))
         (respond! return-path {:error {:type    "anvil.server.PermissionDenied",

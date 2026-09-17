@@ -31,7 +31,9 @@ const PyDefUtils = {
     /** @deprecated use funcWithKwargs when creating a pyFunc, or kwsToJsObj from py-util for direct conversion. */
     withKwargs: pythonUtils.withKwargs,
     funcWithKwargs: pythonUtils.funcWithKwargs,
+    /** @deprecated prefer funcFastCall from py-util for raw keyword arguments. */
     withRawKwargs: pythonUtils.withRawKwargs,
+    /** @deprecated prefer funcFastCall from py-util with kwsToObj for object-style keyword arguments. */
     funcWithRawKwargsDict: pythonUtils.funcWithRawKwargsDict,
     /** @deprecated use funcFastCall from py-util */
     funcFastCall,

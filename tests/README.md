@@ -2,6 +2,12 @@ I just want to run the tests
 
 1. ./run_tests
 
+The smoke test starts a fresh App Server and embedded database for each of three
+Data Tables configurations: legacy, accelerated, and split storage. It checks app
+startup, the physical PostgreSQL storage mode, and adding and counting rows through
+server functions. The storage check catches a split-enabled app silently creating
+combined tables even when its row operations succeed.
+
 Adding a new tests/test apps
 
 1. For each test file you must choose a test app to run against.

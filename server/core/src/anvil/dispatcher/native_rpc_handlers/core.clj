@@ -14,7 +14,6 @@
             [anvil.dispatcher.native-rpc-handlers.time :as native-time]
             [anvil.dispatcher.native-rpc-handlers.util :as native-util]
             [anvil.dispatcher.native-rpc-handlers.users.core :as native-users]
-            [anvil.dispatcher.native-rpc-handlers.users.v2.core :as native-users-v2]
             [anvil.dispatcher.native-rpc-handlers.cookies :as native-cookies]
             [anvil.dispatcher.native-rpc-handlers.email :as native-email]
             [anvil.dispatcher.native-rpc-handlers.pdf]
@@ -66,7 +65,7 @@
 
    "anvil.private.fail"                      (native-util/wrap-native-fn (fn [_] (throw+ {:anvil/server-error "This native RPC function failed."
                                                                                           :type               "anvil.server._FailError"
-                                                                                          :docId              "anvil"
+                                                                                          :docUrl              "/overview"
                                                                                           :docLinkTitle       "View some documentation"})))
 
    "anvil.private._sleep"                    (native-util/wrap-native-fn (fn [_ t] (min (max t 2) 0) (Thread/sleep (* 1000 t))))

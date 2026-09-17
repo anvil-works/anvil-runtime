@@ -51,6 +51,28 @@
             (is (= "consent select_account" (:prompt params)))
             (is (= "custom-scope" (:scope params))))))
 
+      (testing "IDE App Files scopes request consent without OnePick"
+        (let [[url _csrf-token] (google-sso/get-login-url
+                                  "ide-client-id"
+                                  "https://anvil.example.com/ide/ide_auth_callback"
+                                  "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/gmail.send"
+                                  true)
+              params (walk/keywordize-keys (ring-codec/form-decode (second (str/split url #"\?"))))]
+          (is (= "offline" (:access_type params)))
+          (is (= "consent select_account" (:prompt params)))
+          (is (not (contains? params :trigger_onepick)))))
+
+      (testing "drive.file requests consent without offline access"
+        (let [[url _csrf-token] (google-sso/get-login-url
+                                  "client-id"
+                                  "https://anvil.example.com/google-oauth-callback"
+                                  "https://www.googleapis.com/auth/drive.file"
+                                  false)
+              params (walk/keywordize-keys (ring-codec/form-decode (second (str/split url #"\?"))))]
+          (is (= "online" (:access_type params)))
+          (is (= "consent" (:prompt params)))
+          (is (not (contains? params :trigger_onepick)))))
+
       (testing "Config from app with app-origin redirect should restart at the app origin"
         (let [app {:content {:services [{:source        "/runtime/services/google.yml"
                                          :server_config {:client_id           "98765"

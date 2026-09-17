@@ -27,6 +27,7 @@
           "name": "content_panel"
         },
         "index": 0,
+        "slot_order": 0,
         "set_layout_properties": {}
       }
     }

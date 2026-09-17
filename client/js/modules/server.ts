@@ -1,25 +1,19 @@
 "use strict";
 
-import { setOnDebuggerMessage } from "@runtime/modules/_server/handlers";
-import { registerServerCallSuspension } from "@runtime/modules/_server/rpc";
-import { data } from "@runtime/runner/data";
-import { anvilMod, funcFastCall } from "@runtime/runner/py-util";
 import {
-    Args,
     buildNativeClass,
     buildPyClass,
     chainOrSuspend,
     checkCallable,
     checkString,
     isTrue,
-    Kws,
     objectRepr,
     promiseToSuspension,
     pyAttributeError,
     pyBool,
     pyCall,
-    pyCallable,
     pyCallOrSuspend,
+    pyCallable,
     pyCheckType,
     pyClassMethod,
     pyException,
@@ -43,13 +37,20 @@ import {
     setUpModuleMethods,
     toJs,
     toPy,
+    tryCatchOrSuspend,
     typeName,
 } from "@Sk";
 import PyDefUtils from "PyDefUtils";
+import { signalConnectionState } from "@runtime/modules/_server/connection-state";
+import { setOnDebuggerMessage } from "@runtime/modules/_server/handlers";
+import { registerServerCallSuspension } from "@runtime/modules/_server/rpc";
+import { data } from "@runtime/runner/data";
+import { anvilMod, funcFastCall, withAnvilErrorInfo } from "@runtime/runner/py-util";
 import { anvilAppOnline } from "../app_online";
 import { globalSuppressLoading } from "../utils";
 import { loading_indicator } from "./_anvil/loading-indicator";
 import {
+    SerializationInfo,
     connect,
     doHttpCall,
     doRpcCall,
@@ -57,7 +58,6 @@ import {
     pyServerEventHandlers,
     pyValueTypes,
     sendLog,
-    SerializationInfo,
     websocket,
 } from "./_server";
 import { setPortableClassSerializationInfo } from "./_server/serialization-info";
@@ -71,6 +71,13 @@ function server(appId: string, appOrigin: string) {
         loading_indicator,
     };
 
+    pyMod["callable"] = funcFastCall(() => {
+        throw withAnvilErrorInfo(new pyRuntimeError("@anvil.server.callable can only be used in server code."), {
+            docUrl: "/editor/common-errors#server-callable-defined-in-client-code",
+            docLinkTitle: "Learn how to define callable functions in Server Modules",
+        });
+    });
+
     const checkCommand = (cmd: any): cmd is pyStr => {
         if (!(cmd instanceof pyStr)) {
             const msg = `first argument to anvil.server.call() must be as str, got '${typeName(cmd)}'`;
@@ -79,35 +86,96 @@ function server(appId: string, appOrigin: string) {
         return true;
     };
 
-    pyMod["_call_http"] = new pyFunc(
-        PyDefUtils.withRawKwargs(function (pyKwargs: Kws, pyCmd: pyStr, ...args: Args) {
-            checkCommand(pyCmd);
-            return doHttpCall(pyKwargs, args, pyCmd.toString());
-        })
-    );
+    pyMod["_call_http"] = funcFastCall((args, pyKwargs = []) => {
+        const [pyCmd, ...callArgs] = args;
+        checkCommand(pyCmd);
+        return doHttpCall(pyKwargs, callArgs, pyCmd.toString());
+    });
 
     // @ts-ignore
-    const doServerCall = window.anvilParams.isCrawler || window.anvilForceRpcHttp ? doHttpCall : doRpcCall;
+    const forceHttpTransport = window.anvilParams.isCrawler || window.anvilForceRpcHttp;
+    const doServerCall = forceHttpTransport ? doHttpCall : doRpcCall;
+    if (forceHttpTransport) {
+        // No push channel at all - let anyone watching (e.g. the IDE runner shim) know.
+        signalConnectionState("none");
+    }
 
-    pyMod["call_$rw$"] = new pyFunc(
-        PyDefUtils.withRawKwargs(function (pyKwargs: Kws, pyCmd: pyStr, ...args: Args) {
-            checkCommand(pyCmd);
-            return doServerCall(pyKwargs, args, pyCmd.toString());
-        })
-    );
+    pyMod["call_$rw$"] = funcFastCall((args, pyKwargs = []) => {
+        const [pyCmd, ...callArgs] = args;
+        checkCommand(pyCmd);
+        return doServerCall(pyKwargs, callArgs, pyCmd.toString());
+    });
 
-    pyMod["call_s"] = new pyFunc(
-        PyDefUtils.withRawKwargs(function (pyKwargs: Kws, pyCmd: pyStr, ...args: Args) {
-            checkCommand(pyCmd);
-            return doServerCall(pyKwargs, args, pyCmd.toString(), undefined, true);
-        })
-    );
+    pyMod["call_s"] = funcFastCall((args, pyKwargs = []) => {
+        const [pyCmd, ...callArgs] = args;
+        checkCommand(pyCmd);
+        return doServerCall(pyKwargs, callArgs, pyCmd.toString(), undefined, true);
+    });
 
-    pyMod["launch_background_task"] = new pyFunc(
-        PyDefUtils.withRawKwargs((pyKwargs: Kws, pyCmd: pyStr, ...args: Args) => {
-            throw new pyRuntimeError("Cannot launch Background Tasks from client code.");
-        })
-    );
+    pyMod["launch_background_task"] = funcFastCall((args, pyKwargs = []) => {
+        const [pyTaskName, ...launchArgs] = args;
+        if (pyTaskName instanceof pyStr && pyTaskName.toString().startsWith("script:")) {
+            return doServerCall(pyKwargs, [pyTaskName, ...launchArgs], "anvil.private.background_tasks.launch");
+        }
+        throw new pyRuntimeError("Cannot launch Background Tasks from client code.");
+    });
+
+    /*!defFunction(anvil.server,any,script_name,[args])!2*/
+    ({
+        $doc: "Run one of this app's scripts as a Background Task, wait for it to finish, and return its return value (whatever the script set anvil.script.return_value to). If the script raises an exception or exits with a non-zero status, that error is raised here.",
+        anvil$args: {
+            script_name: "The name of the script to run",
+            args: "Positional arguments to pass to the script (available to it as sys.argv[1:] and anvil.script.args; Media arguments appear in sys.argv as the names of temporary files containing their content)",
+        },
+    });
+    pyMod["run_script"] = funcFastCall((args, pyKwargs = []) => {
+        const [pyScriptName, ...scriptArgs] = args;
+        if (!(pyScriptName instanceof pyStr)) {
+            const msg = `first argument to anvil.server.run_script() must be a str, got '${typeName(pyScriptName)}'`;
+            throw new pyTypeError(msg);
+        }
+        if (pyKwargs.length) {
+            throw new pyTypeError("anvil.server.run_script() does not accept keyword arguments");
+        }
+        const sleep = (ms: number) => promiseToSuspension(new Promise((resolve) => setTimeout(resolve, ms)));
+        const pyStrIsCompleted = new pyStr("is_completed");
+        const pyStrGetReturnValue = new pyStr("get_return_value");
+        loading_indicator.$start();
+        return tryCatchOrSuspend(
+            () =>
+                chainOrSuspend(
+                    doServerCall(
+                        [],
+                        [new pyStr("script:" + pyScriptName.toString()), ...scriptArgs],
+                        "anvil.private.background_tasks.launch"
+                    ),
+                    (pyTask: pyObject) => {
+                        let delay = 200;
+                        const poll = (): pyObject | ReturnType<typeof chainOrSuspend> =>
+                            chainOrSuspend(
+                                pyCallOrSuspend(pyTask.tp$getattr(pyStrIsCompleted), []),
+                                (pyCompleted: pyObject) => {
+                                    if (isTrue(pyCompleted)) {
+                                        return pyCallOrSuspend(pyTask.tp$getattr(pyStrGetReturnValue), []);
+                                    }
+                                    const thisDelay = delay;
+                                    delay = Math.min(delay * 1.5, 1000);
+                                    return chainOrSuspend(sleep(thisDelay), poll);
+                                }
+                            );
+                        return poll();
+                    },
+                    (result: pyObject) => {
+                        loading_indicator.$stop();
+                        return result;
+                    }
+                ),
+            (e) => {
+                loading_indicator.$stop();
+                throw e;
+            }
+        );
+    });
 
     pyMod["__anvil$doRpcCall"] = doServerCall as unknown as pyObject; // Ew.
 
@@ -459,6 +527,14 @@ function server(appId: string, appOrigin: string) {
         [pyException]
     );
 
+    /*!defClass(anvil.server,%ScriptExitError, __builtins__..Exception)!*/
+    pyNamedExceptions["anvil.server.ScriptExitError"] = pyMod["ScriptExitError"] = buildPyClass(
+        pyMod,
+        () => {},
+        "ScriptExitError",
+        [pyException]
+    );
+
     /*!defClass(anvil.server,ServiceNotAdded, __builtins__..Exception)!*/
     pyNamedExceptions["anvil.server.ServiceNotAdded"] = pyMod["ServiceNotAdded"] = buildPyClass(
         pyMod,
@@ -519,6 +595,9 @@ function server(appId: string, appOrigin: string) {
             pyCallOrSuspend(pyMod["call_s"], [new pyStr("anvil.private.reset_session")]),
             (token: pyStr | pyNoneType) => {
                 window.anvilSessionToken = toJs(token) ?? "";
+                // The session (and anything watched under it, e.g. launched background
+                // tasks) has been replaced - signal so watchers can mark the gap.
+                signalConnectionState("session-reset");
                 return invalidatedMacs();
             },
             () => pyNone

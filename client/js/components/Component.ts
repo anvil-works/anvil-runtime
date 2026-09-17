@@ -47,11 +47,13 @@ import {
     s_name,
     s_raise_event,
     s_remove_event_handler,
+    s_x_anvil_dom_node_changed,
 } from "../runner/py-util";
 import type { DropModeFlags, WithLayout } from "../runner/python-objects";
 import { HasRelevantHooks } from "../runner/python-objects";
 import type { Container } from "./Container";
 import { setupClsHooks, setupInstanceHooks } from "./anvil-hooks";
+import { markComponentElement, unmarkComponentElement } from "./component-dom";
 
 // The *real* base Component class. It implements the event APIs, the __anvil_xyz/anvil$hooks API, and that's it.
 
@@ -142,6 +144,45 @@ function initComponentSubclass(cls: ComponentConstructor) {
 
 let defaultDepAppId: string | undefined | null;
 let onNextInstantiation: ((c: Component) => void) | undefined;
+
+const currentElementByComponent = new WeakMap<Component, HTMLElement>();
+
+function getElementForComponent(component: Component, fallback?: HTMLElement | null): HTMLElement | null {
+    return component.anvil$hooks.domElement ?? fallback ?? null;
+}
+
+function refreshComponentElement(component: Component, fallback?: HTMLElement | null) {
+    const nextElement = getElementForComponent(component, fallback);
+    const previousElement = currentElementByComponent.get(component);
+
+    if (previousElement === nextElement) {
+        return;
+    }
+    if (previousElement) {
+        unmarkComponentElement(component, previousElement);
+    }
+    if (nextElement) {
+        markComponentElement(component, nextElement);
+        currentElementByComponent.set(component, nextElement);
+    } else {
+        currentElementByComponent.delete(component);
+    }
+}
+
+function installComponentDomTracking(component: Component) {
+    const originalSetupDom = component.anvil$hooks.setupDom;
+    component.anvil$hooks.setupDom = () =>
+        chainOrSuspend(originalSetupDom(), (element: HTMLElement) => {
+            refreshComponentElement(component, element);
+            return element;
+        });
+
+    const handler = funcFastCall(() => {
+        refreshComponentElement(component);
+        return pyNone;
+    });
+    (component._Component.eventHandlers[s_x_anvil_dom_node_changed.toString()] ??= []).push(handler);
+}
 
 export const setDefaultDepAppIdForNextComponent = (depAppId: string | null) => {
     defaultDepAppId = depAppId;
@@ -528,11 +569,19 @@ export interface DropInfo {
     maxChildIdx?: number;
     layout_properties?: LayoutProperties;
     slots_set_layout_properties?: string[];
-    otherComponentUpdates?: {
-        [componentName: string]: {
-            layout_properties: LayoutProperties;
-        };
-    };
+    /** Layout changes to existing components or slots that are displaced by this drop. */
+    otherLayoutUpdates?: (
+        | {
+              type: "component";
+              name: string;
+              layout_properties: LayoutProperties;
+          }
+        | {
+              type: "slot";
+              name: string;
+              layout_properties: LayoutProperties;
+          }
+    )[];
 }
 
 export interface DropZone {
@@ -834,6 +883,7 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
             };
             defaultDepAppId = undefined;
             setupInstanceHooks(self, cls);
+            installComponentDomTracking(self);
 
             if (onNextInstantiation) {
                 onNextInstantiation(self);
@@ -1173,11 +1223,11 @@ export const addEventHandler = (
 
 /*!defClass(anvil,Component)!*/
 
-const getComponents = (container: Container) => {
+export const getComponents = (container: Container) => {
     return pyCall<pyList<Component>>(container.tp$getattr(s_get_components), []).valueOf();
 };
 
-const isContainerLike = (c: Component): c is Container => {
+export const isContainerLike = (c: Component): c is Container => {
     return !!lookupSpecial(c, s_get_components);
 };
 

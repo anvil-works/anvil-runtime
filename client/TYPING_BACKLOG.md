@@ -23,7 +23,7 @@ Initial conversion candidates: `27` source files. Current remaining first-party 
 
 Worth converting first:
 
-- none remaining. The remaining files are either large (`modules/anvil.js`, `components/GoogleMap.js`), low-value (`components/SimpleCanvas.js`), or generated/vendor-like (`extra-python-modules.js`).
+- none remaining. The remaining files are either large (`components/GoogleMap.js`), low-value (`components/SimpleCanvas.js`), or generated/vendor-like (`extra-python-modules.js`).
 
 Recently converted:
 
@@ -38,13 +38,13 @@ Recently converted:
 - `modules/shapes.js`
 - `modules/tz.js`
 - `messages.js`
+- `modules/anvil.js`
 - all `PyDefUtils/*.js` candidates
 - `modules/xml.js`
 
 Defer for now:
 
 - `extra-python-modules.js` is a generated Plotly blob.
-- `modules/anvil.js` is large enough to defer out of the small-module batch.
 - `components/SimpleCanvas.js` is small, but not worth the conversion cost right now.
 - `components/GoogleMap.js` is in the same bracket; it is large and JSX-heavy.
 
@@ -56,7 +56,3 @@ Defer for now:
 
 - `components/GoogleMap.js`
 - `components/SimpleCanvas.js`
-
-## Modules
-
-- `modules/anvil.js`

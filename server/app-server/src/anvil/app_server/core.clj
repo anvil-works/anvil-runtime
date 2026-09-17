@@ -12,6 +12,7 @@
             [anvil.util :as util]
             [anvil.app-server.dispatch :as dispatch]
             [anvil.runtime.cron :as cron]
+            [anvil.runtime.tables.schema :as table-schema]
             [anvil.app-server.tables :as tables]
             [ring.util.response :as resp]
             [anvil.runtime.app-data :as app-data]
@@ -101,9 +102,13 @@
               (load-app main-app-id)
               (catch Exception e
                 (log/error e "Failed to load app %s: %s" main-app-id)
-                (System/exit 1)))]
+                (System/exit 1)))
+        {:keys [enable_v2 enable_split]} (some #(when (= "/runtime/services/tables.yml" (:source %))
+                                                (:client_config %))
+                                             (-> app :content :services))]
     (update-cron-jobs! (:content app))
-    (tables/validate-app-tables-schema (-> app :content :db_schema) (-> app :content :table_id_hints) main-app-id auto-migrate-tables? ignore-invalid-schema?)
+    (binding [table-schema/*create-split-tables?* (boolean (and enable_v2 enable_split))]
+      (tables/validate-app-tables-schema (-> app :content :db_schema) (-> app :content :table_id_hints) main-app-id auto-migrate-tables? ignore-invalid-schema?))
     (tables/update-indexes-and-views!)
     app))
 
@@ -144,7 +149,7 @@
 
 (app-log/set-log-impl! {:record-session! (fn record-session! [session log-data]
                                            (log/info "[SESSION]" (-> @session :client :type) (runtime-sessions/get-id session) log-data))
-                        :record-event!   (fn [_session _trace-id type log-text data]
+                        :record-event!   (fn [_session _trace-id type log-text data & [_opts]]
                                            (condp contains? type
                                              #{"client_err" "err"}
                                              (log/error (apply str

@@ -21,6 +21,7 @@
           "name": ""
         },
         "index": 0,
+        "slot_order": 0,
         "set_layout_properties": {
           "dropzone": "$dz_0"
         },
@@ -32,6 +33,7 @@
           "name": ""
         },
         "index": 0,
+        "slot_order": 1,
         "set_layout_properties": {
           "dropzone": "$dz_1"
         }

@@ -1,0 +1,16 @@
+{
+  "name": "parser/raw-text-contexts",
+  "entrypoint": "parseContainerForm",
+  "html": "<iframe>a &amp; b > c</iframe>\n<xmp>a &amp; b > c</xmp>\n<noembed>a &amp; b > c</noembed>\n<noframes>a &amp; b > c</noframes>\n<textarea>a &amp; b &lt; c</textarea>\n<title>a &amp; b &lt; c</title>\n<svg><style>a &amp; b &lt; c</style></svg>",
+  "expected": {
+    "container": {
+      "type": "HtmlComponent",
+      "properties": {
+        "html": "<iframe>a &amp; b > c</iframe>\n<xmp>a &amp; b > c</xmp>\n<noembed>a &amp; b > c</noembed>\n<noframes>a &amp; b > c</noframes>\n<textarea>a &amp; b &lt; c</textarea>\n<title>a &amp; b &lt; c</title>\n<svg><style>a &amp; b &lt; c</style></svg>"
+      }
+    },
+    "components": [],
+    "serialized_html": "<iframe>a &amp; b > c</iframe>\n<xmp>a &amp; b > c</xmp>\n<noembed>a &amp; b > c</noembed>\n<noframes>a &amp; b > c</noframes>\n<textarea>a &amp; b &lt; c</textarea>\n<title>a &amp; b &lt; c</title>\n<svg><style>a &amp; b &lt; c</style></svg>"
+  },
+  "expectedSerializedHtml": "<iframe>a &amp; b > c</iframe>\n<xmp>a &amp; b > c</xmp>\n<noembed>a &amp; b > c</noembed>\n<noframes>a &amp; b > c</noframes>\n<textarea>a &amp; b &lt; c</textarea>\n<title>a &amp; b &lt; c</title>\n<svg><style>a &amp; b &lt; c</style></svg>"
+}

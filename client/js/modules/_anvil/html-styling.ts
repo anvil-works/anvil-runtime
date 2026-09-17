@@ -12,14 +12,14 @@ import {
     pyTrue,
     pyFalse,
     pyTuple,
-    pyType,
+    pyNewableType,
     pyTypeError,
     toJs,
 } from "@Sk";
 import type { Args, Kws } from "@Sk";
 import { pyIteratorFromIterable } from "@runtime/runner/py-util/iter-utils";
 
-export interface ClassesConstructor extends pyType<Classes> {
+export interface ClassesConstructor extends pyNewableType<Classes> {
     new (value?: pyObject | HTMLElement | null, onChange?: () => void): Classes;
 }
 
@@ -27,37 +27,37 @@ export interface Classes extends pyObject {
     _classNames: string[];
     _element: HTMLElement | null;
     _onChange?: () => void;
-    $getCurrentClasses(): string[];
-    $setCurrentClasses(tokens: string[]): void;
-    $clear(): void;
-    $replace(value?: pyObject): void;
-    $update(updates: pyDict<pyObject, pyObject>): void;
-    $tokens(): string[];
-    $setTokens(tokens: string[]): void;
-    $setElement(element: HTMLElement | null, hydrate?: boolean): void;
-    $add(value: pyObject): void;
-    $remove(value: pyObject): void;
-    $has(value: pyObject): boolean;
+    $getCurrentClasses(this: Classes): string[];
+    $setCurrentClasses(this: Classes, tokens: string[]): void;
+    $clear(this: Classes): void;
+    $replace(this: Classes, value?: pyObject): void;
+    $update(this: Classes, updates: pyDict<pyObject, pyObject>): void;
+    $tokens(this: Classes): string[];
+    $setTokens(this: Classes, tokens: string[]): void;
+    $setElement(this: Classes, element: HTMLElement | null, hydrate?: boolean): void;
+    $add(this: Classes, value: pyObject): void;
+    $remove(this: Classes, value: pyObject): void;
+    $has(this: Classes, value: pyObject): boolean;
 }
 
-export interface StyleConstructor extends pyType<Style> {
+export interface StyleConstructor extends pyNewableType<Style> {
     new (value?: pyObject | HTMLElement | null, onChange?: () => void): Style;
 }
 
 export interface Style extends pyObject {
     _element: HTMLElement | null;
     _onChange?: () => void;
-    $getCurrentStyles(): Map<string, string>;
-    $setCurrentStyles(entries: Map<string, string>): void;
-    $clear(): void;
-    $replace(value?: pyObject): void;
-    $update(updates: pyDict<pyObject, pyObject>): void;
-    $entries(): Map<string, string>;
-    $setEntries(entries: Map<string, string>): void;
-    $setElement(element: HTMLElement | null, hydrate?: boolean): void;
-    $set(property: pyObject, value: pyObject): void;
-    $delete(property: pyObject): void;
-    $get(property: pyObject): string;
+    $getCurrentStyles(this: Style): Map<string, string>;
+    $setCurrentStyles(this: Style, entries: Map<string, string>): void;
+    $clear(this: Style): void;
+    $replace(this: Style, value?: pyObject): void;
+    $update(this: Style, updates: pyDict<pyObject, pyObject>): void;
+    $entries(this: Style): Map<string, string>;
+    $setEntries(this: Style, entries: Map<string, string>): void;
+    $setElement(this: Style, element: HTMLElement | null, hydrate?: boolean): void;
+    $set(this: Style, property: pyObject, value: pyObject): void;
+    $delete(this: Style, property: pyObject): void;
+    $get(this: Style, property: pyObject): string;
 }
 
 const isHTMLElement = (value: unknown): value is HTMLElement =>
@@ -283,7 +283,7 @@ const renderStyleEntries = (entries: Map<string, string>): string =>
 const createStyleElement = (): HTMLElement => document.createElement("div");
 
 export const Classes: ClassesConstructor = buildNativeClass("anvil.Classes", {
-    constructor: function Classes(this: Classes, value?: pyObject | HTMLElement | null, onChange?: () => void) {
+    constructor: function Classes(value?: pyObject | HTMLElement | null, onChange?: () => void) {
         this._classNames = [];
         this._element = null;
         this._onChange = onChange;
@@ -326,10 +326,10 @@ export const Classes: ClassesConstructor = buildNativeClass("anvil.Classes", {
         },
     },
     proto: {
-        $getCurrentClasses(this: Classes) {
+        $getCurrentClasses() {
             return this._element ? Array.from(this._element.classList) : this._classNames.slice();
         },
-        $setCurrentClasses(this: Classes, tokens: string[]) {
+        $setCurrentClasses(tokens) {
             const deduped = dedupeClassTokens(tokens);
             if (this._element) {
                 this._element.className = deduped.join(" ");
@@ -337,33 +337,33 @@ export const Classes: ClassesConstructor = buildNativeClass("anvil.Classes", {
                 this._classNames = deduped;
             }
         },
-        $clear(this: Classes) {
+        $clear() {
             this.$setCurrentClasses([]);
             notifyObserver(this);
         },
-        $replace(this: Classes, value?: pyObject) {
+        $replace(value) {
             this.$setTokens(classTokensFromPyObject(value));
             notifyObserver(this);
         },
-        $update(this: Classes, updates: pyDict<pyObject, pyObject>) {
+        $update(updates) {
             for (const [className, enabled] of updates.$items()) {
                 this.mp$ass_subscript(className, enabled);
             }
         },
-        $tokens(this: Classes) {
+        $tokens() {
             return this.$getCurrentClasses();
         },
-        $setTokens(this: Classes, tokens: string[]) {
+        $setTokens(tokens) {
             this.$setCurrentClasses(tokens);
         },
-        $setElement(this: Classes, element: HTMLElement | null, hydrate = false) {
+        $setElement(element, hydrate = false) {
             const tokens = hydrate || this._element ? null : this.$getCurrentClasses();
             this._element = element;
             if (!hydrate && element && tokens) {
                 this.$setTokens(tokens);
             }
         },
-        $add(this: Classes, value: pyObject) {
+        $add(value) {
             const next = this.$getCurrentClasses();
             for (const token of classTokensFromPyObject(value)) {
                 if (!next.includes(token)) {
@@ -373,12 +373,12 @@ export const Classes: ClassesConstructor = buildNativeClass("anvil.Classes", {
             this.$setCurrentClasses(next);
             notifyObserver(this);
         },
-        $remove(this: Classes, value: pyObject) {
+        $remove(value) {
             const remove = new Set(classTokensFromPyObject(value));
             this.$setCurrentClasses(this.$getCurrentClasses().filter((className) => !remove.has(className)));
             notifyObserver(this);
         },
-        $has(this: Classes, value: pyObject) {
+        $has(value) {
             const tokens = classTokensFromPyObject(value);
             const current = this.$getCurrentClasses();
             return tokens.length > 0 && tokens.every((className) => current.includes(className));
@@ -430,7 +430,7 @@ export const Classes: ClassesConstructor = buildNativeClass("anvil.Classes", {
 });
 
 export const Style: StyleConstructor = buildNativeClass("anvil.Style", {
-    constructor: function Style(this: Style, value?: pyObject | HTMLElement | null, onChange?: () => void) {
+    constructor: function Style(value?: pyObject | HTMLElement | null, onChange?: () => void) {
         this._element = createStyleElement();
         this._onChange = onChange;
         if (isHTMLElement(value)) {
@@ -476,10 +476,10 @@ export const Style: StyleConstructor = buildNativeClass("anvil.Style", {
         },
     },
     proto: {
-        $getCurrentStyles(this: Style) {
+        $getCurrentStyles() {
             return parseStyleString(this._element?.style.cssText ?? "");
         },
-        $setCurrentStyles(this: Style, entries: Map<string, string>) {
+        $setCurrentStyles(entries) {
             const next = new Map(entries);
             const element = this._element ?? (this._element = createStyleElement());
             element.style.cssText = "";
@@ -487,11 +487,11 @@ export const Style: StyleConstructor = buildNativeClass("anvil.Style", {
                 element.style.setProperty(property, cssValue);
             }
         },
-        $clear(this: Style) {
+        $clear() {
             this.$setCurrentStyles(new Map());
             notifyObserver(this);
         },
-        $replace(this: Style, value?: pyObject) {
+        $replace(value) {
             const cssText = styleStringFromPyObject(value);
             if (cssText !== null) {
                 (this._element ?? (this._element = createStyleElement())).style.cssText = cssText;
@@ -501,7 +501,7 @@ export const Style: StyleConstructor = buildNativeClass("anvil.Style", {
             this.$setEntries(styleEntriesFromPyObject(value));
             notifyObserver(this);
         },
-        $update(this: Style, updates: pyDict<pyObject, pyObject>) {
+        $update(updates) {
             for (const [property, cssValue] of updates.$items()) {
                 if (cssValue === pyNone) {
                     this.$delete(property);
@@ -510,20 +510,20 @@ export const Style: StyleConstructor = buildNativeClass("anvil.Style", {
                 }
             }
         },
-        $entries(this: Style) {
+        $entries() {
             return this.$getCurrentStyles();
         },
-        $setEntries(this: Style, entries: Map<string, string>) {
+        $setEntries(entries) {
             this.$setCurrentStyles(entries);
         },
-        $setElement(this: Style, element: HTMLElement | null, hydrate = false) {
+        $setElement(element, hydrate = false) {
             const entries = hydrate ? null : this.$getCurrentStyles();
             this._element = element ?? createStyleElement();
             if (!hydrate && entries) {
                 this.$setEntries(entries);
             }
         },
-        $set(this: Style, property: pyObject, value: pyObject) {
+        $set(property, value) {
             const propertyName = getStylePropertyName(property);
             if (!propertyName) {
                 throw new pyTypeError("Style property name must not be empty");
@@ -537,12 +537,12 @@ export const Style: StyleConstructor = buildNativeClass("anvil.Style", {
             }
             notifyObserver(this);
         },
-        $delete(this: Style, property: pyObject) {
+        $delete(property) {
             const propertyName = getStylePropertyName(property);
             this._element?.style.removeProperty(propertyName);
             notifyObserver(this);
         },
-        $get(this: Style, property: pyObject) {
+        $get(property) {
             const propertyName = getStylePropertyName(property);
             return this._element?.style.getPropertyValue(propertyName) ?? "";
         },

@@ -71,7 +71,7 @@
   ([message error-type]
    {:anvil/server-error message
     :type               error-type
-    :docId              "data_tables"
+    :docUrl              "/data-tables"
     :docLinkTitle       "Learn more about Data tables"}))
 
 (defonce ^:private log-every-sql-error? false)
@@ -163,7 +163,9 @@
       (if-let [first-type (get-type-from-value first-val)]
         (if (:error first-type)
           first-type
-          (if (:table_id first-type)
+          (if (and (= "liveObject" (:type first-type))
+                   (= "anvil.tables.Row" (:backend first-type))
+                   (:table_id first-type))
             (if (every? #(= first-type (get-type-from-value %)) (rest json-value))
               (assoc first-type :type "liveObjectArray")
               {:error "All elements of a table-row list must be rows from the same table"})
@@ -303,7 +305,7 @@
                           ;; Don't allow view rows
                           (when (and is-view-row? (not permit-view-rows?))
                             (throw+ {:anvil/server-error "You cannot store a view row in a table column. Store the full row (not from a view) instead"
-                                     :docId              "data_tables_views"
+                                     :docUrl              "/data-tables/data-security#views"
                                      :docLinkTitle       "Learn more about views in data tables"}))
 
                           (.serialiseForRpc
@@ -450,6 +452,11 @@
      (binding [*current-db-transaction* db#]
        ~@body)))
 
+(defmacro with-relaxed-table-transaction [& body]
+  `(util/with-db-transaction [db# (db) :repeatable-read]
+     (binding [*current-db-transaction* db#]
+       ~@body)))
+
 (defn with-app-transaction*
   "Run body-fn in a local transaction, or in the ongoing app transaction if there is one"
   [require-ongoing-transaction? relaxed-isolation-level body-fn]
@@ -561,13 +568,13 @@
      (when (not= rows-added 0)
        (if allow-throw?
          (when-not (decrement-if-possible! db-txn :db-rows rows-added)
-           (throw+ (general-tables-error "Datatables row count quota exceeded" "anvil.tables.QuotaExceededError")))
+           (throw+ (general-tables-error "Data Tables row count quota exceeded" "anvil.tables.QuotaExceededError")))
          (decrement! db-txn :db-rows rows-added)))
 
      (when (not= bytes-added 0)
        (if allow-throw?
          (when-not (decrement-if-possible! db-txn :db-bytes bytes-added)
-           (throw+ (general-tables-error "Datatable database size limit exceeded" "anvil.tables.QuotaExceededError")))
+           (throw+ (general-tables-error "Data Table database size limit exceeded" "anvil.tables.QuotaExceededError")))
          (decrement! db-txn :db-bytes bytes-added))))))
 
 (defmacro -with-use-quota [[decrement! decrement-if-possible! relaxed-isolation-level] [use-quota!] & body]

@@ -17,7 +17,7 @@
 
 (defn general-drive-error [message]
   {:anvil/server-error message
-   :docId "google_drive"
+   :docUrl "/integrations/google/google-drive"
    :docLinkTitle "Learn more about Google Drive integration"})
 
 (defn gen-lm [{id "id" title "title" :as file-item} creds]

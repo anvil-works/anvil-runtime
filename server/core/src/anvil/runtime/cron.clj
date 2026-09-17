@@ -60,18 +60,6 @@
     (when next-exec
       (java.sql.Timestamp. (max (.getTimeInMillis next-exec) (System/currentTimeMillis))))))
 
-(defn get-cron-job-info [app-id job-id]
-  (when-let [infos (jdbc/query util/db ["SELECT next_run, last_bg_task_id, id, completion_status, background_tasks.task_name AS task_name, debug, session, start_time, last_seen_alive, scheduled_tasks.env_id AS env_id
-                                               FROM scheduled_tasks
-                                               LEFT JOIN background_tasks ON (last_bg_task_id = id)
-                                               LEFT JOIN app_environments ON (scheduled_tasks.env_id = app_environments.env_id)
-                                               WHERE (scheduled_tasks.app_id = ? OR (scheduled_tasks.app_id IS NULL AND app_environments.app_id = ?)) AND job_id = ?" app-id app-id job-id])]
-    (for [info infos]
-      (merge
-        (when (:last_bg_task_id info)
-          (background-tasks/present-background-task info))
-        (select-keys info [:env_id :next_run])))))
-
 ;; Common code for updating jobs from DB records
 (defn get-scheduled-jobs [scheduled-tasks-yaml previous-scheduled-jobs extra-keys]
   (let [known-jobs (into {} (for [job previous-scheduled-jobs] [(:job_id job) job]))]
@@ -102,7 +90,10 @@
 (defonce get-environment-for-job
          (fn [job] (throw (UnsupportedOperationException.))))
 
-(def set-cron-hooks! (util/hook-setter #{update-job! get-environment-for-job}))
+(defonce get-overdue-jobs
+         (fn [db] (jdbc/query db ["SELECT * FROM scheduled_tasks WHERE next_run < NOW() ORDER BY random() LIMIT 10"])))
+
+(def set-cron-hooks! (util/hook-setter #{update-job! get-environment-for-job get-overdue-jobs}))
 
 (def restrict-scheduled-tasks? false)
 
@@ -110,7 +101,7 @@
   (let [jobs-we-have-committed-to-launching
         (util/with-db-lock ::launch-cron-jobs false
           (util/with-db-transaction [db util/db]
-            (let [jobs (jdbc/query db ["SELECT * FROM scheduled_tasks WHERE next_run < NOW() ORDER BY random() LIMIT 10"])
+            (let [jobs (get-overdue-jobs db)
                   now (Date.)]
               (doall
                 (for [job jobs

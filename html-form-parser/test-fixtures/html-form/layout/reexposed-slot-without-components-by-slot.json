@@ -16,6 +16,7 @@
           "name": "slot_1"
         },
         "index": 0,
+        "slot_order": 0,
         "set_layout_properties": {}
       }
     }

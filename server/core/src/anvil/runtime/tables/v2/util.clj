@@ -37,7 +37,7 @@
   ([message error-type]
    {:anvil/server-error message
     :type               error-type
-    :docId              "data_tables"
+    :docUrl              "/data-tables"
     :docLinkTitle       "Learn more about Data tables"}))
 
 
@@ -133,7 +133,7 @@
      (throw+ {:anvil/server-error (str "Cannot " (condp = required-level WRITE "write to" READ "read from" "access") (when row? " row from") name " from "
                                        (if (or rpc-util/*client-request?* (get request-overrides :use_client_config)) "client" "server") " code.")
               :type               "anvil.server.PermissionDenied"
-              :docId              "data_tables_permissions"
+              :docUrl              "/data-tables/data-security#permissions"
               :docLinkTitle       "Learn about Data Table permissions"}))))
 
 (defn- ensure-access! [tables table-id perm required-level row? request-overrides]

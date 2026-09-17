@@ -9,9 +9,18 @@
             [anvil.runtime.app-log :as app-log]
             [anvil.runtime.browser-ws :as browser-ws]
             [anvil.runtime.browser-ws :refer [process-log-data]]
+            [anvil.util :as util]
             [clojure.java.io :as io]
             [medley.core :refer [filter-keys]]
             [clojure.string :as str]))
+
+;; Hookable functions. on-http-call-end fires at most once per request: just before the
+;; final response frame is serialised (so hooks can append trailing frames to the multipart
+;; response via ::send-message!), or on channel close if the call never finished cleanly.
+(defonce on-http-call-start (fn [connection] nil))
+(defonce on-http-call-end (fn [connection] nil))
+
+(def set-browser-http-hooks! (util/hook-setter [on-http-call-start on-http-call-end]))
 
 (defn- file->blob [{file :tempfile}]
   (with-open [input-stream (io/input-stream file)
@@ -77,8 +86,10 @@
                        x)))
       (:liveobject-secret)))
 
-(defn- mk-serial-responder [channel session-liveobject-secret request-id]
+(defn- mk-serial-responder [channel session-liveobject-secret call-ended! request-id]
   (fn [resp call-finished?]
+    (when call-finished?
+      (call-ended!))
     (serialisation/serialise-to-http!
      (assoc resp :id request-id) channel true session-liveobject-secret #(when call-finished? (close channel)))))
 
@@ -138,8 +149,19 @@
   (with-channel request channel
     (let [session-liveobject-secret (get-session-liveobject-secret app-session)
           deserialiser (serialisation/mk-Deserialiser {:origin :client, :get-session-liveobject-key (constantly session-liveobject-secret)})
-          serial-responder (partial mk-serial-responder channel session-liveobject-secret)]
-      (on-close channel (fn [reason]))
+          connection {:connection-id (random/base32 21)
+                      :environment environment
+                      :app-session app-session
+                      ;; Same key as browser-ws connections, so platform hooks can treat both alike
+                      ::browser-ws/send-message! (fn [msg]
+                                                   (serialisation/serialise-to-http! (assoc msg :id (str "evt" (random/base32 10))) channel true session-liveobject-secret (fn [])))}
+          ended? (atom false)
+          call-ended! (fn []
+                        (when (compare-and-set! ended? false true)
+                          (on-http-call-end connection)))
+          serial-responder (partial mk-serial-responder channel session-liveobject-secret call-ended!)]
+      (on-close channel (fn [reason] (call-ended!)))
+      (on-http-call-start connection)
       (send-headers channel)
       (process-data request app-yaml deserialiser serial-responder))))
 

@@ -1,52 +1,39 @@
 (ns anvil.dispatcher.native-rpc-handlers.users.core
-  (:use clj-commons.slingshot)
-  (:require [anvil.dispatcher.native-rpc-handlers.util :as util]
-            [anvil.dispatcher.native-rpc-handlers.users.util :as users-util :refer [add-new-user
-                                                                                    get-and-create-columns
-                                                                                    get-props-with-named-user-table
-                                                                                    get-user-check-enabled-and-validate
-                                                                                    validate-enabled-user!
-                                                                                    get-user-row-by-id
-                                                                                    is-valid-user-row?
-                                                                                    user-row->table-id-row-id
-                                                                                    user-row->v1-id-str
-                                                                                    user-row->row-id-int
-                                                                                    row-ref-to-row
-                                                                                    row-to-map
-                                                                                    set-values-creating-col-if-necessary
-                                                                                    table-get
-                                                                                    update-row!
-                                                                                    update-row-values
-                                                                                    record-login-failure!]]
+  (:require [anvil.dispatcher.native-rpc-handlers.util :as rpc-util]
+            [anvil.dispatcher.core :as dispatcher]
+            [anvil.runtime.tables.v2.rpc :as table-rpc]
             [anvil.dispatcher.native-rpc-handlers.google.auth :as google-auth]
             [anvil.dispatcher.native-rpc-handlers.facebook :as facebook-auth]
             [anvil.dispatcher.native-rpc-handlers.microsoft :as microsoft-auth]
             [anvil.dispatcher.native-rpc-handlers.saml :as saml-auth]
             [anvil.dispatcher.native-rpc-handlers.email :as email]
-            [anvil.runtime.tables.util :as tables-util]
-            [clojure.data.json :as json]
-            [crypto.random :as random]
-            [anvil.runtime.app-data :as app-data]
-            [clojure.tools.logging :as log]
+            [slingshot.slingshot :refer [throw+ try+]]
+            [anvil.dispatcher.native-rpc-handlers.cookies :as cookies]
             [anvil.util :as anvil-util]
             [anvil.runtime.util :as runtime-util]
             [ring.util.codec :as codec]
-            [anvil.dispatcher.native-rpc-handlers.cookies :as cookies]
-            [anvil.dispatcher.core :as dispatcher]
             [anvil.runtime.secrets :as secrets]
             [anvil.dispatcher.native-rpc-handlers.users.fido :as fido]
             [anvil.dispatcher.native-rpc-handlers.users.totp :as totp]
             [anvil.dispatcher.native-rpc-handlers.users.twilio :as twilio]
+            [crypto.random :as random]
+            [anvil.runtime.app-data :as app-data]
             [anvil.runtime.sessions :as sessions]
             [anvil.runtime.conf :as runtime-conf]
-            [anvil.core.worker-pool :as worker-pool]
-            [anvil.runtime.conf :as conf])
+            [clojure.tools.logging :as log]
+            [anvil.dispatcher.native-rpc-handlers.users.util :as user-util :refer [record-login-failure!]]
+            [anvil.runtime.tables.util :as table-v1-util]
+            [anvil.runtime.tables.rpc :as table-v1-rpc]
+            [anvil.runtime.tables.v2.util :as table-util]
+            [anvil.runtime.tables.v2.basic-ops :as table-basic-ops]
+            [anvil.core.worker-pool :as worker-pool])
   (:import (anvil.dispatcher.types DateTime)
            (java.text SimpleDateFormat)
            (java.util Date)
            (org.mindrot.jbcrypt BCrypt)
            (java.time Instant)
            (java.time.format DateTimeParseException)))
+
 
 (defn- now-as-table-date []
   (DateTime. (.format (SimpleDateFormat. "yyyy-MM-dd HH:mm:ss.SSSZ") (Date.))))
@@ -63,48 +50,73 @@
   (format "<a href=\"%s\">%s</a>" (.replace url "\"" "&quot;") url))
 
 (defn- get-our-origin []
-  (or util/*app-origin*
-      (app-data/get-app-origin util/*environment*)
-      (app-data/get-public-app-origin util/*environment*)
+  (or rpc-util/*app-origin*
+      (app-data/get-app-origin rpc-util/*environment*)
+      (app-data/get-public-app-origin rpc-util/*environment*)
       (throw+ {:anvil/server-error "This app does not have a URL, so we can't send a confirmation email."})))
 
 (defn- get-cookie-type [{:keys [share_login_status] :as _props}]
   (if share_login_status :shared :local))
 
-(defn set-and-return-value-creating-col-if-necessary [table-id row-id col_name val]
-  (set-values-creating-col-if-necessary table-id row-id {col_name val})
-  val)
 
-(defn logout [{:keys [invalidate_client_objects] :as kwargs}]
-  (when invalidate_client_objects
-    (util/invalidate-client-objects!))
-  (let [{:keys [user_table] :as props} (get-props-with-named-user-table)
-        cookie-type (get-cookie-type props)
-        cookie-key-token (keyword (str "user-table-" user_table "-remember-me"))]
-    (swap! util/*session-state* update-in [:users] dissoc :logged-in-id)
-    (swap! util/*session-state* update-in [:users] dissoc :partial-logged-in-id)
+(defn- get-remember-me-cookie-key [table-id]
+  (keyword (str "user-table-" table-id "-remember-me")))
+
+
+(defn- get-remember-me-token-hash-from-cookie [user-props]
+  (let [{:keys [table_id]} user-props
+        cookie-key-token (get-remember-me-cookie-key table_id)
+        cookie-type (get-cookie-type user-props)]
     (try+
       (when-let [remember-token (cookies/get-cookie-val cookie-type cookie-key-token)]
-        (let [token-hash (anvil-util/sha-256 (str remember-token "#" user_table))]
-          (cookies/del-cookie! cookie-type (keyword (str "user-table-" user_table "-remember-me")))
+        (anvil-util/sha-256 (str remember-token "#" table_id)))
+      (catch :anvil/cookie-error _ nil))))
 
-          (binding [util/*client-request?* false]
-            (try+
-              (tables-util/with-table-transaction
-                (when-let [row (table-get user_table {"remembered_logins" [{"token_hash" token-hash}]})]
-                  (let [remembered-logins (->> (get (row-to-map row) "remembered_logins")
-                                               (remove #(= (:token_hash %) token-hash))
-                                               (vec))]
 
-                    (update-row-values user_table (user-row->row-id-int row) {"remembered_logins" remembered-logins}))))
-              ;; Tolerate (eg) collisisons in remember-me cookies
-              (catch #(and (:anvil/server-error %) (= (:type %) "anvil.tables.TableError") %) e
-                (util/*rpc-println* (str "WARNING: Cannot retrieve user record by remember-me state: " (:anvil/server-error e))))))))
-      (catch :anvil/cookie-error _ nil)))
+(defn- remove-remember-me-cookie [user-props]
+  (let [{:keys [table_id]} user-props
+        cookie-key-token (get-remember-me-cookie-key table_id)
+        cookie-type (get-cookie-type user-props)]
+    (try+
+      (cookies/del-cookie! cookie-type cookie-key-token)
+      (catch :anvil/cookie-error _ nil))))
+
+(defn remove-remember-me-token-hash [{:keys [table_id] :as user-props} token-hash]
+  (try+
+    (table-v1-util/with-table-transaction
+      (when-let [user-row (user-util/table-get-row-from-query table_id {"remembered_logins" [{"token_hash" token-hash}]})]
+        (let [remembered-logins (->> (user-util/get-in-user-row user-row :remembered_logins)
+                                     (remove #(= (:token_hash %) token-hash))
+                                     (vec))]
+          (user-util/update-user-row user-row {"remembered_logins" remembered-logins}))))
+    ;; Tolerate (eg) collisions in remember-me cookies
+    (catch #(and (:anvil/server-error %) (= (:type %) "anvil.tables.TableError") %) e
+      (rpc-util/*rpc-println* (str "WARNING: Cannot retrieve user record by remember-me state: " (:anvil/server-error e))))))
+
+
+(defn- add-login-session-data [user-row]
+  (swap! rpc-util/*session-state*
+         (fn [state]
+           (-> state
+               (assoc-in [:users :logged-in-id] (user-util/user-row->v1-id-str user-row))
+               (update-in [:users] dissoc :partial-logged-in-id)))))
+
+(defn- remove-login-session-data []
+  (swap! rpc-util/*session-state* update-in [:users] dissoc :logged-in-id :partial-logged-in-id))
+
+
+(defn logout [{:keys [invalidate_client_objects] :as _kws}]
+  (when invalidate_client_objects (rpc-util/invalidate-client-objects!))
+  (let [user-props (user-util/get-user-props)]
+    (remove-login-session-data)
+    (when-let [token-hash (get-remember-me-token-hash-from-cookie user-props)]
+      (remove-remember-me-cookie user-props)
+      (remove-remember-me-token-hash user-props token-hash)))
   nil)
 
+
 (defn invalidate-all-session-logins [user-id]
-  (let [except-session-id (sessions/get-id util/*session-state*)]
+  (let [except-session-id (sessions/get-id rpc-util/*session-state*)]
     (doseq [session-id (sessions/list-sessions-for-user-id user-id)
             :when (not= session-id except-session-id)
             :let [session (sessions/load-session-by-id-without-authentication session-id)]
@@ -112,264 +124,455 @@
       (swap! session dissoc :users)
       (sessions/notify-session-update! session true))))
 
+
+(defn- set-last-email-cookie [{:keys [table_id] :as user-props} user-row]
+  (let [cookie-type (get-cookie-type user-props)
+        email (user-util/get-in-user-row user-row :email)]
+    (try+
+      (cookies/set-cookie! cookie-type {(keyword (str "user-table-" table_id "-last-email")) email} 30)
+      (catch :anvil/cookie-error _e
+        nil))))
+
+
+(defn- get-and-set-remember-me-token-hash [{:keys [table_id remember_me_days] :as user-props}]
+  (let [new-token (random/base64 32)
+        new-token-hash (anvil-util/sha-256 (str new-token "#" table_id))
+        cookie-type (get-cookie-type user-props)]
+    (try+
+      (cookies/set-cookie! cookie-type {(keyword (str "user-table-" table_id "-remember-me")) new-token}
+                           remember_me_days)
+      new-token-hash
+      (catch :anvil/cookie-error e
+        (rpc-util/*rpc-println* (str "WARNING: Cannot save login state to cookie: " (:anvil/server-error e)))
+        nil))))
+
+
+(defn- get-remembered-logins-update [{:keys [remember_me_days] :as _user-props} user-row token-hash]
+  (->> (user-util/get-in-user-row user-row :remembered_logins)
+       (filter #(is-in-date? % remember_me_days))
+       (cons {"login_time" (str (Instant/now)), "token_hash" token-hash})
+       (vec)))
+
+
+(defn- set-remember-me-cookie-and-update-row [{ :keys [allow_remember_me] :as user-props} user-row updates remember?]
+  (if (and remember? allow_remember_me)
+    (when-let [token-hash (get-and-set-remember-me-token-hash user-props)]
+      (->> {:remembered_logins (get-remembered-logins-update user-props user-row token-hash)}
+           (merge updates)
+           (user-util/update-user-row-creating-cols-as-necessary user-row))
+      true)
+    ;; else, no memory allowed
+    (do
+      (remove-remember-me-cookie user-props)
+      false)))
+
+
+
+(defn- last-login-is-too-old? [last-login]
+  (try
+    (< (-> last-login
+           (table-v1-util/datetime->instant)
+           (.toEpochMilli))
+       (- (System/currentTimeMillis) 5000))
+    (catch Exception _ true)))
+
+
+(defn- should-update-last-login [user-row]
+  (let [last-login (user-util/get-in-user-row user-row :last_login)]
+    (or (not last-login)
+        (last-login-is-too-old? last-login))))
+
+
+(defn- calculate-login-updates [user-row]
+  (merge (when (should-update-last-login user-row)
+           {:last_login (now-as-table-date)})
+         (when (not= 0 (user-util/get-in-user-row user-row :n_password_failures 0))
+           {:n_password_failures 0})))
+
+
 (defn login! [user-row remember?]
-  (let [[table-id row-id] (user-row->table-id-row-id user-row)
-        user-map (row-to-map user-row)
-        {:keys [allow_remember_me remember_me_days] :as props} (get-props-with-named-user-table)
-        cookie-type (get-cookie-type props)
-        values-to-set (merge (when (let [last-login (get user-map "last_login")]
-                                     (or (not last-login)
-                                         (try
-                                           (< (-> last-login
-                                                  (tables-util/datetime->instant)
-                                                  (.toEpochMilli))
-                                              (- (System/currentTimeMillis) 5000))
-                                           (catch Exception _ true))))
-                               {"last_login" (now-as-table-date)})
-                             (when (not= 0 (get user-map "n_password_failures" 0))
-                               {"n_password_failures" 0}))]
-    (swap! util/*session-state* assoc-in [:users :logged-in-id] (user-row->v1-id-str user-row))
-    (swap! util/*session-state* update-in [:users] dissoc :partial-logged-in-id)
+  (let [user-props (user-util/get-user-props)
+        updates (calculate-login-updates user-row)]
+    (add-login-session-data user-row)
+    (set-last-email-cookie user-props user-row)
+    ;; false-y value means we didn't do the update
+    (when-not (set-remember-me-cookie-and-update-row user-props user-row updates remember?)
+      (user-util/update-user-row-creating-cols-as-necessary user-row updates))
+    ;; TODO check is this ok - we won't have the updates here
+    user-row))
 
-    (when-not
-      (try+
-        (cookies/set-cookie! cookie-type {(keyword (str "user-table-" table-id "-last-email")) (get user-map "email")} 30)
-        (if (and remember? allow_remember_me)
-          (let [new-token (random/base64 32)
-                new-token-hash (anvil-util/sha-256 (str new-token "#" table-id))]
 
-            (try+
-              (cookies/set-cookie! cookie-type {(keyword (str "user-table-" table-id "-remember-me")) new-token}
-                                   remember_me_days)
-
-              (update-row! [table-id row-id] (fn [{remembered-logins "remembered_logins"}]
-                                    (assoc values-to-set
-                                      "remembered_logins" (->> remembered-logins
-                                                               (filter #(is-in-date? % remember_me_days))
-                                                               (cons {"login_time" (str (Instant/now)), "token_hash" new-token-hash})
-                                                               (vec)))))
-
-              true
-
-              (catch :anvil/cookie-error e
-                (util/*rpc-println* (str "WARNING: Cannot save login state to cookie: " (:anvil/server-error e)))
-                false)))
-
-          ;; else, no memory allowed
-          (do
-            (cookies/del-cookie! cookie-type (keyword (str "user-table-" table-id "-remember-me")))
-            false))
-        (catch :anvil/cookie-error _e
-          nil))
-      ;; false-y return from that big (try) means we didn't hit the (update-row!)
-      (when (not-empty values-to-set)
-        (set-values-creating-col-if-necessary table-id row-id values-to-set))))
-
-  user-row)
-
-(defn force-login [{:keys [remember] :as _kwargs} user-row]
-  (util/require-server! "call force_login()")
+(defn force-login [{:keys [remember fetch] :as _kws} serialized-user-row]
+  (rpc-util/require-server! "call force_login()")
   (cond
-    (nil? user-row) (logout nil)
-    (is-valid-user-row? user-row) (login! (row-ref-to-row user-row) remember)
-    :else (throw+ {:anvil/server-error "force_login() must be passed a row from the users table"})))
+    (nil? serialized-user-row)
+    (logout nil)
 
+    (user-util/is-valid-serialized-user-row? serialized-user-row)
+    (-> serialized-user-row
+        (user-util/serialized-row->user-row (table-rpc/validate-fetch-request fetch))
+        (login! remember))
+
+    :else
+    (throw+ {:anvil/server-error "force_login() must be passed a row from the users table"})))
+
+
+(defn check-password-hash [user-row password]
+  (when-not password
+     (throw+ {:anvil/server-error "No password provided" :type "anvil.users.AuthenticationFailed"}))
+  (let [pw-hash (user-util/get-in-user-row user-row :password_hash)]
+    (when-not (anvil.util/bcrypt-checkpw password pw-hash)
+      (record-login-failure! user-row)
+      (throw+ {:anvil/server-error "Incorrect password" :type "anvil.users.AuthenticationFailed"}))))
+
+(defn get-enabled-mfa-types
+  ([] (get-enabled-mfa-types nil))
+  ([_kws]
+   (concat (when true ["totp"])
+           (when true ["fido"])
+           (when runtime-conf/twilio-config ["twilio-verify"]))))
 
 ; It only makes sense to call this from the client. On the server, you can edit the user row directly.
-(defn add-mfa-method [_kwargs password mfa-method clear-existing]
-  (binding [util/*client-request?* false]                   ; Safe, because we're loading the current user, and verifying their password.
-    (let [{:keys [user_table]} (get-props-with-named-user-table)
-          v1-id-str (or (get-in @util/*session-state* [:users :logged-in-id]) (get-in @util/*session-state* [:users :mfa-reset-user-id]))
-          user (get-user-row-by-id user_table v1-id-str)]
-      (when-not password
-        (throw+ {:anvil/server-error "No password provided" :type "anvil.users.AuthenticationFailed"}))
-      (let [pw-hash (when user (get (row-to-map user) "password_hash"))]
-        (when-not (anvil.util/bcrypt-checkpw password pw-hash)
-          (record-login-failure! user)
-          (throw+ {:anvil/server-error "Incorrect password" :type "anvil.users.AuthenticationFailed"})))
+(defn add-mfa-method [_kws password mfa-method clear-existing]
+  (let [{:keys [table_id] :as user-props} (user-util/get-user-props)
+        v1-id-str (or (get-in @rpc-util/*session-state* [:users :logged-in-id]) (get-in @rpc-util/*session-state* [:users :mfa-reset-user-id]))
+        user-row (user-util/table-get-row-by-id table_id v1-id-str)]
+    (check-password-hash user-row password)
+    (swap! rpc-util/*session-state* assoc-in [:users :mfa-reset-user-id] nil)
+    ;; Add the new MFA method to the end of the list, or to a new list if clear-existing is True
+    (let [mfa-methods (if clear-existing [] (user-util/get-in-user-row user-row :mfa))
+          mfa-type (:type mfa-method)
+          enabled-mfa-types (set (get-enabled-mfa-types))
+          _ (when-not (enabled-mfa-types mfa-type)
+              (throw+ {:anvil/server-error "MFA method not supported" :type "anvil.users.AuthenticationFailed"}))
+          _ (when (some #(= (:id %) (:id mfa-method)) mfa-methods)
+              (throw+ {:anvil/server-error "MFA method already exists" :type "anvil.users.AuthenticationFailed"}))
+          new-mfa-methods (vec (conj mfa-methods mfa-method))]
+      (user-util/update-user-row-creating-cols-as-necessary user-row {:mfa new-mfa-methods})
+      new-mfa-methods)))
 
-      (swap! util/*session-state* assoc-in [:users :mfa-reset-user-id] nil)
+(defn get-available-mfa-types [_kws email password]
+  (let [{:keys [table_id]} (user-util/get-user-props)
+        email (.trim ^String (or email ""))
+        user-row (user-util/table-get-from-email-check-enabled-and-validate table_id email)
+        pw-hash (user-util/get-in-user-row user-row :password_hash)]
+    (if-not (anvil.util/bcrypt-checkpw password pw-hash)
+      []
+      (map :type (user-util/get-in-user-row user-row :mfa [])))))
 
-      ;; Add the new MFA method to the end of the list, or to a new list if clear-existing is True
-      (let [mfa-methods (if clear-existing [] (get (row-to-map user) "mfa"))
-            new-mfa-methods (vec (conj mfa-methods mfa-method))]
-        (set-and-return-value-creating-col-if-necessary user_table (user-row->row-id-int user) "mfa" new-mfa-methods)))))
 
-(defn get-available-mfa-types [_kwargs email password]
-  (binding [util/*client-request?* false]
-    (let [{:keys [user_table]} (get-props-with-named-user-table)
-          user-row (get-user-check-enabled-and-validate user_table {:email (.trim ^String (or email ""))} :email)
-          pw-hash (when user-row (get (row-to-map user-row) "password_hash"))]
+(defn- check-can-use-email [{:keys [use_email] :as _user-props}]
+  (when-not use_email (throw+ {:anvil/server-error "Email/password authentication is not enabled."})))
 
-      (if-not (anvil.util/bcrypt-checkpw password pw-hash)
-        []
-        (map :type (get (row-to-map user-row) "mfa" []))))))
 
-(defn get-enabled-mfa-types [_kwargs]
-  (concat (when true ["totp"])
-          (when true ["fido"])
-          (when runtime-conf/twilio-config ["twilio-verify"])))
+(defn- check-confirmed-email [{:keys [confirm_email] :as _user-props} user-row]
+  (when (and confirm_email user-row (not (user-util/get-in-user-row user-row :confirmed_email)))
+    (throw+ {:anvil/server-error "You haven't confirmed your email address. Please check your email and click the confirmation link, or reset your password."
+             :type               "anvil.users.EmailNotConfirmed"})))
 
-; mfa: {:type, :...}
-(defn login-with-email [{:keys [remember mfa] :as _kwargs} email password]
-  (binding [util/*client-request?* false]
-    (let [partial-logged-in-id (atom nil)]
-      (try
-        (let [{:keys [user_table use_email confirm_email require_mfa mfa_timeout_days max_password_failures] :as props} (get-props-with-named-user-table)
-              cookie-type (get-cookie-type props)
-              _ (when-not use_email (throw+ {:anvil/server-error "Email/password authentication is not enabled."}))
-              user-row (get-user-check-enabled-and-validate user_table {:email (.trim ^String (or email ""))} :email)
-              user-data (row-to-map user-row)
+(defn- check-password-failures [{:keys [max_password_failures] :as _user-props} user-row]
+  (let [n-password-failures (let [f (user-util/get-in-user-row user-row :n_password_failures)]
+                              (if (number? f) f 0))]
+    (when (>= n-password-failures (or max_password_failures 10))
+      (throw+ {:anvil/server-error "You have entered an incorrect password too many times. Please reset your password by email."
+               :type               "anvil.users.TooManyPasswordFailures"}))))
 
-              n-password-failures (let [f (get user-data "n_password_failures")]
-                                    (if (number? f) f 0))
-              max_password_failures (or max_password_failures 10)
-              pw-hash (get user-data "password_hash")]
 
-          (when (and confirm_email user-row (not (get user-data "confirmed_email")))
-            (throw+ {:anvil/server-error "You haven't confirmed your email address. Please check your email and click the confirmation link, or reset your password."
-                     :type               "anvil.users.EmailNotConfirmed"}))
+(defn- check-password [{:keys [max_password_failures] :as _user-props} user-row password]
+  (let [pw-hash (user-util/get-in-user-row user-row :password_hash)
+        n-password-failures (let [f (user-util/get-in-user-row user-row :n_password_failures)]
+                              (if (number? f) f 0))]
 
-          (when (>= n-password-failures max_password_failures)
-            (throw+ {:anvil/server-error "You have entered an incorrect password too many times. Please reset your password by email."
-                     :type               "anvil.users.TooManyPasswordFailures"}))
+    (when-not (anvil.util/bcrypt-checkpw password pw-hash)
+      (record-login-failure! user-row)
+      (throw+ {:anvil/server-error "Incorrect email address or password"
+               :type               (if (>= (inc n-password-failures) (or max_password_failures 10))
+                                     "anvil.users.TooManyPasswordFailures"
+                                     "anvil.users.AuthenticationFailed")}))))
 
-          (when-not (anvil.util/bcrypt-checkpw password pw-hash)
-            (record-login-failure! user-row)
-            (throw+ {:anvil/server-error "Incorrect email address or password"
-                     :type               (if (>= (inc n-password-failures) max_password_failures)
-                                           "anvil.users.TooManyPasswordFailures"
-                                           "anvil.users.AuthenticationFailed")}))
 
-          (when require_mfa
-            (let [mfa-methods (get (row-to-map user-row) "mfa")
-                  mfa-cookie-key (keyword (str "user-table-" user_table "-user-" (.substring (anvil-util/sha-256 email) 0 8) "-mfa-validation"))
+;; TODO: We could unconditionally remember any MFA methods that are validated, allowing signup to carry over to login.
+(defn- maybe-remember-mfa! [{:keys [mfa_timeout_days] :as user-props} {:keys [mfa-cookie-key]} {:keys [id serial]}]
+  (when (and mfa_timeout_days (> mfa_timeout_days 0))
+    (let [cookie-type (get-cookie-type user-props)
+          cookie {mfa-cookie-key (str id "#" serial "#" (System/currentTimeMillis))}]
+      (try+
+        (cookies/set-cookie! cookie-type cookie mfa_timeout_days)
+        (catch :anvil/cookie-error e (log/trace e))))))
 
-                  ;; TODO: We could unconditionally remember any MFA methods that are validated, allowing signup to carry over to login.
-                  maybe-remember-mfa! (fn [{:keys [id serial]}]
-                                        (when (and mfa_timeout_days
-                                                   (> mfa_timeout_days 0))
-                                          (try+
-                                            (cookies/set-cookie! cookie-type {mfa-cookie-key (str id "#"
-                                                                                                  serial "#"
-                                                                                                  (System/currentTimeMillis))}
-                                                                 mfa_timeout_days)
-                                            (catch :anvil/cookie-error e (log/trace e)))))]
-              (if mfa
-                (let [mfa-type (:type mfa)
-                      matching-mfa-methods (filter #(= mfa-type (get % :type)) mfa-methods)]
-                  (if (empty? matching-mfa-methods)
-                    (throw+ {:anvil/server-error "No matching MFA method available" :type "anvil.users.AuthenticationFailed"})
-                    (condp = mfa-type
-                      "totp"
-                      (if-let [mfa-method (some #(when (totp/validate-totp-code nil % (:code mfa)) %) matching-mfa-methods)]
-                        (maybe-remember-mfa! mfa-method)
-                        (do
-                          (record-login-failure! user-row)
-                          (throw+ {:anvil/server-error "Incorrect authentication code" :type "anvil.users.AuthenticationFailed"})))
 
-                      "fido"
-                      (if-let [[mfa-method updated-mfa-method] (some #(when-let [updated-mfa-method (fido/validate-fido-assertion % (:result mfa))] [% updated-mfa-method]) matching-mfa-methods)]
-                        ;; We have successfully validated against mfa-method, which has incremented its signCount. Save the updated method to the user object.
-                        (let [new-mfa-methods (vec (map #(if (= % mfa-method) updated-mfa-method %) mfa-methods))]
-                          (set-and-return-value-creating-col-if-necessary user_table (user-row->row-id-int user-row) "mfa" new-mfa-methods)
-                          (maybe-remember-mfa! updated-mfa-method))
-                        (do
-                          (record-login-failure! user-row)
-                          (throw+ {:anvil/server-error "Two-factor authentication failed" :type "anvil.users.AuthenticationFailed"})))
+(defn- check-mfa-totp [user-props user-row {:keys [matching-mfa-methods mfa] :as mfa-props}]
+  (if-let [mfa-method (some #(when (totp/validate-totp-code nil % (:code mfa)) %) matching-mfa-methods)]
+    (maybe-remember-mfa! user-props mfa-props mfa-method)
+    (do
+      (record-login-failure! user-row)
+      (throw+ {:anvil/server-error "Incorrect authentication code" :type "anvil.users.AuthenticationFailed"}))))
 
-                      "twilio-verify"
-                      (if-let [mfa-method (some #(when (twilio/check-verification-token nil % (:code mfa)) %) matching-mfa-methods)]
-                        (maybe-remember-mfa! mfa-method)
-                        (do
-                          (record-login-failure! user-row)
-                          (throw+ {:anvil/server-error "Incorrect authentication code" :type "anvil.users.AuthenticationFailed"})))
 
-                      (throw+ {:anvil/server-error "MFA method not supported" :type "anvil.users.AuthenticationFailed"})))) ; We should never get here.
-                (let [remembered-mfa (try+ (cookies/get-cookie-val cookie-type mfa-cookie-key) (catch :anvil/cookie-error _ nil))
-                      [method-id method-serial validation-time] (.split (or remembered-mfa "") "#")]
-                  ; We have remembered a previous MFA login. Check that it's still valid
-                  (when-not (some #(and (= (:id %) method-id)
-                                        (= (:serial %) (Integer/parseInt (or method-serial "0")))
-                                        (< (- (System/currentTimeMillis) (Long/parseLong (or validation-time "0"))) (* (or mfa_timeout_days 0) 24 60 60 1000))) mfa-methods)
-                    (reset! partial-logged-in-id (user-row->v1-id-str user-row))
-                    (throw+ {:anvil/server-error "MFA authentication required." :type "anvil.users.MFARequired"}))))))
+(defn- find-and-validate-fido-method [{:keys [matching-mfa-methods mfa] :as _mfa-props}]
+  (some
+    #(when-let [updated-mfa-method (fido/validate-fido-assertion % (:result mfa))]
+       [% updated-mfa-method]) matching-mfa-methods))
 
-          (login! user-row remember))
 
-        (finally
-          ;; No matter what happens, set the partially-logged-in user ID or clear it explicitly.
-          (if-let [partial-logged-in-id @partial-logged-in-id]
-            (swap! util/*session-state* assoc-in [:users :partial-logged-in-id] partial-logged-in-id)
-            (swap! util/*session-state* update-in [:users] dissoc :partial-logged-in-id)))))))
+(defn- check-mfa-fido [{:keys [table_id] :as user-props} user-row {:keys [mfa-methods] :as mfa-props}]
+  (if-let [[mfa-method updated-mfa-method] (find-and-validate-fido-method mfa-props)]
+    ;; We have successfully validated against mfa-method, which has incremented its signCount. Save the updated method to the user object.
+    (let [new-mfa-methods (vec (map #(if (= % mfa-method) updated-mfa-method %) mfa-methods))]
+      (user-util/update-user-row-creating-cols-as-necessary user-row {:mfa new-mfa-methods})
+      (maybe-remember-mfa! user-props mfa-props updated-mfa-method))
+    (do
+      (record-login-failure! user-row)
+      (throw+ {:anvil/server-error "Two-factor authentication failed" :type "anvil.users.AuthenticationFailed"}))))
+
+(defn- check-mfa-twilio-verify [user-props user-row {:keys [mfa matching-mfa-methods] :as mfa-props}]
+  (if-let [mfa-method (some #(when (twilio/check-verification-token nil % (:code mfa)) %) matching-mfa-methods)]
+    (maybe-remember-mfa! user-props mfa-props mfa-method)
+    (do
+      (record-login-failure! user-row)
+      (throw+ {:anvil/server-error "Incorrect authentication code" :type "anvil.users.AuthenticationFailed"}))))
+
+
+(defn- check-mfa-methods [user-props user-row {:keys [mfa-type matching-mfa-methods] :as mfa-props}]
+  (if (empty? matching-mfa-methods)
+    (throw+ {:anvil/server-error "No matching MFA method available" :type "anvil.users.AuthenticationFailed"})
+    (case mfa-type
+      "totp" (check-mfa-totp user-props user-row mfa-props)
+      "fido" (check-mfa-fido user-props user-row mfa-props)
+      "twilio-verify" (check-mfa-twilio-verify user-props user-row mfa-props)
+      ; We should never get here.
+      (throw+ {:anvil/server-error "MFA method not supported" :type "anvil.users.AuthenticationFailed"}))))
+
+
+(defn- get-remembered-mfa-cookie [user-props mfa-cookie-key]
+  (let [cookie-type (get-cookie-type user-props)]
+    (try+
+      (cookies/get-cookie-val cookie-type mfa-cookie-key)
+      (catch :anvil/cookie-error _ nil))))
+
+
+(defn check-remembered-mfa [{:keys [mfa_timeout_days] :as user-props} user-row {:keys [mfa-cookie-key mfa-methods] :as mfa-props} partial-logged-in-id]
+  (let [remembered-mfa (get-remembered-mfa-cookie user-props mfa-cookie-key)
+        [method-id method-serial validation-time] (.split (or remembered-mfa "") "#")]
+    ; We have remembered a previous MFA login. Check that it's still valid
+    (when-not (some #(and (= (:id %) method-id)
+                          (= (:serial %) (Integer/parseInt (or method-serial "0")))
+                          (< (- (System/currentTimeMillis) (Long/parseLong (or validation-time "0"))) (* (or mfa_timeout_days 0) 24 60 60 1000))) mfa-methods)
+      (reset! partial-logged-in-id (user-util/user-row->v1-id-str user-row))
+      (throw+ {:anvil/server-error "MFA authentication required." :type "anvil.users.MFARequired"}))))
+
+
+(defn- get-mfa-props [mfa {:keys [table_id] :as _user-props} user-row email]
+  (let [mfa-methods (user-util/get-in-user-row user-row :mfa)
+        mfa-cookie-key (keyword (str "user-table-" table_id "-user-" (.substring (anvil-util/sha-256 email) 0 8) "-mfa-validation"))
+        mfa-type (:type mfa)]
+    {
+     :mfa                  mfa
+     :mfa-type             (:type mfa)
+     :mfa-cookie-key       mfa-cookie-key
+     :mfa-methods          mfa-methods
+     :matching-mfa-methods (filter #(= mfa-type (get % :type)) mfa-methods)}))
+
+
+(defn- check-mfa [mfa {:keys [require_mfa] :as user-props} user-row email partial-logged-in-id]
+  (when require_mfa
+    (let [mfa-props (get-mfa-props mfa user-props user-row email)]
+      (if mfa
+        (check-mfa-methods user-props user-row mfa-props)
+        (check-remembered-mfa user-props user-row mfa-props partial-logged-in-id)))))
+
+
+(defn login-with-email [{:keys [remember mfa fetch] :as _kws} email password]
+  (let [partial-logged-in-id (atom nil)
+        fetch-spec (table-rpc/validate-fetch-request fetch)]
+    (try
+      (let [{:keys [table_id] :as user-props} (user-util/get-user-props)
+            _ (check-can-use-email user-props)
+            user-row (user-util/table-get-from-email-check-enabled-and-validate table_id (.trim ^String (or email "")) fetch-spec)]
+        (check-confirmed-email user-props user-row)
+        (check-password-failures user-props user-row)
+        (check-password user-props user-row password)
+        (check-mfa mfa user-props user-row email partial-logged-in-id)
+        (login! user-row remember))
+      (finally
+        ;; No matter what happens, set the partially-logged-in user ID or clear it explicitly.
+        (if-let [partial-logged-in-id @partial-logged-in-id]
+          (swap! rpc-util/*session-state* assoc-in [:users :partial-logged-in-id] partial-logged-in-id)
+          (swap! rpc-util/*session-state* update-in [:users] dissoc :partial-logged-in-id))))))
+
 
 (defn generate-email-link-token [_kwargs email type]
-  (let [token (str email "#" util/*app-id* "#" (System/currentTimeMillis) "#" type)]
+  (let [token (str email "#" rpc-util/*app-id* "#" (System/currentTimeMillis) "#" type)]
     (secrets/encrypt-str-with-global-key :ut token)))
 
-(defn do-login-with-token [app environment session-state token]
-  (binding [util/*client-request?* false
-            util/*app* (:content app)
-            util/*app-id* (:id app)
-            util/*environment* environment
-            util/*rpc-print* #(log/info "Token login output:" %&)]
 
-    (let [{:keys [user_table use_token] :as props} (get-props-with-named-user-table)]
-      ; Is this a valid token?
-      (when-let [decrypted-token (try (secrets/decrypt-str-with-global-key :ut token) (catch Exception _ nil))]
-        (let [[email token-app-id token-time token-type] (.split (or decrypted-token "") "#")
-              user-row (get-user-check-enabled-and-validate user_table {:email email} :email)]
+(defn- parse-decrypted-token [decrypted-token]
+  (when decrypted-token
+    (let [[email token-app-id token-time token-type] (.split (or decrypted-token "") "#")]
+      {:email email :token-app-id token-app-id :token-time token-time :token-type token-type})))
 
-          (when (and user-row                               ; Is this a valid user?
-                     (= token-app-id (:id app))             ; Is the token for this app?
-                     (< (- (System/currentTimeMillis) (Long/parseLong (or token-time "0"))) ; Is the token still valid?
-                        (* 10 60 1000)))                    ; Ten minute timeout
-            (cond
-              (and use_token (= token-type "login"))
-              ;; Token login is enabled in this app: Log in.
-              (do
-                (swap! session-state assoc-in [:users :logged-in-id] (user-row->v1-id-str user-row))
-                ; Return the logged-in user
-                user-row)
 
-              (= token-type "mfa-reset")
-              ;; This is an mfa-reset token, store it in the session so the client can find it.
-              (do
-                (swap! session-state assoc-in [:users :mfa-reset-user-id] (user-row->v1-id-str user-row))
-                ; The user is still not logged in, so only reveal that this worked and nothing more
-                true)
+(defn- get-decrypted-token [token]
+  (try (-> (secrets/decrypt-str-with-global-key :ut token)
+           parse-decrypted-token) (catch Exception _ nil)))
 
-              (= token-type "pw-reset")
-              (do
-                (swap! session-state assoc-in [:users :password-reset-user-id] (user-row->v1-id-str user-row))
-                ; The user is still not logged in, so only reveal that this worked and nothing more
-                true)
+(defn- is-valid-token? [user-row app { :keys [token-app-id token-time] :as decrypted-token}]
+  (and user-row                                 ; Is this a valid user?
+       (= token-app-id (:id app))               ; Is the token for this app?
+       (< (- (System/currentTimeMillis) (Long/parseLong (or token-time "0"))) ; Is the token still valid?
+          (* 10 60 1000)))) ; Ten minute timeout
+
+
+(defn do-login-with-token [app environment session-state token fetch-spec]
+  (binding [rpc-util/*app* (:content app)
+            rpc-util/*app-id* (:id app)
+            rpc-util/*environment* environment
+            rpc-util/*session-state* session-state
+            rpc-util/*rpc-print* #(log/info "Token login output:" %&)]
+
+    (when-let [{:keys [email token-type] :as decrypted-token} (get-decrypted-token token)]
+      (let [{:keys [table_id use_token]} (user-util/get-user-props)
+            user-row (user-util/table-get-from-email-check-enabled-and-validate table_id email fetch-spec)]
+        (when (is-valid-token? user-row app decrypted-token)
+          (cond
+            (and use_token (= token-type "login"))
+            ;; Token login is enabled in this app: Log in.
+            (do
+              (swap! session-state assoc-in [:users :logged-in-id] (user-util/user-row->v1-id-str user-row))
+              ; Return the logged-in user
+              user-row)
+
+            (= token-type "mfa-reset")
+            ;; This is an mfa-reset token, store it in the session so the client can find it.
+            (do
+              (swap! session-state assoc-in [:users :mfa-reset-user-id] (user-util/user-row->v1-id-str user-row))
+              ; The user is still not logged in, so only reveal that this worked and nothing more
+              true)
+
+            (= token-type "pw-reset")
+            (do
+              (swap! session-state assoc-in [:users :password-reset-user-id] (user-util/user-row->v1-id-str user-row))
+              ; The user is still not logged in, so only reveal that this worked and nothing more
+              true)))))))
 
               ;; TODO: Add token type for email verification
-              )))))))
 
-(defn login-with-token [_kwargs token]
-  (do-login-with-token {:id util/*app-id* :content util/*app*} util/*environment* util/*session-state* token))
 
-(defn signup-common [required-permission signup-method-name search-attributes new-user-attributes login-when-enabled? lowercase-column remember?]
-  (let [{:keys [user_table allow_signup enable_automatically] :as props} (get-props-with-named-user-table)]
-    (when (and util/*client-request?* (not allow_signup))
-      (throw+ {:anvil/server-error "Signups from client code are not enabled."}))
-    (when-not (get props required-permission)
-      (throw+ {:anvil/server-error (str signup-method-name " authentication is not enabled.")}))
-    (binding [util/*client-request?* false]
-      (tables-util/with-table-transaction
-        (if (get-and-create-columns user_table search-attributes lowercase-column)
-          (throw+ {:anvil/server-error "This user already exists", :type "anvil.users.UserExists"})
-          (let [attributes (merge {:signed_up (now-as-table-date)
-                                   :enabled   (boolean enable_automatically)}
-                                  search-attributes new-user-attributes)
-                new-user (add-new-user user_table attributes)]
-            (if (and enable_automatically login-when-enabled?)
-              (do
-                (validate-enabled-user! (row-to-map new-user))
-                (login! new-user remember?))
-              new-user)))))))
+(defn login-with-token [{:keys [fetch] :as _kws} token]
+  (let [fetch-spec (table-rpc/validate-fetch-request fetch)]
+    (do-login-with-token {:id rpc-util/*app-id* :content rpc-util/*app*} rpc-util/*environment* rpc-util/*session-state* token fetch-spec)))
+
+
+
+(def required-permission->email-getter
+  {:use_google    google-auth/get-user-email
+   :use_facebook  facebook-auth/get-user-email
+   :use_microsoft microsoft-auth/get-user-email
+   :use_saml      saml-auth/get-user-email})
+
+(def required-permission->auth-name
+  {:use_google "Google"
+   :use_facebook "Facebook"
+   :use_microsoft "Microsoft"
+   :use_saml "SAML"
+   :use_email "Email/password"})
+
+
+(def default-automatic-login-keys [:enable_automatically])
+
+(def required-permission->automatic-login-preds
+  {:use_google default-automatic-login-keys
+   :use_facebook default-automatic-login-keys
+   :use_microsoft default-automatic-login-keys
+   :use_saml default-automatic-login-keys
+   :use_email [:enable_automatically (complement :confirm_email)]})
+
+
+(defn required-permission->can-login-automatically? [required-permission user-props]
+  (as-> required-permission m
+        (required-permission->automatic-login-preds m)
+        (apply every-pred m)
+        (m user-props)))
+
+
+
+(defn check-client-can-signup [{:keys [table_id allow_signup enable_automatically] :as user-props}]
+  (when (and rpc-util/*client-request?* (not allow_signup))
+    (throw+ {:anvil/server-error "Signups from client code are not enabled."})))
+
+
+(defn check-can-use-authentication-method [user-props required-permission]
+  (when-not (get user-props required-permission)
+    (throw+ {:anvil/server-error (str (required-permission->auth-name required-permission) " authentication is not enabled.")})))
+
+
+(defn get-and-check-current-user-email-from-required-permission [required-permission]
+  (let [email-getter (required-permission->email-getter required-permission)
+        current-user-email (email-getter {})]
+    (when-not current-user-email
+      (throw+ {:anvil/server-error (str "User is not logged in with " (required-permission->auth-name required-permission))}))
+    current-user-email))
+
+
+(defn add-new-user-from-signup [required-permission user-props email {:keys [fetch remember]} {:keys [attrs] :as opts}]
+  (let [{:keys [table_id enable_automatically] :as _user-props} user-props
+        ;; Include :last_login nil to ensure the column exists (login! reads it later),
+        ;; but don't set a date — the user may not be auto-logged-in (e.g. email confirmation required).
+        attributes (merge attrs {:signed_up   (now-as-table-date)
+                                 :last_login  nil
+                                 :enabled     (boolean enable_automatically)
+                                 :email       (.toLowerCase email)})
+        new-user (user-util/add-new-user table_id attributes (table-rpc/validate-fetch-request fetch))]
+    (if (required-permission->can-login-automatically? required-permission user-props)
+      (do
+        (user-util/validate-enabled-user! (user-util/row-to-map new-user))
+        (login! new-user remember))
+      new-user)))
+
+
+(defn signup-common-from-email [required-permission email {:keys [table_id] :as user-props} kws & {:keys [attrs] :as opts}]
+  (check-client-can-signup user-props)
+  (check-can-use-authentication-method user-props required-permission)
+  (table-v1-util/with-table-transaction
+    (if-let [user-row (user-util/table-get-from-email-check-enabled-and-validate table_id email)]
+      (throw+ {:anvil/server-error "This user already exists", :type "anvil.users.UserExists"})
+      (add-new-user-from-signup required-permission user-props email kws opts))))
+
+
+
+(defn signup-common [required-permission kws]
+  (let [current-user-email (get-and-check-current-user-email-from-required-permission required-permission)
+        user-props (user-util/get-user-props)]
+    (signup-common-from-email required-permission current-user-email user-props kws)))
+
+
+(defn login-common [required-permission {:keys [remember fetch] :as kws}]
+  (let [{:keys [table_id allow_signup] :as user-props} (user-util/get-user-props)
+        _ (check-can-use-authentication-method user-props required-permission)
+        current-user-email (get-and-check-current-user-email-from-required-permission required-permission)
+        fetch-spec (table-rpc/validate-fetch-request fetch)
+        user-row (user-util/table-get-from-email-check-enabled-and-validate table_id current-user-email fetch-spec)]
+    (cond
+      user-row (login! user-row remember)
+      allow_signup (signup-common-from-email required-permission current-user-email user-props kws)
+      :else (throw+ {:anvil/server-error "Not a registered user" :type "anvil.users.AuthenticationFailed"}))))
+
+
+(def login-with-google (partial login-common :use_google))
+
+(def signup-with-google (partial signup-common :use_google))
+
+(def login-with-facebook (partial login-common :use_facebook))
+
+(def signup-with-facebook (partial signup-common :use_facebook))
+
+(def login-with-microsoft (partial login-common :use_microsoft))
+
+(def signup-with-microsoft (partial signup-common :use_microsoft))
+
+(def login-with-saml (partial login-common :use_saml))
+
+(def signup-with-saml (partial signup-common :use_saml))
 
 (def default-emails
   {:token_login     {:subject_suffix "Login"
@@ -390,15 +593,15 @@
 (defn send-email! [service-props to email-name text-subs link-subs]
   (let [{:keys [email_content email_from_address]} service-props
         ;; only allow overriding email content for trusted apps; otherwise could become a spam free-for-all
-        email_content (when-not (app-data/abuse-caution? util/*session-state* util/*app-id*)
+        email_content (when-not (app-data/abuse-caution? rpc-util/*session-state* rpc-util/*app-id*)
                         email_content)
-        from-name (if (app-data/abuse-caution? util/*session-state* util/*app-id*)
+        from-name (if (app-data/abuse-caution? rpc-util/*session-state* rpc-util/*app-id*)
                     "Accounts"
-                    (str (or (:name util/*app-info*) (:name util/*app*)) " Accounts"))
+                    (str (or (:name rpc-util/*app-info*) (:name rpc-util/*app*)) " Accounts"))
         from-address (or email_from_address "accounts")
         subject (or (get-in email_content [email-name :subject])
                     (get-in default-emails [email-name :subject])
-                    (str (:name util/*app*) " " (get-in default-emails [email-name :subject_suffix])))
+                    (str (:name rpc-util/*app*) " " (get-in default-emails [email-name :subject_suffix])))
 
         replace-subs (fn [html subs f]
                        (reduce (fn [^String html [sub-name sub]]
@@ -418,8 +621,8 @@
                  (.replace "&gt;" ">")
                  (.replace "&amp;" "&")
                  (.replace "&quot;" "\""))]
-    (if (get-in @util/*session-state* [:users :test-email-divert])
-      (swap! util/*session-state* update-in [:users :test-email-divert] concat [{:to to, :from_name from-name, :from_address from-address, :subject subject, :text text}])
+    (if (get-in @rpc-util/*session-state* [:users :test-email-divert])
+      (swap! rpc-util/*session-state* update-in [:users :test-email-divert] concat [{:to to, :from_name from-name, :from_address from-address, :subject subject, :text text}])
       (binding [email/*use-quota* false
                 email/*require-service-config* false]
         (email/send! {:from_name    from-name
@@ -429,124 +632,161 @@
                       :text         text
                       :html         html})))))
 
-(defn send-token-login-email [_kwargs email]
-  (binding [util/*client-request?* false]
-    (let [{:keys [user_table use_token] :as props} (get-props-with-named-user-table)]
-      ;; We're only allowed to call this from the client if logging in with a token is enabled. We can call this from the server either way.
-      (when (not use_token)
-        (throw+ {:anvil/server-error "Token login is not enabled." :type "anvil.users.AuthenticationFailed"}))
 
-      (when (empty? email)
-        (throw+ {:anvil/server-error "Please provide an email address." :type "anvil.users.AuthenticationFailed"}))
+(defn- check-can-use-token [{:keys [use_token] :as user-props}]
+  (when (not use_token)
+    (throw+ {:anvil/server-error "Token login is not enabled." :type "anvil.users.AuthenticationFailed"})))
 
-      (if (get-user-check-enabled-and-validate user_table {:email email} :email)
-        (let [login-link (str (get-our-origin)
-                              "/_/login/"
-                              (anvil-util/real-actual-genuine-url-encoder (generate-email-link-token nil email "login")))]
-          (send-email! props email :token_login {:email email :login_url login-link} {:login_link login-link})
-          nil)
-        (throw+ {:anvil/server-error "User disabled, or not found." :type "anvil.users.AuthenticationFailed"})))))
+(defn- check-non-empty-email [email]
+  (when (empty? email)
+    (throw+ {:anvil/server-error "Please provide an email address." :type "anvil.users.AuthenticationFailed"})))
 
-(defn send-mfa-reset-email [_kwargs email]
-  (binding [util/*client-request?* false]
-    (let [{:keys [user_table require_mfa allow_mfa_email_reset] :as props} (get-props-with-named-user-table)]
+(defn- check-user-exists [user-row]
+  (when-not user-row
+    (throw+ {:anvil/server-error "User disabled, or not found." :type "anvil.users.AuthenticationFailed"})))
 
-      (when (empty? email)
-        (throw+ {:anvil/server-error "Please provide an email address." :type "anvil.users.AuthenticationFailed"}))
 
-      (if-let [user (get-user-check-enabled-and-validate user_table {:email email} :email)]
-        (let [login-link (str (get-our-origin)
-                              "/_/login/"
-                              (anvil-util/real-actual-genuine-url-encoder (generate-email-link-token nil email "mfa-reset")))
-              mfa-available-for-user? (not-empty (map :type (get (row-to-map user) "mfa" [])))]
-          ;; Only send the email if reset is allowed, or if mfa is required and we have no methods available.
-          (if (or allow_mfa_email_reset
-                  (and require_mfa (not mfa-available-for-user?)))
-            (do (send-email! props email :mfa_reset {:email email :login_url login-link} {:login_link login-link})
-                nil)
-            (throw+ {:anvil/server-error "Cannot reset two-factor authentication by email." :type "anvil.users.AuthenticationFailed"})))
-        (throw+ {:anvil/server-error "User disabled, or not found." :type "anvil.users.AuthenticationFailed"})))))
+(defn- send-login-token-link [user-props email]
+  (let [login-link (str (get-our-origin)
+                        "/_/login/"
+                        (anvil-util/real-actual-genuine-url-encoder (generate-email-link-token nil email "login")))]
+    (send-email! user-props email :token_login {:email email :login_url login-link} {:login_link login-link})
+    nil))
 
-(defn signup-with-email [{:keys [remember mfa_method] :as _kwargs} email password]
-  (let [email (.trim (.toLowerCase ^String (or email "")))
-        {:keys [confirm_email enable_automatically require_secure_passwords require_mfa] :as props} (get-props-with-named-user-table)
-        _ (when (and require_secure_passwords
-                     (< (.length (str password)) 7))
-            (throw+ {:anvil/server-error "Passwords must be 8 characters or more" :type "anvil.users.PasswordNotAcceptable"}))
-        _ (when (and require_secure_passwords
-                     (or (< (.length password) 6) (runtime-util/is-password-pwned? password)))
-            (throw+ {:anvil/server-error "This password is not safe to use: It has previously been leaked and posted on the internet." :type "anvil.users.PasswordNotAcceptable"}))
 
-        _ (when (and require_mfa
-                     (not mfa_method))
-            (throw+ {:anvil/server-error "MFA authentication required" :type "anvil.users.MFARequired"}))
+(defn send-token-login-email [_kws email]
+  (let [{:keys [table_id ] :as user-props} (user-util/get-user-props)]
+    ;; We're only allowed to call this from the client if logging in with a token is enabled. We can call this from the server either way.
+    (check-can-use-token user-props)
+    (check-non-empty-email email)
+    (let [user-row (user-util/table-get-from-email-check-enabled-and-validate table_id email)]
+      (check-user-exists user-row)
+      (send-login-token-link user-props email))))
 
-        _ (when (and require_mfa
-                     (not ((set (get-enabled-mfa-types nil)) (:type mfa_method))))
-            (throw+ {:anvil/server-error "MFA type not supported" :type "anvil.users.MFARequired"}))
 
-        confirmation-key (random/url-part 10)
-        new-user-row (signup-common :use_email "Email/password"
-                                    {:email email} (merge {:password_hash (BCrypt/hashpw password (BCrypt/gensalt))}
-                                                          (when confirm_email
-                                                            {:confirmed_email false, :email_confirmation_key confirmation-key})
-                                                          (when require_mfa
-                                                            {:mfa [mfa_method]}))
-                                    (not confirm_email) :email remember)
-        confirm-url (format "%s/_/email-confirm/%s/%s"
-                            (get-our-origin)
-                            (codec/url-encode email)
-                            (codec/url-encode confirmation-key))]
-    (when confirm_email
-      (send-email! props email :confirm_address {:email email :confirm_url confirm-url} {:confirm_link confirm-url}))
-    new-user-row))
+(defn- can-send-mfa-reset-email-to-user? [{:keys [require_mfa allow_mfa_email_reset] :as _user-props} user-row]
+  ;; Only send the email if reset is allowed, or if mfa is required, and we have no methods available.
+  ;; user-row must have mfa in the fetch-spec
+  (cond
+    allow_mfa_email_reset true
+    (and require_mfa (empty? (user-util/get-in-user-row user-row :mfa))) true
+    :else false))
 
-(defn send-password-reset-email [_kwargs email]
-  (binding [util/*client-request?* false]
-    (let [{:keys [user_table use_email] :as props} (get-props-with-named-user-table)]
+(defn- check-can-send-mfa-reset-email-to-user [user-props user-row]
+  ;; user-row must have mfa in the fetch-spec
+  (when-not (can-send-mfa-reset-email-to-user? user-props user-row)
+    (throw+ {:anvil/server-error "Cannot reset two-factor authentication by email." :type "anvil.users.AuthenticationFailed"})))
 
-      (when (not use_email)
-        (throw+ {:anvil/server-error "Email/password login is not enabled." :type "anvil.users.AuthenticationFailed"}))
 
-      (when (empty? email)
-        (throw+ {:anvil/server-error "Please provide an email address." :type "anvil.users.AuthenticationFailed"}))
+(defn- send-mfa-reset-link [user-props email]
+  (let [login-link (str (get-our-origin)
+                        "/_/login/"
+                        (anvil-util/real-actual-genuine-url-encoder (generate-email-link-token nil email "mfa-reset")))]
+    (send-email! user-props email :mfa_reset {:email email :login_url login-link} {:login_link login-link})
+    nil))
 
-      (if (get-user-check-enabled-and-validate user_table {:email email} :email)
-        (let [reset-link (str (get-our-origin)
-                              "/_/reset_password/"
-                              (anvil-util/real-actual-genuine-url-encoder (generate-email-link-token nil email "pw-reset")))
-              request util/*req*]
 
-          (worker-pool/run-task! ::send-reset-email
-            (util/with-basic-native-bindings-from-request request
-              (send-email! props email :reset_password {:email email :reset_url reset-link} {:reset_link reset-link})))
-          (when-not conf/dont-confirm-emails-during-auth?
-            true))
-        (when-not conf/dont-confirm-emails-during-auth?
-          (throw+ {:anvil/server-error "This username does not exist or is disabled." :type "anvil.users.AuthenticationFailed"}))))))
+(defn send-mfa-reset-email [_kws email]
+  (let [{:keys [table_id] :as user-props} (user-util/get-user-props)]
+    (check-non-empty-email email)
+    (let [user-row (try+
+                     (user-util/table-get-from-email-check-enabled-and-validate table_id email)
+                     (catch #(= "anvil.users.AccountIsNotEnabled" (:type %)) _
+                       nil))]
+      (if user-row
+        (do
+          (check-can-send-mfa-reset-email-to-user user-props user-row)
+          (send-mfa-reset-link user-props email))
+        (when-not runtime-conf/dont-confirm-emails-during-auth?
+          (throw+ {:anvil/server-error "User disabled, or not found." :type "anvil.users.AuthenticationFailed"}))))))
+
+
+(defn- check-secure-password [{:keys [require_secure_passwords] :as _user-props} password]
+  (when (and require_secure_passwords
+             (< (.length (str password)) 7))
+    (throw+ {:anvil/server-error "Passwords must be 8 characters or more" :type "anvil.users.PasswordNotAcceptable"}))
+  (when (and require_secure_passwords
+             (or (< (.length password) 6) (runtime-util/is-password-pwned? password)))
+    (throw+ {:anvil/server-error "This password is not safe to use: It has previously been leaked and posted on the internet." :type "anvil.users.PasswordNotAcceptable"})))
+
+
+(defn- check-mfa-requirements [{:keys [require_mfa] :as _user-props} {:keys [mfa_method] :as _kws}]
+  (when (and require_mfa
+             (not mfa_method))
+    (throw+ {:anvil/server-error "MFA authentication required" :type "anvil.users.MFARequired"}))
+
+  (when (and require_mfa
+             (not ((set (get-enabled-mfa-types)) (:type mfa_method))))
+    (throw+ {:anvil/server-error "MFA type not supported" :type "anvil.users.MFARequired"})))
+
+
+(defn- maybe-send-confirmation-email [{:keys [confirm_email] :as user-props} email confirmation-key]
+  (when confirm_email
+    (let [confirm-url (format "%s/_/email-confirm/%s/%s"
+                              (get-our-origin)
+                              (codec/url-encode email)
+                              (codec/url-encode confirmation-key))]
+      (send-email! user-props email :confirm_address {:email email :confirm_url confirm-url} {:confirm_link confirm-url}))))
+
+
+(defn get-new-user-signup-with-email [{:keys [confirm_email require_mfa] :as user-props} {:keys [mfa_method] :as kws} email password confirmation-key]
+  (let [attrs (cond-> {:password_hash (BCrypt/hashpw password (BCrypt/gensalt))}
+                confirm_email (assoc :confirmed_email false, :email_confirmation_key confirmation-key)
+                require_mfa (assoc :mfa [mfa_method]))]
+    (signup-common-from-email :use_email email user-props kws {:attrs attrs})))
+
+
+(defn signup-with-email [kws email password]
+  (let [user-props (user-util/get-user-props)]
+    (check-mfa-requirements user-props kws)
+    (check-secure-password user-props password)
+    (let [email (.trim (.toLowerCase ^String (or email "")))
+          confirmation-key (random/url-part 10)
+          new-user (get-new-user-signup-with-email user-props kws email password confirmation-key)]
+      (maybe-send-confirmation-email user-props email confirmation-key)
+      new-user)))
+
+(defn- do-send-password-reset-email! [user-props email]
+  (let [reset-link (str (get-our-origin)
+                        "/_/reset_password/"
+                        (anvil-util/real-actual-genuine-url-encoder (generate-email-link-token nil email "pw-reset")))
+        request rpc-util/*req*]
+    (worker-pool/run-task! ::send-reset-email
+                           (rpc-util/with-basic-native-bindings-from-request
+                             request
+                             (send-email! user-props email :reset_password {:email email :reset_url reset-link} {:reset_link reset-link})))
+    (when-not runtime-conf/dont-confirm-emails-during-auth?
+      true)))
+
+(defn send-password-reset-email [_kws email]
+  (let [{:keys [table_id] :as user-props} (user-util/get-user-props)]
+    (check-can-use-email user-props)
+    (check-non-empty-email email)
+    (if (user-util/table-get-from-email-check-enabled-and-validate table_id email)
+      (do-send-password-reset-email! user-props email)
+      (when-not runtime-conf/dont-confirm-emails-during-auth?
+        (throw+ {:anvil/server-error "This username does not exist or is disabled." :type "anvil.users.AuthenticationFailed"})))))
 
 (defn call-if-confirmation-key-correct [app environment email confirmation-key require-settings f]
-  (binding [util/*client-request?* false
-            util/*app* (:content app)
-            util/*app-id* (:id app)
-            util/*environment* environment
-            util/*session-state* (or util/*session-state* (sessions/empty-dummy-session))
-            util/*rpc-print* #(log/info "Email confirmation table output:" %&)]
-
-    (let [{:keys [user_table use_email] :as props} (get-props-with-named-user-table)]
+  (binding [rpc-util/*app* (:content app)
+            rpc-util/*app-id* (:id app)
+            rpc-util/*environment* environment
+            rpc-util/*session-state* (or rpc-util/*session-state* (sessions/empty-dummy-session))
+            rpc-util/*rpc-print* #(log/info "Email confirmation table output:" %&)]
+    (let [{:keys [table_id use_email] :as props} (user-util/get-user-props)]
       (when (and use_email (every? props require-settings))
-        (let [user-row (get-and-create-columns user_table {:email email} :email)
-              real-confirmation-key (get (row-to-map user-row) "email_confirmation_key")]
+        (let [user-row (user-util/table-get-row-from-query table_id {:email email})
+              real-confirmation-key (user-util/get-in-user-row user-row :email_confirmation_key)]
 
           (when (and real-confirmation-key
                      (= (anvil-util/sha-256 real-confirmation-key) (anvil-util/sha-256 confirmation-key)))
-            (f user_table user-row)))))))
+            (f user-row)))))))
 
 (defn set-if-confirmation-key-correct [app environment email confirmation-key require-settings new-attributes]
   (call-if-confirmation-key-correct app environment email confirmation-key require-settings
-                                      (fn [user_table user-row]
-                                        (set-values-creating-col-if-necessary user_table (user-row->row-id-int user-row) new-attributes)
-                                        true)))
+                                    (fn [user-row]
+                                      (user-util/update-user-row-creating-cols-as-necessary user-row new-attributes)
+                                      true)))
 
 
 (defn confirm-email [app environment email confirmation-key]
@@ -558,51 +798,46 @@
   (call-if-confirmation-key-correct app environment email confirmation-key #{} (constantly true)))
 
 ; To stop the password reset box from popping up multiple times if you cancel it.
-(defn cancel-password-reset [_kwargs]
-  (swap! util/*session-state* assoc-in [:users :password-reset-user-id] nil)
+(defn cancel-password-reset [_kws]
+  (swap! rpc-util/*session-state* assoc-in [:users :password-reset-user-id] nil)
   nil)
 
+(defn- check-old-password [user-row old-password]
+  (let [pw-hash (user-util/get-in-user-row user-row :password_hash)]
+    (when-not (anvil.util/bcrypt-checkpw old-password pw-hash)
+      (record-login-failure! user-row)
+      (throw+ {:anvil/server-error "Incorrect password" :type "anvil.users.AuthenticationFailed"}))))
+
+
+(defn- update-user-row-after-password-reset [{:keys [confirm_email] :as _user-props} user-row new-password email-reset-user]
+  (let [password-failures (user-util/get-in-user-row user-row :n_password_failures)
+        updated-attrs (cond-> {:password_hash (BCrypt/hashpw new-password (BCrypt/gensalt))}
+                        (and confirm_email email-reset-user) (assoc :confirmed_email true)
+                        (number? password-failures) (assoc :n_password_failures 0))]
+    (user-util/update-user-row-creating-cols-as-necessary user-row  updated-attrs)))
+
+
 (defn reset-password [_kwargs old-password new-password]
-  (binding [util/*client-request?* false]
-    (let [{:keys [user_table require_secure_passwords confirm_email] :as _props} (get-props-with-named-user-table)
-          email-reset-user (get-in @util/*session-state* [:users :password-reset-user-id])
-          v1-row-id-str (or (get-in @util/*session-state* [:users :logged-in-id]) email-reset-user)
-          user (get-user-row-by-id user_table v1-row-id-str)
-          {pw-hash "password_hash"
-           password-failures "n_password_failures"} (row-to-map user)]
+  (let [{:keys [table_id confirm_email] :as user-props} (user-util/get-user-props)
+        email-reset-user (get-in @rpc-util/*session-state* [:users :password-reset-user-id])
+        v1-row-id-str (or (get-in @rpc-util/*session-state* [:users :logged-in-id]) email-reset-user)
+        user-row (user-util/table-get-row-by-id table_id v1-row-id-str)
+        password-failures (user-util/get-in-user-row user-row :n_password_failures)]
 
-      (when-not (or email-reset-user
-                    (anvil.util/bcrypt-checkpw old-password pw-hash))
-        ;; Don't require old password when resetting by token.
-        (record-login-failure! user)
-        (throw+ {:anvil/server-error "Incorrect password" :type "anvil.users.AuthenticationFailed"}))
+    (when-not email-reset-user
+      ;; Don't require old password when resetting by token.
+      (check-old-password user-row old-password))
+    (check-secure-password user-props new-password)
 
-      (when (and require_secure_passwords
-                 (< (.length (str new-password)) 8))
-        (throw+ {:anvil/server-error "Passwords must be 8 characters or more" :type "anvil.users.PasswordNotAcceptable"}))
+    (swap! rpc-util/*session-state* assoc-in [:users :password-reset-user-id] nil)
+    (update-user-row-after-password-reset user-props user-row new-password email-reset-user)
+    (invalidate-all-session-logins v1-row-id-str)
+    true))
 
-      (when (and require_secure_passwords
-                 (runtime-util/is-password-pwned? new-password))
-        (throw+ {:anvil/server-error "This password is not safe to use: It has been previously leaked and posted on the internet." :type "anvil.users.PasswordNotAcceptable"}))
-
-      (swap! util/*session-state* assoc-in [:users :password-reset-user-id] nil)
-      (set-values-creating-col-if-necessary user_table (user-row->row-id-int user)
-                                            (merge {"password_hash" (BCrypt/hashpw new-password (BCrypt/gensalt))}
-                                                   (when (and confirm_email email-reset-user)
-                                                     {:confirmed_email true})
-                                                   (when (number? password-failures)
-                                                     {"n_password_failures" 0})))
-      (invalidate-all-session-logins v1-row-id-str)
-      true)))
 
 (defn reset-email-password! [app environment email confirmation-key password]
-  (let [{:keys [require_secure_passwords confirm_email] :as _props} (get-props-with-named-user-table (tables-util/table-mapping-for-environment environment util/*session-state*) (:content app))
-        _ (when (and require_secure_passwords
-                     (< (.length (str password)) 7))
-            (throw+ {:anvil/server-error "Passwords must be 8 characters or more" :type "anvil.users.PasswordNotAcceptable"}))
-        _ (when (and require_secure_passwords
-                     (or (< (.length password) 6) (runtime-util/is-password-pwned? password)))
-            (throw+ {:anvil/server-error "This password is not safe to use: It has been previously leaked and posted on the internet." :type "anvil.users.PasswordNotAcceptable"}))]
+  (let [{:keys [confirm_email] :as user-props} (user-util/get-base-user-props (:content app))]
+    (check-secure-password user-props password)
     (set-if-confirmation-key-correct app environment email confirmation-key #{}
                                      (merge
                                        {:email_confirmation_key nil
@@ -611,176 +846,154 @@
                                          {:confirmed_email true})))))
 
 
-(defn login-with-google [{:keys [remember] :as _kwargs}]
-  (binding [util/*client-request?* false]
-    (let [{:keys [user_table use_google enable_automatically allow_signup]} (get-props-with-named-user-table)
-          current-google-user (google-auth/get-user-email {})
-          _ (when-not use_google (throw+ {:anvil/server-error "Google authentication is not enabled."}))
-          _ (when-not current-google-user (throw+ {:anvil/server-error "User is not logged in with Google"}))
-          user-row (get-user-check-enabled-and-validate user_table {:email current-google-user} :email)]
-      (if user-row
-        (login! user-row remember)
-        (if allow_signup
-          (signup-common :use_google "Google"
-                         {:email (.toLowerCase current-google-user)} nil
-                         true :email remember)
-          (throw+ {:anvil/server-error "Not a registered user" :type "anvil.users.AuthenticationFailed"}))))))
+(defn- get-user-from-session [{:keys [table_id] :as _user-props} fetch-spec]
+  (when-let [user-id (get-in @rpc-util/*session-state* [:users :logged-in-id])]
+    (user-util/table-get-row-by-id table_id user-id fetch-spec)))
 
-(defn signup-with-google [{:keys [remember] :as _kwargs}]
-  (if-let [current-google-user (google-auth/get-user-email {})]
-    (signup-common :use_google "Google"
-                   {:email (.toLowerCase current-google-user)} nil
-                   true :email remember)
-    (throw+ {:anvil/server-error "User is not logged in with Google"})))
 
-(defn login-with-facebook [{:keys [remember] :as _kwargs}]
-  (binding [util/*client-request?* false]
-    (let [{:keys [user_table use_facebook enable_automatically allow_signup]} (get-props-with-named-user-table)
-          current-facebook-user (facebook-auth/get-user-email {})
-          _ (when-not use_facebook (throw+ {:anvil/server-error "Facebook authentication is not enabled."}))
-          _ (when-not current-facebook-user (throw+ {:anvil/server-error "User is not logged in with Facebook"}))
-          user-row (get-user-check-enabled-and-validate user_table {:email current-facebook-user} :email)]
-      (if user-row
-        (login! user-row remember)
-        (if allow_signup
-          (signup-common :use_facebook "Facebook"
-                         {:email (.toLowerCase current-facebook-user)} nil
-                         true :email remember)
-          (throw+ {:anvil/server-error "Not a registered user" :type "anvil.users.AuthenticationFailed"}))))))
+(defn- is-valid-remembered-user? [user-row remember-me-days]
+  (and user-row
+       (user-util/get-in-user-row user-row :enabled)
+       (some #(is-in-date? % remember-me-days)
+             (user-util/get-in-user-row user-row :remembered_logins))))
 
-(defn signup-with-facebook [{:keys [remember] :as _kwargs}]
-  (if-let [current-facebook-user (facebook-auth/get-user-email {})]
-    (signup-common :use_facebook "Facebook"
-                   {:email (.toLowerCase current-facebook-user)} nil
-                   true :email remember)
-    (throw+ {:anvil/server-error "User is not logged in with Facebook"})))
 
-(defn login-with-microsoft [{:keys [remember] :as _kwargs}]
-  (binding [util/*client-request?* false]
-    (let [{:keys [user_table use_microsoft enable_automatically allow_signup]} (get-props-with-named-user-table)
-          current-microsoft-user (microsoft-auth/get-user-email {})
-          _ (when-not use_microsoft (throw+ {:anvil/server-error "Microsoft authentication is not enabled."}))
-          _ (when-not current-microsoft-user (throw+ {:anvil/server-error "User is not logged in with Microsoft"}))
-          user-row (get-user-check-enabled-and-validate user_table {:email current-microsoft-user} :email)]
-      (if user-row
-        (login! user-row remember)
-        (if allow_signup
-          (signup-common :use_microsoft "Microsoft"
-                         {:email (.toLowerCase current-microsoft-user)} nil
-                         true :email remember)
-          (throw+ {:anvil/server-error "Not a registered user" :type "anvil.users.AuthenticationFailed"}))))))
-
-(defn signup-with-microsoft [{:keys [remember] :as _kwargs}]
-  (if-let [current-microsoft-user (microsoft-auth/get-user-email {})]
-    (signup-common :use_microsoft "Microsoft"
-                   {:email (.toLowerCase current-microsoft-user)} nil
-                   true :email remember)
-    (throw+ {:anvil/server-error "User is not logged in with Microsoft"})))
-
-(defn login-with-saml [{:keys [remember] :as _kwargs}]
-  (binding [util/*client-request?* false]
-    (let [{:keys [user_table use_saml enable_automatically allow_signup]} (get-props-with-named-user-table)
-          current-saml-user (saml-auth/get-user-email {})
-          _ (when-not use_saml (throw+ {:anvil/server-error "SAML authentication is not enabled."}))
-          _ (when-not current-saml-user (throw+ {:anvil/server-error "User is not logged in via SAML"}))
-          user-row (get-user-check-enabled-and-validate user_table {:email current-saml-user} :email)]
-      (if user-row
-        (login! user-row remember)
-        (if allow_signup
-          (signup-common :use_saml "SAML"
-                         {:email (.toLowerCase current-saml-user)} nil
-                         true :email remember)
-          (throw+ {:anvil/server-error "Not a registered user" :type "anvil.users.AuthenticationFailed"}))))))
-
-(defn signup-with-saml [{:keys [remember] :as _kwargs}]
-  (if-let [current-saml-user (saml-auth/get-user-email {})]
-    (signup-common :use_saml "SAML"
-                   {:email (.toLowerCase current-saml-user)} nil
-                   true :email remember)
-    (throw+ {:anvil/server-error "User is not logged in via SAML"})))
-
-(defn get-current-user [{:keys [allow_remembered _anvil_test_tell_me_if_reset_requested] :as _kwargs}]
-  (let [really-client-request? util/*client-request?*]
-    (binding [util/*client-request?* false]
-      (let [{:keys [user_table allow_remember_me remember_me_days require_mfa use_email] :as props} (get-props-with-named-user-table)
-            cookie-key-token (keyword (str "user-table-" user_table "-remember-me"))
-            cookie-type (get-cookie-type props)]
-        (if (and use_email (or really-client-request? _anvil_test_tell_me_if_reset_requested) (get-in @util/*session-state* [:users :password-reset-user-id]))
-          (throw+ {:anvil/server-error "Password reset requested" :type "anvil.users.PasswordResetRequested"})
-          (if-let [v1-row-id-str (get-in @util/*session-state* [:users :logged-in-id])]
-            (get-user-row-by-id user_table v1-row-id-str)
-            (if (and require_mfa really-client-request? (get-in @util/*session-state* [:users :mfa-reset-user-id]))
-              (throw+ {:anvil/server-error "MFA authentication required" :type "anvil.users.MFARequired"})
-              (try+
-                (when-let [remember-token (and allow_remembered
-                                               allow_remember_me
-                                               (cookies/get-cookie-val cookie-type cookie-key-token))]
-                  (let [token-hash (anvil-util/sha-256 (str remember-token "#" user_table))
-                        user-row (try+
-                                   (table-get user_table {"remembered_logins" [{"token_hash" token-hash}]})
-                                   (catch #(and (:anvil/server-error %) (= (:type %) "anvil.tables.TableError") %) e
-                                     (util/*rpc-println* (str "WARNING: Cannot retrieve user record by remember-me state: " (:anvil/server-error e)))
-                                     nil))
-                        user-row-map (row-to-map user-row)]
-                    (if (and user-row
-                             (some #(is-in-date? % remember_me_days)
-                                   (get user-row-map "remembered_logins"))
-                             (get user-row-map "enabled"))
-                      user-row
-                      (do
-                        (cookies/del-cookie! cookie-type cookie-key-token)
-                        nil))))
-                (catch :anvil/cookie-error _
-                  ; We don't care if cookies fail in the users service.
-                  nil)))))))))
-
-(defn get-current-user-email [kwargs]
-  (-> (get-current-user kwargs)
-      (row-to-map)
-      (get "email")))
-
-(defn get-last-login-email [_kwargs]
-  (let [{:keys [user_table] :as props} (get-props-with-named-user-table)
-        cookie-type (get-cookie-type props)]
+(defn- fetch-user-by-remember-token-hash [{:keys [table_id] :as user-props} fetch-spec]
+  (when-let [token-hash (get-remember-me-token-hash-from-cookie user-props)]
     (try+
-      (cookies/get-cookie-val cookie-type (keyword (str "user-table-" user_table "-last-email")))
+      (user-util/table-get-row-from-query table_id {"remembered_logins" [{"token_hash" token-hash}]} fetch-spec)
+      (catch #(and (:anvil/server-error %) (= (:type %) "anvil.tables.TableError") %) e
+        (rpc-util/*rpc-println* (str "WARNING: Cannot retrieve user record by remember-me state: " (:anvil/server-error e)))
+        nil))))
+
+
+(defn- get-user-from-remember-me [{:keys [remember_me_days] :as user-props} fetch-spec]
+  (when-let [user-row (fetch-user-by-remember-token-hash user-props fetch-spec)]
+    (if (is-valid-remembered-user? user-row remember_me_days)
+      user-row
+      (do
+        ;; User found but invalid, remove token and return nil
+        (remove-remember-me-cookie user-props)
+        nil))))
+
+
+(defn- check-whether-reset-requested [user-props _testing-reset-request]
+  (let [{:keys [use_email]} user-props]
+    (when (and use_email
+               (or rpc-util/*client-request?* _testing-reset-request)
+               (get-in @rpc-util/*session-state* [:users :password-reset-user-id]))
+      (throw+ {:anvil/server-error "Password reset requested" :type "anvil.users.PasswordResetRequested"}))))
+
+
+(defn- check-whether-mfa-required [user-props]
+  (let [{:keys [require_mfa]} user-props]
+    (when (and require_mfa
+               rpc-util/*client-request?*
+               (get-in @rpc-util/*session-state* [:users :mfa-reset-user-id]))
+      (throw+ {:anvil/server-error "MFA authentication required" :type "anvil.users.MFARequired"}))))
+
+
+(defn get-current-user [{:keys [fetch allow_remembered _anvil_test_tell_me_if_reset_requested]} & args]
+  (let [user-props (user-util/get-user-props)
+        fetch-spec (table-rpc/validate-fetch-request fetch)]
+    (check-whether-reset-requested user-props _anvil_test_tell_me_if_reset_requested)
+    (or
+      (get-user-from-session user-props fetch-spec)
+      (do
+        (check-whether-mfa-required user-props)
+        (when (and allow_remembered (:allow_remember_me user-props))
+          (get-user-from-remember-me user-props fetch-spec))))))
+
+
+(defn get-logged-in-user-id
+  "The row id of this session's logged-in user, or nil. Falls back (like get-current-user) to
+   a valid remember-me cookie that hasn't yet become a login via get_user(), but never logs the
+   session in. Requires native RPC bindings; nil if the Users service isn't set up."
+  []
+  (or (get-in @rpc-util/*session-state* [:users :logged-in-id])
+      (try+
+        (let [{:keys [allow_remember_me] :as user-props} (user-util/get-user-props)]
+          (when allow_remember_me
+            (when-let [user-row (get-user-from-remember-me user-props (table-rpc/validate-fetch-request nil))]
+              (user-util/user-row->v1-id-str user-row))))
+        (catch :anvil/server-error _
+          nil))))
+
+
+(defn get-current-user-email [kws]
+  (-> (get-current-user kws)
+      (user-util/get-in-user-row :email)))
+
+
+(defn get-last-login-email [_kws]
+  (let [{:keys [table_id] :as user-props} (user-util/get-user-props)
+        cookie-type (get-cookie-type user-props)]
+    (try+
+      (cookies/get-cookie-val cookie-type (keyword (str "user-table-" table_id "-last-email")))
       (catch :anvil/cookie-error _
         ; We don't care if cookies didn't work.
         nil))))
 
-(defn v1-users-handlers []
-  {"anvil.private.users.get_current_user"          (util/wrap-native-fn get-current-user)
-   "anvil.private.users.get_current_user_email"    (util/wrap-native-fn get-current-user-email)
-   "anvil.private.users.get_last_login_email"      (util/wrap-native-fn get-last-login-email)
-   "anvil.private.users.logout"                    (util/wrap-native-fn logout)
-   "anvil.private.users.login_with_token"          (util/wrap-native-fn login-with-token)
-   "anvil.private.users.login_with_email"          (util/wrap-native-fn login-with-email)
-   "anvil.private.users.login_with_google"         (util/wrap-native-fn login-with-google)
-   "anvil.private.users.login_with_facebook"       (util/wrap-native-fn login-with-facebook)
-   "anvil.private.users.login_with_microsoft"      (util/wrap-native-fn login-with-microsoft)
-   "anvil.private.users.login_with_saml"           (util/wrap-native-fn login-with-saml)
-   "anvil.private.users.force_login"               (util/wrap-native-fn force-login)
-   "anvil.private.users.signup_with_email"         (util/wrap-native-fn signup-with-email)
-   "anvil.private.users.send_password_reset_email" (util/wrap-native-fn send-password-reset-email)
-   "anvil.private.users.signup_with_google"        (util/wrap-native-fn signup-with-google)
-   "anvil.private.users.signup_with_facebook"      (util/wrap-native-fn signup-with-facebook)
-   "anvil.private.users.signup_with_microsoft"     (util/wrap-native-fn signup-with-microsoft)
-   "anvil.private.users.signup_with_saml"          (util/wrap-native-fn signup-with-saml)
-   "anvil.private.users.reset_password"            (util/wrap-native-fn reset-password)
-   "anvil.private.users.cancel_password_reset"     (util/wrap-native-fn cancel-password-reset)
-   "anvil.private.users.send_token_login_email"    (util/wrap-native-fn send-token-login-email)
-   "anvil.private.users.generate_email_link_token" (util/wrap-native-fn generate-email-link-token)
-   "anvil.private.users.add_mfa_method"            (util/wrap-native-fn add-mfa-method)
-   "anvil.private.users.get_available_mfa_types"   (util/wrap-native-fn get-available-mfa-types)
-   "anvil.private.users.get_enabled_mfa_types"     (util/wrap-native-fn get-enabled-mfa-types)
-   "anvil.private.users.send_mfa_reset_email"      (util/wrap-native-fn send-mfa-reset-email)})
+(defn sanitize-row-for-client [user-row]
+  (if-not rpc-util/*client-request?*
+    user-row
+    (let [[view-key, table-id, row-id, table-data] user-row]
+     [view-key table-id row-id (table-basic-ops/clean-table-data-for-client table-data table-id row-id)])))
 
-;; (swap! dispatcher/native-rpc-handlers merge (v1-users-handlers)) ; Only use for manual switching
+
+(defn convert-to-live-object-if-necessary [user-row]
+  (if (user-util/is-v2-tables-enabled?)
+    user-row
+    (let [[_ table-id _ _] user-row]
+      (binding [rpc-util/*client-request?* false]
+        ((table-v1-rpc/Table "get_by_id") [table-id {}] {} (user-util/user-row->v1-id-str user-row))))))
+
+(defn- is-user-row? [user-row]
+  (vector? user-row))
+
+(defn sanitize-row-wrapper [handler]
+  (fn [& args]
+    (let [maybe-user-row (apply handler args)]
+      (if (is-user-row? maybe-user-row)
+        (-> maybe-user-row
+            sanitize-row-for-client
+            convert-to-live-object-if-necessary)
+        maybe-user-row))))
+
+(defn users-handlers []
+  {"anvil.private.users.get_current_user"          (rpc-util/wrap-native-fn (sanitize-row-wrapper get-current-user))
+   "anvil.private.users.get_current_user_email"    (rpc-util/wrap-native-fn get-current-user-email)
+   "anvil.private.users.get_last_login_email"      (rpc-util/wrap-native-fn get-last-login-email)
+   "anvil.private.users.logout"                    (rpc-util/wrap-native-fn logout)
+   "anvil.private.users.login_with_token"          (rpc-util/wrap-native-fn (sanitize-row-wrapper login-with-token))
+   "anvil.private.users.login_with_email"          (rpc-util/wrap-native-fn (sanitize-row-wrapper login-with-email))
+   "anvil.private.users.login_with_google"         (rpc-util/wrap-native-fn (sanitize-row-wrapper login-with-google))
+   "anvil.private.users.login_with_facebook"       (rpc-util/wrap-native-fn (sanitize-row-wrapper login-with-facebook))
+   "anvil.private.users.login_with_microsoft"      (rpc-util/wrap-native-fn (sanitize-row-wrapper login-with-microsoft))
+   "anvil.private.users.login_with_saml"           (rpc-util/wrap-native-fn (sanitize-row-wrapper login-with-saml))
+   "anvil.private.users.force_login"               (rpc-util/wrap-native-fn (sanitize-row-wrapper force-login))
+   "anvil.private.users.signup_with_email"         (rpc-util/wrap-native-fn (sanitize-row-wrapper signup-with-email))
+   "anvil.private.users.send_password_reset_email" (rpc-util/wrap-native-fn send-password-reset-email)
+   "anvil.private.users.signup_with_google"        (rpc-util/wrap-native-fn (sanitize-row-wrapper signup-with-google))
+   "anvil.private.users.signup_with_facebook"      (rpc-util/wrap-native-fn (sanitize-row-wrapper signup-with-facebook))
+   "anvil.private.users.signup_with_microsoft"     (rpc-util/wrap-native-fn (sanitize-row-wrapper signup-with-microsoft))
+   "anvil.private.users.signup_with_saml"          (rpc-util/wrap-native-fn (sanitize-row-wrapper signup-with-saml))
+   "anvil.private.users.reset_password"            (rpc-util/wrap-native-fn reset-password)
+   "anvil.private.users.cancel_password_reset"     (rpc-util/wrap-native-fn cancel-password-reset)
+   "anvil.private.users.send_token_login_email"    (rpc-util/wrap-native-fn send-token-login-email)
+   "anvil.private.users.generate_email_link_token" (rpc-util/wrap-native-fn generate-email-link-token)
+   "anvil.private.users.add_mfa_method"            (rpc-util/wrap-native-fn add-mfa-method)
+   "anvil.private.users.get_available_mfa_types"   (rpc-util/wrap-native-fn get-available-mfa-types)
+   "anvil.private.users.get_enabled_mfa_types"     (rpc-util/wrap-native-fn get-enabled-mfa-types)
+   "anvil.private.users.send_mfa_reset_email"      (rpc-util/wrap-native-fn send-mfa-reset-email)})
+
+(swap! dispatcher/native-rpc-handlers merge (users-handlers))
+
 
 (defn export-with-table [yaml app-id version-spec]
   (let [SERVICE-URL "/runtime/services/anvil/users.yml"
         app (app-data/get-app (app-data/get-app-info-insecure app-id) version-spec)]
 
     (update-in yaml [:services] (partial map #(if (= SERVICE-URL (:source %))
-                                                (assoc % :server_config {:user_table (:user_table (users-util/get-props (:content app)))})
+                                                (assoc % :server_config {:user_table (:user_table (user-util/get-base-user-props (:content app)))})
                                                 %)))))

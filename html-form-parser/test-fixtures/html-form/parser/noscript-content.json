@@ -1,0 +1,16 @@
+{
+  "name": "parser/noscript-content",
+  "entrypoint": "parseContainerForm",
+  "html": "<noscript><anvil-component type=\"Button\" name=\"hidden\"></anvil-component><b anvil:on-dom:click=\"self.hidden\">a &amp; b</b></noscript>",
+  "expected": {
+    "container": {
+      "type": "HtmlComponent",
+      "properties": {
+        "html": "<noscript><anvil-component type=\"Button\" name=\"hidden\"></anvil-component><b anvil:on-dom:click=\"self.hidden\">a &amp; b</b></noscript>"
+      }
+    },
+    "components": [],
+    "serialized_html": "<noscript><anvil-component type=\"Button\" name=\"hidden\"></anvil-component><b anvil:on-dom:click=\"self.hidden\">a &amp; b</b></noscript>"
+  },
+  "expectedSerializedHtml": "<noscript><anvil-component type=\"Button\" name=\"hidden\"></anvil-component><b anvil:on-dom:click=\"self.hidden\">a &amp; b</b></noscript>"
+}

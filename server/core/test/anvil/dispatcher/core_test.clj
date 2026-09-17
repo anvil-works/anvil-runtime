@@ -5,10 +5,6 @@
   (:require [crypto.random :as random]
             [anvil.dispatcher.native-rpc-handlers.util :as nrpc]))
 
-
-(clj-logging-config.log4j/set-logger! "anvil.dispatcher.core" :level :trace)
-(clj-logging-config.log4j/set-logger! "anvil.dispatcher.quota" :level :trace)
-
 #_(def update! (constantly nil))
 #_(defn respond! [resp & args]
   (println "RESPONSE:" resp)

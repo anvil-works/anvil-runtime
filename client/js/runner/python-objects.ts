@@ -72,7 +72,9 @@ interface SlotConstructor extends pyType<Slot> {
 
 export interface DropModeFlags {
     asComponent?: boolean;
-    allowOtherComponentUpdates?: boolean;
+    /** Allow a drop zone to move existing components or slots by updating their layout properties. */
+    allowOtherUpdates?: boolean;
+    asCustomComponentContainer?: boolean;
 }
 
 export interface HasRelevantHooks {

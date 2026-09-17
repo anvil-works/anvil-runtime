@@ -26,6 +26,7 @@
 
 (def rewrite-form-specs-in-form-yaml form-specs/rewrite-form-specs-in-form-yaml)
 (def canonicalize-form-specs-in-form-yaml form-specs/canonicalize-form-specs-in-form-yaml)
+(def rename-package-qualified-form-specs-in-form-yaml form-specs/rename-package-qualified-form-specs-in-form-yaml)
 
 (def clean-template-yaml template/clean-template-yaml)
 (def clean-html-frontmatter template/clean-html-frontmatter)

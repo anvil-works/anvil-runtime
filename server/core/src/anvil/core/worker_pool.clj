@@ -84,8 +84,10 @@
 
 (defn enqueue-one-task! [task tags]
   (when (not= tags [:anvil-http]) (log/trace "Task:" tags))
-  (when (> (hrr-queue/hrr-size (first @task-queue)) MAX-QUEUE-SIZE)
-    (throw (RejectedExecutionException. "Worker queue overflow")))
+  ;; Temporarily disable queue overflow, this causes Bad Things
+  ;(when (> (hrr-queue/hrr-size (first @task-queue)) MAX-QUEUE-SIZE)
+  ;  (metrics/inc! :api/task-queue-overflow-total)
+  ;  (throw (RejectedExecutionException. "Worker queue overflow")))
   (swap! task-queue (fn [[queue]] [(hrr-queue/hrr-push queue [task (System/nanoTime)] tags)]))
   (try (swap! max-task-queue (fn [current-max] (merge-with hrr-queue/max-size-merger current-max (hrr-queue/to-structure (first @task-queue))))) (catch Exception _ nil))
   (locking TASK-LOCK (.notify TASK-LOCK)))

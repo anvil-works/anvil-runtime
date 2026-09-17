@@ -1,0 +1,37 @@
+{
+  "name": "parser/json-compatibility",
+  "entrypoint": "parseContainerForm",
+  "html": "<anvil-component type=\"Custom\" name=\"json_props\" prop:object='{\"foo\":\"bar\"}  ' prop:array='[1,2] \t' prop:invalid_object='{\"foo\":\"bar\"}suffix' prop:non_json_whitespace='1\u000b'></anvil-component>",
+  "normalization": {
+    "dropzoneIds": false
+  },
+  "expected": {
+    "container": {
+      "type": "HtmlComponent",
+      "properties": {
+        "html": "<anvil-dropzone name=\"$dz_0\"></anvil-dropzone>"
+      }
+    },
+    "components": [
+      {
+        "type": "Custom",
+        "name": "json_props",
+        "properties": {
+          "object": {
+            "foo": "bar"
+          },
+          "array": [
+            1,
+            2
+          ],
+          "invalid_object": "{\"foo\":\"bar\"}suffix",
+          "non_json_whitespace": "1\u000b"
+        },
+        "layout_properties": {
+          "dropzone": "$dz_0"
+        }
+      }
+    ],
+    "serialized_html": "<anvil-component type=\"Custom\" name=\"json_props\" prop:object='{\"foo\":\"bar\"}  ' prop:array='[1,2] \t' prop:invalid_object='{\"foo\":\"bar\"}suffix' prop:non_json_whitespace='1\u000b'></anvil-component>"
+  }
+}

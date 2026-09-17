@@ -452,7 +452,10 @@ const RepeatingPanelFactory = (pyModule: PyModMap) => {
                             }
 
                             if (self._anvil.pagination.rowsDisplayed >= self._anvil.pagination.rowQuota) {
-                                self._anvil.pagination.done = false;
+                                // A later row exhausting the quota must not hide an invalid nested resume point.
+                                if (self._anvil.pagination.done !== "INVALID") {
+                                    self._anvil.pagination.done = false;
+                                }
                                 idx++;
                                 idxOnPage++;
                                 return new Break();
@@ -486,7 +489,10 @@ const RepeatingPanelFactory = (pyModule: PyModMap) => {
                                             templateInstance._anvil.pagination.stoppedAt,
                                             templateInstance._anvil.pagination.done,
                                         ];
-                                        if (templateInstance._anvil.pagination.done === "INVALID") {
+                                        if (
+                                            self._anvil.pagination.done === "INVALID" ||
+                                            templateInstance._anvil.pagination.done === "INVALID"
+                                        ) {
                                             self._anvil.pagination.done = "INVALID";
                                         } else {
                                             self._anvil.pagination.done =
@@ -516,7 +522,7 @@ const RepeatingPanelFactory = (pyModule: PyModMap) => {
                                                 stoppedAt,
                                                 done,
                                             ];
-                                            if (done === "INVALID") {
+                                            if (self._anvil.pagination.done === "INVALID" || done === "INVALID") {
                                                 self._anvil.pagination.done = "INVALID";
                                             } else {
                                                 self._anvil.pagination.done =
@@ -573,7 +579,7 @@ const RepeatingPanelFactory = (pyModule: PyModMap) => {
                                                         stoppedAt,
                                                         done,
                                                     ];
-                                                    if (done === "INVALID") {
+                                                    if (self._anvil.pagination.done === "INVALID" || done === "INVALID") {
                                                         self._anvil.pagination.done = "INVALID";
                                                     } else {
                                                         self._anvil.pagination.done =

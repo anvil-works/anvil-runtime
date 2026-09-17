@@ -129,7 +129,7 @@
      (if *require-service-config*
        (throw+ {:anvil/server-error "Add the Email service to your app before calling this function"
                 :type               "anvil.server.ServiceNotAdded"
-                :docId              "email"
+                :docUrl              "/server/email"
                 :docLinkTitle       "You need to add the Email service to your app. Learn more"})
        default-props))))
 

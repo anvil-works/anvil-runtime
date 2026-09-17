@@ -25,6 +25,7 @@ export interface ComponentYaml {
     components?: ComponentYaml[]; // containers only
     event_bindings?: EventBindingYaml;
     data_bindings?: DataBindingYaml[];
+    designer_config?: { [prop: string]: string };
 }
 
 export interface FormContainerYaml {
@@ -56,6 +57,7 @@ export interface SlotDefYaml {
     placeholder_text?: string;
     template?: ComponentYaml; // TODO: Not actually true. Templates don't have names.
     index: number;
+    slot_order?: number;
 }
 
 export type SlotDefsYaml = { [slotName: string]: SlotDefYaml };
@@ -80,6 +82,8 @@ export interface FormYaml {
     is_package?: boolean;
     save_as_html?: boolean; // Whether to save as .html file (vs .yaml)
     code: string;
+    help_text?: string;
+    
     // If this is a classic form (inherits from a container type)
     container?: FormContainerYaml;
     components?: ComponentYaml[];

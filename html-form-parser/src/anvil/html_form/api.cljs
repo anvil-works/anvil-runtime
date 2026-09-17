@@ -87,11 +87,15 @@
       (unchecked-set result "event_bindings" (value->js (:event_bindings component))))
     (when-let [data-bindings (seq (:data_bindings component))]
       (unchecked-set result "data_bindings" (seq->js-array data-bindings data-binding->js)))
+    (when (seq (:designer_config component))
+      (unchecked-set result "designer_config" (value->js (:designer_config component))))
     result))
 
 (defn- slot-def->js [slot-def]
   (let [result #js {:target (target->js (:target slot-def))
                     :index (:index slot-def)}]
+    (when (contains? slot-def :slot_order)
+      (unchecked-set result "slot_order" (:slot_order slot-def)))
     (when (contains? slot-def :set_layout_properties)
       (unchecked-set result "set_layout_properties" (value->js (:set_layout_properties slot-def))))
     (when (:one_component slot-def)
@@ -104,6 +108,24 @@
   (let [result #js {}]
     (doseq [[slot-name slot-def] slots]
       (unchecked-set result slot-name (slot-def->js slot-def)))
+    result))
+
+(defn- warning->js [{:keys [code path message name attr-name tag-name event-name from to]}]
+  (let [result #js {:code code
+                    :path path
+                    :message message}]
+    (when (seq name)
+      (unchecked-set result "name" name))
+    (when (seq attr-name)
+      (unchecked-set result "attrName" attr-name))
+    (when (seq tag-name)
+      (unchecked-set result "tagName" tag-name))
+    (when (some? event-name)
+      (unchecked-set result "eventName" event-name))
+    (when (some? from)
+      (unchecked-set result "from" from))
+    (when (some? to)
+      (unchecked-set result "to" to))
     result))
 
 (defn- container->js [container]
@@ -123,6 +145,8 @@
                     :serialized_html (:serialized_html parsed)}]
     (when-let [slots (seq (:slots parsed))]
       (unchecked-set result "slots" (slots->js slots)))
+    (when-let [warnings (seq (:warnings parsed))]
+      (unchecked-set result "warnings" (seq->js-array warnings warning->js)))
     result))
 
 (defn- layout->js [layout]
@@ -148,6 +172,8 @@
                     :components_by_slot (components-by-slot->js (:components_by_slot parsed))}]
     (when-let [slots (seq (:slots parsed))]
       (unchecked-set result "slots" (slots->js slots)))
+    (when-let [warnings (seq (:warnings parsed))]
+      (unchecked-set result "warnings" (seq->js-array warnings warning->js)))
     result))
 
 (defn- parsed-serialized->js [parsed]
@@ -333,6 +359,12 @@
     (core/canonicalize-form-specs-in-form-yaml
       (js-value->clj form)
       (package-context context))))
+
+(defn ^:export copyFormYamlWithRenamedPackageQualifiedFormSpecs [form package-renames]
+  (form-spec-rewrite-result->js
+    (core/rename-package-qualified-form-specs-in-form-yaml
+      (js-value->clj form)
+      (js-value->clj package-renames))))
 
 (defn ^:export copyFormYamlWithRewrittenFormSpecs [form rewriters]
   (form-spec-rewrite-result->js

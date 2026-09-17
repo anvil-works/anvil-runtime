@@ -39,7 +39,7 @@
                                        ["table_id = ?" [table-id]])]
     ;(log/trace "CURSOR" cursor)
     ;(log/trace "CURSOR EXPR" CURSOR-EXPR cursor-params)
-    [(str "SELECT " ID-COL " AS id, " SELECT-EXPR " AS rdata, 0 AS fid, ROW_NUMBER() OVER (ORDER BY " ORDER-BY-EXPR ") AS primary_order FROM " TABLE-NAME
+    [(str "SELECT " ID-COL " AS _id, " SELECT-EXPR " AS rdata, 0 AS fid, ROW_NUMBER() OVER (ORDER BY " ORDER-BY-EXPR ") AS primary_order FROM " TABLE-NAME
           " WHERE " TABLE-ID-SQL " AND " WHERE-EXPR
           (when cursor (str " AND " CURSOR-EXPR))
           " ORDER BY " ORDER-BY-EXPR " LIMIT " (int chunk-size))
@@ -91,7 +91,7 @@
 
 (defn result-row->cursor [table last-primary-row order-by]
   ;; Produce a cursor that can be ingested by query/CURSOR->SQL
-  (let [{:keys [rdata id]} last-primary-row
+  (let [{:keys [rdata _id]} last-primary-row
         {:keys [storage columns]} table]
 
     (if (:split storage)
@@ -99,12 +99,12 @@
         (for [{:keys [column_name]} order-by
               :let [col (get columns column_name)]]
           (table-types/reduce-val-for-query storage col
-                                            (util-v2/render-transmitted-value table id rdata col)))
-        [id])
+                                            (util-v2/render-transmitted-value table _id rdata col)))
+        [_id])
       (concat
         (for [{:keys [column_name]} order-by]
           (get rdata (keyword column_name)))
-        [id]))))
+        [_id]))))
 
 (defn get-page [tables db-c {table-id :id, :keys [restrict] :as view-spec} requested-cols query order-by chunk-size cursor]
   (let [query (query/both-queries query restrict)

@@ -1,6 +1,5 @@
 (ns anvil.dispatcher.native-rpc-handlers.users.twilio-compat-test
-  (:require [anvil.dispatcher.native-rpc-handlers.users.twilio :as users-v1-twilio]
-            [anvil.dispatcher.native-rpc-handlers.users.v2.twilio :as users-v2-twilio]
+  (:require [anvil.dispatcher.native-rpc-handlers.users.twilio :as users-twilio]
             [anvil.runtime.conf :as runtime-conf]
             [anvil.runtime.secrets :as secrets]
             [clojure.string :as str]
@@ -18,18 +17,19 @@
       (throw (ex-info "this encrypted value cannot be used"
                       {:type "anvil.secrets.SecretError"})))))
 
-(deftest twilio-phone-ciphertext-is-compatible-between-v1-and-v2
+(deftest twilio-phone-ciphertext-retains-historical-key
   (let [to-calls (atom [])
-        ok-response (delay {:status 200 :body "{}"})]
+        ok-response (delay {:status 200 :body "{\"status\":\"approved\"}"})
+        stored-method {:phone (fake-encrypt :anvil.dispatcher.native-rpc-handlers.users.twilio/phone
+                                            "+12025550123")}]
     (with-redefs [secrets/encrypt-str-with-global-key fake-encrypt
                   secrets/decrypt-str-with-global-key fake-decrypt
                   runtime-conf/twilio-config {:verify-service-id "svc" :account-sid "sid" :auth-token "token"}
                   http/post (fn [_url {:keys [form-params]}]
                               (swap! to-calls conj (get form-params "To"))
                               ok-response)]
-      (let [v1-method (users-v1-twilio/generate-mfa-method nil "+12025550123")
-            v2-method (users-v2-twilio/generate-mfa-method nil "+447700900123")]
-        ;; This should keep working when users v1 and v2 paths share MFA data.
-        (is (nil? (users-v2-twilio/send-verification-token nil v1-method "sms")))
-        (is (nil? (users-v1-twilio/send-verification-token nil v2-method "sms")))
-        (is (= ["+12025550123" "+447700900123"] @to-calls))))))
+      (is (= (:phone stored-method)
+             (:phone (users-twilio/generate-mfa-method nil "+12025550123"))))
+      (is (nil? (users-twilio/send-verification-token nil stored-method "sms")))
+      (is (true? (users-twilio/check-verification-token nil stored-method "123456")))
+      (is (= ["+12025550123" "+12025550123"] @to-calls)))))

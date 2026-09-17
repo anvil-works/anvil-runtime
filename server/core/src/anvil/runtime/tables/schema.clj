@@ -13,7 +13,7 @@
 
 (clj-logging-config.log4j/set-logger! :level :trace)
 
-(defn yaml-schema-column-from-raw-column [{:keys [name type backend table_id admin_ui client_hidden] :as col-spec} python-name-from-table-id]
+(defn yaml-schema-column-from-raw-column [{:keys [name type backend table_id admin_ui client_hidden on_delete] :as col-spec} python-name-from-table-id]
   (tables-manager/validate-colspec! col-spec)
   (merge {:name     name,
           :client_hidden client_hidden
@@ -23,8 +23,9 @@
            {:type "unresolved"}
 
            (= type "liveObject")
-           {:type "link_single"
-            :target (python-name-from-table-id table_id)}
+           (cond-> {:type   "link_single"
+                    :target (python-name-from-table-id table_id)}
+             on_delete (assoc :on_delete on_delete))
 
            (= type "liveObjectArray")
            {:type "link_multiple"
@@ -33,7 +34,7 @@
            :else
            {:type type})))
 
-(defn raw-column-from-yaml-schema [{:keys [name admin_ui client_hidden type target]} order table-id-from-python-name]
+(defn raw-column-from-yaml-schema [{:keys [name admin_ui client_hidden type target on_delete]} order table-id-from-python-name]
   (let [table-type (fn [type]
                      (if-let [tbl-id (table-id-from-python-name target)]
                        {:type     type
@@ -48,7 +49,7 @@
              {:admin_ui (assoc admin_ui :order order)})
            (or
              (cond
-               (= type "link_single") (table-type "liveObject")
+               (= type "link_single") (cond-> (table-type "liveObject") on_delete (assoc :on_delete on_delete))
                (= type "link_multiple") (table-type "liveObjectArray")
                (contains? BASIC-COLUMN-TYPES type) {:type type}
                :else (throw+ {:anvil/server-error (format "Not a valid column type: '%s'" type)}))
@@ -164,8 +165,8 @@
                                                   ; Single element list to make concat nicer below.
                                                   [(merge {:type :UPDATE_TABLE :table table-name} updates)])
 
-                                  ;; Now update any changed columns. Ignore ordering, admin_ui, client_hidden, and indexes.
-                                  IGNORED-KEYS [:admin_ui :client_hidden :indexes]
+                                  ;; Now update any changed columns. Ignore ordering, admin_ui, client_hidden, on_delete, and indexes.
+                                  IGNORED-KEYS [:admin_ui :client_hidden :on_delete :indexes]
                                   simple-src-cols (map #(apply dissoc % IGNORED-KEYS) src-cols)
                                   simple-target-cols (map #(apply dissoc % IGNORED-KEYS) target-cols)
                                   removed-cols (filter (fn [col] (not (some #{(apply dissoc col IGNORED-KEYS)} simple-target-cols))) src-cols)
@@ -177,14 +178,23 @@
 
                                   ;; Only generate updates for columns that aren't being added/removed
                                   column-updates (for [[src-col target-col] (map vector src-cols target-cols)
+                                                       :let [client-hidden-changed (not= (boolean (:client_hidden src-col)) (boolean (:client_hidden target-col)))
+                                                             on-delete-changed (and (not= (:on_delete src-col) (:on_delete target-col))
+                                                                                    ;; set_null is equivalent to there being no on_delete in the schema. Dont generate a diff in that case.
+                                                                                    (not (and (= (:on_delete target-col) nil)
+                                                                                              (= (:on_delete src-col) "set_null")))
+                                                                                    (not (and (= (:on_delete src-col) nil)
+                                                                                              (= (:on_delete target-col) "set_null"))))]
                                                        :when (and (= (:name src-col) (:name target-col))
-                                                                  (not= (boolean (:client_hidden src-col)) (boolean (:client_hidden target-col)))
+                                                                  (or client-hidden-changed on-delete-changed)
                                                                   (not (contains? added-names (:name src-col)))
                                                                   (not (contains? removed-names (:name src-col))))]
-                                                   {:type    :UPDATE_COLUMN
-                                                    :table   table-name
+                                                   {:type        :UPDATE_COLUMN
+                                                    :table       table-name
                                                     :column_name (:name src-col)
-                                                    :changes {:client_hidden (:client_hidden target-col)}})
+                                                    :changes     (cond-> {}
+                                                                   client-hidden-changed (assoc :client_hidden (:client_hidden target-col))
+                                                                   on-delete-changed (assoc :on_delete (:on_delete target-col)))})
 
                                   ;; Given a list of remaining added cols and a removed col, find an added col that this removed col has been renamed to.
                                   find-matching-added-col (fn [added-cols removed-col]
@@ -306,7 +316,8 @@
                                                                                                                                           (contains? (get valid-index-types (:type %)) (:type col-spec) )))
                                                                                                                            (mapv #(dissoc % :columns)))]
                                                                                                  [id (cond-> col-spec
-                                                                                                       (not-empty this-col-indexes) (assoc :indexes this-col-indexes))])))))))]]
+                                                                                                       (not-empty this-col-indexes) (assoc :indexes this-col-indexes)
+                                                                                                       (not (:split storage)) (dissoc :on_delete))])))))))]]
                  (table-util/save-table-record! db table-record)
                  (tables-manager/update-col-indexes! db table-record))
                (recur more-changes table-ids))
@@ -357,8 +368,8 @@
                (recur more-changes table-ids))
 
              (= "UPDATE_COLUMN" type)
-             (let [[table-id cols col-id] (get-table-id-and-cols table table-ids column_name)
-                   changes {:client_hidden (boolean (get-in change [:changes :client_hidden]))}
+             (let [[table-id _ col-id] (get-table-id-and-cols table table-ids column_name)
+                   changes (-> (:changes change) (select-keys [:client_hidden :on_delete]))
                    col-id-kw (keyword col-id)]
                (tables-manager/table-update-column! (table-util/db) table-id col-id-kw changes)
                (recur more-changes table-ids))

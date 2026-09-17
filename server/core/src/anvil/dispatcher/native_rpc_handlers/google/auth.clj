@@ -15,7 +15,7 @@
    (logout-on-client-id-mismatch! google-service)
    (when-not (has-own-client-id? google-service)
      (throw+ {:anvil/server-error "To get Google API tokens, you need to supply your own client ID and secret"
-              :docId              "google_rest_api"
+              :docUrl              "/integrations/google/google-rest-apis"
               :docLinkTitle       "Learn more about Google API credentials"}))))
 
 (defn get-user-access-token [_kwargs]

@@ -267,6 +267,16 @@ export const setOnDebuggerMessage = (handler: DebugHandler) => {
     onDebuggerMessage = handler;
 };
 
+// Server-pushed events about background tasks launched from this session (only sent to
+// debug sessions; the IDE runner shim forwards them to the IDE via postMessage).
+type BgTaskEventHandler = (event: any) => void;
+
+let onBgTaskEvent: null | BgTaskEventHandler = null;
+
+export const setOnBgTaskEvent = (handler: BgTaskEventHandler) => {
+    onBgTaskEvent = handler;
+};
+
 function handleDebuggerMessage(d: any) {
     const req = outstandingRequests[d.id];
     const susp = requestSuspensions[d.id];
@@ -289,6 +299,8 @@ export function handleMessage(data: any) {
             return handleEvent(d);
         case !!d.debuggers:
             return handleDebuggerMessage(d);
+        case !!d.bgTaskLog:
+            return onBgTaskEvent?.(d.bgTaskLog);
         case !!d.output:
             return handleOutput(d);
         case !!d["invalidate-macs"]:

@@ -12,7 +12,7 @@ import {
 } from "../@Sk";
 import Modal from "../modules/modal";
 import { logEvent } from "./logging";
-import { isOpaqueScriptError } from "./py-util/error-utils";
+import { isOpaqueScriptError } from "./opaque-script-error";
 
 // overrides the dom-lib OnErrorEventHandlerNonNull
 interface OnErrorEventHandlerNonNull {

@@ -12,7 +12,7 @@
 
 (defn general-gmail-error [message]
   {:anvil/server-error message
-   :docId "google_mail"
+   :docUrl "/integrations/google/gmail"
    :docLinkTitle "Learn more about GMail integration"})
 
 (def jm-session (Session/getInstance (Properties.)))

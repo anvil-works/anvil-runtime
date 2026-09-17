@@ -8,6 +8,7 @@ RUN cd /runtime/database/migrator-core && lein install
 COPY /runtime/server/core/project.clj /runtime/server/core/project.clj
 RUN cd /runtime/server/core && lein deps
 COPY /runtime/server/core /runtime/server/core
+COPY /runtime/html-form-parser/src /runtime/html-form-parser/src
 RUN cd /runtime/server/core && lein install
 
 # Build client
@@ -30,7 +31,7 @@ COPY /runtime/downlink/python/ /runtime/downlink/python/
 # /runtime/client which are copied above. Only _components.py points outside.
 # The package build (build-python-package) uses 'cp -aL' to dereference symlinks.
 COPY /doc/dist/_components.py /doc/dist/_components.py
-RUN ~/.local/bin/uv pip install --system -r /runtime/downlink/python/requirements.txt
+RUN ~/.local/bin/uv pip install --system -r /runtime/downlink/python/requirements.txt psycopg2-binary
 ENV PYTHON_INTERPRETER=/usr/bin/python3
 ENV DOWNLINK_WORKDIR=/runtime/downlink/python
 

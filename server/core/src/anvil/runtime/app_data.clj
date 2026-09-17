@@ -143,17 +143,27 @@
    (get-app-content-with-dependencies app-info version-spec {}))
   ([app-info version-spec {:keys [include-extra-files?] :or {include-extra-files? false}}]
    ;; Do a recursive dependency lookup on the app
-   (let [app (get-app-content app-info version-spec)]
+   (let [app (try+
+               (get-app-content app-info version-spec)
+               (catch :anvil/invalid-yaml e
+                 (let [message (or (:anvil/server-error e) "This app contains invalid YAML and cannot be loaded.")]
+                   ;; Also carry :anvil/invalid-yaml through, so callers that specifically care
+                   ;; about "this is invalid YAML" (rather than "app failed to load" generally)
+                   ;; can still catch on that key.
+                   (throw+ {:anvil/app-loading-error (:id app-info)
+                            :anvil/invalid-yaml true
+                            :anvil/server-error message
+                            :message message}))))]
      (loop [loaded-deps {}
             dependency-versions {}
             config-overrides {}
             dep-order '()
             all-dep-ids (util/string-keys (:dep_ids app-info))
             seen-dep-ids {}
-            seen-assets (when-not (get-in app [:content :invalidYaml]) (into #{} (map :name (get-in app [:content :theme :assets]))))
+            seen-assets (into #{} (map :name (get-in app [:content :theme :assets])))
             [{:keys [depending-app dep_id version config] :as dep-spec} & more-deps-to-process :as deps-to-process]
-            (if (get-in app [:content :invalidYaml]) {} (->> (:dependencies (:content app))
-                                                             (map #(assoc % :depending-app (:id app-info)))))]
+            (->> (:dependencies (:content app))
+                 (map #(assoc % :depending-app (:id app-info))))]
        (cond
          (empty? deps-to-process)
          (-> app
@@ -220,39 +230,38 @@
                                               {:full-dep (get-app-content dep-info git-version-spec)}
                                               (catch :anvil/app-loading-error e
                                                 {:error (:message e)})
+                                              (catch :anvil/invalid-yaml e
+                                                {:error (or (:anvil/server-error e) "Invalid YAML in dependency")})
                                               (catch Throwable e
                                                 {:error (.getMessage e)})
                                               (catch Object e
                                                 {:error (str e)}))]
                (if-not full-dep
                  (recur (assoc loaded-deps app-id {:error error}) dependency-versions config-overrides dep-order all-dep-ids seen-dep-ids seen-assets more-deps-to-process)
-                 (let [content (:content full-dep)]
-                   (if (:invalidYaml content)
-                     (recur (assoc loaded-deps dep_id {:error "Invalid yaml"}) dependency-versions config-overrides dep-order all-dep-ids seen-dep-ids seen-assets more-deps-to-process)
-                     (let [{:keys [config_schema] :as dep-content} (:content full-dep)
-                           {dep-assets false, overridden-dep-assets true} (->> (get-in dep-content [:theme :assets])
-                                                                               (group-by #(and (contains? seen-assets (:name %)) (not= (:name %) "theme.css"))))]
-                       ;;(println depending-app "(" (:name dep-info) ") -> " (:id dep-info) " (" (:name dep-info) ") version " version " / " version-sha "/" (:version full-dep))
-                       (recur (assoc loaded-deps app-id
-                                     (-> (select-keys dep-content
-                                                      (cond-> [:forms :modules :server_modules :package_name :secrets :native_deps :runtime_options :toolbox_sections :toolbox :layouts :config_schema :client_init_module :code_prelude]
-                                                        include-extra-files? (conj :extra_files)))
-                                         (assoc :version-spec (clean-version-spec version)
-                                                :commit-id (:version full-dep)
-                                                :depending_app depending-app
-                                                :name (:name dep-info)
-                                                :assets dep-assets
-                                                :overriden_assets (map :name overridden-dep-assets)
-                                                :form_templates (get-in dep-content [:theme :templates])
-                                                :color_scheme (get-in dep-content [:theme :parameters :color_scheme])
-                                                :roles (get-in dep-content [:theme :parameters :roles]))))
-                              (assoc dependency-versions app-id (:version full-dep))
-                              (assoc config-overrides app-id (list config))
-                              (cons app-id dep-order)
-                              (merge (util/string-keys (:dep_ids dep-info)) all-dep-ids)
-                              seen-dep-ids
-                              (into seen-assets (map :name dep-assets))
-                              (concat more-deps-to-process (map #(assoc % :depending-app app-id) (:dependencies dep-content))))))))))))))))
+                 (let [{:keys [config_schema] :as dep-content} (:content full-dep)
+                       {dep-assets false, overridden-dep-assets true} (->> (get-in dep-content [:theme :assets])
+                                                                           (group-by #(and (contains? seen-assets (:name %)) (not= (:name %) "theme.css"))))]
+                   ;;(println depending-app "(" (:name dep-info) ") -> " (:id dep-info) " (" (:name dep-info) ") version " version " / " version-sha "/" (:version full-dep))
+                   (recur (assoc loaded-deps app-id
+                                 (-> (select-keys dep-content
+                                                  (cond-> [:forms :modules :server_modules :scripts :package_name :secrets :native_deps :runtime_options :toolbox_sections :toolbox :layouts :config_schema :client_init_module :code_prelude]
+                                                    include-extra-files? (conj :extra_files)))
+                                     (assoc :version-spec (clean-version-spec version)
+                                            :commit-id (:version full-dep)
+                                            :depending_app depending-app
+                                            :name (:name dep-info)
+                                            :assets dep-assets
+                                            :overriden_assets (map :name overridden-dep-assets)
+                                            :form_templates (get-in dep-content [:theme :templates])
+                                            :color_scheme (get-in dep-content [:theme :parameters :color_scheme])
+                                            :roles (get-in dep-content [:theme :parameters :roles]))))
+                          (assoc dependency-versions app-id (:version full-dep))
+                          (assoc config-overrides app-id (list config))
+                          (cons app-id dep-order)
+                          (merge (util/string-keys (:dep_ids dep-info)) all-dep-ids)
+                          seen-dep-ids
+                          (into seen-assets (map :name dep-assets))
+                          (concat more-deps-to-process (map #(assoc % :depending-app app-id) (:dependencies dep-content))))))))))))))
 
 (defn get-app
   ([app-info version-spec] (get-app app-info version-spec true))

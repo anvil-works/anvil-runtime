@@ -6,6 +6,7 @@
   (re-pattern (str "^" legacy-custom-component-spec-prefix "(?:([^:]+):)?(.+)$")))
 (def legacy-dependency-form-property-spec-regex #"^([^:]+):(.+)$")
 (def package-qualified-form-name-regex #"^([^.]+)\.(.+)$")
+(def built-in-component-spec-prefix "anvil.")
 
 ;; Rewrite helpers for persisted Form YAML, not runtime import resolution.
 ;;
@@ -128,3 +129,42 @@
     form
     {:custom-component-spec #(canonicalize-custom-component-spec % context)
      :form-property-spec #(canonicalize-form-property-spec % context)}))
+
+(defn- package-rename-pair [{:keys [old-package-name new-package-name oldPackageName newPackageName]}]
+  (let [old-package-name (or old-package-name oldPackageName)
+        new-package-name (or new-package-name newPackageName)]
+    (when (and (seq old-package-name)
+               (seq new-package-name)
+               (not= old-package-name new-package-name))
+      [old-package-name new-package-name])))
+
+(defn- package-rename-map [package-renames]
+  (into {} (keep package-rename-pair) package-renames))
+
+(defn- rename-package-qualified-form-spec [renames form-spec]
+  (when-let [[_ package-name app-local-form-name] (and (string? form-spec)
+                                                       (not (str/starts-with? form-spec
+                                                                              legacy-custom-component-spec-prefix))
+                                                       (not (str/starts-with? form-spec
+                                                                              built-in-component-spec-prefix))
+                                                       (re-matches package-qualified-form-name-regex form-spec))]
+    (when-let [renamed-package (get renames package-name)]
+      (str renamed-package "." app-local-form-name))))
+
+(defn rename-package-qualified-form-specs-in-form-yaml
+  "Rewrite package-qualified form specs using package rename pairs.
+
+   Legacy customComponentSpecs such as `form:Form1` are intentionally left alone."
+  ([form old-package-name new-package-name]
+   (rename-package-qualified-form-specs-in-form-yaml
+     form
+     [{:old-package-name old-package-name
+       :new-package-name new-package-name}]))
+  ([form package-renames]
+   (let [renames (package-rename-map package-renames)]
+     (if (empty? renames)
+       {:form form :changed? false}
+       (rewrite-form-specs-in-form-yaml
+         form
+         {:custom-component-spec #(rename-package-qualified-form-spec renames %)
+          :form-property-spec #(rename-package-qualified-form-spec renames %)})))))

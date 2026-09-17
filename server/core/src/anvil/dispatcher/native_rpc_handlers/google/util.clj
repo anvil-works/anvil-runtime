@@ -83,7 +83,7 @@
                                             (when (.startsWith (str (-> resp :headers :content-type)) "text/html")
                                               (:body resp))
                                             (str "code " (:status resp))))
-               :docId              "google"
+               :docUrl              "/integrations/google"
                :docLinkTitle       "Learn more about Google integration"}))
 
     (condp (fn [a b] (.startsWith b a)) (or (-> resp :headers :content-type) "")
@@ -140,7 +140,7 @@
                                       :noclient "This app file can only be accessed by a server module"
                                       :roclient "This app file can only be written by a server module"
                                       "Permission denied"))
-              :docId "drive_permissions"
+              :docUrl "/integrations/google/google-drive#permissions"
               :docLinkTitle "Learn more about Google Drive permissions"}))))
 
 (defn whitelist-ok? [type id creds writing?]

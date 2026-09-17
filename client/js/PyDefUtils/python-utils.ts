@@ -57,6 +57,9 @@ export function funcWithKwargs<T extends Function>(f: T) {
 /**
  * Sometimes, you don't want the kwargs transformed into JavaScript.
  * Just mark the function as taking kwargs.
+ *
+ * @deprecated Prefer `funcFastCall` from `@runtime/runner/py-util` for new
+ * Skulpt callable implementations that need raw keyword arguments.
  */
 export function withRawKwargs<T extends Function>(f: T) {
     (f as CoKwargsFunction<T>).co_kwargs = true;
@@ -66,6 +69,9 @@ export function withRawKwargs<T extends Function>(f: T) {
 /**
  * Like `withKwargs()`, but uses `kwsToObj()` to build kwargs from the raw array,
  * then exposes the result as a Skulpt `pyFunc`.
+ *
+ * @deprecated Prefer `funcFastCall` from `@runtime/runner/py-util` with a local
+ * `kwsToObj(kws)` conversion when object-style keyword arguments are needed.
  */
 export function funcWithRawKwargsDict<T extends Function>(f: T) {
     const rf = function (this: unknown, pyKwarray: Kws, ...moreFunctionArgs: Args) {

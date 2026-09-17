@@ -1,5 +1,6 @@
 import anvil
 import anvil.server
+import anvil.tables
 from anvil.server import Capability
 
 from .._base_classes import Row as BaseRow
@@ -622,7 +623,7 @@ class Row(BaseRow):
         self._anvil.cache_spec = []
         self._anvil.has_uncached = True
 
-    def _anvil_fill_cache(self, fetch=None):
+    def _anvil_fill_cache(self, fetch=None, explicit=False):
         if fetch is not None:
             uncached_keys = None if fetch is True else fetch
         elif self._anvil.spec is None:
@@ -633,6 +634,18 @@ class Row(BaseRow):
             ]
         else:
             return  # no uncached values
+
+        if anvil.tables._raise_on_cache_miss and not explicit:
+            if uncached_keys is None:
+                detail = "row data"
+            else:
+                detail = "column(s) {}".format(
+                    ", ".join(repr(key) for key in uncached_keys)
+                )
+            raise RuntimeError(
+                "Cannot implicitly fetch uncached {} while "
+                "anvil.tables._raise_on_cache_miss is enabled".format(detail)
+            )
 
         table_data = _batcher.flush_and_call(
             PREFIX + "fetch", self._anvil.cap, uncached_keys
@@ -956,7 +969,7 @@ class Row(BaseRow):
     def refresh(self, fetch=None):
         self._anvil_clear_cache()
         if fetch is None:
-            self._anvil_fill_cache()
+            self._anvil_fill_cache(explicit=True)
         else:
             self.fetch(fetch)
 
@@ -967,7 +980,7 @@ class Row(BaseRow):
             nm = type(fetch).__name__
             raise TypeError("expected a q.fetch_only() object, got {!r}".format(nm))
 
-        self._anvil_fill_cache(fetch.spec)
+        self._anvil_fill_cache(fetch.spec, explicit=True)
 
     @classmethod
     def _anvil_use_client_config(cls, permission, from_client):

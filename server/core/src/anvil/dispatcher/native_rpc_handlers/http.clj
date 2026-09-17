@@ -21,7 +21,7 @@
 (defn general-http-error
   ([message]
    {:anvil/server-error message
-    :docId              "http_module"
+    :docUrl              "/external-resources/http-apis/making-http-requests"
     :docLinkTitle       "Learn more about the HTTP module"})
   ([type message]
     (assoc (general-http-error message)

@@ -1,0 +1,16 @@
+{
+  "name": "parser/raw-text-dom-rewrite",
+  "entrypoint": "parseContainerForm",
+  "html": "<section anvil:on-dom:click=\"self.clicked\"><style>\n.card > .title { color: red; }\n</style><script>\nconst text = `first\n  second &amp; third`;\n</script></section>",
+  "expected": {
+    "container": {
+      "type": "HtmlComponent",
+      "properties": {
+        "html": "<section anvil:on-dom:click=\"self.clicked\" anvil:dom-node><style>\n.card > .title { color: red; }\n</style><script>\nconst text = `first\n  second &amp; third`;\n</script></section>"
+      }
+    },
+    "components": [],
+    "serialized_html": "<section anvil:on-dom:click=\"self.clicked\"><style>\n.card > .title { color: red; }\n</style><script>\nconst text = `first\n  second &amp; third`;\n</script></section>"
+  },
+  "expectedSerializedHtml": "<section anvil:on-dom:click=\"self.clicked\"><style>\n.card > .title { color: red; }\n</style><script>\nconst text = `first\n  second &amp; third`;\n</script></section>"
+}

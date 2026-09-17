@@ -42,7 +42,7 @@
         stripe-user-id (get-in service-config [:server_config :stripe_user_id])]
     (if (nil? stripe-user-id)
       (throw+ {:anvil/server-error "To use the Stripe API, you need to connect your own stripe account"
-               :docId              "stripe"
+               :docUrl              "/integrations/stripe"
                :docLinkTitle       "Learn more about Stripe Integration"})
       (let [request-options (-> (RequestOptions/builder)
                                 (.setStripeAccount stripe-user-id)
@@ -119,11 +119,11 @@
 
       (catch Throwable e
         (throw+ {:anvil/server-error (.getMessage e)
-                 :docId "stripe_service"
+                 :docUrl "/integrations/stripe"
                  :docLinkTitle "Learn more about the Stripe service"}))
       (catch Object e
         (throw+ {:anvil/server-error (str e)
-                 :docId "stripe_service"
+                 :docUrl "/integrations/stripe"
                  :docLinkTitle "Learn more about the Stripe service"})))))
 
 

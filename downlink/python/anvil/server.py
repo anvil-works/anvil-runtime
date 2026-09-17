@@ -1,5 +1,7 @@
 # Implementation of anvil.server for the downlink worker
 
+import time
+
 from ._threaded_server import live_object_backend, LazyMedia, call_info as session, _switch_session, call_context as context
 
 from ._server import (register, 
@@ -29,6 +31,7 @@ from ._server import (register,
                       BackgroundTaskError,
                       BackgroundTaskNotFound,
                       BackgroundTaskKilled,
+                      ScriptExitError,
                       http_endpoint,
                       wellknown_endpoint,
                       route,
@@ -50,6 +53,10 @@ from ._server import (register,
                       server_method)
 
 from . import _threaded_server, _server
+from ._client_side_only import _ClientSideOnly
+
+loading_indicator = _ClientSideOnly("server.loading_indicator")
+no_loading_indicator = _ClientSideOnly("server.no_loading_indicator")
 
 #~!defModuleAttr(anvil.server)!1: {name: 'startup_data', type: 'any', description: 'data loaded when returning a LoadAppResponse from a route'}
 def __getattr__(name):
@@ -84,6 +91,15 @@ def get_api_origin(environment_type=None, **kwargs):
 #!defFunction(anvil.server,Task object,fn_name, [args])!2: {anvil$args: {fn_name: "The name of the background function to launch", args: "Arguments to pass into the background function"}, anvil$helpLink: "/docs/background-tasks/defining-and-running", $doc: "Launches a function to run in the background. The function must be decorated with @anvil.server.background_task. Returns a Task object."} ["launch_background_task"]
 def launch_background_task(fn_name, *args, **kwargs):
     return call("anvil.private.background_tasks.launch", fn_name, *args, **kwargs)
+
+#!defFunction(anvil.server,any,script_name,[args])!2: {anvil$args: {script_name: "The name of the script to run", args: "Positional arguments to pass to the script (available to it as sys.argv[1:] and anvil.script.args; Media arguments appear in sys.argv as the names of temporary files containing their content)"}, anvil$helpLink: "/docs/background-tasks", $doc: "Run one of this app's scripts as a Background Task, wait for it to finish, and return its return value (whatever the script set anvil.script.return_value to). If the script raises an exception, exits with a non-zero status, or is killed, that error is raised here."} ["run_script"]
+def run_script(script_name, *args):
+    task = launch_background_task("script:" + script_name, *args)
+    delay = 0.2
+    while not task.is_completed():
+        time.sleep(delay)
+        delay = min(delay * 1.5, 1.0)
+    return task.get_return_value()
 
 #!defFunction(anvil.server,Task object,id)!2: {anvil$args: {id: "The id of a background task"}, anvil$helpLink: "/docs/background-tasks/communicating-back", $doc: "Returns the Task object of a background task from its id. You can get the task id from task.get_id()."} ["get_background_task"]
 def get_background_task(id):

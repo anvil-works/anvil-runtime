@@ -1,6 +1,7 @@
 (ns anvil.runtime.app-data-test
   (:require [anvil.runtime.app-data :as app-data]
             [anvil.runtime.html-form-template :as html-form-template]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is]]))
 
 (def ^:private html-form-body
@@ -92,6 +93,59 @@
         html-template (html-form-template/generate-html-template form-yaml)]
     (is (= {:slots {}} frontmatter))
     (is (re-find #"(?m)^slots: \{\}$" html-template))))
+
+(deftest rename-package-qualified-form-specs-in-form-regenerates-html-body
+  (let [form-yaml {:save_as_html true
+                   :serialized_html (str "<anvil-form layout=\"Template_App.Layouts.BaseLayout\">\n"
+                                         "  <anvil-block slot=\"content\">\n"
+                                         "    <anvil-component type=\"RepeatingPanel\" name=\"repeating_panel_1\" prop:item_template=\"Template_App.RowTemplate\"></anvil-component>\n"
+                                         "  </anvil-block>\n"
+                                         "</anvil-form>")
+                   :layout {:type "Template_App.Layouts.BaseLayout"}
+                   :components_by_slot {"content" [{:type "RepeatingPanel"
+                                                    :name "repeating_panel_1"
+                                                    :properties {:item_template "Template_App.RowTemplate"}}]}}
+        {:keys [form changed?]} (html-form-template/rename-package-qualified-form-specs-in-form
+                                  form-yaml
+                                  "Template_App"
+                                  "Created_App_2")]
+    (is changed?)
+    (is (= "Created_App_2.Layouts.BaseLayout" (get-in form [:layout :type])))
+    (is (= "Created_App_2.RowTemplate"
+           (get-in form [:components_by_slot "content" 0 :properties :item_template])))
+    (is (str/includes? (:serialized_html form) "layout=\"Created_App_2.Layouts.BaseLayout\""))
+    (is (str/includes? (:serialized_html form) "prop:item_template=\"Created_App_2.RowTemplate\""))
+    (is (not (str/includes? (:serialized_html form) "Template_App")))
+    (is (not (str/includes? (:serialized_html form) "form:Layouts.BaseLayout")))))
+
+(deftest rename-package-qualified-form-specs-in-form-leaves-legacy-local-form-specs
+  (let [form-yaml {:save_as_html true
+                   :serialized_html "<anvil-form layout=\"form:Layouts.BaseLayout\"></anvil-form>"
+                   :layout {:type "form:Layouts.BaseLayout"}
+                   :components_by_slot {}}
+        {:keys [form changed?]} (html-form-template/rename-package-qualified-form-specs-in-form
+                                  form-yaml
+                                  "Template_App"
+                                  "Created_App_2")]
+    (is (not changed?))
+    (is (= form-yaml form))))
+
+(deftest rename-package-qualified-form-specs-in-app-yaml-uses-supplied-final-package
+  (let [form-yaml {:save_as_html true
+                   :serialized_html "<anvil-form layout=\"Template_App.Layouts.BaseLayout\"></anvil-form>"
+                   :layout {:type "Template_App.Layouts.BaseLayout"}
+                   :components_by_slot {}}
+        app-yaml {:name "Created App 2"
+                  :package_name "Created_App_2"
+                  :forms [form-yaml]}
+        renamed (html-form-template/rename-package-qualified-form-specs-in-app-yaml
+                  app-yaml
+                  "Template_App"
+                  "Created_App_2")]
+    (is (= "Created_App_2" (:package_name renamed)))
+    (is (= "Created_App_2.Layouts.BaseLayout" (get-in renamed [:forms 0 :layout :type])))
+    (is (str/includes? (get-in renamed [:forms 0 :serialized_html])
+                       "layout=\"Created_App_2.Layouts.BaseLayout\""))))
 
 (deftest sanitised-app-and-style-for-client-removes-html-storage-fields-from-runtime-forms
   (let [main-form (html-form "Main")

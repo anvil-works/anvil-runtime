@@ -27,8 +27,10 @@
          (instance? Integer v) (.setAttribute span key-name (long v))
          (keyword? v) (.setAttribute span key-name ^String (name v))
          (string? v) (.setAttribute span key-name ^String v)
-         (nil? v) (.setAttribute span key-name nil)
-         :else (.setAttribute span key-name v))))))
+         (nil? v) (let [nil-value nil]
+                    ;; Ensure we match only one .setAttribute overload
+                    (.setAttribute span key-name ^String nil-value))
+         :else (.setAttribute span key-name ^String (str v)))))))
 
 (defn span->map [span]
   (let [carrier (atom {})

@@ -3,17 +3,16 @@
 // modal-vanilla 0.12.0 <https://github.com/KaneCohen/modal-vanilla>
 // Copyright 2020 Kane Cohen <https://github.com/KaneCohen>
 // Available under BSD-3-Clause license
-
+import { Suspension, chainOrSuspend, pyCallOrSuspend, pyObject, pyStr } from "@Sk";
+import PyDefUtils from "PyDefUtils";
 import {
-    addEventHandler,
     Component,
+    addEventHandler,
     notifyComponentMounted,
     notifyComponentUnmounted,
 } from "@runtime/components/Component";
 import { getCssPrefix } from "@runtime/runner/legacy-features";
-import { anvilMod, objToKws, s_add_component, s_DEPRECATED } from "@runtime/runner/py-util";
-import { chainOrSuspend, pyCallOrSuspend, pyObject, pyStr, Suspension } from "@Sk";
-import PyDefUtils from "PyDefUtils";
+import { anvilMod, objToKws, s_DEPRECATED, s_add_component } from "@runtime/runner/py-util";
 
 const s_click = new pyStr("click");
 const s_alert_footer_buttons = new pyStr("anvil.alerts.FooterButton");
@@ -53,14 +52,14 @@ class EventEmitter {
 }
 
 const DEFAULT_OPTIONS = {
-    backdrop: true, // Boolean or 'static', Show Modal backdrop blocking content.
+    backdrop: true as boolean | "static", // Boolean or 'static', Show Modal backdrop blocking content.
     keyboard: true, // Close modal on esc key.
     show: true,
     id: undefined as number | undefined | string,
     large: null as boolean | null,
     title: null as string | null,
     dismissible: true,
-    body: true as boolean | string,
+    body: true as boolean | string | null,
     showFooter: false,
     buttons: [] as { text: string; style?: string; onClick?: () => void }[],
 };
@@ -137,7 +136,7 @@ interface AlertProps {
     title?: string | null;
     showFooter?: boolean;
     dismissible?: boolean;
-    body?: boolean | string;
+    body?: boolean | string | null;
 }
 
 const DISPLAY_NONE = { style: "display: none;" };

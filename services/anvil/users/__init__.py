@@ -102,6 +102,8 @@ def reset_password(old_password, new_password):
 
 
 if is_server_side():
+    from anvil._client_side_only import _ClientSideOnly
+
     def get_user(*args, **kws):
         allow_remembered, fetch = _resolve_args_kws("get_user", ["allow_remembered", "fetch"], [True, None], args, kws)
         user = anvil.server.call("anvil.private.users.get_current_user", allow_remembered=allow_remembered, fetch=fetch)
@@ -113,13 +115,11 @@ if is_server_side():
         u = anvil.server.call("anvil.private.users.force_login", _to_row_ref(user), remember=remember, fetch=fetch)
         return _to_user_row(u)
 
-    def _fail(fname):
-        def f(*args, **kwargs):
-            raise Exception("You can't use " + fname + "() on the server (do it in form code instead)")
-        return f
+    for n in ["login_with_google", "signup_with_google", "login_with_facebook", "signup_with_facebook",
+              "login_with_microsoft", "signup_with_microsoft", "login_with_saml", "signup_with_saml",
+              "login_with_form", "signup_with_form", "change_password_with_form", "configure_account_with_form"]:
+        globals()[n] = _ClientSideOnly(n, msg="You can't use {name}() on the server (do it in form code instead)")
 
-    for n in ["login_with_google", "signup_with_google", "login_with_facebook", "signup_with_facebook", "login_with_microsoft", "signup_with_microsoft", "login_with_saml", "signup_with_saml", "login_with_form", "signup_with_form"]:
-        globals()[n] = _fail(n)
 
 else:
     from . import mfa

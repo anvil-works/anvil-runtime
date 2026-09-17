@@ -1,14 +1,11 @@
 (ns anvil.dispatcher.native-rpc-handlers.users.fido
-  (:use clj-commons.slingshot)
+  (:use slingshot.slingshot)
   (:require [anvil.runtime.app-data :as app-data]
             [clojure.data.codec.base64 :as b64]
             [anvil.dispatcher.native-rpc-handlers.util :as util]
             [crypto.random :as random]
             [anvil.runtime.secrets :as secrets]
-            [anvil.dispatcher.native-rpc-handlers.users.util :refer [row-to-map
-                                                                     get-user-row-by-id
-                                                                     get-props-with-named-user-table
-                                                                     get-user-check-enabled-and-validate]]
+            [anvil.dispatcher.native-rpc-handlers.users.util :as users-util]
             [clojure.tools.logging :as log]
             [anvil.dispatcher.core :as dispatcher])
   (:import (com.webauthn4j.data.client.challenge DefaultChallenge)
@@ -27,11 +24,10 @@
 
 (defn begin-fido-attestation [_kwargs email]
   (let [email (or email
-                  (binding [util/*client-request?* false]
-                    (let [{:keys [user_table]} (get-props-with-named-user-table)
-                          v1-row-id-str (or (get-in @util/*session-state* [:users :logged-in-id]) (get-in @util/*session-state* [:users :mfa-reset-user-id]))
-                          user-row (get-user-row-by-id user_table v1-row-id-str)]
-                      (get (row-to-map user-row) "email")))
+                  (let [{:keys [table_id]} (users-util/get-user-props)
+                        v1-row-id-str (or (get-in @util/*session-state* [:users :logged-in-id]) (get-in @util/*session-state* [:users :mfa-reset-user-id]))
+                        user-row (users-util/table-get-row-by-id table_id v1-row-id-str)]
+                    (users-util/get-in-user-row user-row :email))
                   (throw+ {:anvil/server-error "Email address not provided and could not be inferred"}))
         challenge (String. ^bytes (b64/encode (random/bytes 32)))]
 
@@ -86,25 +82,24 @@
     (secrets/encrypt-str-with-global-key :u (String. ^bytes (b64/encode attestation-object-bytes)))))
 
 (defn begin-fido-assertion [_kwargs email password]
-  (binding [util/*client-request?* false]                   ; Safe, because we're loading the current user, and verifying their password.
-    (let [{:keys [user_table]} (get-props-with-named-user-table)
-          user (get-user-check-enabled-and-validate user_table {:email (.trim ^String (or email ""))} :email)]
+  (let [{:keys [table_id]} (users-util/get-user-props)
+        user-row (users-util/table-get-from-email-check-enabled-and-validate table_id (.trim ^String (or email "")))]
 
-      (when-not password
-        (throw+ {:anvil/server-error "No password provided" :type "anvil.users.AuthenticationFailed"}))
-      (let [pw-hash (when user (get (row-to-map user) "password_hash"))]
-        (when-not (anvil.util/bcrypt-checkpw password pw-hash)
-          (throw+ {:anvil/server-error "Incorrect password" :type "anvil.users.AuthenticationFailed"})))
+    (when-not password
+      (throw+ {:anvil/server-error "No password provided" :type "anvil.users.AuthenticationFailed"}))
+    (let [pw-hash (when user-row (users-util/get-in-user-row user-row "password_hash"))]
+      (when-not (anvil.util/bcrypt-checkpw password pw-hash)
+        (throw+ {:anvil/server-error "Incorrect password" :type "anvil.users.AuthenticationFailed"})))
 
-      (let [challenge (String. ^bytes (b64/encode (random/bytes 32)))]
-        (swap! util/*session-state* assoc-in [:users :fido-assertion-challenge] challenge)
-        {:publicKey {:challenge        challenge
-                     :userVerification "discouraged"
-                     :allowCredentials (for [mfa-method (get (row-to-map user) "mfa" [])
-                                             :when (= (:type mfa-method) "fido")
-                                             :let [attestation-object (fido-mfa-method->attestation-object mfa-method)
-                                                   credential-id (-> attestation-object .getAuthenticatorData .getAttestedCredentialData .getCredentialId)]]
-                                         {:type "public-key" :id (String. ^bytes (b64/encode credential-id))})}}))))
+    (let [challenge (String. ^bytes (b64/encode (random/bytes 32)))]
+      (swap! util/*session-state* assoc-in [:users :fido-assertion-challenge] challenge)
+      {:publicKey {:challenge        challenge
+                   :userVerification "discouraged"
+                   :allowCredentials (for [mfa-method (users-util/get-in-user-row user-row "mfa" [])
+                                           :when (= (:type mfa-method) "fido")
+                                           :let [attestation-object (fido-mfa-method->attestation-object mfa-method)
+                                                 credential-id (-> attestation-object .getAuthenticatorData .getAttestedCredentialData .getCredentialId)]]
+                                       {:type "public-key" :id (String. ^bytes (b64/encode credential-id))})}})))
 
 (defn validate-fido-assertion [mfa-method webauthn-assertion-response]
   (let [attestation-object ^AttestationObject (fido-mfa-method->attestation-object mfa-method)
@@ -152,9 +147,9 @@
           (log/trace (str "Fido assertion validation failed. This could be because a different MFA method matched on the same user.\n" (.getMessage e)))
           false)))))
 
-(defn v1-users-handlers []
+(defn users-handlers []
   {"anvil.private.users.begin_fido_attestation"    (util/wrap-native-fn begin-fido-attestation)
    "anvil.private.users.validate_fido_attestation" (util/wrap-native-fn validate-fido-attestation)
    "anvil.private.users.begin_fido_assertion"      (util/wrap-native-fn begin-fido-assertion)})
 
-;; (swap! dispatcher/native-rpc-handlers merge (v1-users-handlers))
+(swap! dispatcher/native-rpc-handlers merge (users-handlers))

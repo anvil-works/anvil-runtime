@@ -208,7 +208,7 @@
 (defn get-cell [_kwargs cells-feed-url row col creds]
   (when-not (and (number? row) (number? col))
     (throw+ {:anvil/server-error "Row and column must be numbers"
-             :docId "drive_sheets"
+             :docUrl "/integrations/google/google-drive#google-sheets"
              :docLinkTitle "Learn more about Google Sheets integration"}))
 
   (let [wl-access (get-whitelist-access ::worksheet-cells-feed-url cells-feed-url creds)

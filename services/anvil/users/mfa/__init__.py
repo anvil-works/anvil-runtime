@@ -2,53 +2,53 @@ import anvil.server
 from anvil import *
 from ..exceptions import AuthenticationFailed, MFAException
 from ..config import get_client_config
-from anvil.js import window
-
-
-def _replace(s, pattern, replacement):
-    return window.String.prototype.replace.call(s, window.RegExp(pattern, "g"), replacement)
-
-
-class PhoneNumberValidator(object):
-    def __init__(self, **properties):
-        self.box = pluggable_ui['anvil.TextBox'](type="tel", **properties)
-        self.valid_number = None
-        self.box.add_event_handler("focus", self.on_focus)
-        self.box.add_event_handler("lost_focus", self.on_blur)
-        self.box.add_event_handler("pressed_enter", self.on_blur)
-
-    def on_focus(self, **e):
-        if hasattr(self.box, "placeholder"):
-            self.box.placeholder = "(123) 456 7890" if window.navigator.language == "en-US" else "+1 000 0..."
-
-    def on_blur(self, **e):
-        self.validate()
-
-    def validate(self):
-        leadingPlus = self.box.text.startswith("+")
-        text = self.box.text = _replace(self.box.text, "[^0-9]", "")
-        if leadingPlus:
-            if len(text) > 3: # What's a valid minimum length?
-                self.box.text = "+" + text
-                self.valid_number = text
-            else:
-                self.valid_number = None
-        else:
-            if len(text) == 10:
-                self.valid_number = "+1" + text
-                self.box.text = "(" + text[0:3] + ") " + text[3:6] + " " + text[6:]
-            else:
-                self.valid_number = None
-        
 
 
 #!defFunction(anvil.users,_,email_address)!2: "Send a two-factor authentication reset email to the specified user." ["send_mfa_reset_email"]
 def send_mfa_reset_email(email):
     anvil.server.call("anvil.private.users.send_mfa_reset_email", email)
 if is_server_side():
-    pass
+    from anvil._client_side_only import _ClientSideOnly
+
+    for n in ["mfa_login_with_form", "configure_mfa_with_form"]:
+        globals()[n] = _ClientSideOnly(n, msg="You can't use {name}() on the server (do it in form code instead)")
 else:
     from . import webauthn
+    from anvil.js import window
+
+    def _replace(s, pattern, replacement):
+        return window.String.prototype.replace.call(s, window.RegExp(pattern, "g"), replacement)
+
+    class PhoneNumberValidator(object):
+        def __init__(self, **properties):
+            self.box = pluggable_ui['anvil.TextBox'](type="tel", **properties)
+            self.valid_number = None
+            self.box.add_event_handler("focus", self.on_focus)
+            self.box.add_event_handler("lost_focus", self.on_blur)
+            self.box.add_event_handler("pressed_enter", self.on_blur)
+
+        def on_focus(self, **e):
+            if hasattr(self.box, "placeholder"):
+                self.box.placeholder = "(123) 456 7890" if window.navigator.language == "en-US" else "+1 000 0..."
+
+        def on_blur(self, **e):
+            self.validate()
+
+        def validate(self):
+            leadingPlus = self.box.text.startswith("+")
+            text = self.box.text = _replace(self.box.text, "[^0-9]", "")
+            if leadingPlus:
+                if len(text) > 3: # What's a valid minimum length?
+                    self.box.text = "+" + text
+                    self.valid_number = text
+                else:
+                    self.valid_number = None
+            else:
+                if len(text) == 10:
+                    self.valid_number = "+1" + text
+                    self.box.text = "(" + text[0:3] + ") " + text[3:6] + " " + text[6:]
+                else:
+                    self.valid_number = None            
 
     #!defFunction(anvil.users.mfa,_,email_address)!2: "Generate a WebAuthn challenge that can be used to register a new hardware token for two-factor authentication." ["create_fido_mfa_method"]
     def create_fido_mfa_method(email):

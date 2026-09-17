@@ -765,6 +765,28 @@ describe("top-level anvil-component container behaviour", () => {
         expect(normalizeMultiline(serialized)).toBe(normalizeMultiline(expectedHtml));
         expect(normalizeMultiline(yaml.serialized_html ?? "")).toBe(normalizeMultiline(expectedHtml));
     });
+
+    it("does not strip generated component name text from serialized attribute values", () => {
+        const yaml = {
+            container: {
+                type: "HtmlComponent",
+                properties: { html: `<div><anvil-dropzone name="label_slot"></anvil-dropzone></div>` },
+            },
+            components: [
+                {
+                    type: "Label",
+                    name: "$component_1",
+                    properties: { text: `foo name="$component_1" bar` },
+                    layout_properties: { dropzone: "label_slot" },
+                },
+            ],
+        };
+
+        const serialized = serializeFormContainer(yaml, { allowReparse: true });
+
+        expect(serialized).toContain(`prop:text='foo name="$component_1" bar'`);
+    });
+
     it("downgrades to HtmlForm when re-parsing serialized output with no metadata", () => {
         const html = `<div anvil:on:show="self.on_show">
     <anvil-component type="Button" prop:text="Click"></anvil-component>

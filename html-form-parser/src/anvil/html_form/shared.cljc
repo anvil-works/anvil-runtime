@@ -359,21 +359,51 @@
       (str open " />")
       (str open ">" inner-html "</" tag-name ">"))))
 
-(defn serialize-node [node]
+(defn- formatted-multiline-text? [value]
+  ;; Leading/trailing line breaks surround element content and carry structural
+  ;; indentation. A line break inside ordinary text remains literal content.
+  (or (str/blank? value)
+      (str/starts-with? value "\n")
+      (boolean (re-find #"\n[ \t]*$" value))))
+
+(def ^:private whitespace-preserving-elements #{"pre" "textarea"})
+
+(defn- serialize-node* [node indent node-attrs preserve-whitespace?]
   (cond
+    (raw/raw-text-node? node)
+    (raw/text-value node)
+
     (= "#text" (raw/node-name node))
-    (escape-html-text (raw/text-value node))
+    (let [value (raw/text-value node)]
+      (escape-html-text
+        (if (and (not preserve-whitespace?)
+                 (seq indent)
+                 (formatted-multiline-text? value))
+          (str/replace value "\n" (str "\n" indent))
+          value)))
 
     (= "#comment" (raw/node-name node))
-    (str "<!--" (raw/comment-data node) "-->")
+    (let [value (raw/comment-data node)]
+      (str "<!--"
+           (if (seq indent)
+             (str/replace value "\n" (str "\n" indent))
+             value)
+           "-->"))
 
     (raw/element? node)
-    (render-element (raw/tag-name node)
-                    (raw/attrs node)
-                    (apply str (map serialize-node (raw/child-nodes node))))
+    (let [tag-name (raw/tag-name node)
+          preserve-whitespace? (or preserve-whitespace?
+                                   (contains? whitespace-preserving-elements tag-name))]
+      (render-element tag-name
+                      (or node-attrs (raw/attrs node))
+                      (apply str (map #(serialize-node* % indent nil preserve-whitespace?)
+                                      (raw/child-nodes node)))))
 
     :else
     ""))
+
+(defn serialize-node [node]
+  (serialize-node* node "" nil false))
 
 (defn without-attrs [attrs names]
   (let [names (set names)]
@@ -383,6 +413,32 @@
 
 (defn with-attr [attrs name value]
   (conj (without-attrs attrs [name]) {:name name :value value}))
+
+(defn- has-attr? [attrs name]
+  (some #(= name (raw/attr-name %)) attrs))
+
+(defn- has-on-dom-attr? [attrs]
+  (some #(str/starts-with? (raw/attr-name %) "anvil:on-dom:") attrs))
+
+(defn- empty-dom-node-attr? [attr]
+  (and (= "anvil:dom-node" (raw/attr-name attr))
+       (not (seq (or (raw/attr-value attr) "")))))
+
+(defn ensure-dom-node-attrs [attrs]
+  (let [attrs (vec attrs)]
+    (if (and (has-on-dom-attr? attrs)
+             (not (has-attr? attrs "anvil:dom-node")))
+      (conj attrs {:name "anvil:dom-node" :value ""})
+      attrs)))
+
+(defn normalize-dom-node-attrs [attrs]
+  (let [attrs (ensure-dom-node-attrs attrs)]
+    (if (has-on-dom-attr? attrs)
+      attrs
+      (filterv #(not (empty-dom-node-attr? %)) attrs))))
+
+(defn strip-empty-dom-node-attrs [attrs]
+  (filterv #(not (empty-dom-node-attr? %)) attrs))
 
 (defn json-literal? [value]
   (let [trimmed (str/trim (or value ""))]
@@ -398,9 +454,24 @@
             (= first-code 110)
             (<= 48 first-code 57))))))
 
+#?(:clj
+   (defn- reject-non-whitespace-extra-json-data [value reader]
+     ;; data.json parses one JSON value, then passes the unread suffix here.
+     ;; Match JSON.parse by accepting only JSON whitespace after that value.
+     ;; Any other suffix throws, so attribute parsing keeps the original string.
+     ;; e.g. {}suffix -> remaining "suffix" is rejected here
+     (let [remaining (slurp reader)]
+       (if (re-matches #"[ \t\n\r]*" remaining)
+         value
+         (throw (ex-info "Found extra data after JSON value" {:value value :remaining remaining}))))))
+
+#?(:clj
+   (defn- json-read-strict [value]
+     (json/read-str value :extra-data-fn reject-non-whitespace-extra-json-data)))
+
 (defn json-parseable? [value]
   (try
-    #?(:clj (json/read-str value)
+    #?(:clj (json-read-strict value)
        :cljs (js/JSON.parse value))
     true
     (catch #?(:clj Exception :cljs :default) _
@@ -413,7 +484,7 @@
   (if-not (json-literal? value)
     value
     (try
-      #?(:clj (json/read-str value)
+      #?(:clj (json-read-strict value)
          :cljs (js->clj (js/JSON.parse value)))
       (catch #?(:clj Exception :cljs :default) _
         value))))
@@ -422,45 +493,90 @@
   #?(:clj (keyword value)
      :cljs value))
 
-(defn- indent-fragment-content [content indent]
-  (str/join "\n"
-            (map (fn [line]
-                   (if (empty? line) "" (str indent line)))
-                 (str/split (or content "") #"\n" -1))))
+(defn serialize-nodes-at-position
+  "Serialize parsed nodes at a surrounding indentation position.
 
-(defn- render-node-with-added-attrs [node attrs]
-  (let [node-attrs (reduce (fn [current attr]
-                             (with-attr current
-                               (raw/attr-name attr)
-                               (or (raw/attr-value attr) "")))
-                           (raw/attrs node)
-                           attrs)]
-    (render-element (raw/tag-name node)
-                    node-attrs
-                    (apply str (map serialize-node (raw/child-nodes node))))))
+  `:indent` is added after line breaks in structural whitespace and comments.
+  When `:prepend-indent?` is true, it is also added before the first node.
+  `:root` identifies the node whose attributes should be replaced by
+  `:root-attrs`."
+  [nodes {:keys [indent prepend-indent? root root-attrs]
+          :or {indent ""}}]
+  (let [html (apply str
+                    (map #(serialize-node*
+                            % indent (when (identical? % root) root-attrs) false)
+                         nodes))]
+    (if (and prepend-indent? (seq html))
+      (str indent html)
+      html)))
 
-(defn add-attrs-to-root-element
-  ([html attrs] (add-attrs-to-root-element html attrs "    "))
-  ([html attrs indent]
-   ;; Fragment metadata is written onto the existing root element when possible,
-   ;; preserving tags like button/input instead of wrapping unnecessarily.
-   (if (or (empty? attrs) (not (seq (str/trim (or html "")))))
-     html
-     (let [fragment (raw/parse-fragment html)
-           nodes (raw/child-nodes fragment)
-           root (get-single-root-element nodes)]
-       (if-not root
-         (render-element "div" attrs (str "\n" (indent-fragment-content (str/trim html) indent) "\n"))
-         (apply str
-                (map #(if (identical? % root)
-                        (render-node-with-added-attrs % attrs)
-                        (serialize-node %))
-                     nodes)))))))
+(declare serialize-node-with-ensured-dom-node)
+
+(defn- serialize-element-with-ensured-dom-node [element changed?]
+  (let [original-attrs (vec (raw/attrs element))
+        attrs (normalize-dom-node-attrs original-attrs)
+        changed-element? (not= (count attrs) (count original-attrs))
+        child-html (apply str (map (if (raw/inert-element? element)
+                                    serialize-node
+                                    #(serialize-node-with-ensured-dom-node % changed?))
+                                  (raw/child-nodes element)))]
+    (when changed-element?
+      (state-reset! changed? true))
+    (render-element (raw/tag-name element) attrs child-html)))
+
+(defn- serialize-node-with-ensured-dom-node [node changed?]
+  (cond
+    (raw/element? node)
+    (serialize-element-with-ensured-dom-node node changed?)
+
+    :else
+    (serialize-node node)))
 
 (defn ensure-dom-node-attribute [html]
-  ;; anvil:on-dom handlers require anvil:dom-node so the designer can locate
-  ;; the underlying DOM node; add it only when absent.
-  (if (or (str/includes? html "anvil:dom-node")
-          (not (str/includes? html "anvil:on-dom:")))
+  ;; anvil:on-dom handlers require anvil:dom-node on the same element so the
+  ;; runtime can find and inspect that element's event attributes.
+  (if-not (or (str/includes? html "anvil:on-dom:")
+              (str/includes? html "anvil:dom-node"))
     html
-    (add-attrs-to-root-element html [{:name "anvil:dom-node" :value ""}])))
+    (let [fragment (raw/parse-fragment html)
+          changed? (state false)
+          rendered (apply str (map #(serialize-node-with-ensured-dom-node % changed?)
+                                   (raw/child-nodes fragment)))]
+      (if @changed?
+        rendered
+        html))))
+
+(declare serialize-node-without-empty-dom-node)
+
+(defn- serialize-element-without-empty-dom-node [element changed?]
+  (let [original-attrs (vec (raw/attrs element))
+        attrs (strip-empty-dom-node-attrs original-attrs)
+        changed-element? (not= (count attrs) (count original-attrs))
+        child-html (apply str (map (if (raw/inert-element? element)
+                                    serialize-node
+                                    #(serialize-node-without-empty-dom-node % changed?))
+                                  (raw/child-nodes element)))]
+    (when changed-element?
+      (state-reset! changed? true))
+    (render-element (raw/tag-name element) attrs child-html)))
+
+(defn- serialize-node-without-empty-dom-node [node changed?]
+  (cond
+    (raw/element? node)
+    (serialize-element-without-empty-dom-node node changed?)
+
+    :else
+    (serialize-node node)))
+
+(defn strip-empty-dom-node-attributes [html]
+  ;; Empty anvil:dom-node is internal serializer/parser plumbing for
+  ;; anvil:on-dom. Named DOM node refs remain public and must round-trip.
+  (if-not (str/includes? html "anvil:dom-node")
+    html
+    (let [fragment (raw/parse-fragment html)
+          changed? (state false)
+          rendered (apply str (map #(serialize-node-without-empty-dom-node % changed?)
+                                   (raw/child-nodes fragment)))]
+      (if @changed?
+        rendered
+        html))))

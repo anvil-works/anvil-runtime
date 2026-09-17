@@ -64,6 +64,7 @@ function makeLayoutReparseFixture(): ParsedLayoutHtml {
             content: {
                 target: { type: "slot", name: "body" },
                 index: 0,
+                slot_order: 0,
                 set_layout_properties: { role: "content" },
             },
         },
@@ -231,16 +232,19 @@ describe("parseLayoutHtml", () => {
             actions: {
                 target: { type: "slot", name: "header" },
                 index: 1,
+                slot_order: 0,
                 set_layout_properties: {},
             },
             primary: {
                 target: { type: "container", name: "main_panel" },
                 index: 0,
+                slot_order: 1,
                 set_layout_properties: {},
             },
             secondary: {
                 target: { type: "container", name: "main_panel" },
                 index: 0,
+                slot_order: 2,
                 set_layout_properties: { width: 200 },
             },
         });
@@ -263,6 +267,7 @@ describe("parseLayoutHtml", () => {
                 slot_1: {
                     target: { type: "slot", name: "slot_1" },
                     index: 0,
+                    slot_order: 0,
                     set_layout_properties: {},
                 },
             },
@@ -290,6 +295,7 @@ describe("parseLayoutHtml", () => {
                 slot_1: {
                     target: { type: "slot", name: "slot_1" },
                     index: 0,
+                    slot_order: 0,
                     set_layout_properties: {},
                 },
             },
@@ -468,6 +474,7 @@ describe("parseLayoutHtml", () => {
                 content: {
                     target: { type: "slot", name: "body" },
                     index: 0,
+                    slot_order: 0,
                     set_layout_properties: { role: "content" },
                 },
             })

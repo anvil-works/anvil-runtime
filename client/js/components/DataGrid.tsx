@@ -18,13 +18,14 @@ import {
 import PyDefUtils from "PyDefUtils";
 import { getCssPrefix } from "@runtime/runner/legacy-features";
 import { PyModMap, s_add_component, s_remove_from_parent } from "@runtime/runner/py-util";
-import { getDomPyComponent, type ClassicComponentConstructor } from "./ClassicComponent";
+import type { ClassicComponentConstructor } from "./ClassicComponent";
 import type { ClassicContainer } from "./ClassicContainer";
 import { getPyParent } from "./Component";
 import { indexInRange, validateChild } from "./Container";
-import { isInvisibleComponent } from "./helpers";
-import type { Done, PaginateFn } from "./Paginator";
 import { DataRowPanel } from "./DataRowPanel";
+import type { Done, PageChangeSource, PageOperation, PaginateFn } from "./Paginator";
+import { getDomPyComponent } from "./component-dom";
+import { isInvisibleComponent } from "./helpers";
 
 /*#
 id: datagrid
@@ -124,6 +125,8 @@ interface DataGridAnvil {
     updateConfigHeader?: () => void;
     onUpdateAutoHeader?: () => void;
     afterUpdateColumns?: () => void;
+    navigatePage: (operation: PageOperation, source: PageChangeSource, page?: any) => any;
+    recoverInvalidPage: () => any;
 }
 
 export interface DataGrid extends ClassicContainer<DataGridAnvil> {}
@@ -196,7 +199,7 @@ const DataGridFactory: (pyModule: PyModMap) => void = (pyModule) => {
                     pyVal: true,
                     exampleValue: 20,
                     description: "The maximum number of rows to display at one time.",
-                    set: (s, e, v) => pyCallOrSuspend(s.tp$getattr<pyCallable>(new pyStr("jump_to_first_page"))),
+                    set: (s, e, v) => s._anvil.navigatePage("first", "code"),
                 },
                 wrap_on: /*!componentProp(DataGrid)!1*/ {
                     name: "wrap_on",
@@ -217,7 +220,31 @@ const DataGridFactory: (pyModule: PyModMap) => void = (pyModule) => {
             }
         ),
 
-        events: PyDefUtils.assembleGroupEvents("data grid", /*!componentEvents(DataGrid)!1*/ ["universal"]),
+        events: PyDefUtils.assembleGroupEvents("data grid", /*!componentEvents(DataGrid)!1*/ ["universal"], {
+            page_changed: /*!componentEvent(DataGrid)!1*/ {
+                name: "page_changed",
+                description:
+                    "When the current page changes, including navigation in code and automatic resets. " +
+                    "Fires once after navigation completes, and not when the page stays the same. " +
+                    "Handlers may navigate again; the event describes the completed change even if the page changes while a handler is waiting.",
+                parameters: [
+                    {
+                        name: "previous_page",
+                        description: "The previous zero-based page number, or None if there was no previous page.",
+                    },
+                    {
+                        name: "current_page",
+                        description: "The zero-based page number after navigation completes.",
+                        important: true,
+                    },
+                    {
+                        name: "source",
+                        description:
+                            "How navigation was triggered: 'click' for pagination buttons, or 'code' for programmatic changes and automatic resets.",
+                    },
+                ],
+            },
+        }),
 
         layouts: [
             {
@@ -294,16 +321,15 @@ const DataGridFactory: (pyModule: PyModMap) => void = (pyModule) => {
                 self._anvil.updateColStyles = updateColStyles.bind(self, self);
                 self._anvil.paginate = paginate.bind(self, self);
 
-                const bindPageButton = (elt: HTMLElement, methodName: string) => {
+                const bindPageButton = (elt: HTMLElement, operation: PageOperation) => {
                     $(elt).on("click", () => {
-                        const method = self.tp$getattr<pyCallable>(new pyStr(methodName));
-                        PyDefUtils.asyncToPromise(() => pyCallOrSuspend(method));
+                        PyDefUtils.asyncToPromise(() => self._anvil.navigatePage(operation, "click"));
                     });
                 };
-                bindPageButton(self._anvil.elements.firstPage, "jump_to_first_page");
-                bindPageButton(self._anvil.elements.prevPage, "previous_page");
-                bindPageButton(self._anvil.elements.nextPage, "next_page");
-                bindPageButton(self._anvil.elements.lastPage, "jump_to_last_page");
+                bindPageButton(self._anvil.elements.firstPage, "first");
+                bindPageButton(self._anvil.elements.prevPage, "previous");
+                bindPageButton(self._anvil.elements.nextPage, "next");
+                bindPageButton(self._anvil.elements.lastPage, "last");
 
                 return self._anvil.setProp("columns", self._anvil.props["columns"]);
             });
@@ -351,7 +377,7 @@ const DataGridFactory: (pyModule: PyModMap) => void = (pyModule) => {
                             },
                         });
                     },
-                    () => pyCallOrSuspend(self.tp$getattr<pyCallable>(new pyStr("jump_to_first_page")))
+                    () => self._anvil.navigatePage("first", "code")
                 );
             });
 
@@ -516,8 +542,7 @@ const DataGridFactory: (pyModule: PyModMap) => void = (pyModule) => {
                         () => {
                             if (self._anvil.paginatorPages) {
                                 if (done === "INVALID") {
-                                    self._anvil.repaginating = false; // HACK: Allow recursive call to previous_page. Ew.
-                                    return pyCallOrSuspend(self.tp$getattr<pyCallable>(new pyStr("previous_page")));
+                                    return self._anvil.recoverInvalidPage();
                                 } else {
                                     self._anvil.paginatorPages[self._anvil.paginatorPages.length - 1].rowsDisplayed =
                                         rows;

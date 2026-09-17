@@ -1,0 +1,28 @@
+{
+  "name": "parser/designer-config",
+  "entrypoint": "parseContainerForm",
+  "html": "<anvil-component type=\"ColumnPanel\" name=\"card\" designer:placeholder=\"Add components here\"></anvil-component>",
+  "expected": {
+    "container": {
+      "type": "HtmlComponent",
+      "properties": {
+        "html": "<anvil-dropzone name=\"$dz_0\"></anvil-dropzone>"
+      }
+    },
+    "components": [
+      {
+        "type": "ColumnPanel",
+        "name": "card",
+        "properties": {},
+        "layout_properties": {
+          "dropzone": "$dz_0"
+        },
+        "designer_config": {
+          "placeholder": "Add components here"
+        }
+      }
+    ],
+    "serialized_html": "<anvil-component type=\"ColumnPanel\" name=\"card\" designer:placeholder=\"Add components here\"></anvil-component>"
+  },
+  "expectedSerializedHtml": "<anvil-component type=\"ColumnPanel\" name=\"card\" designer:placeholder=\"Add components here\"></anvil-component>"
+}

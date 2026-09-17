@@ -3,13 +3,13 @@
     "scope": "runtime/client/js",
     "workflow": ["run_prettier", "commit_format_only", "rename_to_ts_or_tsx", "commit_rename", "apply_type_fixes"],
     "summary": {
-        "sourceJsJsxFiles": 4,
+        "sourceJsJsxFiles": 3,
         "availableCandidates": 0,
         "blockedCandidates": 0,
-        "deferredCandidates": 4,
+        "deferredCandidates": 3,
         "deletedCandidates": 0,
-        "existingTsTsxFiles": 140,
-        "convertedCandidates": 23,
+        "existingTsTsxFiles": 159,
+        "convertedCandidates": 24,
         "supportFiles": 2
     },
     "supportFiles": [
@@ -302,17 +302,17 @@
             "targetFile": "modules/anvil.ts",
             "lines": 1525,
             "category": "conversion",
-            "status": "deferred",
+            "status": "converted",
             "priority": 17,
-            "suitability": "n/a",
+            "suitability": "medium",
             "batch": null,
-            "runPrettier": false,
-            "formatCommitted": false,
-            "renamedToTs": false,
-            "renameCommitted": false,
-            "typesFixed": false,
+            "runPrettier": true,
+            "formatCommitted": true,
+            "renamedToTs": true,
+            "renameCommitted": true,
+            "typesFixed": true,
             "conflictingPrs": [],
-            "notes": "Large runtime module shim; deferred out of the small-module batch."
+            "notes": "Large runtime module shim; split into internal _anvil helpers and converted."
         },
         {
             "file": "modules/base64.js",

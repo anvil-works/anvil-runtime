@@ -1,4 +1,5 @@
 import { pyBaseException, pyStr, pyTuple, toJs } from "@Sk";
+import { AnvilErrorInfo, getAnvilErrorInfo } from "@runtime/runner/py-util";
 
 window.messages = window.messages || {};
 
@@ -28,6 +29,7 @@ type RuntimeMessageEvent = MessageEvent<RuntimeMessage>;
 
 type MessageResponse = {
     error?: string;
+    errorObj?: AnvilErrorInfo;
     fn?: string;
     msg?: unknown;
     requestId?: unknown;
@@ -137,11 +139,13 @@ $(function () {
             } catch (err) {
                 console.error(err, err instanceof Error ? err.stack : "(no stack trace)");
                 if (err instanceof pyBaseException) {
+                    const errorObj = getAnvilErrorInfo(err);
                     rv = {
                         fn: "pythonError",
                         traceback: err.traceback,
-                        type: err.tp$name,
+                        type: errorObj?.type || err.tp$name,
                         msg: toJs(err.args)[0],
+                        errorObj,
                     };
                 } else {
                     rv = { error: "" + err };

@@ -4,6 +4,7 @@
 import PyDefUtils from "PyDefUtils";
 import { s_get_components } from "@runtime/runner/py-util";
 import { pyFunc } from "@Sk";
+import { getDomPyComponent } from "./component-dom";
 
 /*#
 id: googlemap
@@ -3008,7 +3009,7 @@ function GoogleMap(pyModule) {
                         if (typeof v === "string") {
                             return new pyStr(v);
                         }
-                        return $(v).data("anvil-py-component") || pyNone;
+                        return getDomPyComponent(v) || pyNone;
                     },
                 },
                 /*!componentProp(anvil.GoogleMap.InfoWindow)!1*/

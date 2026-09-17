@@ -139,6 +139,7 @@ app_tables = _LazyAppTables()
 batch_update = _LazyContext()
 batch_delete = _LazyContext()
 batch = _LazyContext()
+_raise_on_cache_miss = False
 # Not very nice but these references exist in uplink code
 # before we have a chance to know if we're using the v1/v2 config option
 # we can't call anvil.server until the uplink has made a connetion
