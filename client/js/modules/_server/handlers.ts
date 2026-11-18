@@ -57,10 +57,14 @@ export interface ResponseData {
 }
 
 export interface ErrorData {
+    id?: string;
+    objects?: any;
+    vt_global?: VtGlobals;
     error: {
         type: string;
         message: string;
         trace: [string, string][];
+        portableException?: any;
     };
 }
 
@@ -229,6 +233,20 @@ export async function maybeHandleResponse(id: string) {
             req.deferred.reject(e);
         }
     } else if ("error" in req.response!) {
+        if (req.response?.objects) {
+            // Portable exceptions use the same object table as normal responses;
+            // if reconstruction fails, the legacy wrapped error remains usable.
+            const reconstructProfile = req.profile.append("Reconstruct error objects");
+            try {
+                await reconstructObjects(req.response as any, req.media);
+            } catch (e) {
+                delete req.response.error.portableException;
+                const message = req.response.error.message || "[unexpected error]";
+                req.response.error.message = `${message}\n\nFailed to reconstruct portable exception: ${e}`;
+            } finally {
+                reconstructProfile?.end();
+            }
+        }
         req.profile.print();
         req.deferred.reject(assembleException(req.response));
     } else {
@@ -317,7 +335,8 @@ export function handleMessage(data: any) {
 export const assembleException = function ({ error }: any) {
     const { type, message, trace } = error;
     const exceptionType = pyNamedExceptions[type] || anvilServerMod.AnvilWrappedError;
-    const exception = pyCall(exceptionType, [new pyStr(message || "[unexpected error]")]);
+    const exception =
+        error.portableException || pyCall(exceptionType, [new pyStr(message || "[unexpected error]")]);
 
     if (trace && exception.traceback) {
         for (const [filename, lineno] of trace) {

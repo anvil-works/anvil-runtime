@@ -2,22 +2,22 @@
 import React from "react";
 import { createPortal, flushSync } from "react-dom";
 
-import {
-    type ComponentProperties,
-    type ContainerDesignInfo,
-    type CustomComponentSpec,
-    type DropZone as DZ,
-    type DropInfo,
-    type DroppingSpecification,
-    type Interaction,
-    type LayoutProperties,
-    type PropertyDescription,
-    type PropertyValueUpdates,
-    type RegionInteraction,
-    type StringPropertyDescription,
-    type ToolboxSection,
-    type UnsetPropertyValue,
-    type UnsetPropertyValues,
+import type {
+    ComponentProperties,
+    ContainerDesignInfo,
+    CustomComponentSpec,
+    DropZone as DZ,
+    DropInfo,
+    DroppingSpecification,
+    Interaction,
+    LayoutProperties,
+    PropertyDescription,
+    PropertyValueUpdates,
+    RegionInteraction,
+    StringPropertyDescription,
+    ToolboxSection,
+    UnsetPropertyValue,
+    UnsetPropertyValues,
 } from "@runtime/components/Component";
 import type { JsComponentAPI } from "../../../public-api";
 import type { JsComponent, JsComponentConstructor, JsContainer } from "../../../public-api/component";
@@ -495,6 +495,7 @@ function setupReactComponent(self: ReactComponent, spec: ReactComponentDefinitio
                     ref: (element: HTMLElement) => {
                         if (element) {
                             _.sections.set(section.id, { ...section, element });
+                            designerApi.updateComponentSections(self, { [section.id]: { element } });
                             if (section.inlineEditRoot) {
                                 addSectionInlineEditInteraction(section.id, section.inlineEditRoot, element);
                             }
@@ -644,7 +645,7 @@ function setupReactComponent(self: ReactComponent, spec: ReactComponentDefinitio
             props.components = _.components;
         }
 
-        _.ref = React.useRef();
+        _.ref = React.useRef<HTMLElement | null>(null);
         const previousDomNode = React.useRef<HTMLElement | null>(null);
 
         React.useEffect(() => {
@@ -831,6 +832,28 @@ function mkComponentClass(spec: ReactComponentDefinition): JsComponentConstructo
         _anvilGetUnsetPropertyValues(): UnsetPropertyValues {
             return Object.fromEntries(this._.unsetPropertyValues.entries());
         }
+        _anvilGetSections() {
+            return Array.from(
+                this._.sections.values(),
+                ({ id, sectionProperties, sectionPropertyValues, setSectionPropertyValues, ...section }) => ({
+                    id,
+                    ...section,
+                    propertyDescriptions: sectionProperties,
+                    propertyValues: sectionPropertyValues,
+                    interactions: [
+                        ...remapInteractions([...(this._.sectionInteractions.get(id)?.values() || [])]),
+                        ...(this._.sectionInlineEditInteractions.get(id)?.values() || []),
+                    ],
+                })
+            );
+        }
+        _anvilGetSectionDomElement(id: string): HTMLElement {
+            return this._.sections.get(id)!.element;
+        }
+        _anvilSetSectionPropertyValues(id: string, values: PropertyValueUpdates) {
+            const section = this._.sections.get(id);
+            return section?.setSectionPropertyValues(values);
+        }
         _anvilUpdateDesignName(name: string): void {
             this._.designName = name;
             this._.forceRender?.();
@@ -936,28 +959,6 @@ function mkComponentClass(spec: ReactComponentDefinition): JsComponentConstructo
         _anvilDisableDropMode(): void {
             this._.dropping = null;
             this._.forceRender?.();
-        }
-        _anvilGetSections() {
-            return Array.from(
-                this._.sections.values(),
-                ({ id, sectionProperties, sectionPropertyValues, setSectionPropertyValues, ...section }) => ({
-                    id,
-                    ...section,
-                    propertyDescriptions: sectionProperties,
-                    propertyValues: sectionPropertyValues,
-                    interactions: [
-                        ...remapInteractions([...(this._.sectionInteractions.get(id)?.values() || [])]),
-                        ...(this._.sectionInlineEditInteractions.get(id)?.values() || []),
-                    ],
-                })
-            );
-        }
-        _anvilGetSectionDomElement(id: string): HTMLElement {
-            return this._.sections.get(id)!.element;
-        }
-        _anvilSetSectionPropertyValues(id: string, values: PropertyValueUpdates) {
-            const section = this._.sections.get(id);
-            return section?.setSectionPropertyValues(values);
         }
         _anvilGetContainerDesignInfo(component: JsComponent): ContainerDesignInfo {
             return { layoutPropertyDescriptions: layoutProperties ?? [] };

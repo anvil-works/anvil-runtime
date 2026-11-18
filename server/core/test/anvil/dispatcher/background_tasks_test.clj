@@ -3,6 +3,7 @@
             [anvil.dispatcher.background-tasks :as background-tasks]
             [anvil.dispatcher.native-rpc-handlers.users.core :as users]
             [anvil.runtime.app-log :as app-log]
+            [clojure.java.jdbc :as jdbc]
             [clj-commons.slingshot.test :refer [thrown+?]]))
 
 ;; ---------------------------------------------------------------------------
@@ -136,3 +137,57 @@
                     (check-client-script-launch!
                       (request-for {:my_script {:client_callable "logged_in_user"}})
                       "script:my_script"))))))
+
+;; ---------------------------------------------------------------------------
+;; record-final-state!
+;;
+;; handle-task-ended! is called with the task's row and its final state, but only
+;; by whichever call gives the task its completion status.
+;; ---------------------------------------------------------------------------
+
+(deftest test-record-final-state-calls-task-ended-hook
+  (let [ended (atom [])
+        row {:id "task-1" :session_id "session-1" :task_name "task:foo" :completion_status "threw"}
+        updated-row (atom row)]
+    (with-redefs [jdbc/query (fn [& _] (when-let [r @updated-row] [r]))
+                  app-log/record-event! (fn [& _])
+                  background-tasks/handle-task-ended! (fn [task final-state] (swap! ended conj [task final-state]))]
+
+      (testing "the hook gets the row and the task's error"
+        (background-tasks/record-final-state! nil {:id "task-1"} {:error {:message "oops" :type "ValueError"}} true)
+        (is (= [[row {:error {:message "oops" :type "ValueError"}}]]
+               (map (fn [[task final-state]] [task (select-keys final-state [:error])]) @ended))))
+
+      (testing "the hook isn't called if the task already had a completion status"
+        (reset! ended [])
+        (reset! updated-row nil)
+        (background-tasks/record-final-state! nil {:id "task-1"} {} :killed)
+        (is (empty? @ended)))
+
+      (testing "an error from the hook doesn't stop the task's end being recorded"
+        (reset! updated-row row)
+        (with-redefs [background-tasks/handle-task-ended! (fn [& _] (throw (Exception. "hook failed")))]
+          (is (nil? (background-tasks/record-final-state! nil {:id "task-1"} {:error {:message "oops"}} true))))))))
+
+;; ---------------------------------------------------------------------------
+;; list-app-background-tasks
+;;
+;; App code's list_background_tasks() doesn't include the tasks get-internal-background-tasks returns
+;; ---------------------------------------------------------------------------
+
+(deftest test-list-app-background-tasks-hides-internal-tasks
+  (let [tasks [{:id "internal" :task_name "task:anvil.private.internal_task"}
+               {:id "app" :task_name "task:send_receipt"}
+               {:id "script" :task_name "task:script:import"}]
+        listed (atom nil)]
+    (with-redefs [background-tasks/list-background-tasks (fn [environment all-environments?]
+                                                           (reset! listed [environment all-environments?])
+                                                           tasks)]
+      (testing "with no internal tasks, every task is listed"
+        (with-redefs [background-tasks/get-internal-background-tasks (constantly #{})]
+          (is (= ["internal" "app" "script"] (map :id (background-tasks/list-app-background-tasks {:env_id 1} true))))))
+
+      (testing "internal tasks are left out"
+        (with-redefs [background-tasks/get-internal-background-tasks (constantly #{"anvil.private.internal_task"})]
+          (is (= ["app" "script"] (map :id (background-tasks/list-app-background-tasks {:env_id 1} true))))
+          (is (= [{:env_id 1} true] @listed)))))))

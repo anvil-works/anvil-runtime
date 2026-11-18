@@ -12,11 +12,11 @@ export type {
     SectionRefs,
 } from "./core";
 
-export {
-    type EventDescription,
-    type Interaction,
-    type LayoutProperties,
-    type PropertyDescription,
-    type RegionInteraction,
-    type ToolboxSection,
+export type {
+    EventDescription,
+    Interaction,
+    LayoutProperties,
+    PropertyDescription,
+    RegionInteraction,
+    ToolboxSection,
 } from "@runtime/components/Component";

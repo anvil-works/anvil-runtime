@@ -167,31 +167,161 @@ def get_table_by_id(table_id):
 #
 
 
+def _get_call_info():
+    # call_info only exists in server-side (downlink/uplink) runtimes; this module also runs
+    # under Skulpt on the client
+    if anvil.is_server_side():
+        from anvil._threaded_server import call_info
+
+        return call_info
+    return None
+
+
+_NO_CALLBACKS = {"before_commit": (), "after_commit": (), "after_rollback": ()}
+
+
+def _effective_isolation(txn):
+    return "relaxed" if txn._isolation == "relaxed" else "serializable"
+
+
+def _outer_isolation(ci):
+    # Isolation of the transaction already open in this call chain, or None if there isn't one
+    if ci.active_transaction is not None:
+        return _effective_isolation(ci.active_transaction)
+    return ci.outer_transaction_isolation
+
+
 class Transaction:
     def __init__(self, relaxed=False):
         self._aborting = False
         self._isolation = "relaxed" if relaxed else None
+        self._entered_depth = 0
 
-    #!defMethod(anvil.tables.Transaction instance)!2: "Begin the transaction" ["__enter__"]
+    #!defMethod(anvil.tables.Transaction instance)!2: "Begin the transaction. If a transaction is already open, this block is merged into it: it commits or rolls back with the outermost transaction." ["__enter__"]
     def __enter__(self):
+        ci = _get_call_info()
+        outer_isolation = _outer_isolation(ci) if ci is not None else None
+        if outer_isolation is not None:
+            # A transaction is already open: merge this block into it
+            if outer_isolation == "relaxed" and _effective_isolation(self) == "serializable":
+                raise TableError(
+                    "Can't open a fully-isolated transaction inside a relaxed transaction"
+                )
+            self._entered_depth += 1
+            return self
+
         anvil.server.call(
             "anvil.private.tables.open_transaction", isolation=self._isolation
         )
+        if ci is not None:
+            ci.active_transaction = self
+            ci.txn_end_callbacks = {
+                "before_commit": [],
+                "after_commit": [],
+                "after_rollback": [],
+            }
+        self._entered_depth += 1
         return self
 
     #!defMethod(_)!2: "End the transaction" ["__exit__"]
     def __exit__(self, e_type, e_val, tb):
-        anvil.server.call(
-            "anvil.private.tables.close_transaction",
-            self._aborting or e_val is not None,
-        )
+        self._entered_depth -= 1
+        ci = _get_call_info()
+        if ci is not None and not (
+            ci.active_transaction is self and self._entered_depth == 0
+        ):
+            # Nested block: committing is a no-op, and an exception keeps propagating to
+            # the outermost transaction
+            return
+        if ci is not None:
+            ci.active_transaction = None
+        callbacks = None
+        if ci is not None:
+            callbacks = ci.txn_end_callbacks
+            ci.txn_end_callbacks = None
+        if callbacks is None:
+            callbacks = _NO_CALLBACKS
 
-    #!defMethod(_)!2: "Abort this transaction. When it ends, all write operations performed during it will be cancelled" ["abort"]
+        rolling_back = self._aborting or e_val is not None
+        rollback_reason = e_val  # None for an explicit abort()
+
+        if not rolling_back:
+            try:
+                for cb in callbacks["before_commit"]:
+                    cb()
+            except Exception as e:
+                anvil.server.call("anvil.private.tables.close_transaction", True)
+                for cb in callbacks["after_rollback"]:
+                    cb(e)
+                raise
+
+        try:
+            anvil.server.call("anvil.private.tables.close_transaction", rolling_back)
+        except Exception as e:
+            # The transaction is gone either way: a commit that failed (eg a conflict detected
+            # at commit time) has been rolled back
+            for cb in callbacks["after_rollback"]:
+                cb(e)
+            raise
+
+        if rolling_back:
+            for cb in callbacks["after_rollback"]:
+                cb(rollback_reason)
+        else:
+            for cb in callbacks["after_commit"]:
+                cb()
+
+    #!defMethod(_)!2: "Abort the transaction this block is part of. When the outermost transaction ends, all write operations performed during it will be cancelled. Raises an error if this block is nested in a transaction opened by a different server call (for example, the server function that called this one), or if this transaction is not open." ["abort"]
     def abort(self):
-        self._aborting = True
+        if self._entered_depth == 0:
+            raise TableError("Can't abort() a transaction that is not open")
+        ci = _get_call_info()
+        if ci is None:
+            # No server-side call context; nothing to delegate to
+            self._aborting = True
+        elif ci.active_transaction is not None:
+            # Roll back the outermost transaction, whether that's us or a transaction
+            # we're nested inside
+            ci.active_transaction._aborting = True
+        else:
+            raise TableError(
+                "Can't abort() a nested transaction in a call that does not own the outermost transaction"
+            )
 
 
 #!defClass(anvil.tables,%Transaction)!:
+
+
+#!defFunction(anvil.tables,%,[before_commit=],[after_commit=],[after_rollback=])!2:
+# {
+# 	$doc: "Register callbacks to run when the current data tables transaction ends. before_commit callbacks run (with no arguments) just before the transaction attempts to commit; after_commit callbacks run (with no arguments) after it commits successfully; after_rollback callbacks run after the transaction is rolled back, receiving the exception that caused the rollback (or None for an explicit abort()). If no transaction is open, before_commit and then after_commit are called immediately.",
+# anvil$helpLink: "/docs/data-tables/TODO"
+#  } ["on_transaction_end"]
+def on_transaction_end(before_commit=None, after_commit=None, after_rollback=None):
+    for cb in (before_commit, after_commit, after_rollback):
+        if cb is not None and not callable(cb):
+            raise TypeError("on_transaction_end() callbacks must be callable")
+
+    ci = _get_call_info()
+    callbacks = ci.txn_end_callbacks if ci is not None else None
+    if callbacks is not None:
+        # This call owns the open transaction: run the callbacks when it ends
+        if before_commit is not None:
+            callbacks["before_commit"].append(before_commit)
+        if after_commit is not None:
+            callbacks["after_commit"].append(after_commit)
+        if after_rollback is not None:
+            callbacks["after_rollback"].append(after_rollback)
+    elif ci is not None and ci.outer_transaction_isolation is not None:
+        # We're inside a transaction our caller opened; we'll never see it end
+        raise TableError(
+            "Cannot call anvil.tables.on_transaction_end() in a call that doesn't own this transaction"
+        )
+    else:
+        if before_commit is not None:
+            before_commit()
+        if after_commit is not None:
+            after_commit()
 
 
 #!defFunction(anvil.tables,%,function,server_function)!2:
@@ -206,6 +336,13 @@ def in_transaction(maybe_f=None, relaxed=None):
     def wrap(f):
         @functools.wraps(f)
         def new_f(*args, **kwargs):
+            ci = _get_call_info()
+            if ci is not None and _outer_isolation(ci) is not None:
+                # Already in a transaction: merge into it, and leave retrying to whoever
+                # owns it (a conflict dooms the whole outer transaction, so retrying just
+                # this body could never succeed)
+                with Transaction(relaxed=relaxed):
+                    return f(*args, **kwargs)
             n = 0
             while True:
                 try:
@@ -279,10 +416,27 @@ def get_connection_string(via_host=None, via_port=None):
 #!defClassNoConstructor(anvil.tables,#Table)!1: "A table returned from app_tables"
 
 #!defMethod(Media object, [escape_for_excel=False])!2: "Get the results of the SearchIterator in CSV format, optionally escaped for use in Excel. Returns a downloadable Media object; use its url property." ["to_csv"]
+#!defMethod(_)!2: "Delete all the rows matching this search from the data table.\n\nNot available with Legacy Tables." ["delete_all_rows"]
 #!defClassNoConstructor(anvil.tables,#SearchIterator)!1: "An iterator of table rows returned from a search()";
 
 
 #!defMethod(_)!2: "Delete the row from its data table" ["delete"]
 #!defMethod(id)!2: "Get the unique ID of the table row" ["get_id"]
-#!defMethod(_,**column_values)!2: "update the data for multiple columns" ["update"]
-#!defClassNoConstructor(anvil.tables,#Row)!1: "A table row";
+#!defMethod(_,**column_values)!2:
+# {
+#   $doc: "Set values for multiple columns of this row at once. Use keyword arguments to specify column values.\n\nChanges are written to the database, or buffered until save() is called if this Row is buffering changes.",
+#   anvil$helpLink: "/docs/data-tables/data-tables-in-code#updating-and-deleting-rows"
+# } ["update"]
+#!defMethod(_,[fetch=None])!2:
+# {
+#   $doc: "Clear this Row object's cached column values and immediately fetch fresh values from the database.\n\nWith no fetch argument, fetches all accessible columns. Pass a query.fetch_only(...) object to fetch only the specified columns; other columns remain uncached until accessed.",
+#   anvil$args: {fetch: "A query.fetch_only(...) object specifying which columns to fetch, or None to fetch all accessible columns."},
+#   anvil$helpLink: "/docs/data-tables/data-tables-in-code#explicit-cache-control"
+# } ["refresh"]
+#!defMethod(_,fetch)!2:
+# {
+#   $doc: "Fetch fresh values for specific columns of this Row from the database, even if those columns are already cached.\n\nPass a query.fetch_only(...) object specifying which columns to fetch. Other columns keep their existing cached values or remain uncached.",
+#   anvil$args: {fetch: "A query.fetch_only(...) object specifying which columns to fetch."},
+#   anvil$helpLink: "/docs/data-tables/data-tables-in-code#explicit-cache-control"
+# } ["fetch"]
+#!defClassNoConstructor(anvil.tables,#Row)!1: "A Data Table row.";

@@ -1,5 +1,6 @@
 (ns anvil.runtime.read-app-storage-test
   (:require [anvil.runtime.read-app-storage :as read-app-storage]
+            [anvil.util :as util]
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is]]
             [lazy-map.core :refer [lazy-map]])
@@ -62,6 +63,25 @@
         (is (= "Form1" (:class_name form)))
         (is (= "v1" (get-in yaml [:theme :parameters :version])))
         (is (= "abc123oid" (:hash asset))))
+      (finally
+        (cleanup-tree! tmp-dir)))))
+
+(deftest extra-file-names-are-keywords
+  (let [tmp-dir (.toFile (Files/createTempDirectory "read-app-storage-test-" (make-array FileAttribute 0)))]
+    (try
+      (write-text! tmp-dir "theme/parameters.yaml" "version: v1\n")
+      (write-text! tmp-dir "server_code/requirements.txt" "emoji\n")
+      (write-text! tmp-dir "tests/server_tests/requirements.txt" "pytest\n")
+      (write-text! tmp-dir "tests/server_tests/sub/test_a.py" "")
+      (let [yaml (read-app-storage/get-app-yaml-from-resource-directory (-> tmp-dir .toURI .toURL) false true)
+            extra-files (:extra_files yaml)]
+        ;; "pytest\n", and an empty file. server_code/requirements.txt is the server spec's, not an extra file.
+        (is (= {:tests {:server_tests {:requirements.txt "cHl0ZXN0Cg=="
+                                       :sub              {:test_a.py ""}}}}
+               extra-files))
+        (is (= "emoji\n" (get-in yaml [:runtime_options :server_spec :requirements])))
+        ;; The same as an app sent from a remote git node, which is decoded from JSON with keyword keys
+        (is (= extra-files (util/read-json-str (util/write-json-str extra-files)))))
       (finally
         (cleanup-tree! tmp-dir)))))
 

@@ -5,6 +5,8 @@ from opentelemetry.sdk.trace.export import (
 )
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
+from .dummy import DUMMY_TRACER_PROVIDER
+
 def serialise_span_ctx(span=None):
     """Serialise the provided span into a form suitable for sending over the RPC connnection. If no span is provided,
        get the current span from the context."""
@@ -93,7 +95,8 @@ def get_tracer_provider(service_name, exporter):
     tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
     return tracer_provider
 
-_anvil_tracer_provider = None
+_anvil_tracer_provider = DUMMY_TRACER_PROVIDER
+
 def set_internal_tracer_provider(provider):
     global _anvil_tracer_provider
     _anvil_tracer_provider = provider

@@ -27,7 +27,7 @@
            (org.bouncycastle.util.io.pem PemObject PemWriter)
            (org.mindrot.jbcrypt BCrypt)
            (clojure.lang IPersistentMap Keyword)
-           (java.net InetAddress)
+           (java.net InetAddress UnknownHostException)
            (com.maxmind.db CHMCache)
            (com.maxmind.geoip2 DatabaseReader$Builder DatabaseReader)
            (java.io InputStream File ByteArrayOutputStream ByteArrayInputStream FileOutputStream StringWriter)
@@ -457,6 +457,9 @@
          :location    (when-let [l (.getLocation r)] {:lat (.getLatitude l), :lng (.getLongitude l)})
          :subdivision (when-let [s (.getMostSpecificSubdivision r)]
                         {:code (.getIsoCode s), :name (.getName s)})})
+      (catch UnknownHostException _e
+        (log/warn (str "UnknownHostException: Cannot get IP location of unknown host " (pr-str remote-addr)))
+        nil)
       (catch GeoIp2Exception _e
         nil))))
 

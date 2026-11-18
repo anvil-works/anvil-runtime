@@ -141,6 +141,12 @@ export interface DependencyCode {
     [depId: string]: DependencyTreeMapContent;
 }
 
+export interface ResolutionHints {
+    package_name?: string;
+    name?: string;
+    app_id?: string;
+}
+
 interface ThemeColors {
     [color: string]: string;
 }
@@ -262,7 +268,11 @@ export interface TreeMapContent extends AnvilYaml {
 }
 
 /** TreeMapContent for a dependency app. */
-export interface DependencyTreeMapContent extends TreeMapContent {}
+export interface DependencyTreeMapContent extends TreeMapContent {
+    error?: string;
+    resolution_hints?: ResolutionHints;
+    logical_dep_id?: string;
+}
 
 /**
  * Result of `get-app-content-with-dependencies` in `app_data.clj`.

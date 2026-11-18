@@ -1,9 +1,34 @@
 {
-    "extends": "../../../../../tsconfig.json",
+    "extends": "../../../../../tsconfig.base.json",
     "compilerOptions": {
         "jsx": "react",
-        "jsxFactory": "React.createElement"
+        "jsxFactory": "React.createElement",
+        "types": [
+            "react",
+            "react-dom",
+            "../../../../../js/globals",
+            "jquery"
+        ],
+        "skipLibCheck": true,
+        "baseUrl": ".",
+        "paths": {
+            "@runtime/*": [
+                "../../../../../js/*"
+            ],
+            "@Sk": [
+                "../../../../../js/@Sk"
+            ],
+            "PyDefUtils": [
+                "../../../../../js/PyDefUtils"
+            ]
+        },
+        "moduleResolution": "Bundler"
     },
-    "include": ["./src/**/*.ts", "./src/**/*.tsx"],
-    "exclude": ["@types/jsx.ts"]
+    "include": [
+        "./src/**/*.ts",
+        "./src/**/*.tsx"
+    ],
+    "exclude": [
+        "@types/jsx.ts"
+    ]
 }

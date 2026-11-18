@@ -1,5 +1,3 @@
-/* global Plotly */
-
 /*#
 id: plot
 docs_url: /docs/client/components/plots
@@ -67,8 +65,6 @@ description: |
 
 
 */
-import { SpinnerLoader, appendSvgSpinner } from "@runtime/runner/loading-spinner";
-import { PyModMap, datetimeMod, pyLazyMod } from "@runtime/runner/py-util";
 import {
     promiseToSuspension,
     proxy,
@@ -84,8 +80,13 @@ import {
     toPy,
 } from "@Sk";
 import PyDefUtils from "PyDefUtils";
+import type Plotly from "plotly.js";
+import { SpinnerLoader, appendSvgSpinner } from "@runtime/runner/loading-spinner";
+import { PyModMap, datetimeMod, pyLazyMod } from "@runtime/runner/py-util";
+import { warn } from "@runtime/runner/warnings";
 import { PostponedResizeObserver } from "../utils";
 import { ClassicComponent, ClassicComponentConstructor } from "./ClassicComponent";
+import { wrapPlotly } from "./plotly-compat";
 
 interface PlotAnvil {
     elements: { root: HTMLDivElement; spinner: HTMLElement };
@@ -433,7 +434,7 @@ const PlotFactory = (pyModule: PyModMap) => {
             /*!defMethod(_,data,traces)!2*/ ("Adds data to an existing trace.");
             $loc["extend_traces"] = new pyFunc(function extend_traces(self: Plot, pyData: any, pyIndices: any) {
                 loadPlotly(self).then(() =>
-                    Plotly.extendTraces(self._anvil.domNode, remapToJs(pyData), remapToJs(pyIndices))
+                    wrappedPlotly.extendTraces(self._anvil.domNode, remapToJs(pyData), remapToJs(pyIndices))
                 );
                 return pyNone;
             });
@@ -441,7 +442,7 @@ const PlotFactory = (pyModule: PyModMap) => {
             /*!defMethod(_,data,traces)!2*/ ("Prepends data to an existing trace.");
             $loc["prepend_traces"] = new pyFunc(function prepend_traces(self: Plot, pyData: any, pyIndices: any) {
                 loadPlotly(self).then(() =>
-                    Plotly.prependTraces(self._anvil.domNode, remapToJs(pyData), remapToJs(pyIndices))
+                    wrappedPlotly.prependTraces(self._anvil.domNode, remapToJs(pyData), remapToJs(pyIndices))
                 );
                 return pyNone;
             });
@@ -449,7 +450,7 @@ const PlotFactory = (pyModule: PyModMap) => {
             /*!defMethod(_,update,traces)!2*/ ("A more efficient means of changing attributes in the data array. When restyling, you may choose to have the specified changes effect as many traces as desired.");
             $loc["restyle"] = new pyFunc(function restyle(self: Plot, pyUpdate: any, pyIndices: any) {
                 loadPlotly(self).then(() =>
-                    Plotly.restyle(
+                    wrappedPlotly.restyle(
                         self._anvil.domNode,
                         remapToJs(pyUpdate),
                         pyIndices ? remapToJs(pyIndices) : undefined
@@ -460,7 +461,7 @@ const PlotFactory = (pyModule: PyModMap) => {
 
             /*!defMethod(_,update)!2*/ ("A more efficient means of updating just the layout in a graphDiv. The call signature and arguments for relayout are similar (but simpler) to restyle.");
             $loc["relayout"] = new pyFunc(function relayout(self: Plot, pyUpdate: any) {
-                loadPlotly(self).then(() => Plotly.relayout(self._anvil.domNode, remapToJs(pyUpdate)));
+                loadPlotly(self).then(() => wrappedPlotly.relayout(self._anvil.domNode, remapToJs(pyUpdate)));
                 return pyNone;
             });
 
@@ -469,7 +470,10 @@ const PlotFactory = (pyModule: PyModMap) => {
                 return PyDefUtils.suspensionFromPromise(
                     loadPlotly(self)
                         .then(() =>
-                            Plotly.toImage(self._anvil.domNode, pyOptions ? remapToJs(pyOptions) : { format: "png" })
+                            wrappedPlotly.toImage(
+                                self._anvil.domNode,
+                                pyOptions ? remapToJs(pyOptions) : { format: "png" }
+                            )
                         )
                         .then((i) => pyCall(pyModule["URLMedia"], [toPy(i)]))
                 );
@@ -477,12 +481,15 @@ const PlotFactory = (pyModule: PyModMap) => {
         },
     });
 
+    let wrappedPlotly: ReturnType<typeof wrapPlotly<typeof Plotly>>;
     let plotlyPromise: Promise<void> | undefined;
 
     function loadPlotly(self: Plot): Promise<void> {
-        const plotlySrc =
-            window.anvilAppOrigin + "/_/static/runtime/js/lib/plotly-latest.min.js?buildTime=" + BUILD_TIME;
-        plotlyPromise ??= PyDefUtils.loadScript(plotlySrc);
+        plotlyPromise ??= import(/* webpackChunkName: "plotly" */ "plotly.js/dist/plotly.min.js").then(
+            ({ default: plotly }) => {
+                wrappedPlotly = wrapPlotly(plotly, { warn });
+            }
+        );
         const spinnerLoader = self._anvil.spinnerLoader;
         return PyDefUtils.withDelayPrint(spinnerLoader.withIndicator(plotlyPromise));
     }
@@ -668,7 +675,7 @@ const PlotFactory = (pyModule: PyModMap) => {
                 .then(async () => {
                     const outerEl = self._anvil.domNode;
                     // react is faster than newPlot on the same div element
-                    const plotlyEl = await Plotly.react(outerEl, jsData, jsLayout, jsConfig);
+                    const plotlyEl = await wrappedPlotly.react(outerEl, jsData, jsLayout, jsConfig);
                     if (!self._anvil.plotlyUpdated) {
                         plotlyEl.on("plotly_click", onPlotlyClick.bind(null, self));
                         plotlyEl.on("plotly_doubleclick", onPlotlyDoubleClick.bind(null, self));
@@ -686,13 +693,13 @@ const PlotFactory = (pyModule: PyModMap) => {
     }
 
     function relayout(self: Plot): void {
-        if (typeof Plotly === "undefined" || !self._anvil.plotlyUpdated) return;
+        if (!wrappedPlotly || !self._anvil.plotlyUpdated) return;
         // only relayout the width and height
         const width = self._anvil.element.width();
         const height = self._anvil.element.height();
         try {
             // relayout returns a Promise, the errors are part of the syncronous code
-            Plotly.relayout(self._anvil.domNode, { width, height });
+            wrappedPlotly.relayout(self._anvil.domNode, { width, height });
         } catch (e) {
             console.warn(e);
         }

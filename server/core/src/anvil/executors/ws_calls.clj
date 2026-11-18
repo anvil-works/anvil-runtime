@@ -21,6 +21,10 @@
 ;; This will be put on the call context as ::accounting-info
 (defonce get-accounting-info (fn [request] nil))
 
+;; Hookable: the isolation level ("serializable"/"relaxed") of the open table transaction on this
+;; thread-id, or nil if there isn't one. Set by anvil.runtime.tables.util.
+(defonce thread-transaction-isolation (fn [thread-id] nil))
+
 ;; Centralise translation between the `request` object (contains Atoms, pretty chunky)
 ;; and a "serialisable request" object suitable for putting on the wire
 
@@ -35,7 +39,7 @@
   ;;  - a serialisable request
   ;;  - a return path that understands :update-python-session
   ;;  - a precise specification of the app+dependencies version for (retrieve-exact-app) (currently the app itself, but we can make this more efficient)
-  (let [{:keys [app-id app session-state environment call-stack stale-uplink? tracing-span vt_global scheduled-task-id bg-task-timeout bg-task-watch-key step-in paused]} request
+  (let [{:keys [app-id app session-state environment call-stack stale-uplink? tracing-span vt_global scheduled-task-id bg-task-timeout bg-task-watch-key step-in paused thread-id]} request
         persistence-key (get-persistence-key environment app)
         n-responses (atom 0)
         current-session (atom session-state)
@@ -111,7 +115,9 @@
                       (when step-in
                         {:step-in true})
                       (when paused
-                        {:paused true})))]
+                        {:paused true})
+                      (when-let [isolation (when thread-id (thread-transaction-isolation thread-id))]
+                        {:in-transaction isolation})))]
 
     {:request request, :return-path return-path, :call-context call-context}))
 
@@ -185,4 +191,4 @@
 
       (dispatcher/dispatch! request return-path))))
 
-(def set-ws-calls-hooks! (util/hook-setter [get-accounting-info]))
+(def set-ws-calls-hooks! (util/hook-setter [get-accounting-info thread-transaction-isolation]))

@@ -1,5 +1,3 @@
-/// <reference path="../node_modules/moment/ts3.1-typings/moment.d.ts" />
-
 declare global {
     let ANVIL_IN_DESIGNER: boolean;
     let BUILD_TIME: number;

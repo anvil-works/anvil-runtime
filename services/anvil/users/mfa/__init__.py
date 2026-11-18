@@ -48,7 +48,7 @@ else:
                     self.valid_number = "+1" + text
                     self.box.text = "(" + text[0:3] + ") " + text[3:6] + " " + text[6:]
                 else:
-                    self.valid_number = None            
+                    self.valid_number = None
 
     #!defFunction(anvil.users.mfa,_,email_address)!2: "Generate a WebAuthn challenge that can be used to register a new hardware token for two-factor authentication." ["create_fido_mfa_method"]
     def create_fido_mfa_method(email):
@@ -106,7 +106,7 @@ else:
 
     def _configure_mfa(email, mfa_error, require_password, allow_cancel, confirm_button_text):
         TextBox = pluggable_ui['anvil.TextBox']
-        
+
         mfa_types = get_enabled_mfa_types()
         selected_mfa_type = None
         mfa_methods = {}
@@ -181,7 +181,7 @@ else:
                         twilio_box = TextBox(placeholder="Enter 6-digit code", align="center", font="monospace")
                         twilio_box.set_event_handler("pressed_enter", lambda **e: mfa_panel.raise_event("x-close-alert"))
                         twilio_box.set_event_handler("show", lambda **e: twilio_box.focus())
-                        mfa_panel.add_component(twilio_box)                            
+                        mfa_panel.add_component(twilio_box)
 
                         sms_link = Link(text="Resend Text Message", icon="fa:commenting-o")
                         phone_link = Link(text="Call Me instead", icon="fa:phone")
@@ -269,7 +269,7 @@ else:
         def clear_error():
             error_label.visible = False
             error_label.text = ""
-        
+
         if 'totp' in mfa_types:
             totp_box = TextBox(placeholder="Enter 6-digit code", align="center", font="monospace")
             totp_box.set_event_handler("pressed_enter", lambda **e: mfa_panel.raise_event('x-close-alert', value=get_totp_mfa_login(totp_box.text)))
@@ -284,7 +284,7 @@ else:
                 if val:
                     mfa_panel.raise_event("x-close-alert", value=val)
 
-            
+
             if webauthn.is_webauthn_available():
                 fido_link = Link(text="Use hardware token", icon="fa:lock")
                 fido_link.set_event_handler("click", use_fido)
@@ -293,7 +293,7 @@ else:
                 mfa_panel.add_component(Label(text="Hardware token unavailable", icon="fa:lock", tooltip="Is this page running in an iframe or an unsupported browser?"))
 
         if 'twilio-verify' in mfa_types:
-            
+
             def use_phone(**e):
                 error("Calling you now")
                 try:
@@ -354,7 +354,7 @@ else:
 
             if mfa_method:
                 try:
-                    add_mfa_method(password, mfa_method)
+                    add_mfa_method(password, mfa_method, clear_existing=True)
                     alert("Your two-factor authentication configuration has been reset.")
                     return True
                 except AuthenticationFailed as e:

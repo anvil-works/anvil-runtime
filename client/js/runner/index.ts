@@ -102,7 +102,11 @@ async function loadApp() {
             jQueryDeprecationWarned[msg] = true;
             warn(
                 "WARNING: This application uses deprecated jQuery 2.2 features. Please see the Javascript console for more details. Error: " +
-                    msg
+                    msg,
+                {
+                    docUrl: "/editor/common-errors#deprecated-jquery-features",
+                    docLinkTitle: "How to update deprecated jQuery code",
+                }
             );
             logEvent({
                 warning: {

@@ -26,6 +26,7 @@ import Modal from "@runtime/modules/modal";
 import { topLevelForms } from "@runtime/runner/data";
 import { funcFastCall, kwsToObj, objToKws } from "@runtime/runner/py-util";
 import type { PyModMap } from "@runtime/runner/py-util";
+import { warn } from "@runtime/runner/warnings";
 import { defer } from "@runtime/utils";
 import type { PluggableUIObject } from "./pluggable-ui";
 
@@ -247,9 +248,19 @@ export function createModalFunctions(pyModule: ModalModule) {
 
     const s_modal = new pyStr("anvil.modal");
 
-    function cleanModalArgs(args: Args, kws?: Kws): PyKwargsObject {
+    function cleanModalArgs(name: string, args: Args, kws?: Kws): PyKwargsObject {
         const kwargs = kwsToObj(kws);
         kwargs.content ??= args[0] ?? pyNone;
+        if (args.length > 1) {
+            warn(
+                `${name}() options must be passed as keyword arguments. Positional arguments after the content are ignored.`,
+                {
+                    key: `${name}-positional-options`,
+                    docUrl: "/editor/common-errors#popup-options-ignored",
+                    docLinkTitle: "How to pass popup options",
+                }
+            );
+        }
         return kwargs;
     }
 
@@ -265,19 +276,19 @@ export function createModalFunctions(pyModule: ModalModule) {
             throw new pyRuntimeError("alerts are not available in the Designer");
         }
         checkArgsLen("modal", args, 0, 1);
-        const kwargs = cleanModalArgs(args, kws);
+        const kwargs = cleanModalArgs("modal", args, kws);
         return suspensionFromPromise(modal(kwargs));
     });
 
     const alert = funcFastCall((args, kws) => {
-        const kwargs = cleanModalArgs(args, kws);
+        const kwargs = cleanModalArgs("alert", args, kws);
         kwargs.dismissible ??= pyTrue;
         kwargs.buttons ??= defaultAlertButtons;
         return callPluggableUiModal(kwargs);
     });
 
     const confirm = funcFastCall((args, kws) => {
-        const kwargs = cleanModalArgs(args, kws);
+        const kwargs = cleanModalArgs("confirm", args, kws);
         kwargs.dismissible ??= pyFalse;
         kwargs.buttons ??= defaultConfirmButtons;
         return callPluggableUiModal(kwargs);

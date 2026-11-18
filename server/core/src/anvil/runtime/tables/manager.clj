@@ -159,11 +159,16 @@
 
         environment (tables-util/current-environment)]
 
-    (util/call-when-committed
-      db-c (fn []
-             (worker-pool/run-task! ::init-new-columns
-               (binding [tables-util/*environment-for-admin-call* environment]
-                 (update-data-after-column-change! table-record new-col-ids init-new-columns?)))))
+    (if (:split (:storage table-record))
+      ;; Split tables don't need their new columns initialised, so only the indexes need updating. Request that
+      ;; here rather than from the ::init-new-columns task, so a surrounding batch (see
+      ;; with-split-table-index-updates-batched) can include it.
+      (update-col-indexes! db-c table-record)
+      (util/call-when-committed
+        db-c (fn []
+               (worker-pool/run-task! ::init-new-columns
+                 (binding [tables-util/*environment-for-admin-call* environment]
+                   (update-data-after-column-change! table-record new-col-ids init-new-columns?))))))
 
     new-cols))
 
@@ -219,7 +224,16 @@
 (defn table-delete-column! [db-c table-id col-id-kw]
   (util/with-db-transaction [db-c db-c]
     (let [{:keys [storage] :as old-table-record} (tables-util/load-table-record db-c table-id)
-          table-record (update-in old-table-record [:columns] dissoc col-id-kw)]
+          table-record (-> old-table-record
+                 (update :columns dissoc col-id-kw)
+                 (update :indexes
+                         (fn [indexes]
+                           (filterv
+                             (fn [{:keys [columns]}]
+                               (not-any? #(= % (name col-id-kw))
+                                         columns))
+                             indexes)))
+                 (tables-util/normalise-indexes))]
       (when (:split storage)
         (split-table-manager/do-remove-column! db-c old-table-record col-id-kw))
       (tables-util/update-table-views! db-c table-record)
@@ -256,7 +270,9 @@
     ;; Remove from both per-col indexes and top-level indexes, because it could be in either. Type of storage is irrelevant here.
     (let [table-record (cond->
                          (update old-table-record :indexes #(vec (disj (set %) index)))
-                         (= 1 (count (:columns index))) (update-in [:columns (keyword (first (:columns index))) :indexes] #(vec (disj (set %) {:type (:type index)}))))]
+                         (and (= 1 (count (:columns index)))
+                              (contains? (:columns old-table-record)
+                                         (keyword (first (:columns index))))) (update-in [:columns (keyword (first (:columns index))) :indexes] #(vec (disj (set %) {:type (:type index)}))))]
       (update-col-indexes! db-c table-record)
       (tables-util/save-table-record! db-c table-record))))
 
@@ -271,23 +287,59 @@
        (table-create-columns! (db) table-id [new-col] false)))))
 
 
+(def ^:dynamic ^:private *pending-split-index-updates*
+  "While collecting batches this is bound to an atom containing a vector of
+  {:app-db, :table-id} entries."
+  nil)
+
+(defn- start-split-table-index-updates!
+  [db-c entries]
+  (when (seq entries)
+    (util/call-when-committed
+      db-c
+      (fn []
+        (worker-pool/run-task! ::update-split-table-indexes
+          (worker-pool/with-expanding-threadpool-when-slow
+            (doseq [{:keys [app-db table-id]} (distinct entries)]
+              (try
+                ;; Reload the record: a request made with an older copy must not drop indexes added since.
+                (split-table-manager/update-indexes! app-db (tables-util/load-table-record app-db table-id))
+                (catch Exception e
+                  ;; Logging is the best we can do here; we're running async in the background
+                  ;; from whatever operation kicked us off
+                  (log/error e "Failed to update indexes for split table" table-id))))))))))
+
+(defn -with-split-table-index-updates-batched [db-c f]
+  (if *pending-split-index-updates*
+    (f)                                                     ; The outermost batch will start the updates.
+    (let [pending (atom [])]
+      (try
+        (binding [*pending-split-index-updates* pending]
+          (f))
+        (finally
+          ;; Also on failure: outside a transaction, work committed before the failure still needs its indexes.
+          ;; Inside one, the updates are discarded on rollback, along with the rest of the transaction's on-commit work.
+          (start-split-table-index-updates! db-c @pending))))))
+
+(defmacro with-split-table-index-updates-batched
+  "Collect split-table index updates and call-when-committed them all in one task at the end."
+  [db-c & body]
+  `(-with-split-table-index-updates-batched ~db-c (fn [] ~@body)))
+
 (defn update-col-indexes! [db-c {table-id :id :keys [columns storage] :as table-record}]
-  ; This doesn't use the DB passed in, because it can't run in a transaction.
+  ; This doesn't use the DB passed in to change indexes, because that can't run in a transaction.
   (if (:split storage)
-    (let [env-for-admin-call tables-util/*environment-for-admin-call*] ; Ew. Preserve across callback boundary.
-      (util/call-when-committed
-        db-c
-        (fn []
-          (binding [tables-util/*environment-for-admin-call* env-for-admin-call]
-            (let [db-c (tables-util/db-for-current-app)]
-              (if-not (get-in db-c [:anvil/pool-info :allow-admin-actions?])
-                (log/warn (str "Cannot update col indexes for table " table-id " - admin actions not allowed."))
-                (worker-pool/run-task!
-                  (worker-pool/with-expanding-threadpool-when-slow
-                    ;; TODO ascribe this (possibly heroic) amount of work to the
-                    (->> table-record
-                         (tables-util/normalise-indexes)    ;; In case the table record has been updated since it was loaded.
-                         (split-table-manager/update-indexes! db-c))))))))))
+    (let [app-db (tables-util/db-for-current-app)
+          entry {:app-db app-db, :table-id table-id}]
+      (cond
+        (not (get-in app-db [:anvil/pool-info :allow-admin-actions?]))
+        (log/warn (str "Cannot update col indexes for table " table-id " - admin actions not allowed."))
+
+        *pending-split-index-updates*
+        (swap! *pending-split-index-updates* conj entry)
+
+        :else
+        (start-split-table-index-updates! db-c [entry])))
 
     ;; Else: combined storage
     (when (and (get-in db-c [:anvil/pool-info :allow-admin-actions?])

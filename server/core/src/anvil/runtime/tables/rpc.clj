@@ -961,9 +961,11 @@
             "has_row"                 (fn [[table-id view-query] _kwargs {:keys [backend id] :as _row}]
                                         (let [[row-tid row-id] (try (json/read-str id) (catch Exception _e))]
                                           (if (empty? view-query)
-                                            ;; If this is a table, just return whether the row is in this table.
+                                            ;; If this is a table, check the row belongs to it and has not been deleted.
                                             (boolean (and (= "anvil.tables.Row" backend)
-                                                          (= table-id row-tid)))
+                                                          (= table-id row-tid)
+                                                          (first (jdbc/query (db) ["SELECT 1 FROM app_storage_data WHERE table_id=? AND id=?"
+                                                                                   table-id row-id]))))
 
                                             ;; If this is a view, we have to query it to find out if the row is in there.
                                             (let [[VIEW-QUERY-SQL view-query-params] (query->sql view-query)]

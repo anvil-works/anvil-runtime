@@ -17,6 +17,7 @@ import {
     toJs,
 } from "@Sk";
 import type { Args, Kws } from "@Sk";
+import { ACTIVE_CARRIER_ATTRS } from "@runtime/runner/designer-dom-attributes";
 import { pyIteratorFromIterable } from "@runtime/runner/py-util/iter-utils";
 
 export interface ClassesConstructor extends pyNewableType<Classes> {
@@ -59,6 +60,28 @@ export interface Style extends pyObject {
     $delete(this: Style, property: pyObject): void;
     $get(this: Style, property: pyObject): string;
 }
+
+export interface AttrsConstructor extends pyNewableType<Attrs> {
+    new (value?: pyObject | HTMLElement | null): Attrs;
+}
+
+export interface Attrs extends pyObject {
+    _element: HTMLElement | null;
+    $getCurrentAttrs(this: Attrs): Map<string, string>;
+    $setCurrentAttrs(this: Attrs, entries: Map<string, string>): void;
+    $clear(this: Attrs): void;
+    $replace(this: Attrs, value?: pyObject): void;
+    $update(this: Attrs, updates: pyDict<pyObject, pyObject>): void;
+    $entries(this: Attrs): Map<string, string>;
+    $setEntries(this: Attrs, entries: Map<string, string>): void;
+    $setElement(this: Attrs, element: HTMLElement | null, hydrate?: boolean): void;
+    $set(this: Attrs, name: pyObject, value: pyObject): void;
+    $delete(this: Attrs, name: pyObject): void;
+    $get(this: Attrs, name: pyObject): pyObject;
+    $has(this: Attrs, name: pyObject): boolean;
+}
+
+const ACTIVE_CARRIER_ATTR_VALUES = new Set<string>(Object.values(ACTIVE_CARRIER_ATTRS));
 
 const isHTMLElement = (value: unknown): value is HTMLElement =>
     typeof HTMLElement !== "undefined" && value instanceof HTMLElement;
@@ -127,6 +150,31 @@ export const cssPropertyName = (key: string): string => {
 };
 
 const getStylePropertyName = (key: pyObject): string => cssPropertyName(key.toString().trim());
+const getAttrName = (key: pyObject): string => key.toString().trim();
+
+const isExcludedManagedAttr = (name: string): boolean => {
+    // HTML attribute names are case-insensitive, including the reserved names.
+    name = name.toLowerCase();
+    if (name === "class" || name === "style") {
+        return true;
+    }
+    if (name.startsWith("anvil:")) {
+        return true;
+    }
+    if (name.startsWith("data-anvil-")) {
+        return true;
+    }
+    if (ACTIVE_CARRIER_ATTR_VALUES.has(name)) {
+        return true;
+    }
+    return false;
+};
+
+const assertManagedAttr = (name: string): void => {
+    if (isExcludedManagedAttr(name)) {
+        throw new pyTypeError(`Attribute '${name}' is managed elsewhere`);
+    }
+};
 
 const BASE_UNITLESS_CSS_PROPERTIES = [
     "animation-iteration-count",
@@ -267,11 +315,122 @@ const styleStringFromPyObject = (value: pyObject | undefined): string | null => 
 
 const updateDictFromArgs = (args: Args, kws?: Kws): pyDict<pyObject, pyObject> => pyCall(pyDict, args, kws);
 
+const attrDictFromValue = (value: pyObject): pyDict<pyObject, pyObject> => {
+    try {
+        return pyCall(pyDict, [value]);
+    } catch {
+        throw new pyTypeError("Attrs value must be a dictionary of attribute names to values");
+    }
+};
+
+const attrUpdateDictFromArgs = (args: Args, kws?: Kws): pyDict<pyObject, pyObject> => {
+    try {
+        return updateDictFromArgs(args, kws);
+    } catch {
+        throw new pyTypeError("Attrs.update() expects a dictionary and/or keyword arguments");
+    }
+};
+
+const attrsElement = (self: Attrs): HTMLElement => self._element ?? (self._element = createStyleElement());
+
+const attrsFromElement = (element: HTMLElement): Map<string, string> => {
+    const result = new Map<string, string>();
+    for (const attr of element.attributes) {
+        if (isExcludedManagedAttr(attr.name)) {
+            continue;
+        }
+        result.set(attr.name, attr.value);
+    }
+    return result;
+};
+
+function* managedDomAttrEntries(element: HTMLElement): Generator<[string, string]> {
+    for (const attr of element.attributes) {
+        if (isExcludedManagedAttr(attr.name)) {
+            continue;
+        }
+        yield [attr.name, attr.value];
+    }
+}
+
+const managedAttrEntriesIterable = (self: Attrs): Iterable<[string, string]> => ({
+    [Symbol.iterator]() {
+        return managedDomAttrEntries(attrsElement(self));
+    },
+});
+
+const managedAttrKeysIterable = (self: Attrs): Iterable<string> => ({
+    [Symbol.iterator]() {
+        return (function* () {
+            for (const [name] of managedDomAttrEntries(attrsElement(self))) {
+                yield name;
+            }
+        })();
+    },
+});
+
+const managedAttrValuesIterable = (self: Attrs): Iterable<string> => ({
+    [Symbol.iterator]() {
+        return (function* () {
+            for (const [, value] of managedDomAttrEntries(attrsElement(self))) {
+                yield value;
+            }
+        })();
+    },
+});
+
 const pyStrIteratorFromIterable = <T extends string>(iterable: Iterable<T>) =>
     pyIteratorFromIterable(iterable, (value) => new pyStr(value));
 
 const pyStringPairIteratorFromIterable = (iterable: Iterable<[string, string]>) =>
     pyIteratorFromIterable(iterable, ([name, attrValue]) => new pyTuple([new pyStr(name), new pyStr(attrValue)]));
+
+const attrValueToString = (value: unknown): string | null => {
+    if (value === null || value === undefined) {
+        return null;
+    }
+    return String(value);
+};
+
+const pyAttrValueToString = (value: pyObject): string | null => {
+    if (value === pyNone) {
+        return null;
+    }
+    if (value === pyTrue || value === pyFalse) {
+        return value === pyTrue ? "true" : "false";
+    }
+    if (checkNumber(value)) {
+        return String(pyAsNum(value));
+    }
+    return attrValueToString(toJs(value));
+};
+
+const attrsEntriesFromPyDict = (updates: pyDict<pyObject, pyObject>): Map<string, string> => {
+    const result = new Map<string, string>();
+    for (const [name, attrValue] of updates.$items()) {
+        const attrName = getAttrName(name);
+        if (!attrName) {
+            throw new pyTypeError("Attribute name must not be empty");
+        }
+        assertManagedAttr(attrName);
+        const valueString = pyAttrValueToString(attrValue);
+        if (valueString === null) {
+            continue;
+        }
+        result.set(attrName, valueString);
+    }
+    return result;
+};
+
+const attrsEntriesFromPyObject = (value: pyObject | undefined): Map<string, string> => {
+    if (!value || value === pyNone) {
+        return new Map();
+    }
+    if (value instanceof Attrs) {
+        return new Map(value.$entries());
+    }
+    return attrsEntriesFromPyDict(attrDictFromValue(value));
+};
 
 const notifyObserver = (self: Classes | Style) => {
     self._onChange?.();
@@ -279,6 +438,19 @@ const notifyObserver = (self: Classes | Style) => {
 
 const renderStyleEntries = (entries: Map<string, string>): string =>
     [...entries.entries()].map(([property, cssValue]) => `${property}: ${cssValue}`).join("; ");
+
+const escapeHtmlAttrValue = (value: string): string =>
+    value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+
+const renderAttrEntries = (entries: Map<string, string>): string =>
+    [...entries.entries()]
+        .map(([name, attrValue]) => (attrValue.length === 0 ? name : `${name}="${escapeHtmlAttrValue(attrValue)}"`))
+        .join(" ");
+
+const renderAttrRepr = (entries: Map<string, string>): string =>
+    [...entries.entries()]
+        .map(([name, attrValue]) => (attrValue.length === 0 ? name : `${name}=${attrValue}`))
+        .join(" ");
 
 const createStyleElement = (): HTMLElement => document.createElement("div");
 
@@ -332,7 +504,8 @@ export const Classes: ClassesConstructor = buildNativeClass("anvil.Classes", {
         $setCurrentClasses(tokens) {
             const deduped = dedupeClassTokens(tokens);
             if (this._element) {
-                this._element.className = deduped.join(" ");
+                // SVG elements have no className setter.
+                this._element.setAttribute("class", deduped.join(" "));
             } else {
                 this._classNames = deduped;
             }
@@ -590,6 +763,170 @@ export const Style: StyleConstructor = buildNativeClass("anvil.Style", {
     },
 });
 
+export const Attrs: AttrsConstructor = buildNativeClass("anvil.Attrs", {
+    constructor: function Attrs(value?: pyObject | HTMLElement | null) {
+        this._element = createStyleElement();
+        if (isHTMLElement(value)) {
+            this.$setElement(value, true);
+        } else {
+            this.$replace(value ?? pyNone);
+        }
+    },
+    slots: {
+        tp$new(args, kws) {
+            const [value] = copyKeywordsToNamedArgs("Attrs", ["value"], args, kws, [pyNone]);
+            return new Attrs(value);
+        },
+        tp$str() {
+            return new pyStr(renderAttrEntries(this.$getCurrentAttrs()));
+        },
+        $r() {
+            return new pyStr(`Attrs(${renderAttrRepr(this.$getCurrentAttrs())})`);
+        },
+        tp$iter() {
+            return pyStrIteratorFromIterable(managedAttrKeysIterable(this));
+        },
+        tp$as_sequence_or_mapping: true,
+        sq$length() {
+            return this.$getCurrentAttrs().size;
+        },
+        sq$contains(name) {
+            return this.$has(name);
+        },
+        mp$subscript(name) {
+            return this.$get(name);
+        },
+        mp$ass_subscript(name, value) {
+            if (value === undefined) {
+                this.$delete(name);
+            } else {
+                this.$set(name, value);
+            }
+        },
+    },
+    proto: {
+        $getCurrentAttrs(this: Attrs) {
+            return attrsFromElement(attrsElement(this));
+        },
+        $setCurrentAttrs(this: Attrs, entries: Map<string, string>) {
+            const next = new Map(entries);
+            const element = attrsElement(this);
+            const toRemove: string[] = [];
+            for (const attr of element.attributes) {
+                if (!isExcludedManagedAttr(attr.name)) {
+                    toRemove.push(attr.name);
+                }
+            }
+            for (const name of toRemove) {
+                element.removeAttribute(name);
+            }
+            for (const [name, attrValue] of next) {
+                element.setAttribute(name, attrValue);
+            }
+        },
+        $clear(this: Attrs) {
+            this.$setCurrentAttrs(new Map());
+        },
+        $replace(this: Attrs, value?: pyObject) {
+            this.$setEntries(attrsEntriesFromPyObject(value));
+        },
+        $update(this: Attrs, updates: pyDict<pyObject, pyObject>) {
+            for (const [name, attrValue] of updates.$items()) {
+                this.mp$ass_subscript(name, attrValue);
+            }
+        },
+        $entries(this: Attrs) {
+            return this.$getCurrentAttrs();
+        },
+        $setEntries(this: Attrs, entries: Map<string, string>) {
+            this.$setCurrentAttrs(entries);
+        },
+        $setElement(this: Attrs, element: HTMLElement | null, hydrate = false) {
+            const entries = hydrate ? null : this.$getCurrentAttrs();
+            this._element = element ?? createStyleElement();
+            if (!hydrate && entries) {
+                this.$setEntries(entries);
+            }
+        },
+        $set(this: Attrs, name: pyObject, value: pyObject) {
+            const attrName = getAttrName(name);
+            if (!attrName) {
+                throw new pyTypeError("Attribute name must not be empty");
+            }
+            assertManagedAttr(attrName);
+            const valueString = pyAttrValueToString(value);
+            const element = attrsElement(this);
+            if (valueString === null) {
+                element.removeAttribute(attrName);
+            } else {
+                element.setAttribute(attrName, valueString);
+            }
+        },
+        $delete(this: Attrs, name: pyObject) {
+            const attrName = getAttrName(name);
+            if (!attrName) {
+                throw new pyTypeError("Attribute name must not be empty");
+            }
+            assertManagedAttr(attrName);
+            attrsElement(this).removeAttribute(attrName);
+        },
+        $get(this: Attrs, name: pyObject) {
+            const attrName = getAttrName(name);
+            if (!attrName) {
+                throw new pyTypeError("Attribute name must not be empty");
+            }
+            assertManagedAttr(attrName);
+            const element = attrsElement(this);
+            if (!element.hasAttribute(attrName)) {
+                return pyNone;
+            }
+            return new pyStr(element.getAttribute(attrName) ?? "");
+        },
+        $has(this: Attrs, name: pyObject) {
+            const attrName = getAttrName(name);
+            if (!attrName) {
+                throw new pyTypeError("Attribute name must not be empty");
+            }
+            assertManagedAttr(attrName);
+            return attrsElement(this).hasAttribute(attrName);
+        },
+    },
+    methods: {
+        keys: {
+            $meth() {
+                return pyStrIteratorFromIterable(managedAttrKeysIterable(this));
+            },
+            $flags: { NoArgs: true },
+        },
+        values: {
+            $meth() {
+                return pyStrIteratorFromIterable(managedAttrValuesIterable(this));
+            },
+            $flags: { NoArgs: true },
+        },
+        items: {
+            $meth() {
+                return pyStringPairIteratorFromIterable(managedAttrEntriesIterable(this));
+            },
+            $flags: { NoArgs: true },
+        },
+        update: {
+            $meth(args, kws) {
+                this.$update(attrUpdateDictFromArgs(args, kws));
+                return pyNone;
+            },
+            $flags: { FastCall: true },
+        },
+        clear: {
+            $meth() {
+                this.$clear();
+                return pyNone;
+            },
+            $flags: { NoArgs: true },
+        },
+    },
+});
+
 /*!defMethod(,[value=None])!2*/ ("Create a live class-list helper. `value` may be `None`, a string, a list of strings, a dictionary of class names to booleans, or another `Classes` object."); ["__init__"];
 /*!defMethod(_,value)!2*/ ("Add one or more class names. Strings are split on whitespace; duplicate classes are ignored."); ["add"];
 /*!defMethod(_,value)!2*/ ("Remove one or more class names. Missing classes are ignored."); ["remove"];
@@ -605,3 +942,11 @@ export const Style: StyleConstructor = buildNativeClass("anvil.Style", {
 /*!defMethod(_,updates=None,**kwargs)!2*/ ("Merge CSS properties into this style object. `None` or empty values remove properties."); ["update"];
 /*!defMethod(None,)!2*/ ("Remove all CSS properties."); ["clear"];
 /*!defClass(anvil,Style)!*/
+
+/*!defMethod(,[value=None])!2*/ ("Create a live HTML attribute helper. `value` may be `None`, a dictionary of attribute names to values, or another `Attrs` object."); ["__init__"];
+/*!defMethod(iterator[string],)!2*/ ("Return an iterator over the attribute names in this attrs object."); ["keys"];
+/*!defMethod(iterator[string],)!2*/ ("Return an iterator over the attribute values in this attrs object."); ["values"];
+/*!defMethod(iterator,)!2*/ ("Return an iterator over `(name, value)` pairs for this attrs object."); ["items"];
+/*!defMethod(_,updates=None,**kwargs)!2*/ ("Merge attribute names and values into this attrs object. `None` values remove attributes."); ["update"];
+/*!defMethod(None,)!2*/ ("Remove all managed HTML attributes."); ["clear"];
+/*!defClass(anvil,Attrs)!*/

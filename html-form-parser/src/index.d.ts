@@ -102,7 +102,9 @@ export interface ParseWarning {
         | "unknown-dom-anvil-attribute"
         | "anvil-namespace-attribute-on-anvil-tag"
         | "anvil-component-attribute-on-dom-node"
-        | "unknown-form-spec-package";
+        | "unknown-form-spec-package"
+        | "self-closing-anvil-tag"
+        | "unclosed-anvil-tag";
     path: string;
     message: string;
     name?: string;

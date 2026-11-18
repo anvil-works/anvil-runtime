@@ -5,14 +5,14 @@ import React from "react";
 interface ItemProps<T> {
     item: T;
     idx: number;
-    fn: (item: T, idx: number) => JSX.Element;
+    fn: (item: T, idx: number) => React.JSX.Element;
 }
 const Item = <T,>({ item, idx, fn }: ItemProps<T>) => fn(item, idx);
 
 interface ForProps<T> {
     each: T[];
     keyFn?: (item: T) => string | number;
-    children: () => JSX.Element;
+    children: () => React.JSX.Element;
 }
 
 export const For = <T,>({ each, children, keyFn }: ForProps<T>) =>

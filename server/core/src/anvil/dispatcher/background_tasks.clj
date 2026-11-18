@@ -65,8 +65,28 @@
 
 (defonce get-environment-for-background-task (fn [task] (throw (UnsupportedOperationException.))))
 
+(defonce handle-test-event! (fn [_launch-request _session _test-event] nil))
+
+;; Called with the launch request and the new task's row, before the task starts
+(defonce handle-task-created! (fn [_launch-request _task] nil))
+
+;; Called with the task's row and the final state it was given, once the task has a completion status
+(defonce handle-task-ended! (fn [_task _final-state] nil))
+
+;; Returns the set of task functions that Anvil runs internally, which app code shouldn't see in list_background_tasks()
+(defonce get-internal-background-tasks (fn [] #{}))
+
 (def set-background-task-hooks! (util/hook-setter #{do-kill-task! do-get-task-state create-background-task-record list-background-tasks
-                                                    load-background-task-in-environment get-environment-for-background-task}))
+                                                    load-background-task-in-environment get-environment-for-background-task
+                                                    handle-test-event! handle-task-created! handle-task-ended!
+                                                    get-internal-background-tasks}))
+
+(defn list-app-background-tasks
+  "The tasks list_background_tasks() returns: those in list-background-tasks, without the internal Anvil tasks"
+  [environment all-environments?]
+  (let [internal-task-names (set (map #(str "task:" %) (get-internal-background-tasks)))]
+    (remove (comp internal-task-names :task_name)
+            (list-background-tasks environment all-environments?))))
 
 (defn load-background-task-by-id
   ([id] (load-background-task-by-id util/db id))
@@ -180,11 +200,18 @@
                                                             " WHERE id = ? AND completion_status IS NULL RETURNING *")
                                                        status final-state id])))
 
-        updated-row (try
-                      (update-task-row! status serialised-state)
-                      (catch PSQLException e
-                        ;; TODO: We could test the task-state and return value one by one here to work out which failed, if we cared enough.
-                        (update-task-row! "threw" {:error {:message (str "The state or return value could not be saved: " (.getMessage e))}})))]
+        [updated-row final-state] (try
+                                    [(update-task-row! status serialised-state) serialised-state]
+                                    (catch PSQLException e
+                                      ;; TODO: We could test the task-state and return value one by one here to work out which failed, if we cared enough.
+                                      (let [final-state {:error {:message (str "The state or return value could not be saved: " (.getMessage e))}}]
+                                        [(update-task-row! "threw" final-state) final-state])))]
+
+    (when updated-row
+      (try
+        (handle-task-ended! updated-row final-state)
+        (catch Exception e
+          (log/error e "Error handling the end of background task" id))))
 
     (when (and updated-row session)
 
@@ -363,7 +390,7 @@
                                                                   (when rpc-util/*client-request?*
                                                                     (throw+ {:anvil/server-error "Can't manage background tasks from the client" :type "anvil.server.BackgroundTaskError"}))
                                                                   (doall
-                                                                    (for [bt (list-background-tasks rpc-util/*environment* all_environments)
+                                                                    (for [bt (list-app-background-tasks rpc-util/*environment* all_environments)
                                                                           :let [id (:id bt)]]
                                                                       (mk-BackgroundTaskLiveObject id)))))})
 
@@ -445,12 +472,18 @@
                        (select-keys request [:app-id :environment]))
         task (create-background-task-record request impl func (sessions/get-id new-session))
         _ (swap! new-session assoc-in [:client :background-task-id] (:id task))
+        _ (try
+            (handle-task-created! request task)
+            (catch Exception e
+              (log/error e "Error handling the creation of background task" (:id task))))
 
-        return-path {:update!  (fn [{:keys [output debuggers]}]
+        return-path {:update!  (fn [{:keys [output debuggers test_event]}]
                                  (when debuggers
                                    (debugger/handle-debugger-update! environment {:type "background_task"} debuggers nil))
                                  (when output
-                                   (app-log/record-event! new-session (tracing/get-trace-id tracing-span) "print" output nil)))
+                                   (app-log/record-event! new-session (tracing/get-trace-id tracing-span) "print" output nil))
+                                 (when test_event
+                                   (handle-test-event! request new-session test_event)))
                      :respond! (fn [{:keys [error] :as resp}]
                                  (record-final-state! new-session task resp (boolean error))
 

@@ -1,5 +1,5 @@
 from __future__ import absolute_import
-import ast, sys, importlib, time
+import ast, io, sys, importlib, linecache, time
 
 # The downlink may need to coexist with the Uplink (for example in the standalone App Server).
 # In these deployments, the downlink's version of the 'anvil' module is shipped as
@@ -72,6 +72,18 @@ def _unsupported_script_input(prompt=""):
 # 2. (for Python 3 back-compatibility:) Intercept requests to import top-level modules in the main app,
 #    and instead load the module in its main-app package, then alias it into sys.modules
 #
+
+def _register_source(filename, code):
+    # App code has no file on disk, so put its source in linecache. Then tracebacks (including pytest's) can show
+    # its lines. An mtime of None stops linecache.checkcache() evicting it.
+    # Split lines only where compile() counts them (\n, \r\n and \r). str.splitlines() also splits on characters
+    # like form feed, which would show the wrong line for everything after them.
+    lines = io.StringIO(code, newline=None).readlines()
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    linecache.cache[filename] = (len(code), None, lines, filename)
+
+
 class SimpleLoader(object):
     def __init__(self, module, real_name=None):
         self._module = module
@@ -99,8 +111,11 @@ class SimpleLoader(object):
             mod.__path__ = []
 
         if 'code' in self._module:
+            filename = real_name.replace(".", "/") + '.py'
+            if sys.version_info[0] >= 3:
+                _register_source(filename, self._module['code'])
             try:
-                do_exec(compile(self._module['code'], real_name.replace(".", "/") + '.py', 'exec'), mod.__dict__)
+                do_exec(compile(self._module['code'], filename, 'exec'), mod.__dict__)
             except ErrorLoadingUserCode as e:
                 raise
             except Exception as e:
@@ -334,6 +349,9 @@ def run_repl(code, gbl, loc=None):
         cobj = compile(ast.Interactive(to_run_interactive), "<input>", "single")
         do_exec(cobj, gbl, loc)
 
+# Launched by the platform when the IDE runs an app's server tests (see anvil.ide.server-tests)
+RUN_SERVER_TESTS_COMMAND = "task:anvil.private.testing.run_server_tests"
+
 APP_LOAD_REQUESTED = None
 def handle_incoming_call(msg, send_to_host, start_time=None, ready_time=None):
     global APP_LOAD_REQUESTED, SEND_TO_HOST
@@ -382,6 +400,19 @@ def handle_incoming_call(msg, send_to_host, start_time=None, ready_time=None):
             send_to_host({"id": msg['id'], "response": None})
             return
 
+        elif msg['type'] == "LAUNCH_BACKGROUND" and msg.get('command') == RUN_SERVER_TESTS_COMMAND:
+            def run_fn():
+                from .server_tests import run_server_tests
+                kwargs = msg.get('kwargs') or {}
+                files = kwargs.get('server_tests')
+                if files is None:
+                    raise Exception("No server tests were provided")
+
+                def emit(test_event):
+                    send_to_host({'id': msg['id'], 'test_event': test_event})
+
+                run_server_tests(files, emit, selection=kwargs.get('selection'), collect_only=kwargs.get('collect_only', False))
+
         elif msg['type'] == "DEBUG_REQUEST":
             if _debugger:
                 response = _debugger.handle_debug_request(msg, file_prefix=module_finder.get_main_package()+"/")
@@ -398,4 +429,8 @@ def handle_incoming_call(msg, send_to_host, start_time=None, ready_time=None):
                                              run_fn=run_fn,
                                              dump_task_state=(msg['type'].startswith("LAUNCH_BACKGROUND")))
         except:
-            send_to_host(_server._report_exception(msg['id']))
+            send_to_host(
+                _server._report_exception(
+                    msg['id'], include_portable_exception=False
+                )
+            )

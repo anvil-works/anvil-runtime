@@ -41,6 +41,8 @@ class DummyStdout:
         write_pipe({'output': s, 'id': _threaded_server.call_info.call_id})
     def flush(self):
         pass
+    def isatty(self):
+        return False
 
 
 sys.stdout = DummyStdout()

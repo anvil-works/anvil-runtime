@@ -92,8 +92,8 @@
             border-color: color.adjust($border, $lightness: -25%);
         }
     }
-    &.anvil-disabled,
-    &[disabled] {
+    // Disabled defaults must not override a theme's Button hover colours.
+    &:where(.anvil-disabled, [disabled]) {
         &:hover,
         &:focus,
         &.focus {

@@ -1,3 +1,5 @@
+import { dateFormat, formatPickerDate, parsePickerDate } from "../components/date-picker-dates";
+
 interface DateRangePickerOptions {
     timePicker?: boolean;
     timePickerIncrement?: number;
@@ -43,12 +45,6 @@ class DateRangePicker {
         if (this.isShowing) this.move();
     };
 
-    // Moment.js helper
-    private getMoment(): any {
-        const w = window as any;
-        return w.moment;
-    }
-
     private updateFormInputs(): void {
         const applyBtn = this.elements?.applyBtn as HTMLButtonElement | undefined;
         if (!applyBtn) return;
@@ -62,7 +58,7 @@ class DateRangePicker {
         maxDate: null,
         date: null,
         locale: {
-            format: "MM/DD/YYYY",
+            format: "%x",
             applyLabel: "Apply",
             cancelLabel: "Cancel",
             daysOfWeek: ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"],
@@ -84,37 +80,6 @@ class DateRangePicker {
         },
     };
 
-    // Helper method to get moment locale options
-    private getMomentLocale(): Partial<DateRangePickerOptions["locale"]> {
-        const moment = this.getMoment();
-        if (!moment) return {};
-
-        const ld = moment.localeData();
-        if (!ld) return {};
-
-        const momentLocale: Partial<DateRangePickerOptions["locale"]> = {};
-
-        // First day of week
-        const dow = typeof ld.firstDayOfWeek === "function" ? ld.firstDayOfWeek() : ld._week && ld._week.dow;
-        if (typeof dow === "number") {
-            momentLocale.firstDay = dow;
-        }
-
-        // Weekdays short (Su, Mo, ...)
-        const dows = typeof ld.weekdaysMin === "function" ? ld.weekdaysMin() : undefined;
-        if (Array.isArray(dows) && dows.length === 7) {
-            momentLocale.daysOfWeek = Array.from(dows as string[]);
-        }
-
-        // Month names
-        const months = typeof ld.months === "function" ? ld.months() : undefined;
-        if (Array.isArray(months) && months.length === 12) {
-            momentLocale.monthNames = Array.from(months as string[]);
-        }
-
-        return momentLocale;
-    }
-
     constructor(
         element: HTMLInputElement,
         options: DateRangePickerOptions = {},
@@ -124,10 +89,9 @@ class DateRangePicker {
         this.callback = callback;
         this.options = { ...this.defaultOptions, ...options };
 
-        // Merge locale with proper priority: defaultOptions.locale → momentLocale → options.locale
+        // Merge locale with proper priority: defaultOptions.locale → options.locale
         this.options.locale = {
             ...this.defaultOptions.locale,
-            ...this.getMomentLocale(),
             ...(options.locale ?? {}),
         };
 
@@ -159,32 +123,16 @@ class DateRangePicker {
     }
 
     private formatDate(date: Date): string {
-        const moment = this.getMoment();
-        if (!moment) return "";
-        const fmt = this.options.locale.format;
-        return fmt ? moment(date).format(fmt) : moment(date).format((moment as any).ISO_8601);
+        return formatPickerDate(date, dateFormat(this.options.locale.format ?? "%x"));
     }
 
     private parseDate(dateInput: Date | string | null, validOnly = true): Date | null {
         if (!dateInput) return null;
-        if (dateInput instanceof Date) return new Date(dateInput);
-        if (typeof dateInput === "string") {
-            const moment = this.getMoment();
-            if (moment) {
-                const fmt = this.options.locale.format;
-                const m = fmt
-                    ? moment(dateInput, [fmt, (moment as any).ISO_8601], true)
-                    : moment(dateInput, (moment as any).ISO_8601, true);
-                if (validOnly) {
-                    return m && m.isValid() ? m.toDate() : null;
-                }
-                return m.toDate();
-            } else {
-                const parsed = new Date(dateInput);
-                return validOnly ? (isNaN(parsed.getTime()) ? null : parsed) : parsed;
-            }
-        }
-        return null;
+        const date =
+            dateInput instanceof Date
+                ? new Date(dateInput)
+                : parsePickerDate(dateInput, dateFormat(this.options.locale.format ?? "%x"));
+        return validOnly && isNaN(date.getTime()) ? null : date;
     }
 
     private init(): void {

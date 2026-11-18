@@ -81,7 +81,7 @@ class Figure(Base):
 
         if layout is None:
             layout = {}
-        elif isinstance(layout, dict):
+        if isinstance(layout, dict):
             layout = dict(layout)
             template = self._initialize_template(layout.get("template", None))
             if template is not None:

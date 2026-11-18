@@ -13,6 +13,7 @@
             [anvil.app-server.dispatch :as dispatch]
             [anvil.runtime.cron :as cron]
             [anvil.runtime.tables.schema :as table-schema]
+            [anvil.runtime.tables.manager :as tables-manager]
             [anvil.app-server.tables :as tables]
             [ring.util.response :as resp]
             [anvil.runtime.app-data :as app-data]
@@ -107,9 +108,11 @@
                                                 (:client_config %))
                                              (-> app :content :services))]
     (update-cron-jobs! (:content app))
-    (binding [table-schema/*create-split-tables?* (boolean (and enable_v2 enable_split))]
-      (tables/validate-app-tables-schema (-> app :content :db_schema) (-> app :content :table_id_hints) main-app-id auto-migrate-tables? ignore-invalid-schema?))
-    (tables/update-indexes-and-views!)
+    ;; One batch, so the migration's index builds don't run alongside the rebuild of every table's indexes.
+    (tables-manager/with-split-table-index-updates-batched nil
+      (binding [table-schema/*create-split-tables?* (boolean (and enable_v2 enable_split))]
+        (tables/validate-app-tables-schema (-> app :content :db_schema) (-> app :content :table_id_hints) main-app-id auto-migrate-tables? ignore-invalid-schema?))
+      (tables/update-indexes-and-views!))
     app))
 
 (defn wrap-cors [f origin]

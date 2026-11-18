@@ -240,7 +240,7 @@
                               (handle-update! (cond-> raw-data
                                                       get-debugger-coordinates (update :debuggers cons (get-debugger-coordinates call-id)))))
 
-                            (or (contains? raw-data :output) (contains? raw-data :invalidate-macs))
+                            (or (contains? raw-data :output) (contains? raw-data :invalidate-macs) (contains? raw-data :test_event))
                             (handle-update! raw-data))))
 
 

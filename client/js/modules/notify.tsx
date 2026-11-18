@@ -2,9 +2,10 @@
  * Modern notification system
  * Replaces bootstrap-notify with vanilla JavaScript
  */
-
-import { BOOTSTRAP_MODAL_BG } from "./modal";
+import type { pyObject } from "@Sk";
+import { applyRole } from "@runtime/PyDefUtils/styling";
 import { getCssPrefix } from "@runtime/runner/legacy-features";
+import { BOOTSTRAP_MODAL_BG } from "./modal";
 
 interface NotifyContent {
     message: string;
@@ -13,6 +14,7 @@ interface NotifyContent {
 
 interface NotifyOptions {
     type?: string;
+    role?: pyObject;
     timeout?: number; // timeout in milliseconds
     placement?: {
         from: string;
@@ -56,7 +58,7 @@ class Notify {
                 <div
                     refName="container"
                     data-notify="container"
-                    className={`${prefix}col-xs-11 ${prefix}col-sm-4 ${prefix}alert ${prefix}alert-${this.options.type} ${prefix}animated`}
+                    className={`anvil-notification ${prefix}col-xs-11 ${prefix}col-sm-4 ${prefix}alert ${prefix}alert-${this.options.type} ${prefix}animated`}
                     style={baseStyle}
                     role="alert">
                     <button
@@ -67,9 +69,13 @@ class Notify {
                         data-notify="dismiss">
                         &times;
                     </button>
-                    <span data-notify="icon"></span>
-                    <span data-notify="title">{content.title || ""}</span>
-                    <span data-notify="message">{content.message}</span>
+                    <span className="anvil-notification-icon" data-notify="icon"></span>
+                    <span className="anvil-notification-title" data-notify="title">
+                        {content.title || ""}
+                    </span>
+                    <span className="anvil-notification-message" data-notify="message">
+                        {content.message}
+                    </span>
                 </div>
             </div>
         );
@@ -77,6 +83,9 @@ class Notify {
         this.element = element as HTMLElement;
         this.elements = elements as Record<string, HTMLElement>;
 
+        if (this.options.role) {
+            applyRole(this.options.role, this.elements.container);
+        }
         this.applyStyles();
     }
 

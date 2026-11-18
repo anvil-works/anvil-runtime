@@ -11,7 +11,6 @@ import {
     pyFalse,
     pyMappingProxy,
     pyNone,
-    pyNotImplementedError,
     pyObject,
     pyStr,
     pySuper,
@@ -30,7 +29,7 @@ import {
     sanitizeScripts,
     setInnerHTMLWithWrapping,
 } from "@runtime/html-form/dom-utils";
-import { Classes, Style } from "@runtime/modules/_anvil/html-styling";
+import { Attrs, Classes, Style } from "@runtime/modules/_anvil/html-styling";
 import { DropModeFlags } from "@runtime/runner/python-objects";
 import { designerApi } from "../runner/component-designer-api";
 import { setElementVisibility } from "../runner/components-in-js/public-api/property-utils";
@@ -61,15 +60,21 @@ import type { ContainerConstructor } from "./Container";
 import { Container } from "./Container";
 import { COMPONENT_ROOT_ATTR } from "./component-dom";
 
+interface HtmlComponentDropzone {
+    start: Comment;
+    end: Comment;
+}
+
 interface HtmlComponentState {
     _rootElement: HTMLElement | null;
     _activeElement: HTMLElement | null;
     html: string;
     classes: Classes;
     style: Style;
+    attrs: Attrs;
     designerStyleOverride?: string | null;
     visible: boolean;
-    dropzones: Map<string, HTMLElement>;
+    dropzones: Map<string, HtmlComponentDropzone>;
     namedDomNodes: Map<string, Element>;
     namedDomNodesProxy: pyMappingProxy;
     componentTargets: WeakMap<pyObject, string | null>;
@@ -106,10 +111,6 @@ const CONSTRUCTOR_PROPERTY_NAMES = ["html", "classes", "style", "attrs", "visibl
 const CONSTRUCTOR_PROPERTY_NAME_SET = new Set<string>(CONSTRUCTOR_PROPERTY_NAMES);
 const hasOwnProperty = Object.prototype.hasOwnProperty;
 
-const throwAttrsNotImplemented = (): never => {
-    throw new pyNotImplementedError("HtmlComponent.attrs is not implemented yet");
-};
-
 function normalizeDropzoneTarget(target: string | null | undefined): string {
     return target || DEFAULT_DROPZONE_NAME;
 }
@@ -133,12 +134,14 @@ const ensureState = (instance: HtmlComponent): HtmlComponentState => {
                 state.designerStyleOverride = undefined;
             }
         });
+        const attrs = new Attrs(pyNone);
         instance._HtmlComponent = {
             _rootElement: null,
             _activeElement: null,
             html: "",
             classes,
             style,
+            attrs,
             designerStyleOverride: undefined,
             visible: true,
             dropzones: new Map(),
@@ -160,6 +163,7 @@ const ensureState = (instance: HtmlComponent): HtmlComponentState => {
                     this._rootElement = root;
                     this.classes.$setElement(root);
                     this.style.$setElement(root);
+                    this.attrs.$setElement(root);
                 }
                 return this._rootElement!;
             },
@@ -267,19 +271,26 @@ const clearManagedRootStyling = (state: HtmlComponentState, element: HTMLElement
         state.style.$setEntries(new Map());
         state.style.$setElement(null);
     }
+    if (state.attrs._element === element) {
+        state.attrs.$setEntries(new Map());
+        state.attrs.$setElement(null);
+    }
 };
 
 const hydrateRootStyling = (state: HtmlComponentState, element: HTMLElement) => {
     if (element === state.rootElement) {
         state.classes.$setElement(element);
         state.style.$setElement(element);
+        state.attrs.$setElement(element);
         state.classes.$setTokens([]);
         state.style.$setEntries(new Map());
+        state.attrs.$setEntries(new Map());
         return;
     }
 
     state.classes.$setElement(element, true);
     state.style.$setElement(element, true);
+    state.attrs.$setElement(element, true);
 };
 
 const removeBoundEventListeners = (state: HtmlComponentState) => {
@@ -360,6 +371,17 @@ const renderHtml = (instance: HtmlComponent) => {
     const parser = document.createElement("div");
     setInnerHTMLWithWrapping(parser, state.html);
 
+    // Choose the root before lowering dropzones to comments. A top-level dropzone
+    // is content outside any other root element, even when it is currently empty.
+    const meaningfulNodes = Array.from(parser.childNodes).filter((node) => !isIgnorableNode(node));
+    if (
+        meaningfulNodes.length === 1 &&
+        meaningfulNodes[0].nodeType === Node.ELEMENT_NODE &&
+        (meaningfulNodes[0] as Element).tagName !== "ANVIL-DROPZONE"
+    ) {
+        state.activeElement = meaningfulNodes[0] as HTMLElement;
+    }
+
     const specialElements = parser.querySelectorAll(SPECIAL_ELEMENTS_SELECTOR);
     const scriptElements: HTMLScriptElement[] = [];
     specialElements.forEach((node) => {
@@ -374,9 +396,15 @@ const renderHtml = (instance: HtmlComponent) => {
         }
         if (node.tagName === "ANVIL-DROPZONE") {
             const name = node.getAttribute("name");
+            const start = document.createComment(`anvil-dropzone ${name ?? ""}`);
+            const end = document.createComment("/anvil-dropzone");
+            // Keep the insertion boundaries without adding elements to the authored
+            // hierarchy. Empty zones and zones containing static HTML remain targets.
+            node.replaceWith(start, ...node.childNodes, end);
             if (name) {
-                state.dropzones.set(name, node as HTMLElement);
+                state.dropzones.set(name, { start, end });
             }
+            return;
         }
         if (node.hasAttribute(ANVIL_DOM_NODE_ATTR)) {
             const name = node.getAttribute(ANVIL_DOM_NODE_ATTR);
@@ -398,26 +426,7 @@ const renderHtml = (instance: HtmlComponent) => {
         }
     });
 
-    const allChildNodes = Array.from(parser.childNodes);
-    // Filter to only meaningful nodes (elements and non-whitespace text nodes) for single-child check
-    // We ignore comment nodes and whitespace-only text nodes
-    const meaningfulNodes = allChildNodes.filter((node) => !isIgnorableNode(node));
-    const childElements = meaningfulNodes.filter<HTMLElement>(
-        (node): node is HTMLElement => node.nodeType === Node.ELEMENT_NODE
-    );
-
-    // Set activeElement if there's exactly one meaningful node and it's an element (not an ANVIL-DROPZONE)
-    // This ensures we ignore comment nodes and whitespace-only text nodes when determining the single child
-    if (meaningfulNodes.length === 1 && childElements.length === 1 && childElements[0].tagName !== "ANVIL-DROPZONE") {
-        const child = childElements[0];
-        state.activeElement = child;
-        // Place all nodes (including comments) inside the reusable wrapper immediately so setupDom callers
-        // (who may have cached rootElement) see the actual visible node even before mounting.
-        // We preserve comment nodes and other non-element nodes for proper rendering.
-        rootElement.replaceChildren(...allChildNodes);
-    } else {
-        rootElement.replaceChildren(...allChildNodes);
-    }
+    rootElement.replaceChildren(...parser.childNodes);
 
     const visibleNode = state.activeElement;
     hydrateRootStyling(state, visibleNode);
@@ -601,6 +610,15 @@ export const HtmlComponent: HtmlComponentConstructor = buildNativeClass("anvil.H
                         pyType: "anvil.Style instance",
                         description: "The inline styles applied to this HtmlComponent's root element.",
                     },
+                    /*!componentProp(HtmlComponent)!1*/ {
+                        name: "attrs",
+                        type: "attrs",
+                        defaultValue: null,
+                        group: "appearance",
+                        hidden: true,
+                        pyType: "anvil.Attrs instance",
+                        description: "The HTML attributes applied to this HtmlComponent's root element.",
+                    },
                 ];
             },
             getContainerDesignInfo() {
@@ -706,10 +724,12 @@ export const HtmlComponent: HtmlComponentConstructor = buildNativeClass("anvil.H
         },
         attrs: {
             $get() {
-                return throwAttrsNotImplemented();
+                return ensureState(this).attrs;
             },
-            $set(_value?: pyObject) {
-                return throwAttrsNotImplemented();
+            $set(value?: pyObject) {
+                const state = ensureState(this);
+                state.attrs.$setElement(state.activeElement);
+                state.attrs.$replace(value ?? pyNone);
             },
         },
         visible: {
@@ -742,13 +762,13 @@ export const HtmlComponent: HtmlComponentConstructor = buildNativeClass("anvil.H
                 let dropzoneKey = normalizeDropzoneTarget(toJs(dropzoneNamePy)?.toString());
                 const index = layoutProps["index"] ?? pyNone;
                 const state = ensureState(this);
-                let targetElement = state.dropzones.get(dropzoneKey);
-                if (!targetElement && dropzoneKey !== DEFAULT_DROPZONE_NAME) {
+                let dropzone = state.dropzones.get(dropzoneKey);
+                if (!dropzone && dropzoneKey !== DEFAULT_DROPZONE_NAME) {
                     dropzoneKey = DEFAULT_DROPZONE_NAME;
-                    targetElement = state.dropzones.get(dropzoneKey);
+                    dropzone = state.dropzones.get(dropzoneKey);
                 }
                 const storedDropzoneKey = storedDropzoneTarget(dropzoneKey);
-                targetElement ??= state.activeElement;
+                const targetElement = dropzone?.end.parentElement ?? state.activeElement;
 
                 if (!targetElement) {
                     throw new pyValueError("HtmlComponent root element is not initialised");
@@ -766,21 +786,18 @@ export const HtmlComponent: HtmlComponentConstructor = buildNativeClass("anvil.H
                         // Maintain DOM order when callers supply index= or reorder components.
                         // Find the next component in this dropzone and insert before its DOM node so
                         // the fragment reflects the container's logical ordering.
-                        let insertBefore: Element | null = null;
+                        let insertBefore: Node | null = dropzone?.end ?? null;
                         for (let i = componentIndex + 1; i < components.length; i++) {
                             const other = components[i];
                             if (dropzoneTargetsMatch(state.componentTargets.get(other), storedDropzoneKey)) {
-                                insertBefore = other.anvil$hooks?.domElement ?? null;
-                                if (insertBefore && insertBefore.nodeType === Node.ELEMENT_NODE) {
+                                const otherDom = other.anvil$hooks?.domElement;
+                                if (otherDom?.nodeType === Node.ELEMENT_NODE) {
+                                    insertBefore = otherDom;
                                     break;
                                 }
                             }
                         }
-                        if (insertBefore) {
-                            targetElement.insertBefore(domElement, insertBefore);
-                        } else {
-                            targetElement.appendChild(domElement);
-                        }
+                        targetElement.insertBefore(domElement, insertBefore);
                         component.anvilComponent$onRemove(() => {
                             state.componentTargets.delete(component);
                         });
@@ -961,21 +978,12 @@ const getEffectiveLayoutParent = (element: HTMLElement, context?: HtmlComponentD
 
 const elementHeight = (node: Node | null) => (node instanceof HTMLElement ? node.getBoundingClientRect().height : 0);
 
-const fallbackSiblingMarkerHeight = (marker: HTMLElement, hostElement: Element) => {
-    const heights = [
-        elementHeight(marker.previousElementSibling),
-        elementHeight(marker.nextElementSibling),
-        elementHeight(hostElement.previousElementSibling),
-        elementHeight(hostElement.nextElementSibling),
-    ];
+const fallbackSiblingMarkerHeight = (marker: HTMLElement) => {
+    const heights = [elementHeight(marker.previousElementSibling), elementHeight(marker.nextElementSibling)];
     return Math.max(...heights, 0);
 };
 
-const sizeDesignerDropZoneMarker = (
-    marker: HTMLElement,
-    hostElement: Element,
-    context?: HtmlComponentDropZoneSizingContext
-) => {
+const sizeDesignerDropZoneMarker = (marker: HTMLElement, context?: HtmlComponentDropZoneSizingContext) => {
     resetDesignerDropZoneMarkerStyle(marker);
 
     const layoutParent = getEffectiveLayoutParent(marker, context);
@@ -1001,7 +1009,7 @@ const sizeDesignerDropZoneMarker = (
         marker.style.alignSelf = "stretch";
 
         if (marker.getBoundingClientRect().height === 0) {
-            const fallbackHeight = fallbackSiblingMarkerHeight(marker, hostElement);
+            const fallbackHeight = fallbackSiblingMarkerHeight(marker);
             if (fallbackHeight > 0) {
                 marker.style.height = `${fallbackHeight}px`;
             }
@@ -1016,46 +1024,44 @@ const sizeDesignerDropZoneMarker = (
 };
 
 function designerEnableDropMode(self: HtmlComponent, dropping: DroppingSpecification, flags?: DropModeFlags) {
-    // - walk the  <anvil-dropzone> nodes (we will need to store this in the state if we don't already)
-    // - compute insertion points around child anvil components, if we don't already we should keep a map of dropzone to it's child components or something
-    // - create temporary marker elements and record them for cleanup (just use plain divs, with data attributes for the drop info)
-    // - return DropZone descriptors with layout_properties, the name must match the <anvil-dropzone> name
     const layoutProperties = toJs(dropping.pyLayoutProperties) as Record<string, string>;
     const providedDropzoneName = layoutProperties?.dropzone ?? undefined;
 
     const state = ensureState(self);
     // Don't clear dropzones - we'll reuse existing ones if they exist
     const dropZones: DropZone[] = [];
-    // Track active drop-markers by logical insertion point, so we can coalesce adjacent dropzones.
-    // When two <anvil-dropzone> hosts touch, we only render one marker for the shared gap.
+    // The implicit default targets the whole root; explicit zones have comment boundaries.
+    interface DropTarget {
+        parent: HTMLElement;
+        start: Comment | null;
+        end: Comment | null;
+    }
+
+    // Adjacent zones share one insertion marker, including when either zone is empty.
     interface MarkerInfo {
         marker: Element;
         dropZone: DropZone;
         dropzoneName: string;
-        host: Element;
+        host: DropTarget;
         minChildIdx: number;
         maxChildIdx: number | undefined;
         type: "head" | "tail" | "empty";
         order: number;
     }
-    const neighbouringMarkersByHost = new Map<Element, Set<MarkerInfo>>();
+    const headsByStart = new Map<Node, MarkerInfo>();
+    const tailsByEnd = new Map<Node, MarkerInfo>();
     let neighbouringMarkerOrder = 0;
 
     const addNeighbouringMarker = (markerInfo: MarkerInfo) => {
-        const hostMarkers = neighbouringMarkersByHost.get(markerInfo.host) ?? new Set<MarkerInfo>();
-        hostMarkers.add(markerInfo);
-        neighbouringMarkersByHost.set(markerInfo.host, hostMarkers);
+        const { parent, start, end } = markerInfo.host;
+        if (markerInfo.type !== "tail") headsByStart.set(start ?? parent, markerInfo);
+        if (markerInfo.type !== "head") tailsByEnd.set(end ?? parent, markerInfo);
     };
 
     const removeNeighbouringMarker = (markerInfo: MarkerInfo) => {
-        const hostMarkers = neighbouringMarkersByHost.get(markerInfo.host);
-        if (!hostMarkers) {
-            return;
-        }
-        hostMarkers.delete(markerInfo);
-        if (hostMarkers.size === 0) {
-            neighbouringMarkersByHost.delete(markerInfo.host);
-        }
+        const { parent, start, end } = markerInfo.host;
+        if (headsByStart.get(start ?? parent) === markerInfo) headsByStart.delete(start ?? parent);
+        if (tailsByEnd.get(end ?? parent) === markerInfo) tailsByEnd.delete(end ?? parent);
     };
 
     const layoutPropsFromDropping =
@@ -1099,7 +1105,7 @@ function designerEnableDropMode(self: HtmlComponent, dropping: DroppingSpecifica
         childEntriesByDropzone.set(dropzoneName, childEntries);
     });
 
-    // Helpers so we can tell if two dropzone hosts are literally adjacent (ignoring whitespace text nodes).
+    // Ignore formatting whitespace between adjacent zone boundaries.
     const isWhitespaceNode = (node: Node | null) =>
         !!node && node.nodeType === Node.TEXT_NODE && node.textContent?.trim() === "";
 
@@ -1121,7 +1127,7 @@ function designerEnableDropMode(self: HtmlComponent, dropping: DroppingSpecifica
 
     const findNeighbouringDropZone = (
         dropzoneName: string,
-        hostElement: Element,
+        hostElement: DropTarget,
         minChildIdx: number,
         maxChildIdx: number | undefined
     ): DropZone | null => {
@@ -1143,22 +1149,15 @@ function designerEnableDropMode(self: HtmlComponent, dropping: DroppingSpecifica
         };
 
         const neighbouringHostCandidates = [
-            { host: previousMeaningfulSibling(hostElement), isNeighbouringAbove: true },
-            { host: nextMeaningfulSibling(hostElement), isNeighbouringAbove: false },
+            { host: previousMeaningfulSibling(hostElement.start ?? hostElement.parent), isNeighbouringAbove: true },
+            { host: nextMeaningfulSibling(hostElement.end ?? hostElement.parent), isNeighbouringAbove: false },
         ];
         const neighbouringMarkerCandidates: { markerInfo: MarkerInfo; isNeighbouringAbove: boolean }[] = [];
 
         for (const { host, isNeighbouringAbove } of neighbouringHostCandidates) {
-            if (!(host instanceof Element)) {
-                continue;
-            }
-            const hostMarkers = neighbouringMarkersByHost.get(host);
-            if (!hostMarkers) {
-                continue;
-            }
-
-            for (const neighbouringMarker of [...hostMarkers]) {
-                neighbouringMarkerCandidates.push({ markerInfo: neighbouringMarker, isNeighbouringAbove });
+            const markerInfo = host && (isNeighbouringAbove ? tailsByEnd : headsByStart).get(host);
+            if (markerInfo) {
+                neighbouringMarkerCandidates.push({ markerInfo, isNeighbouringAbove });
             }
         }
 
@@ -1202,7 +1201,7 @@ function designerEnableDropMode(self: HtmlComponent, dropping: DroppingSpecifica
 
     const registerDropZone = (
         dropzoneName: string,
-        hostElement: Element,
+        hostElement: DropTarget,
         minChildIdx: number,
         maxChildIdx: number | undefined,
         layoutProps: Record<string, unknown>,
@@ -1225,12 +1224,8 @@ function designerEnableDropMode(self: HtmlComponent, dropping: DroppingSpecifica
 
         // No existing marker claimed this insertion point (or we won the tie-break). Create one.
         const marker = createMarker(dropzoneName, minChildIdx, maxChildIdx);
-        if (referenceNode) {
-            hostElement.insertBefore(marker, referenceNode);
-        } else {
-            hostElement.appendChild(marker);
-        }
-        sizeDesignerDropZoneMarker(marker, hostElement, sizingContext);
+        hostElement.parent.insertBefore(marker, referenceNode ?? hostElement.end);
+        sizeDesignerDropZoneMarker(marker, sizingContext);
         const dropZone: DropZone = {
             element: marker,
             dropInfo: {
@@ -1263,17 +1258,24 @@ function designerEnableDropMode(self: HtmlComponent, dropping: DroppingSpecifica
     // user-authored dropzone that has been consumed by the template has already
     // been reparsed away. The remaining $ namespace is parser/designer bookkeeping
     // and should not be exposed as a CCC drop target.
-    const advertisedDropzones = [...state.dropzones.entries()].filter(
-        ([dropzoneName]) => !(hideGeneratedDropzones && dropzoneName.startsWith(INTERNAL_DROPZONE_NAME_PREFIX))
-    );
+    const advertisedDropzones: [string, DropTarget][] = [];
+    for (const [name, dropzone] of state.dropzones) {
+        if (hideGeneratedDropzones && name.startsWith(INTERNAL_DROPZONE_NAME_PREFIX)) {
+            continue;
+        }
+        const parent = dropzone.end.parentElement;
+        if (parent) {
+            advertisedDropzones.push([name, { parent, ...dropzone }]);
+        }
+    }
 
     // If no dropzones exist in the active YAML carrier, advertise the whole component as the implicit default.
     if (state.dropzones.size === 0 && isActiveYamlCarrier) {
-        advertisedDropzones.push([DEFAULT_DROPZONE_NAME, state.activeElement]);
+        advertisedDropzones.push([DEFAULT_DROPZONE_NAME, { parent: state.activeElement, start: null, end: null }]);
     }
 
     for (const [dropzoneName, hostElement] of advertisedDropzones) {
-        if (!hostElement.isConnected) {
+        if (!hostElement.parent.isConnected) {
             continue;
         }
         if (providedDropzoneName && providedDropzoneName !== dropzoneName) {
@@ -1293,7 +1295,7 @@ function designerEnableDropMode(self: HtmlComponent, dropping: DroppingSpecifica
         const childEntries = childEntriesByDropzone.get(normalizeDropzoneTarget(dropzoneName)) ?? [];
 
         // No children in this dropzone: allow insertion anywhere in the container's
-        // component list. This matches DesignHtmlTemplateV3's behaviour of advertising
+        // component list. This matches DesignHtmlTemplate's behaviour of advertising
         // a single range [0, end] for an empty dropzone.
         if (!childEntries.length) {
             registerDropZone(dropzoneName, hostElement, 0, undefined, baseLayoutProperties, null);
@@ -1301,7 +1303,7 @@ function designerEnableDropMode(self: HtmlComponent, dropping: DroppingSpecifica
         }
 
         // There are existing components in this dropzone. We construct ranges that
-        // behave like DesignHtmlTemplateV3:
+        // behave like DesignHtmlTemplate:
         //   - Start with minChildIdx = 0
         //   - For each child at index i, advertise a gap [minChildIdx, i]
         //   - Then advance minChildIdx to i + 1
@@ -1310,7 +1312,7 @@ function designerEnableDropMode(self: HtmlComponent, dropping: DroppingSpecifica
 
         childEntries.forEach((entry) => {
             const referenceNode =
-                entry.dom && entry.dom.nodeType === Node.ELEMENT_NODE && entry.dom.parentElement === hostElement
+                entry.dom && entry.dom.nodeType === Node.ELEMENT_NODE && entry.dom.parentElement === hostElement.parent
                     ? entry.dom
                     : null;
             registerDropZone(dropzoneName, hostElement, minChildIdx, entry.index, baseLayoutProperties, referenceNode);
@@ -1318,11 +1320,13 @@ function designerEnableDropMode(self: HtmlComponent, dropping: DroppingSpecifica
         });
         const lastEntry = childEntries[childEntries.length - 1];
         const referenceForTail =
-            lastEntry.dom && lastEntry.dom.nodeType === Node.ELEMENT_NODE && lastEntry.dom.parentElement === hostElement
+            lastEntry.dom &&
+            lastEntry.dom.nodeType === Node.ELEMENT_NODE &&
+            lastEntry.dom.parentElement === hostElement.parent
                 ? lastEntry.dom.nextSibling
                 : null;
         // Tail gap: allow any insertion index >= minChildIdx. We model this as
-        // [minChildIdx, undefined], mirroring the behaviour of DesignHtmlTemplateV3's
+        // [minChildIdx, undefined], mirroring the behaviour of DesignHtmlTemplate's
         // final drop zone.
         registerDropZone(dropzoneName, hostElement, minChildIdx, undefined, baseLayoutProperties, referenceForTail);
     }

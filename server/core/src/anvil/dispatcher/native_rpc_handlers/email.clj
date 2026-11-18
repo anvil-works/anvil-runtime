@@ -25,11 +25,17 @@
 (defonce get-reroute-address (fn [session-state app-id] (throw (UnsupportedOperationException.))))
 (defonce get-smtp-connection (fn [email-service-config environment] (throw (UnsupportedOperationException.))))
 (defonce redirect-all-emails? (fn [app-info] false))
+;; Some environments (eg for tests) record the emails their code sends, instead of sending them
+(defonce capture-email? (fn [environment] false))
+(defonce capture-email! (fn [environment email] (throw (UnsupportedOperationException.))))
 
-(def set-rpc-email-hooks! (util/hook-setter [redirect-all-emails? get-reroute-address get-smtp-connection]))
+(def set-rpc-email-hooks! (util/hook-setter [redirect-all-emails? get-reroute-address get-smtp-connection capture-email? capture-email!]))
 
 (defn email-send-error [& msg]
   {:anvil/server-error (apply str msg), :type "anvil.email.SendFailure"})
+
+(defn- new-message-id [app-id]
+  (str "<" (System/currentTimeMillis) "-" (random/hex 4) "-" (or app-id "internal") "@anvil>"))
 
 (defn reroute-warning-text [test-mode to app-info]
   (str "This email would have been sent to '" to "' by Anvil app '" (:name app-info) "', but " (if test-mode "the email service is in test mode. All outgoing emails are being rerouted to you, the app owner." "its email quota has been exceeded.")))
@@ -77,7 +83,7 @@
         msg (doto (proxy [MimeMessage] [session]
                     (updateMessageID []
                       (when (nil? (.getMessageID this))
-                        (.setHeader this "Message-ID" (str "<" (System/currentTimeMillis) "-" (random/hex 4) "-" (or app-id "internal") "@anvil>")))))
+                        (.setHeader this "Message-ID" (new-message-id app-id)))))
               (.setFrom (InternetAddress. ^String from-address ^String from-name))
               (.setSubject subject)
               (.setContent full-content))]
@@ -155,7 +161,9 @@
           (catch AddressException _e
             (throw+ (email-send-error "Not a valid sequence of addresses: " lst))))))
 
-(defn send! [{:keys [to from_address from_name cc bcc subject html text inline_attachments attachments in_reply_to references] :as _kwargs}]
+(declare send-with-smtp! capture!)
+
+(defn send! [{:keys [to from_address from_name cc bcc subject html text inline_attachments attachments in_reply_to references] :as kwargs}]
 
   (let [optional-kwarg (fn [val name pred type-name]
                         (when val
@@ -181,105 +189,131 @@
                                                                                     (nil? a))) as))))
                     "list of Media objects")
 
-    (let [{:keys [custom_smtp test_mode] :as email-service-config} (get-props)
+    (if (capture-email? rpc-util/*environment*)
+      (capture! kwargs)
+      (send-with-smtp! (assoc kwargs :to to :cc cc :bcc bcc)))))
 
-          app-info (app-data/get-app-info-insecure rpc-util/*app-id*)
+(defn- send-with-smtp! [{:keys [to from_address from_name cc bcc subject html text inline_attachments attachments in_reply_to references]}]
+  (let [{:keys [custom_smtp test_mode] :as email-service-config} (get-props)
 
-          default-from-domains (app-data/get-default-hostnames rpc-util/*environment*)
+        app-info (app-data/get-app-info-insecure rpc-util/*app-id*)
 
-          default-domain (first default-from-domains)
+        default-from-domains (app-data/get-default-hostnames rpc-util/*environment*)
 
-          ;; The from_address could be anything, from a full address with name and email
-          ;; to a bare username like 'noreply', or nothing at all.
-          ;; Pull it apart, fill in missing domains (or force the domain to one we're allowed)
-          ;; then put it back together again
-          parsed-from-address (if (and from_address (not= "" from_address))
-                                (try (InternetAddress. from_address)
-                                     (catch AddressException _e
-                                       (throw+ (email-send-error "Invalid 'from' address: " from_address))))
-                                (try (InternetAddress. (str "no-reply@" default-domain))
-                                     (catch AddressException _e
-                                       (throw+ (email-send-error "Invalid 'from' address: " (str "no-reply@" default-domain))))))
+        default-domain (first default-from-domains)
 
-          from_name (or from_name (.getPersonal parsed-from-address))
+        ;; The from_address could be anything, from a full address with name and email
+        ;; to a bare username like 'noreply', or nothing at all.
+        ;; Pull it apart, fill in missing domains (or force the domain to one we're allowed)
+        ;; then put it back together again
+        parsed-from-address (if (and from_address (not= "" from_address))
+                              (try (InternetAddress. from_address)
+                                   (catch AddressException _e
+                                     (throw+ (email-send-error "Invalid 'from' address: " from_address))))
+                              (try (InternetAddress. (str "no-reply@" default-domain))
+                                   (catch AddressException _e
+                                     (throw+ (email-send-error "Invalid 'from' address: " (str "no-reply@" default-domain))))))
 
-          [_ from-prefix from-domain] (re-matches #"(.*?)@(.*)" (.getAddress parsed-from-address))
+        from_name (or from_name (.getPersonal parsed-from-address))
 
-          from-domain (if (and from-domain (or custom_smtp (not conf/restrict-email-domains?)
-                                               (some #{from-domain} default-from-domains)))
-                        from-domain
-                        default-domain)
+        [_ from-prefix from-domain] (re-matches #"(.*?)@(.*)" (.getAddress parsed-from-address))
 
-          from-domain (.toLowerCase from-domain)
+        from-domain (if (and from-domain (or custom_smtp (not conf/restrict-email-domains?)
+                                             (some #{from-domain} default-from-domains)))
+                      from-domain
+                      default-domain)
 
-          from-prefix (or from-prefix (.getAddress parsed-from-address))
+        from-domain (.toLowerCase from-domain)
 
-          from_address (str from-prefix "@" from-domain)
+        from-prefix (or from-prefix (.getAddress parsed-from-address))
+
+        from_address (str from-prefix "@" from-domain)
 
 
-          quota-available (or custom_smtp (not *use-quota*)
-                              (quota/decrement-if-possible! rpc-util/*session-state* rpc-util/*environment* nil :email 1))
+        quota-available (or custom_smtp (not *use-quota*)
+                            (quota/decrement-if-possible! rpc-util/*session-state* rpc-util/*environment* nil :email 1))
 
-          reroute-to-owner? (or (not quota-available) test_mode)
+        reroute-to-owner? (or (not quota-available) test_mode)
 
-          reroute-address (delay (get-reroute-address rpc-util/*session-state* rpc-util/*app-id*))
+        reroute-address (delay (get-reroute-address rpc-util/*session-state* rpc-util/*app-id*))
 
-          possibly-rerouted-to (if (or (empty? to) reroute-to-owner?) @reroute-address to)
-          cc (and (not reroute-to-owner?) cc)
-          bcc (and (not reroute-to-owner?) bcc)
-          html (when html (if-not reroute-to-owner? html (str (reroute-warning-text test_mode (or to @reroute-address) app-info) "<hr/>" html)))
-          text (when text (if-not reroute-to-owner? text (str (reroute-warning-text test_mode (or to @reroute-address) app-info) "\n\n---\n\n" text)))
-          
-          attachments (if (or (instance? MediaDescriptor attachments)
-                              (nil? attachments))
-                        [attachments]
-                        attachments)]
+        possibly-rerouted-to (if (or (empty? to) reroute-to-owner?) @reroute-address to)
+        cc (and (not reroute-to-owner?) cc)
+        bcc (and (not reroute-to-owner?) bcc)
+        html (when html (if-not reroute-to-owner? html (str (reroute-warning-text test_mode (or to @reroute-address) app-info) "<hr/>" html)))
+        text (when text (if-not reroute-to-owner? text (str (reroute-warning-text test_mode (or to @reroute-address) app-info) "\n\n---\n\n" text)))
+        
+        attachments (if (or (instance? MediaDescriptor attachments)
+                            (nil? attachments))
+                      [attachments]
+                      attachments)]
 
-      (log/trace "Sending email from" (str (InternetAddress. ^String from_address ^String from_name)) "to" [to cc bcc])
+    (log/trace "Sending email from" (str (InternetAddress. ^String from_address ^String from_name)) "to" [to cc bcc])
 
-      (when-not quota-available
-        (if (redirect-all-emails? app-info)
-          (when-not (or (empty? to) (= to @reroute-address))
-            (rpc-util/*rpc-println* (str "Email for '" to "' redirected to the app owner. Full Email service is available on the Hobby Plan and above. ")))
-          (rpc-util/*rpc-println* (str "Email quota exceeded. Rerouting email to app owner instead of '" (or to @reroute-address) "'."))))
+    (when-not quota-available
+      (if (redirect-all-emails? app-info)
+        (when-not (or (empty? to) (= to @reroute-address))
+          (rpc-util/*rpc-println* (str "Email for '" to "' redirected to the app owner. Full Email service is available on the Hobby Plan and above. ")))
+        (rpc-util/*rpc-println* (str "Email quota exceeded. Rerouting email to app owner instead of '" (or to @reroute-address) "'."))))
 
-      (try
-        (let [msg ^MimeMessage (smtp-send
-                                 (get-smtp-connection email-service-config rpc-util/*environment*)
-                                 {:from-address       from_address
-                                  :from-name          from_name
-                                  :to                 possibly-rerouted-to
-                                  :subject            (or subject "")
-                                  :cc                 cc
-                                  :bcc                bcc
-                                  :text               text
-                                  :html               html
-                                  :attachments        (for [[idx ^Media media] (map-indexed vector attachments)
-                                                            :when media]
-                                                        (if-not (instance? MediaDescriptor media)
-                                                          (throw+ {:anvil/server-error "Attachments must be a list of Media objects"})
-                                                          (doto (MimeBodyPart.)
-                                                            (.setDataHandler (DataHandler. (ByteArrayDataSource. ^InputStream (blocking-hacks/?->InputStream rpc-util/*req* media) ^String (anvil.util/or-str (.getContentType ^MediaDescriptor media) "application/octet-stream"))))
-                                                            (.setFileName (or (.getName ^MediaDescriptor media) (str "Attachment " (inc idx))))
-                                                            (.setDisposition "attachment"))))
+    (try
+      (let [msg ^MimeMessage (smtp-send
+                               (get-smtp-connection email-service-config rpc-util/*environment*)
+                               {:from-address       from_address
+                                :from-name          from_name
+                                :to                 possibly-rerouted-to
+                                :subject            (or subject "")
+                                :cc                 cc
+                                :bcc                bcc
+                                :text               text
+                                :html               html
+                                :attachments        (for [[idx ^Media media] (map-indexed vector attachments)
+                                                          :when media]
+                                                      (if-not (instance? MediaDescriptor media)
+                                                        (throw+ {:anvil/server-error "Attachments must be a list of Media objects"})
+                                                        (doto (MimeBodyPart.)
+                                                          (.setDataHandler (DataHandler. (ByteArrayDataSource. ^InputStream (blocking-hacks/?->InputStream rpc-util/*req* media) ^String (anvil.util/or-str (.getContentType ^MediaDescriptor media) "application/octet-stream"))))
+                                                          (.setFileName (or (.getName ^MediaDescriptor media) (str "Attachment " (inc idx))))
+                                                          (.setDisposition "attachment"))))
 
-                                  :inline-attachments (for [[idx [content-id ^Media media]] (map-indexed vector inline_attachments)
-                                                            :when (and content-id media)]
-                                                        (if-not (instance? MediaDescriptor media)
-                                                          (throw+ {:anvil/server-error "Inline attachments must be a map of strings to Media objects"})
-                                                          (doto (MimeBodyPart.)
-                                                            (.setDataHandler (DataHandler. (ByteArrayDataSource. ^InputStream (blocking-hacks/?->InputStream rpc-util/*req* media) ^String (anvil.util/or-str (.getContentType ^MediaDescriptor media) "application/octet-stream"))))
-                                                            (.setFileName (or (.getName ^MediaDescriptor media) (str "Attachment " (inc idx))))
-                                                            (.setDisposition "inline")
-                                                            (.setContentID (str "<" (name content-id) ">")))))
-                                  :in-reply-to        in_reply_to
-                                  :references         references
-                                  :app-id             rpc-util/*app-id*})]
+                                :inline-attachments (for [[idx [content-id ^Media media]] (map-indexed vector inline_attachments)
+                                                          :when (and content-id media)]
+                                                      (if-not (instance? MediaDescriptor media)
+                                                        (throw+ {:anvil/server-error "Inline attachments must be a map of strings to Media objects"})
+                                                        (doto (MimeBodyPart.)
+                                                          (.setDataHandler (DataHandler. (ByteArrayDataSource. ^InputStream (blocking-hacks/?->InputStream rpc-util/*req* media) ^String (anvil.util/or-str (.getContentType ^MediaDescriptor media) "application/octet-stream"))))
+                                                          (.setFileName (or (.getName ^MediaDescriptor media) (str "Attachment " (inc idx))))
+                                                          (.setDisposition "inline")
+                                                          (.setContentID (str "<" (name content-id) ">")))))
+                                :in-reply-to        in_reply_to
+                                :references         references
+                                :app-id             rpc-util/*app-id*})]
 
-          (achievements/claim-runtime-achievement rpc-util/*session-state* "sentEmail")
-          (SerializedPythonObject. "anvil.email.SendReport" {:message_id (.getMessageID msg)}))
-        (catch MessagingException e
-          (throw+ (email-send-error (str (.getMessage e) " (" (.getSimpleName (.getClass e)) ")" (when custom_smtp (str ". You have enabled Custom SMTP for email sending - did you configure it correctly? You may need to provide a valid from_address."))))))))))
+        (achievements/claim-runtime-achievement rpc-util/*session-state* "sentEmail")
+        (SerializedPythonObject. "anvil.email.SendReport" {:message_id (.getMessageID msg)}))
+      (catch MessagingException e
+        (throw+ (email-send-error (str (.getMessage e) " (" (.getSimpleName (.getClass e)) ")" (when custom_smtp (str ". You have enabled Custom SMTP for email sending - did you configure it correctly? You may need to provide a valid from_address.")))))))))
+
+(defn- capture!
+  "Records an email with capture-email!, instead of sending it.
+   It records what the app's code asked to send, without the From domain and quota rerouting a real send applies."
+  [{:keys [attachments inline_attachments] :as email}]
+  ;; Fail like a real send if the app doesn't have the Email service
+  (get-props)
+  (let [->blob (fn [media] (blocking-hacks/?->BlobMedia rpc-util/*req* media))
+        message-id (new-message-id rpc-util/*app-id*)]
+    (capture-email! rpc-util/*environment*
+                    (merge (select-keys email [:to :cc :bcc :from_address :from_name :subject :text :html :in_reply_to :references])
+                           {:message_id         message-id
+                            :attachments        (->> (if (instance? MediaDescriptor attachments) [attachments] attachments)
+                                                     (remove nil?)
+                                                     (mapv ->blob))
+                            :inline_attachments (into {} (for [[content-id media] inline_attachments
+                                                               :when (and content-id media)]
+                                                           (if (instance? MediaDescriptor media)
+                                                             [(name content-id) (->blob media)]
+                                                             (throw+ {:anvil/server-error "Inline attachments must be a map of strings to Media objects"}))))}))
+    (SerializedPythonObject. "anvil.email.SendReport" {:message_id message-id})))
 
 (defn wrapped-send [allow-return?]
   (wrap-native-fn (fn [kwargs]

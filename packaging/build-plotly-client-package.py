@@ -12,13 +12,11 @@ os.chdir(SCRIPT_DIR)
 
 OUT_DIR = "../client/py"
 TEMPLATE_DIR = "../client/js/lib/templates"
-LIB_DIR = "../client/js/lib"
+PLOTLY_PACKAGE_DIR = "../client/node_modules/plotly.js"
 
-PYVERSION = "6.1.2"
-# JS version - should match current python version
-# (find package.json in github.com/plotly/plotly.py/js/package.json)
-JSVERSION = "3.0.1"
-SCHEMA_URL = f"https://raw.githubusercontent.com/plotly/plotly.js/v{JSVERSION}/dist/plot-schema.json"
+PYVERSION = "7.1.0"
+# JavaScript schema and renderer come from the installed dependency selected
+# by runtime/client/package.json. Install with pnpm before generating.
 
 # Copied from https://github.com/plotly/plotly.py
 # packages/python/plotly/codegen/utils.py#L1026
@@ -79,7 +77,23 @@ DEPRECATED_DATATYPES = {
 }
 
 
-schema = requests.get(SCHEMA_URL).json()
+def fetch_json(url):
+    response = requests.get(url)
+    response.raise_for_status()
+    return response.json()
+
+
+with open(os.path.join(PLOTLY_PACKAGE_DIR, "dist/plot-schema.json")) as file:
+    schema = json.load(file)
+
+# Keep the portable identities used by existing apps and older Plotly servers.
+# Plot.tsx converts these figures to MapLibre traces at the rendering boundary.
+legacy_schema = fetch_json(
+    "https://raw.githubusercontent.com/plotly/plotly.js/v3.0.1/dist/plot-schema.json"
+)
+for name in ("scattermapbox", "choroplethmapbox", "densitymapbox"):
+    schema["traces"][name] = legacy_schema["traces"][name]
+schema["layout"]["layoutAttributes"]["mapbox"] = legacy_schema["layout"]["layoutAttributes"]["mapbox"]
 
 
 def cdict():
@@ -254,8 +268,7 @@ def write_templates():
 
     # send a GET request to the URL
     response = requests.get(url)
-    if response.status_code != 200:
-        print("Failed to load templates")
+    response.raise_for_status()
 
     files = response.json()
 
@@ -264,9 +277,7 @@ def write_templates():
 
         file_response = requests.get(download_url)
 
-        if file_response.status_code != 200:
-            print("Failed to fetch " + download_url)
-            continue
+        file_response.raise_for_status()
 
         file_name = download_url.rsplit("/", 1)[1]
 
@@ -274,17 +285,4 @@ def write_templates():
             file.write(file_response.text)
 
 
-def update_plotly_min():
-    os.chdir(LIB_DIR)
-    url = f"https://raw.githubusercontent.com/plotly/plotly.js/v{JSVERSION}/dist/plotly.min.js"
-    response = requests.get(url)
-    if response.status_code != 200:
-        print("Failed to load plotly.min.js")
-
-    with open("plotly-latest.min.js", "w") as f:
-        f.write(response.text)
-
-
 write_templates()
-os.chdir(SCRIPT_DIR)
-update_plotly_min()

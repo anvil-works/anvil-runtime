@@ -16,8 +16,9 @@
 (defn update-indexes-and-views!
   ([]
    (binding [tables-util/*environment-for-admin-call* {}]
-     (doseq [access-record (jdbc/query (tables-util/db) ["SELECT table_id,python_name FROM app_storage_access"])]
-       (update-indexes-and-views! access-record))))
+     (tables-manager/with-split-table-index-updates-batched (tables-util/db)
+       (doseq [access-record (jdbc/query (tables-util/db) ["SELECT table_id,python_name FROM app_storage_access"])]
+         (update-indexes-and-views! access-record)))))
   ([{:keys [table_id python_name] :as access-record}]
    (let [SQL-NAME (let [s (.replaceAll python_name "[^\\p{Alnum}]" "_")]
                     (if (= s "") "_" s))

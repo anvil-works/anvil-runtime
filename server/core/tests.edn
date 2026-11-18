@@ -1,1 +1,10 @@
-#kaocha/v1 {}
+#kaocha/v1
+{:plugins [:kaocha.plugin/hooks]
+ ;; Fail fast on DB connection attempts.
+ ;; Suppress logging unless ANVIL_TEST_LOGS=1.
+ :kaocha.hooks/pre-load [anvil.test-support.no-db/pre-load
+                         anvil.test-support.quiet-logs/pre-load]
+ :tests [{:id :unit
+          :type :kaocha.type/clojure.test
+          :test-paths ["test"]
+          :ns-patterns [".*-test$" ".*\\.test-.*$"]}]}

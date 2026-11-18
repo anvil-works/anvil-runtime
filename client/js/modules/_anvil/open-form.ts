@@ -101,10 +101,17 @@ export function createOpenFormFunctions() {
             validateChild(pyForm, "open_form");
         }
 
-        clearPlaceHolder();
+        const oldForm = topLevelForms.openForm;
+        const canReuseLayout =
+            hasLayoutSubclass(pyForm) &&
+            !pyForm._withLayout.pyLayout &&
+            hasLayoutSubclass(oldForm) &&
+            layoutsAreCompatible(pyForm, oldForm);
+        if (!canReuseLayout) {
+            clearPlaceHolder();
+        }
 
         const fns: ((previous?: pyObject) => pyObject | Suspension)[] = [];
-        const oldForm = topLevelForms.openForm;
         if (oldForm) {
             fns.push(() => notifyComponentUnmounted(oldForm, true));
             topLevelForms.openForm = null;
@@ -114,13 +121,15 @@ export function createOpenFormFunctions() {
                         "Warning: You are likely calling 'open_form()' from inside the hide event of the outgoing form (or from one of its components). This may not be what you want."
                     );
                 }
-                // Re-use layout instances
-                if (
-                    hasLayoutSubclass(pyForm) &&
-                    !pyForm._withLayout.pyLayout &&
-                    hasLayoutSubclass(oldForm) &&
-                    layoutsAreCompatible(pyForm, oldForm)
-                ) {
+                // Re-use layout instances if we can
+                if (!canReuseLayout) {
+                    return pyNone;
+                } else if (pyForm._withLayout.pyLayout) {
+                    // A hide handler in notifyComponentUnmounted() caused the new form's layout to be instantiated, abort!
+                    clearPlaceHolder();
+                    return pyNone;
+                } else {
+                    // OK to reuse!
                     const newWithLayout = pyForm._withLayout;
                     const oldWithLayout = oldForm._withLayout;
                     // We can re-use this instance! Remove from the old form, clear its slots, reset its properties, clear its event bindings, and give it to the new form
@@ -164,13 +173,9 @@ export function createOpenFormFunctions() {
                         () => oldWithLayout.onDissociate?.(pyLayout, oldForm) ?? pyNone,
 
                         // Associate with the new form
-                        () => {
-                            newWithLayout.pyLayout = pyLayout;
-                            return newWithLayout.onAssociate?.(pyLayout, pyForm) ?? pyNone;
-                        }
+                        () => pyForm.$associateLayout(pyLayout)
                     );
                 }
-                return pyNone;
             });
         }
 
@@ -182,7 +187,11 @@ export function createOpenFormFunctions() {
                 throw new pyRuntimeError("Form DOM element was not created");
             }
             const appPlaceHolder = getAppPlaceHolder();
-            appPlaceHolder.appendChild(domElement);
+            // Appending an already attached layout would detach it and reset DOM state.
+            if (domElement.parentNode !== appPlaceHolder) {
+                clearPlaceHolder();
+                appPlaceHolder.appendChild(domElement);
+            }
             topLevelForms.openForm = pyForm;
             return notifyComponentMounted(pyForm, true);
         });

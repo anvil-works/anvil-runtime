@@ -16,10 +16,10 @@ All you need to do to run your app locally is:
 
 ### Dependencies
 
-You will need to install the **Java virtual machine** and the Postgres libraries. On Debian-based Linux systems (like Ubuntu and Raspbian), you can do:
+You will need to install **Java 21 or newer** and the Postgres libraries. On Debian-based Linux systems (like Ubuntu and Raspbian), you can do:
 
 ```bash
-$ sudo apt-get install openjdk-8-jdk libpq-dev
+$ sudo apt-get install openjdk-21-jdk libpq-dev
 ```
 
 On a Mac, you can use Homebrew:
@@ -27,7 +27,7 @@ On a Mac, you can use Homebrew:
 $ brew install openjdk pgcli
 ```
 
-On Windows systems, you can install [Amazon Corretto](https://aws.amazon.com/corretto/). Any version is OK (Java 8 minimum).
+On Windows systems, you can install [Amazon Corretto](https://aws.amazon.com/corretto/). Choose Java 21 or newer.
 
 To enable [PDF rendering support](https://anvil.works/docs/working-with-files/creating-pdf-files) (Linux only), you will need both Chrome and Ghostscript installed. On Debian-based systems, you can do:
 
@@ -136,7 +136,7 @@ If you have a fresh, internet-accessible Linux server running Ubuntu or Rasbian,
 ```bash
 $ sudo su
 \# apt update
-\# apt install openjdk-8-jdk python3.7 virtualenv
+\# apt install openjdk-21-jdk python3.7 virtualenv
 \# echo 'net.ipv4.ip_unprivileged_port_start=0' > /etc/sysctl.d/50-unprivileged-ports.conf
 \# sysctl --system
 \# exit

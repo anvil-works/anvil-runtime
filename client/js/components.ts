@@ -35,6 +35,7 @@ import TextBoxFactory from "./components/TextBox";
 import TimerFactory from "./components/Timer";
 import XYPanelFactory from "./components/XYPanel";
 import YouTubeVideoFactory from "./components/YouTubeVideo";
+import { installMomentCompatibility } from "./runner/moment-compat";
 
 /* This file defines the system components available to apps, as Python classes.
    These are the runtime (non-designer) versions. */
@@ -64,6 +65,7 @@ includes: [button, label, richtext, link, checkbox, radiobutton, dropdown, datep
 // This function defines the system components in the Skulpt Python module
 // provided as its argument
 export function defineSystemComponents(pyModule: PyModMap) {
+    installMomentCompatibility();
     pyModule["ComponentProperty"] = buildPyClass(
         pyModule,
         ($gbl, $loc) => {

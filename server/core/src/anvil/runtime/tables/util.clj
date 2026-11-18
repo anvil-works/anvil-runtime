@@ -12,6 +12,7 @@
             [anvil.util :as util]
             [clojure.tools.logging :as log]
             [anvil.dispatcher.serialisation.live-objects :as live-objects]
+            [anvil.executors.ws-calls :as ws-calls]
             [anvil.runtime.quota :as quota]
             digest
             [clojure.string :as str]
@@ -558,6 +559,16 @@
         (when-not rollback?                                 ;; Rolling back an expired transaction is not an error
           (throw+ (general-tables-error "This transaction has expired" "anvil.tables.TransactionError"))))
       (throw+ {:anvil/server-error "No transaction currently running"}))))
+
+;; Tells the executors to mark outgoing calls made from inside an open transaction ("serializable"
+;; or "relaxed" on the wire), so Python runtimes know they don't own the transaction they're in.
+(defn thread-transaction-isolation [thread-id]
+  (when-let [{:keys [db-map]} (get @open-transactions thread-id)]
+    (if (= (:anvil-txn-isolation-level db-map) :repeatable-read)
+      "relaxed"
+      "serializable")))
+
+(ws-calls/set-ws-calls-hooks! (util/hooks [thread-transaction-isolation]))
 
 
 (defn -mk-use-quota [db-txn decrement! decrement-if-possible!]

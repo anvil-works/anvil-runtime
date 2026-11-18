@@ -5,7 +5,7 @@
             [anvil.util :as util]
             [clojure.data.json :as json]
             [crypto.random :as random]
-            [medley.core :refer [deep-merge map-kv-vals]]
+            [medley.core :refer [assoc-some deep-merge map-kv-vals]]
             [clojure.string :as str])
   (:use clj-commons.slingshot)
   (:import (org.apache.commons.codec.binary Base64)))
@@ -134,10 +134,24 @@
                       (-> dep
                           (assoc :config (calculate-config config_schema (get overrides app-id))))))))
 
+;; Errors are keyed by selected app ID, which several YAML references can share.
+;; Keep the reference that supplied these hints so the IDE can distinguish them
+;; from hints for another reference to the same app.
+(defn- broken-dependency-entry [dep-spec logical-dep-id error]
+  (assoc-some {:error error :logical_dep_id logical-dep-id}
+              :resolution_hints (:resolution_hints dep-spec)))
+
 ;; Right now, this merges app config with config schema as it goes. It doesn't cope with multiple dependencies on the same
 ;; app, and has no way to override config via environments.
 ;; TS types for :content: AppContentWithDeps (runtime/client/js/runner/data.ts)
 ;;                        IDEAppContentWithDeps (platform/editor/react/src/types/app.ts)
+;; Dependency IDs in this loader:
+;; - logical-dep-id: the YAML reference, under either dep_id or app_id. Even an
+;;   app_id reference can be remapped without changing the YAML.
+;; - resolved-app-id: the actual app selected for that reference.
+;; - known-dependency-ids: root and discovered mappings, returned as dependency_ids.
+;; - resolved-dependency-ids: selections already encountered in this traversal,
+;;   returned as correct_dependency_ids (including failed selections).
 (defn get-app-content-with-dependencies
   ([app-info version-spec]
    (get-app-content-with-dependencies app-info version-spec {}))
@@ -156,73 +170,104 @@
                             :message message}))))]
      (loop [loaded-deps {}
             dependency-versions {}
+            ;; Inspection relationships stay separate from executable dependency content.
+            ;; Later load errors can replace dependency records without losing these edges.
+            dependency-graph {}
             config-overrides {}
             dep-order '()
-            all-dep-ids (util/string-keys (:dep_ids app-info))
-            seen-dep-ids {}
+            known-dependency-ids (util/string-keys (:dep_ids app-info))
+            resolved-dependency-ids {}
             seen-assets (into #{} (map :name (get-in app [:content :theme :assets])))
-            [{:keys [depending-app dep_id version config] :as dep-spec} & more-deps-to-process :as deps-to-process]
+            [{:keys [depending-app-id dep_id version config] :as dep-spec} & more-deps-to-process :as deps-to-process]
             (->> (:dependencies (:content app))
-                 (map #(assoc % :depending-app (:id app-info))))]
+                 (map #(assoc % :depending-app-id (:id app-info))))]
        (cond
          (empty? deps-to-process)
          (-> app
-             (update :content assoc :dependency_code (apply-dep-config loaded-deps config-overrides) :dependency_order dep-order :dependency_ids all-dep-ids :correct_dependency_ids seen-dep-ids)
+             (update :content assoc
+                     :dependency_code (apply-dep-config loaded-deps config-overrides)
+                     :dependency_order dep-order
+                     :dependency_ids known-dependency-ids
+                     :correct_dependency_ids resolved-dependency-ids)
              (update :content #(assoc % :config (calculate-config (:config_schema %) [])))
-             (assoc :dependency-versions dependency-versions))
+             (assoc :dependency-versions dependency-versions
+                    :dependency_graph dependency-graph))
 
          :else
-         (let [dep_id (or dep_id (:app_id dep-spec))         ;; Legacy format
-               [seen-dep-ids all-dep-ids] (if (contains? seen-dep-ids dep_id)
-                                            [seen-dep-ids all-dep-ids]
-                                            (if-let [dep-app-id (get all-dep-ids dep_id)]
-                                              [(assoc seen-dep-ids dep_id dep-app-id) all-dep-ids]
-                                              [(assoc seen-dep-ids dep_id dep_id) (assoc all-dep-ids dep_id dep_id)]))
-               app-id (get seen-dep-ids dep_id)
+         (let [logical-dep-id (or dep_id (:app_id dep-spec))
+               ;; Both dep_id and app_id reuse the reference's first selection, even
+               ;; if loading failed. For a new reference, use a known mapping or
+               ;; try the reference itself as an app ID.
+               [resolved-dependency-ids known-dependency-ids]
+               (if (contains? resolved-dependency-ids logical-dep-id)
+                 [resolved-dependency-ids known-dependency-ids]
+                 (if-let [dep-app-id (get known-dependency-ids logical-dep-id)]
+                   [(assoc resolved-dependency-ids logical-dep-id dep-app-id) known-dependency-ids]
+                   [(assoc resolved-dependency-ids logical-dep-id logical-dep-id) (assoc known-dependency-ids logical-dep-id logical-dep-id)]))
+               resolved-app-id (get resolved-dependency-ids logical-dep-id)
                git-version-spec (version-spec->git-map version)
-               dep-info (get-app-info-with-can-depend depending-app app-id git-version-spec)
-               git-version-spec (if-let [commit-id (get-in version-spec [:dependency-commit-ids app-id])]
+               dep-info (get-app-info-with-can-depend depending-app-id resolved-app-id git-version-spec)
+               git-version-spec (if-let [commit-id (get-in version-spec [:dependency-commit-ids resolved-app-id])]
                                   {:commit-id commit-id}
                                   git-version-spec)
-               already-loaded-dep (get loaded-deps app-id)]
+               already-loaded-dep (get loaded-deps resolved-app-id)
+               ;; Keep every parent edge, including shared dependencies and version conflicts.
+               ;; Omit configuration values: this metadata is only for dependency inspection.
+               dependency-graph (update dependency-graph depending-app-id (fnil conj [])
+                                        (cond-> (assoc (select-keys dep-spec [:version :resolution_hints])
+                                                       :dep_id logical-dep-id :app_id resolved-app-id)
+                                          (:can_depend dep-info)
+                                          (assoc-in [:resolution_hints :name] (:name dep-info))))]
            (when-not (get dep-info :can_depend)
-             (log/warn (str "Cannot depend on dependency before other checks " depending-app " " app-id " " git-version-spec ": " dep-info)))
+             (log/warn (str "Cannot depend on dependency before other checks " depending-app-id " " resolved-app-id " " git-version-spec ": " dep-info)))
            (cond
-             ;; App doesn't exist?
-             (not dep-info)
-             ;; TODO ICK ICK we're putting a dep_id into a place that expects an app-id, and it will probably work but EW
-             (recur (assoc loaded-deps dep_id {:error "App dependency not found"}) dependency-versions config-overrides dep-order all-dep-ids seen-dep-ids seen-assets more-deps-to-process)
+             ;; App doesn't exist? The platform hook adds :can_depend even to a nil
+             ;; app lookup, so check :id. Report a missing app here; access to an
+             ;; existing app is checked below.
+             (not (:id dep-info))
+             ;; Consumers look up dependency_code using dependency_ids. Keep the
+             ;; logical reference in metadata, including when it points to a missing app.
+             (recur (assoc loaded-deps resolved-app-id
+                           (broken-dependency-entry dep-spec logical-dep-id
+                                                    (if (:dep_id dep-spec)
+                                                      "Unresolved dependency"
+                                                      "App dependency not found")))
+                    dependency-versions dependency-graph config-overrides dep-order known-dependency-ids resolved-dependency-ids seen-assets more-deps-to-process)
 
              ;; Already loaded a different version of this app?
+             ;; Error entries have no :version-spec; don't replace their diagnostic
+             ;; with a version mismatch.
              (and already-loaded-dep
+                  (not (:error already-loaded-dep))
                   (not= (clean-version-spec version) (:version-spec already-loaded-dep)))
-             (let [depending (if (= depending-app (:id app-info))
+             (let [depending (if (= depending-app-id (:id app-info))
                                app-info
-                               (get loaded-deps depending-app))
+                               (get loaded-deps depending-app-id))
                    prev-depending (if (= (:depending_app already-loaded-dep) (:id app-info))
                                     app-info
                                     (get loaded-deps (:depending_app already-loaded-dep)))]
-               (recur (assoc loaded-deps app-id
+               (recur (assoc loaded-deps resolved-app-id
                              {:error (str "Dependency version mismatch: This app depends on more than one version of the same dependency."
-                                          " (\"" (:name depending) "\" (" depending-app ") depends on the "
-                                          (report-version version) " version of \"" (:name dep-info) "\" (" (when (not= dep_id app-id) (str dep_id "->")) app-id "), but"
+                                          " (\"" (:name depending) "\" (" depending-app-id ") depends on the "
+                                          (report-version version) " version of \"" (:name dep-info) "\" (" (when (not= logical-dep-id resolved-app-id) (str logical-dep-id "->")) resolved-app-id "), but"
                                           " \"" (:name prev-depending) "\" (" (:depending_app already-loaded-dep) ") depends on the "
                                           (report-version (:version-spec already-loaded-dep)) " version)")})
-                      dependency-versions config-overrides dep-order all-dep-ids seen-dep-ids seen-assets more-deps-to-process))
+                      dependency-versions dependency-graph config-overrides dep-order known-dependency-ids resolved-dependency-ids seen-assets more-deps-to-process))
 
              ;; Already loaded the same version of this app?
+             ;; Error entries reach this branch too because the version check skips them.
              already-loaded-dep
-             (recur loaded-deps dependency-versions (update config-overrides app-id #(cons config %)) dep-order all-dep-ids seen-dep-ids seen-assets more-deps-to-process)
+             (recur loaded-deps dependency-versions dependency-graph (update config-overrides resolved-app-id #(cons config %)) dep-order known-dependency-ids resolved-dependency-ids seen-assets more-deps-to-process)
 
              ;; Circular dependency on this main app. Don't allow config overrides in this case.
-             (= app-id (:id app-info))
-             (recur loaded-deps dependency-versions config-overrides dep-order all-dep-ids seen-dep-ids seen-assets more-deps-to-process)
+             (= resolved-app-id (:id app-info))
+             (recur loaded-deps dependency-versions dependency-graph config-overrides dep-order known-dependency-ids resolved-dependency-ids seen-assets more-deps-to-process)
 
              ;; Not allowed to see this app?
              (not (:can_depend dep-info))
              (do
-               (log/warn (str "Permission denied loading dependency: " depending-app " " app-id " " git-version-spec))
-               (recur (assoc loaded-deps app-id {:error "Permission denied when loading app dependency"}) dependency-versions config-overrides dep-order all-dep-ids seen-dep-ids seen-assets more-deps-to-process))
+               (log/warn (str "Permission denied loading dependency: " depending-app-id " " resolved-app-id " " git-version-spec))
+               (recur (assoc loaded-deps resolved-app-id (broken-dependency-entry dep-spec logical-dep-id "Permission denied")) dependency-versions dependency-graph config-overrides dep-order known-dependency-ids resolved-dependency-ids seen-assets more-deps-to-process))
 
              ;; All good - load the app!
              :else
@@ -237,31 +282,33 @@
                                               (catch Object e
                                                 {:error (str e)}))]
                (if-not full-dep
-                 (recur (assoc loaded-deps app-id {:error error}) dependency-versions config-overrides dep-order all-dep-ids seen-dep-ids seen-assets more-deps-to-process)
+                 (recur (assoc loaded-deps resolved-app-id (broken-dependency-entry dep-spec logical-dep-id error)) dependency-versions dependency-graph config-overrides dep-order known-dependency-ids resolved-dependency-ids seen-assets more-deps-to-process)
                  (let [{:keys [config_schema] :as dep-content} (:content full-dep)
                        {dep-assets false, overridden-dep-assets true} (->> (get-in dep-content [:theme :assets])
                                                                            (group-by #(and (contains? seen-assets (:name %)) (not= (:name %) "theme.css"))))]
-                   ;;(println depending-app "(" (:name dep-info) ") -> " (:id dep-info) " (" (:name dep-info) ") version " version " / " version-sha "/" (:version full-dep))
-                   (recur (assoc loaded-deps app-id
+                   ;;(println depending-app-id "(" (:name dep-info) ") -> " (:id dep-info) " (" (:name dep-info) ") version " version " / " version-sha "/" (:version full-dep))
+                   (recur (assoc loaded-deps resolved-app-id
                                  (-> (select-keys dep-content
                                                   (cond-> [:forms :modules :server_modules :scripts :package_name :secrets :native_deps :runtime_options :toolbox_sections :toolbox :layouts :config_schema :client_init_module :code_prelude]
                                                     include-extra-files? (conj :extra_files)))
                                      (assoc :version-spec (clean-version-spec version)
                                             :commit-id (:version full-dep)
-                                            :depending_app depending-app
+                                            :depending_app depending-app-id
                                             :name (:name dep-info)
                                             :assets dep-assets
                                             :overriden_assets (map :name overridden-dep-assets)
                                             :form_templates (get-in dep-content [:theme :templates])
                                             :color_scheme (get-in dep-content [:theme :parameters :color_scheme])
                                             :roles (get-in dep-content [:theme :parameters :roles]))))
-                          (assoc dependency-versions app-id (:version full-dep))
-                          (assoc config-overrides app-id (list config))
-                          (cons app-id dep-order)
-                          (merge (util/string-keys (:dep_ids dep-info)) all-dep-ids)
-                          seen-dep-ids
+                          (assoc dependency-versions resolved-app-id (:version full-dep))
+                          (assoc dependency-graph resolved-app-id [])
+                          (assoc config-overrides resolved-app-id (list config))
+                          (cons resolved-app-id dep-order)
+                          ;; Root and earlier discovered mappings win over this app's mappings.
+                          (merge (util/string-keys (:dep_ids dep-info)) known-dependency-ids)
+                          resolved-dependency-ids
                           (into seen-assets (map :name dep-assets))
-                          (concat more-deps-to-process (map #(assoc % :depending-app app-id) (:dependencies dep-content))))))))))))))
+                          (concat more-deps-to-process (map #(assoc % :depending-app-id resolved-app-id) (:dependencies dep-content))))))))))))))
 
 (defn get-app
   ([app-info version-spec] (get-app app-info version-spec true))

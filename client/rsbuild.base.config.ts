@@ -108,7 +108,7 @@ export function copyNodeModulesToLibPlugin(): RsbuildPlugin {
     return {
         name: "copy-node-modules-to-lib",
         setup(api) {
-            api.onBeforeBuild(() => {
+            const copyLibraries = () => {
                 const sourceFiles = [
                     { src: "node_modules/jquery/dist/jquery.min.js", dest: "js/lib/jquery.min.js" },
                     {
@@ -116,11 +116,6 @@ export function copyNodeModulesToLibPlugin(): RsbuildPlugin {
                         dest: "js/lib/jquery-migrate.min.js",
                     },
                     { src: "node_modules/bootstrap/dist/js/bootstrap.min.js", dest: "js/lib/bootstrap.min.js" },
-                    { src: "node_modules/moment/min/moment.min.js", dest: "js/lib/moment.min.js" },
-                    {
-                        src: "node_modules/moment-timezone/builds/moment-timezone-with-data-10-year-range.min.js",
-                        dest: "js/lib/moment-timezone-with-data-10-year-range.min.js",
-                    },
                 ];
 
                 // Ensure js/lib and css/lib directories exist
@@ -174,7 +169,9 @@ export function copyNodeModulesToLibPlugin(): RsbuildPlugin {
                         chalk.blue(`Node modules sync: ${copiedCount} copied, ${skippedCount} skipped (up-to-date)`)
                     );
                 }
-            });
+            };
+            api.onBeforeBuild(copyLibraries);
+            api.onBeforeStartDevServer(copyLibraries);
         },
     };
 }

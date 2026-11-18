@@ -27,7 +27,7 @@ function registerPluggableUI(
     pyModule["pluggable_ui"] = pluggableUI;
 }
 
-function anvil(appOrigin: string, uncaughtExceptions: UncaughtExceptions): PyModMap {
+function anvil(appOrigin: string | null, uncaughtExceptions: UncaughtExceptions): PyModMap {
     const pyModule: AnvilModule = {
         __name__: new pyStr("anvil"),
         __path__: new pyTuple([new pyStr("anvil-services/anvil"), new pyStr("src/lib/anvil")]),

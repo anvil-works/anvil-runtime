@@ -62,6 +62,10 @@
                             (name id)))
                   columns)})
 
+(defn- yaml-index-from-raw-index [{:keys [type columns]} raw-cols]
+  {:type type
+   :columns (mapv #(get-in raw-cols [(keyword %) :name]) columns)})
+
 (defn yaml-schema-from-table-mapping-description [described-table-mapping]
   (let [python-name-from-id (fn [table-id] (:python_name (first (filter #(= (:id %) table-id) described-table-mapping))))]
     (try+
@@ -70,9 +74,7 @@
               [python_name {:title   name,
                             :client  client,
                             :server  server,
-                            :indexes (doall (for [{index-columns :columns type :type} all_indexes]
-                                              {:columns (mapv #(get-in columns [(keyword %) :name]) index-columns)
-                                               :type type})),
+                            :indexes (mapv #(yaml-index-from-raw-index % columns) all_indexes),
                             :columns (doall (for [[_id col-schema]
                                                   (sort-by (fn [[_col-id col-spec]] (get-in col-spec [:admin_ui :order])) columns)]
                                               (yaml-schema-column-from-raw-column col-schema python-name-from-id)))}]))
@@ -268,131 +270,142 @@
   ([table-mapping description schema-changes ^TableAdminPolicy {:keys [allow-index?]} use-quota!]
    (let [table-ids (into {} (for [{:keys [python_name id]} description] [python_name id]))]
 
-     (loop [[{:keys [type table column column_name new_column_name] :as change} & more-changes] schema-changes
-            table-ids table-ids]
-       (when change
-         (let [type (name type)]
-           (cond
+     (tables-manager/with-split-table-index-updates-batched (table-util/db)
+       (loop [[{:keys [type table column column_name new_column_name] :as change} & more-changes] schema-changes
+              table-ids table-ids]
+         (when change
+           (let [type (name type)]
+             (cond
 
-             (= "CREATE_TABLES" type)
-             (let [tables (:tables change)
-                   storage (if *create-split-tables?* {:split true} nil)
-                   table-ids (into table-ids
-                                   (for [[python_name {:keys [title server client]}] tables
-                                         :let [python_name (name python_name)
-                                               {new-id :id} (tables-manager/create-table! table-mapping storage title python_name server client)]]
-                                     [python_name new-id]))
-                   db (table-util/db)]
-               ;; Then do the columns after we've created all the tables, so the references match
+               (= "CREATE_TABLES" type)
+               (let [tables (:tables change)
+                     storage (if *create-split-tables?* {:split true} nil)
+                     table-ids (into table-ids
+                                     (for [[python_name {:keys [title server client]}] tables
+                                           :let [python_name (name python_name)
+                                                 {new-id :id} (tables-manager/create-table! table-mapping storage title python_name server client)]]
+                                       [python_name new-id]))
+                     db (table-util/db)]
+                 ;; Then do the columns after we've created all the tables, so the references match
 
-               (doseq [[python_name {:keys [columns]}] tables]
-                 (let [columns (sort-by #(get-in % [:admin_ui :order]) columns)
-                       ; Don't add indexes to col specs initially - we'll do that later, depending on policy and storage type.
-                       new-cols (map-indexed (fn [order col] (raw-column-from-yaml-schema col order table-ids)) columns)
-                       table-id (table-ids (name python_name))]
-                   (tables-manager/table-create-columns! db table-id new-cols false)))
+                 (doseq [[python_name {:keys [columns]}] tables]
+                   (let [columns (sort-by #(get-in % [:admin_ui :order]) columns)
+                         ; Don't add indexes to col specs initially - we'll do that later, depending on policy and storage type.
+                         new-cols (map-indexed (fn [order col] (raw-column-from-yaml-schema col order table-ids)) columns)
+                         table-id (table-ids (name python_name))]
+                     (tables-manager/table-create-columns! db table-id new-cols false)))
 
-               (doseq [[python_name {:keys [indexes]}] tables
-                       :let [table-id (table-ids (name python_name))
-                             {:keys [columns] :as table-record} (table-util/load-table-record db table-id)
-                             col-id-strs (into {} (map (fn [[id col-spec]] [(:name col-spec) (name id)]) columns))
-                             all-allowed-indexes (->> indexes
-                                                      (mapv #(update % :columns (partial mapv col-id-strs)))
-                                                      (filterv (partial allow-index? db storage)))
-                             ;; Currently only used for non-split tables. TODO: Presumably we should have restrictions on split table index types too.
-                             valid-index-types {"b_tree"    #{"string" "number" "date" "datetime" "bool"}
-                                                "trigram"   #{"string"}
-                                                "full_text" #{"string"}}
+                 (doseq [[python_name {:keys [indexes]}] tables
+                         :let [table-id (table-ids (name python_name))
+                               {:keys [columns] :as table-record} (table-util/load-table-record db table-id)
+                               col-id-strs (into {} (map (fn [[id col-spec]] [(:name col-spec) (name id)]) columns))
+                               all-allowed-indexes (->> indexes
+                                                        (mapv #(update % :columns (partial mapv col-id-strs)))
+                                                        (filterv (partial allow-index? db storage)))
+                               ;; Currently only used for non-split tables. TODO: Presumably we should have restrictions on split table index types too.
+                               valid-index-types {"b_tree"    #{"string" "number" "date" "datetime" "bool"}
+                                                  "trigram"   #{"string"}
+                                                  "full_text" #{"string"}}
 
-                             table-record (if *create-split-tables?*
-                                            ;; Split tables: Add all indexes we're allowed to.
-                                            (assoc table-record :indexes all-allowed-indexes)
+                               table-record (if *create-split-tables?*
+                                              ;; Split tables: Add all indexes we're allowed to.
+                                              (assoc table-record :indexes all-allowed-indexes)
 
-                                            ;; Non-split tables: Add all suitable indexes to their respective col-specs
-                                            (assoc table-record :columns (into {} (->> columns
-                                                                                       (mapv (fn [[id col-spec]]
-                                                                                               (let [this-col-indexes (->> all-allowed-indexes
-                                                                                                                           (filterv #(and (= (:columns %) [(name id)])
-                                                                                                                                          (contains? (get valid-index-types (:type %)) (:type col-spec) )))
-                                                                                                                           (mapv #(dissoc % :columns)))]
-                                                                                                 [id (cond-> col-spec
-                                                                                                       (not-empty this-col-indexes) (assoc :indexes this-col-indexes)
-                                                                                                       (not (:split storage)) (dissoc :on_delete))])))))))]]
-                 (table-util/save-table-record! db table-record)
-                 (tables-manager/update-col-indexes! db table-record))
-               (recur more-changes table-ids))
+                                              ;; Non-split tables: Add all suitable indexes to their respective col-specs
+                                              (assoc table-record :columns (into {} (->> columns
+                                                                                         (mapv (fn [[id col-spec]]
+                                                                                                 (let [this-col-indexes (->> all-allowed-indexes
+                                                                                                                             (filterv #(and (= (:columns %) [(name id)])
+                                                                                                                                            (contains? (get valid-index-types (:type %)) (:type col-spec) )))
+                                                                                                                             (mapv #(dissoc % :columns)))]
+                                                                                                   [id (cond-> col-spec
+                                                                                                         (not-empty this-col-indexes) (assoc :indexes this-col-indexes)
+                                                                                                         (not (:split storage)) (dissoc :on_delete))])))))))]]
+                   (table-util/save-table-record! db table-record)
+                   (tables-manager/update-col-indexes! db table-record))
+                 (recur more-changes table-ids))
 
-             (= "DELETE_TABLE" type)
-             (let [table-id (get-table-id table-ids table)
-                   table-record (table-util/load-table-record (table-util/db) table-id)]
-               (tables-manager/delete-table-access! table-mapping table-record)
-               (recur more-changes (dissoc table-ids (:table type))))
+               (= "DELETE_TABLE" type)
+               (let [table-id (get-table-id table-ids table)
+                     table-record (table-util/load-table-record (table-util/db) table-id)]
+                 (tables-manager/delete-table-access! table-mapping table-record)
+                 (recur more-changes (dissoc table-ids (:table type))))
 
-             (= "UPDATE_TABLE" type)
-             (let [{:keys [table new_python_name server client title]} change
-                   table-id (get-table-id table-ids table)
-                   new-table-ids (if new_python_name
-                                   (-> table-ids
-                                       (dissoc table)
-                                       (assoc new_python_name table-id))
-                                   table-ids)]
-               (when (and new_python_name (not= new_python_name table) (contains? table-ids new_python_name))
-                 (throw+ {:anvil/server-error (format "A table with name '%s' already exists; cannot rename '%s'" new_python_name table)}))
-               (when title
-                 (tables-manager/rename-table! table-id title))
-               (when-let [update (merge {:python_name (or new_python_name table)}
-                                        (when server
-                                          {:server server})
-                                        (when client
-                                          {:client client}))]
-                 (tables-util/update-table-access-record! table-mapping table-id update))
-               (recur more-changes new-table-ids))
+               (= "UPDATE_TABLE" type)
+               (let [{:keys [table new_python_name server client title]} change
+                     table-id (get-table-id table-ids table)
+                     new-table-ids (if new_python_name
+                                     (-> table-ids
+                                         (dissoc table)
+                                         (assoc new_python_name table-id))
+                                     table-ids)]
+                 (when (and new_python_name (not= new_python_name table) (contains? table-ids new_python_name))
+                   (throw+ {:anvil/server-error (format "A table with name '%s' already exists; cannot rename '%s'" new_python_name table)}))
+                 (when title
+                   (tables-manager/rename-table! table-id title))
+                 (when-let [update (merge {:python_name (or new_python_name table)}
+                                          (when server
+                                            {:server server})
+                                          (when client
+                                            {:client client}))]
+                   (tables-util/update-table-access-record! table-mapping table-id update))
+                 (recur more-changes new-table-ids))
 
-             (= "ADD_COLUMN" type)
-             (let [table-id (get-table-id table-ids table)]
-               (tables-manager/table-create-columns! (table-util/db) table-id [(raw-column-from-yaml-schema column nil table-ids)] true)
-               (recur more-changes table-ids))
+               (= "ADD_COLUMN" type)
+               (let [table-id (get-table-id table-ids table)]
+                 (tables-manager/table-create-columns! (table-util/db) table-id [(raw-column-from-yaml-schema column nil table-ids)] true)
+                 (recur more-changes table-ids))
 
-             (= "DELETE_COLUMN" type)
-             (let [[table-id cols col-id] (get-table-id-and-cols table table-ids column_name)
-                   col-id-kw (keyword col-id)]
-               (tables-manager/table-delete-column! (table-util/db) table-id col-id-kw)
-               (recur more-changes table-ids))
+               (= "DELETE_COLUMN" type)
+               (let [[table-id cols col-id] (get-table-id-and-cols table table-ids column_name)
+                     col-id-kw (keyword col-id)]
+                 (tables-manager/table-delete-column! (table-util/db) table-id col-id-kw)
+                 (recur more-changes table-ids))
 
-             (= "RENAME_COLUMN" type)
-             (let [[table-id cols col-id] (get-table-id-and-cols table table-ids column_name)
-                   col-id-kw (keyword col-id)]
-               (when (some (fn [[id col]] (= (:name col) new_column_name)) cols)
-                 (throw+ {:anvil/server-error (format "Table '%s' already has a column named '%s'" table new_column_name)}))
-               (tables-manager/table-update-column! (table-util/db) table-id col-id-kw {:name new_column_name})
-               (recur more-changes table-ids))
+               (= "RENAME_COLUMN" type)
+               (let [[table-id cols col-id] (get-table-id-and-cols table table-ids column_name)
+                     col-id-kw (keyword col-id)]
+                 (when (some (fn [[id col]] (= (:name col) new_column_name)) cols)
+                   (throw+ {:anvil/server-error (format "Table '%s' already has a column named '%s'" table new_column_name)}))
+                 (tables-manager/table-update-column! (table-util/db) table-id col-id-kw {:name new_column_name})
+                 (recur more-changes table-ids))
 
-             (= "UPDATE_COLUMN" type)
-             (let [[table-id _ col-id] (get-table-id-and-cols table table-ids column_name)
-                   changes (-> (:changes change) (select-keys [:client_hidden :on_delete]))
-                   col-id-kw (keyword col-id)]
-               (tables-manager/table-update-column! (table-util/db) table-id col-id-kw changes)
-               (recur more-changes table-ids))
+               (= "UPDATE_COLUMN" type)
+               (let [[table-id _ col-id] (get-table-id-and-cols table table-ids column_name)
+                     changes (-> (:changes change) (select-keys [:client_hidden :on_delete]))
+                     col-id-kw (keyword col-id)]
+                 (tables-manager/table-update-column! (table-util/db) table-id col-id-kw changes)
+                 (recur more-changes table-ids))
 
-             (= "ADD_INDEX" type)
-             (let [[table-id cols] (get-table-id-and-cols table table-ids)
-                   index (:index change)
-                   db-c (table-util/db)
-                   {:keys [storage] :as table-record} (tables-util/load-table-record db-c table-id)]
-               (when-not (allow-index? db-c storage index)
-                 (throw+ {:anvil/server-error "Cannot create table index - permission denied."}))
-               (tables-manager/table-create-index! db-c table-record (raw-index-from-yaml-schema index cols))
-               (recur more-changes table-ids))
+               (= "ADD_INDEX" type)
+               (let [[table-id cols] (get-table-id-and-cols table table-ids)
+                     index (:index change)
+                     db-c (table-util/db)
+                     {:keys [storage] :as table-record} (tables-util/load-table-record db-c table-id)]
+                 (when-not (allow-index? db-c storage index)
+                   (throw+ {:anvil/server-error "Cannot create table index - permission denied."}))
+                 (tables-manager/table-create-index! db-c table-record (raw-index-from-yaml-schema index cols))
+                 (recur more-changes table-ids))
+               
+               (= "DELETE_INDEX" type)
+               (let [table-id (get-table-id table-ids table)
+                     index (:index change)
+                     db-c (table-util/db)
+                     {:keys [storage columns all_indexes]}
+                     (tables-util/load-table-record db-c table-id)
+                     matching-indexes
+                     (filter #(= index (yaml-index-from-raw-index % columns))
+                             all_indexes)]
+                 (when-not (allow-index? db-c storage index)
+                   (throw+ {:anvil/server-error "Cannot delete table index - permission denied."}))
+                 ;; Several stale indexes can appear as the same schema row
+                 ;; once their missing column names become nil. Remove them all.
+                 (doseq [raw-index matching-indexes]
+                   (tables-manager/table-delete-index!
+                     db-c
+                     (tables-util/load-table-record db-c table-id)
+                     raw-index))
+                 (recur more-changes table-ids))
 
-             (= "DELETE_INDEX" type)
-             (let [[table-id cols] (get-table-id-and-cols table table-ids)
-                   index (:index change)
-                   db-c (table-util/db)
-                   {:keys [storage] :as table-record} (tables-util/load-table-record db-c table-id)]
-               (when-not (allow-index? db-c storage index)
-                 (throw+ {:anvil/server-error "Cannot delete table index - permission denied."}))
-               (tables-manager/table-delete-index! db-c table-record (raw-index-from-yaml-schema index cols))
-               (recur more-changes table-ids))
-
-             :else
-             (throw+ {:anvil/server-error (format "Unknown table command '%s'" type)}))))))))
+               :else
+               (throw+ {:anvil/server-error (format "Unknown table command '%s'" type)})))))))))

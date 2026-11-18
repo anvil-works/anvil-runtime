@@ -4,7 +4,7 @@ import anvil.server
 
 #!suggestAttr(anvil.email,send)!0:
 
-#!defClass(anvil.email,SendFailure)!:
+#!defClassNoConstructor(anvil.email,SendFailure)!1: "Raised when sending an email fails."
 class SendFailure(anvil.server.AnvilWrappedError):
     pass
 
@@ -48,13 +48,35 @@ def handle_message(fn=None, require_dkim=False):
     def wrapper(fn):
         import functools # don't try to import this on the client
         @functools.wraps(fn)
-        def handler(msg_dict):
-            msg = Message(msg_dict)
+        def handler(msg):
+            # Anvil passes a dict; server tests pass a Message they constructed
+            if not isinstance(msg, Message):
+                msg = Message.from_dict(msg)
             if require_dkim and not msg.dkim.valid_from_sender:
                 raise DeliveryFailure("No valid DKIM signature for %s" % msg.envelope.from_address)
             fn(msg)
         return anvil.server.callable("email:handle_message")(handler)
     return wrapper(fn) if fn is not None else wrapper
+
+
+def _parse_addresses(addresses):
+    """Address dicts for an address or list of addresses, as the email server sends them"""
+    # This never runs on the client, so the standard lib email.utils is available.
+    # Using importlib so Python 2 doesn't find this module (anvil.email) instead.
+    import importlib
+    parseaddr = importlib.import_module("email.utils").parseaddr
+
+    if addresses is None:
+        return []
+    if not isinstance(addresses, (list, tuple)):
+        addresses = [addresses]
+    result = []
+    for raw in addresses:
+        name, address = parseaddr(raw)
+        if "@" not in address:
+            raise ValueError("Invalid email address: %r" % (raw,))
+        result.append({"address": address, "name": name or None, "raw": raw})
+    return result
 
 
 @anvil.server.portable_class
@@ -107,14 +129,118 @@ class Message(object):
     #!defAttr()!1: {name:"envelope",pyType:"anvil.email.Message.Envelope instance",description:"The sender and receipient of this email, according to the SMTP envelope."}
     #!defAttr()!1: {name:"dkim",pyType:"anvil.email.Message.DKIM instance",description:"Object describing whether this message was signed by the sending domain"}
     #!defAttr()!1: {name:"addressees",pyType:"anvil.email.Message.Addressees instance",description:"The addresses this email was sent from and to, according to the headers."}
-    #!defAttr()!1: {name:"headers",type:"list",description:"All the headers in this email, as a list of (name,value) pairs."}
+    #!defAttr()!1: {name:"headers",type:"list",description:"All the headers in this email, as a list of (name, value) pairs."}
     #!defAttr()!1: {name:"text",type:"string",description:"The plain-text content of this email, or None if there is no plain-text part."}
     #!defAttr()!1: {name:"subject",type:"string",description:"The subject of this email, or None if there is no subject."}
     #!defAttr()!1: {name:"html",type:"string",description:"The HTML content of this email, or None if there is no HTML part."}
     #!defAttr()!1: {name:"attachments",pyType:"list(anvil.Media instance)",description:"A list of this email's attachments."}
     #!defAttr()!1: {name:"inline_attachments",pyType:"dict(string,anvil.Media instance)",description:"A dictionary of this email's inline attachments. Keys are ContentID headers, values are the attachments as Media Objects."}
 
-    def __init__(self, msg_dict):
+    #!defMethod(_,[from_address=],[to=],[cc=],[subject=],[text=],[html=],[attachments=],[inline_attachments=],[headers=],[envelope_from=],[envelope_recipient=],[dkim=True])!2:
+    # {
+    #   $doc: "Represents an incoming email message.\n\nIn a test you can construct a Message to pass to an `@anvil.email.handle_message` function, eg `incoming_email(Message(from_address=\"Alice <alice@example.com>\", text=\"Hi\"))`.",
+    #   anvil$args: {
+    #     from_address: "The From address. Can be bare ('alice@example.com') or include a display name ('Alice <alice@example.com>'). Defaults to 'Sender <sender@example.com>'.",
+    #     to: "The To address or addresses. Defaults to 'App <app@example.com>'.",
+    #     cc: "The Cc address or addresses.",
+    #     subject: "The subject line.",
+    #     text: "The plain-text content.",
+    #     html: "The HTML content.",
+    #     attachments: "A list of Media objects.",
+    #     inline_attachments: "A dictionary of Content-IDs to Media objects.",
+    #     headers: "Extra headers, as (name, value) pairs or a dictionary. They replace the From, To, Cc, Subject and Message-ID headers the message would otherwise have.",
+    #     envelope_from: "The sender according to the SMTP envelope. Defaults to the From address.",
+    #     envelope_recipient: "The recipient according to the SMTP envelope, eg for a message received as a Bcc. Defaults to the first To address.",
+    #     dkim: "If False, the message isn't signed by its sender's domain, so require_dkim=True handlers reject it. Defaults to `True`",
+    #   }
+    # }["__init__"]
+    def __init__(
+        self,
+        from_address = "Sender <sender@example.com>",
+        to = "App <app@example.com>",
+        cc = None,
+        subject = None,
+        text = None,
+        html = None,
+        attachments = None,
+        inline_attachments = None,
+        headers = None,
+        envelope_from = None,
+        envelope_recipient = None,
+        dkim = True,
+    ):
+        """Build an incoming email, to pass to an `@anvil.email.handle_message` function in a test.
+
+        There's no reason to construct a Message except for testing.
+
+        In a test you can call the decorated function with the Message, eg
+        `incoming_email(Message(from_address="Alice <alice@example.com>", text="Hi"))`.
+
+        Args:
+            from_address: The From address. Can be bare ('alice@example.com') or include a display name ('Alice <alice@example.com>').
+            to: The To address or addresses.
+            cc: The Cc address or addresses.
+            subject: The subject line.
+            text: The plain-text content.
+            html: The HTML content.
+            attachments: A list of Media objects.
+            inline_attachments: A dictionary of Content-IDs to Media objects.
+            headers: Extra headers, as (name, value) pairs or a dictionary. They replace the From, To, Cc, Subject and Message-ID headers the message would otherwise have.
+            envelope_from: The sender according to the SMTP envelope. Defaults to the From address.
+            envelope_recipient: The recipient according to the SMTP envelope, eg for a message received as a Bcc. Defaults to the first To address.
+            dkim: If False, the message isn't signed by its sender's domain, so `require_dkim=True` handlers reject it.
+        """
+        import uuid # don't try to import this on the client
+
+        from_addresses = _parse_addresses(from_address)
+        to_addresses = _parse_addresses(to)
+        cc_addresses = _parse_addresses(cc)
+        if len(from_addresses) > 1:
+            raise ValueError("A message can only have one From address")
+
+        if envelope_from is None and from_addresses:
+            envelope_from = from_addresses[0]["address"]
+        if envelope_recipient is None and to_addresses:
+            envelope_recipient = to_addresses[0]["address"]
+
+        if isinstance(headers, dict):
+            headers = list(headers.items())
+        headers = list(headers or [])
+        overridden = set(name.lower() for name, value in headers)
+        default_headers = [("From", from_address),
+                           ("To", ", ".join(a["raw"] for a in to_addresses) or None),
+                           ("Cc", ", ".join(a["raw"] for a in cc_addresses) or None),
+                           ("Subject", subject),
+                           ("Message-ID", "<%s@example.com>" % uuid.uuid4().hex)]
+        headers = [(name, value) for name, value in default_headers
+                   if value is not None and name.lower() not in overridden] + headers
+
+        addressees = {"to": to_addresses, "cc": cc_addresses}
+        if from_addresses:
+            addressees["from"] = from_addresses
+
+        signed = bool(dkim and envelope_from)
+        self._init_from_dict({
+            "envelope": {"from": envelope_from, "recipient": envelope_recipient},
+            "dkim": {"valid_from_sender": signed,
+                     "domains": [envelope_from.rpartition("@")[2]] if signed else []},
+            "addressees": addressees,
+            "headers": headers,
+            "subject": subject,
+            "text": text,
+            "html": html,
+            "attachments": list(attachments or []),
+            "inline_attachments": dict(inline_attachments or {}),
+        })
+
+    @classmethod
+    def from_dict(cls, msg_dict):
+        """Build a Message from the dict Anvil's email server sends for an incoming email"""
+        msg = cls.__new__(cls)
+        msg._init_from_dict(msg_dict)
+        return msg
+
+    def _init_from_dict(self, msg_dict):
         self.envelope = Message.Envelope(msg_dict['envelope'])
         self.dkim = Message.DKIM(msg_dict['dkim'])
         self.addressees = Message.Addressees(msg_dict['addressees'])
@@ -177,7 +303,7 @@ class Message(object):
             ", ".join(["%s (%s bytes)" % (a.name, len(a.get_bytes())) for a in self.attachments]) if len(self.attachments) > 0 else None
         )
 
-    #!defClass(anvil.email,#Message)!:
+    #!defClass(anvil.email,Message)!:
 
 
 @anvil.server.portable_class

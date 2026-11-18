@@ -12,7 +12,7 @@
            (java.time.temporal ChronoField)
            (java.time ZoneId OffsetDateTime ZoneOffset)))
 
-(clj-logging-config.log4j/set-logger! :level :trace)
+(clj-logging-config.log4j/set-logger! :level :info)
 
 ;; Table type handling
 
@@ -125,7 +125,7 @@
   (when-not (is-type? json-value col-type)
     (str "Column '" col-name "' is a " (get-type-name tables col-type) " - "
          (let [val-type (get-type-from-value json-value)]
-           (log/error (str "Column type mismatch: " (pr-str col-type) " vs " (pr-str val-type) " in session " (sessions/get-id rpc-util/*session-state*) " of env " (:env_id rpc-util/*environment*) " of app " rpc-util/*app-id*))
+           (log/trace (str "Column type mismatch: " (pr-str col-type) " vs " (pr-str val-type) " in session " (sessions/get-id rpc-util/*session-state*) " of env " (:env_id rpc-util/*environment*) " of app " rpc-util/*app-id*))
            (or (:error val-type)
                (str "cannot set it to a " (get-type-name tables val-type)))))))
 
@@ -227,7 +227,7 @@
                   (if val
                     [true (delay (.getContentType ^MediaDescriptor @val)) (delay (.getName ^MediaDescriptor @val)) (delay (.getBytes ^HasBytes @val))]
                     [false nil nil nil]))
-      "simpleObject" (if val
+      "simpleObject" (if (some? val)
                        [(util/write-json-str val)]
                        [nil])
       "unresolved" [nil]

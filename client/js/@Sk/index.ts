@@ -148,6 +148,7 @@ export const {
     },
     ffi: { toPy, toJs, proxy, remapToJsOrWrap },
     importModule,
+    generic: { getSetDict },
 } = Sk;
 
 export type { Args, Kws, CompareOp, BinOp, UnaryOp } from "./namespace";

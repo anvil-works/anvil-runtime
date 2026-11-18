@@ -486,6 +486,46 @@ def portable_class(cls, name=None):
 serializable_type = portable_class
 
 
+PORTABLE_EXCEPTION_PROTOCOL_VERSION = 9
+# These names are normally special exception/runtime attributes, not user
+# payload, but filter them defensively if they appear in __dict__.
+_PORTABLE_EXCEPTION_INTERNAL_ATTRS = {
+    "__traceback__",
+    "__context__",
+    "__cause__",
+    "_anvil_error_obj",
+}
+
+
+#!defMethod()!2: "Base class for portable exceptions. Any subclass of PortableException can be passed between client, server and Uplink code as its original exception class. All subclasses of PortableException are automatically also portable classes." ["__init__"]
+#!defClass(anvil.server,PortableException,__builtins__..Exception)!:
+class PortableException(Exception):
+    registered_type_name = None
+
+    def __init_subclass__(cls, **kwargs):
+        try:
+            super(PortableException, cls).__init_subclass__(**kwargs)
+        except AttributeError:
+            pass
+        portable_class(cls)
+
+    def __serialize__(self, info):
+        return {
+            "args": self.args,
+            "dict": {
+                k: v for k, v in self.__dict__.items()
+                if k not in _PORTABLE_EXCEPTION_INTERNAL_ATTRS
+            },
+        }
+
+    @classmethod
+    def __new_deserialized__(cls, data, info):
+        obj = cls.__new__(cls)
+        Exception.__init__(obj, *data.get("args", ()))
+        obj.__dict__.update(data.get("dict", {}))
+        return obj
+
+
 class LazyMedia(anvil.Media):
     def __init__(self, spec):
         if isinstance(spec, LazyMedia):
@@ -581,7 +621,40 @@ def _register_exception_type(name, cls):
 
 
 def _deserialise_exception(error_obj):
-    return _named_exceptions.get(error_obj.get("type"), AnvilWrappedError)(error_obj)
+    portable_exception = error_obj.get("portableException")
+    if isinstance(portable_exception, Exception):
+        portable_exception._anvil_error_obj = error_obj
+        return portable_exception
+
+    exc_class = _named_exceptions.get(error_obj.get("type"), AnvilWrappedError)
+    return exc_class(error_obj)
+
+
+def strip_portable_exception(error_response, reconstruction_error=None):
+    response = dict(error_response)
+    error = dict(response.get("error", {}))
+    error.pop("portableException", None)
+    if reconstruction_error is not None:
+        message = error.get("message") or "[unexpected error]"
+        error["message"] = "{}\n\nFailed to reconstruct portable exception: {}".format(
+            message, reconstruction_error
+        )
+    response["error"] = error
+    return response
+
+
+def _call_chain_supports_protocol_version(call_context, protocol_version):
+    """Return whether every versioned caller supports protocol_version."""
+    call_stack = getattr(call_context, "call_stack", None) or ()
+    for frame in call_stack:
+        if frame.type not in ("browser", "uplink", "client-uplink"):
+            continue
+        if (
+            frame.protocol_version is None
+            or frame.protocol_version < protocol_version
+        ):
+            return False
+    return True
 
 
 def get_liveobject_cache_filter_spec(input_data):
@@ -733,7 +806,7 @@ _register_exception_type("anvil.server.ServiceNotAdded", ServiceNotAdded)
 
 
 
-def _report_exception(request_id=None):
+def _report_exception(request_id, include_portable_exception):
     exc_type, exc_value, exc_traceback = sys.exc_info()
     tb = traceback.extract_tb(exc_traceback)
 
@@ -754,6 +827,24 @@ def _report_exception(request_id=None):
             "id": request_id
         }
         return r
+    elif isinstance(exc_value, PortableException):
+        if hasattr(exc_value, "_anvil_error_obj"):
+            trace = exc_value._anvil_error_obj.get("trace", []) + trace[1:]
+        try:
+            type_name = exc_type.SERIALIZATION_INFO[0]
+        except AttributeError:
+            type_name = exc_type.__module__ + "." + exc_type.__name__
+        error = {
+            "type": type_name,
+            "trace": trace,
+            "message": str(exc_value),
+        }
+        if include_portable_exception:
+            error["portableException"] = exc_value
+        return {
+            "error": error,
+            "id": request_id
+        }
     elif isinstance(exc_value, SyntaxError):
         # Remove whole internal trace and replace it with line where error occurred.
         trace=[(exc_value.filename, exc_value.lineno)]
@@ -1520,7 +1611,7 @@ def register(fn, name=None, name_prefix=None, require_user=None):
 
     return fn
 
-#!defFunction(anvil.server,%,[fn_or_name], [require_user])!2: {anvil$args: {fn_or_name: "The name by which you want to call your function from the client.", require_user: "Allows you to verify whether a user is logged in. Can be a boolean or a function."}, anvil$helpLink: "/docs/server#calling-server-functions-from-client-code", $doc: "When applied to a function as a decorator, the function becomes available from the client side."} ["callable"]
+#!defFunction(anvil.server,%,[fn_or_name], [require_user])!2: {anvil$args: {fn_or_name: "The name by which you want to call your function from the client.", require_user: "Allows you to verify whether a user is logged in. Can be a boolean or a function."}, anvil$helpLink: "/docs/server/server-modules#calling-server-functions-from-client-code", $doc: "Mark a function as callable from client code."} ["callable"]
 def callable(fn_or_name=None, require_user=None):
     if fn_or_name is None or isinstance(fn_or_name, string_type):
         return lambda f: register(f, fn_or_name, require_user=require_user)

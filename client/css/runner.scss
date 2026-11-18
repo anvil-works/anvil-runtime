@@ -431,11 +431,13 @@ input[type=number]::-webkit-outer-spin-button {
 	animation-duration: 0.3s !important;
 }
 
-[data-notify="title"] {
+[data-notify="title"],
+.anvil-notification-title {
 	font-weight: bold;
     white-space: pre-wrap;
 }
-[data-notify="message"] {
+[data-notify="message"],
+.anvil-notification-message {
 	display: block;
 	font-size: 90%;
     white-space: pre-wrap;

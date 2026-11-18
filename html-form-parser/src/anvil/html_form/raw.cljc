@@ -23,7 +23,12 @@
       (parse5/parseFragment (or html "")
                             (clj->js (cond-> {:scriptingEnabled true}
                                        (:source-locations? options)
-                                       (assoc :sourceCodeLocationInfo true)))))))
+                                       (assoc :sourceCodeLocationInfo true)
+
+                                       (:on-parse-error options)
+                                       (assoc :onParseError
+                                              (fn [error]
+                                                ((:on-parse-error options) (.-code error) (.-startOffset error))))))))))
 
 (defn child-nodes [node]
   #?(:clj (vec (.childNodes ^Node node))
@@ -89,6 +94,15 @@
                    .-sourceCodeLocation
                    .-startTag
                    .-startOffset)))
+
+(defn html-start-tag-location [element]
+  #?(:clj nil
+     :cljs (when (= "http://www.w3.org/1999/xhtml" (.-namespaceURI element))
+             (let [location (.-sourceCodeLocation element)]
+               (when-let [start-tag (some-> location .-startTag)]
+                 {:from (.-startOffset start-tag)
+                  :to (.-endOffset start-tag)
+                  :has-end-tag? (some? (.-endTag location))})))))
 
 (defn attr-source-range [element attr-name]
   #?(:clj nil

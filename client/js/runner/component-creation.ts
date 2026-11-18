@@ -1,7 +1,9 @@
 import {
+    Kws,
     Suspension,
     chainOrSuspend,
     isTrue,
+    pyAttributeError,
     pyCall,
     pyCallOrSuspend,
     pyCallable,
@@ -191,13 +193,12 @@ export function addEventHandlers(
                 componentName ? "." + componentName : ""
             }. Expected a callable function, (found type '${Sk.abstr.typeName(pyHandler)}').`;
         }
-        warn(warningMsg);
+        warn(warningMsg, {
+            docUrl: "/editor/common-errors#missing-or-invalid-event-handler",
+            docLinkTitle: "How to fix the event handler",
+        });
     }
 }
-
-const pyAlwaysThrow = new Sk.builtin.func(() => {
-    throw new Sk.builtin.Exception();
-});
 
 export const instantiateComponentFromYamlSpec = (
     context: YamlInstantiationContext,
@@ -263,9 +264,28 @@ function createComponents(
         orphanedComponents: [],
         form: pyForm,
     };
+    const getAttachToParent = (parent: Component, parentName: string, parentType: string) => {
+        try {
+            const addComponent = Sk.abstr.gattr(parent, s_add_component);
+            return (_childYaml: ComponentYaml, child: Component, layoutArgs: Kws) =>
+                pyCallOrSuspend<pyNoneType>(addComponent, [child], layoutArgs);
+        } catch (error) {
+            return (childYaml: ComponentYaml) => {
+                if (!(error instanceof pyAttributeError)) {
+                    throw error;
+                }
+                const parentLabel = parentName ? `"${parentName}" (${parentType})` : parentType;
+                const childLabel = childYaml.name ? `"${childYaml.name}" (${childYaml.type})` : childYaml.type;
+                throw new pyRuntimeError(
+                    `In Form "${formYaml.class_name}", ${parentLabel} cannot contain other components, so ${childLabel} could not be added.`
+                );
+            };
+        }
+    };
+
     const setupComponent = (
         yaml: ComponentYaml,
-        pyAddToParent: pyObject | null,
+        attachToParent: ReturnType<typeof getAttachToParent> | null,
         ancestors: Component[],
         index: number,
         targetSlot?: string
@@ -343,17 +363,12 @@ function createComponents(
                             yaml.components &&
                             !isTrue(pyIsInstance(pyComponent, anvilMod.InvalidComponent as pyNewableType<Component>))
                         ) {
-                            let pyAddComponent = pyAlwaysThrow;
-                            try {
-                                pyAddComponent = Sk.abstr.gattr(pyComponent, s_add_component);
-                            } catch {
-                                // pass;
-                            }
+                            const attachChild = getAttachToParent(pyComponent, yaml.name, yaml.type);
                             return chainOrSuspend(
                                 null,
                                 ...yaml.components.map(
                                     (subYaml, index) => () =>
-                                        setupComponent(subYaml, pyAddComponent, [pyComponent, ...ancestors], index)
+                                        setupComponent(subYaml, attachChild, [pyComponent, ...ancestors], index)
                                 ),
                                 () => pyComponent
                             );
@@ -384,16 +399,16 @@ function createComponents(
                 if (isDesignerDuplicate) {
                     setupResult.duplicatePlaceholdersByYaml.set(yaml, { component: pyComponent });
                 }
-                const layoutArgs: any = [];
+                const layoutArgs: Kws = [];
                 if (yaml.layout_properties) {
                     for (const [k, v] of Object.entries(yaml.layout_properties)) {
                         layoutArgs.push(new pyStr(k), toPy(v));
                     }
                 }
                 return (
-                    pyAddToParent &&
+                    attachToParent &&
                     tryCatchOrSuspend(
-                        () => pyCallOrSuspend<pyNoneType>(pyAddToParent, [pyComponent], layoutArgs),
+                        () => attachToParent(yaml, pyComponent, layoutArgs),
                         (exception) => {
                             reportError(exception);
                             setupResult.orphanedComponents.push(yaml.name);
@@ -507,16 +522,11 @@ function createComponents(
             addEventHandlers(pyForm, pyForm, "", buildEventBindings("", formYaml.container!.event_bindings));
         }
 
-        let pyAddToForm = pyAlwaysThrow;
-        try {
-            pyAddToForm = Sk.abstr.gattr(pyForm, s_add_component);
-        } catch {
-            // pass
-        }
+        const attachToForm = getAttachToParent(pyForm, "", formYaml.container!.type);
         return chainOrSuspend(
             null,
             ...(formYaml.components ?? []).map(
-                (yaml, index) => () => setupComponent(yaml, pyAddToForm, [rootComponent!], index)
+                (yaml, index) => () => setupComponent(yaml, attachToForm, [rootComponent!], index)
             ),
             setupSlotsAndCleanUp
         );
@@ -529,11 +539,13 @@ export function setupFormComponents(formYaml: FormYaml, pyForm: Component, optio
         for (const [name, { component }] of Object.entries(setupResult.components)) {
             const pyName = new pyStr(name);
             if (isTrue(pyHasAttr(pyForm, pyName))) {
-                Sk.builtin.print([
-                    new pyStr(
-                        `Warning: ${pyForm.tp$name} has a method or attribute '${name}' and a component called '${name}'. The method or attribute will be inaccessible. This is probably not what you want.`
-                    ),
-                ]);
+                warn(
+                    `Warning: ${pyForm.tp$name} has a method or attribute '${name}' and a component called '${name}'. The method or attribute will be inaccessible. This is probably not what you want.`,
+                    {
+                        docUrl: "/editor/common-errors#component-name-hides-a-method-or-attribute",
+                        docLinkTitle: "How to fix the component name",
+                    }
+                );
             }
             // add it to the dunder dict IF we have one. If pyForm was created by a YAML carrier, it might not have one.
             if (pyFormDict) {

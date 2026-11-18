@@ -6,10 +6,10 @@
   :source-paths ["src" "../../html-form-parser/src"]
   :managed-dependencies [[org.clojure/clojure "1.12.0"]
 
-                         [com.fasterxml.jackson.core/jackson-core "2.22.1"]
-                         [com.fasterxml.jackson.core/jackson-databind "2.22.1"]
-                         [com.fasterxml.jackson.dataformat/jackson-dataformat-cbor "2.22.1"]
-                         [com.fasterxml.jackson.dataformat/jackson-dataformat-smile "2.22.1"]
+                         [com.fasterxml.jackson.core/jackson-core "2.22.3"]
+                         [com.fasterxml.jackson.core/jackson-databind "2.22.3"]
+                         [com.fasterxml.jackson.dataformat/jackson-dataformat-cbor "2.22.3"]
+                         [com.fasterxml.jackson.dataformat/jackson-dataformat-smile "2.22.3"]
 
                          [dnsjava/dnsjava "3.6.0"]  ; 3.4.1 required by apache-jdkim is vulnerable.
                          [org.apache.james/apache-mime4j-core "0.8.10"]  ; 0.7 required by apache-jdkim is vulnerable.
@@ -49,7 +49,7 @@
                  [crypto-random "1.2.1"]
                  [clj-commons/clj-yaml "1.0.27"]
                  [digest "1.4.4"]
-                 [org.jsoup/jsoup "1.23.1"]
+                 [org.jsoup/jsoup "1.23.2"]
 
                  [org.clojure/data.codec "0.1.0"]
 
@@ -61,8 +61,9 @@
                  [com.stripe/stripe-java "22.5.0"]
 
                  [org.clojure/tools.logging "1.2.4"]
-                 [org.slf4j/slf4j-reload4j "1.7.36"]
-                 [ch.qos.reload4j/reload4j "1.2.19" :exclusions [javax.mail/mail javax.jms/jms com.sun.jdmk/jmxtools com.sun.jmx/jmxri]]
+                 [org.slf4j/slf4j-api "2.0.18"]
+                 [org.slf4j/slf4j-reload4j "2.0.18"]
+                 [ch.qos.reload4j/reload4j "1.2.22" :exclusions [javax.mail/mail javax.jms/jms com.sun.jdmk/jmxtools com.sun.jmx/jmxri]]
                  [clj-logging-config "1.9.12"]
 
                  [org.clj-commons/slingshot "0.13.0"]
@@ -76,7 +77,7 @@
                  [com.maxmind.geoip2/geoip2 "2.16.0"]
                  [com.draines/postal "2.0.2"]
 
-                 [com.google.guava/guava "33.3.1-jre"]
+                 [com.google.guava/guava "33.7.2-jre"]
 
                  [org.apache.xmlgraphics/batik-dom "1.16"]  ; 1.15 required by one-time is vulnerable.
                  [one-time "0.8.0"]
@@ -87,8 +88,8 @@
                  ;  Can't use v0.3 as it removes mailets, which we use in email_server.clj
                  [org.apache.james.jdkim/apache-jdkim "0.2" :extension "pom" :exclusions [org.apache.geronimo.javamail/geronimo-javamail_1.4_mail]]
 
-                 [org.bouncycastle/bcprov-jdk18on "1.84"]
-                 [org.bouncycastle/bcpkix-jdk18on "1.84"]
+                 [org.bouncycastle/bcprov-jdk18on "1.86"]
+                 [org.bouncycastle/bcpkix-jdk18on "1.86"]
                  [buddy/buddy-core "1.12.0-430"]
                  [buddy/buddy-sign "3.6.1-359"]
 
@@ -105,15 +106,15 @@
                  [olical/crawlers "0.2.0"]
 
                  [io.opentelemetry/opentelemetry-sdk]]
-  :bom {:import [[io.opentelemetry/opentelemetry-bom "1.63.0"]]}
+  :bom {:import [[io.opentelemetry/opentelemetry-bom "1.67.0"]]}
   :jvm-opts ["-Dfile.encoding=UTF-8"]
   :plugins [[com.github.anvil-works/lein-aot-order "0.1.1-anvil"]
             [lein-bom "0.2.0-SNAPSHOT"]]
   :aot :order
   :auto-clean false
   :omit-source true
-  :profiles {:provided {:dependencies [[org.bouncycastle/bcprov-jdk18on "1.84"]
-                                       [org.bouncycastle/bcpkix-jdk18on "1.84"]]}
+  :profiles {:provided {:dependencies [[org.bouncycastle/bcprov-jdk18on "1.86"]
+                                       [org.bouncycastle/bcpkix-jdk18on "1.86"]]}
              :uberjar {:exclusions [org.bouncycastle/bcprov-jdk18on
                                     org.bouncycastle/bcpkix-jdk18on]}
              :dev {:jvm-opts ["-Dclojure.compiler.disable-locals-clearing=true"
@@ -121,6 +122,7 @@
                               ]
                    :dependencies [[nubank/matcher-combinators "3.9.2"]
                                   [org.senatehouse/expect-call "0.4.0"]]}
-             :test {:dependencies [[lambdaisland/kaocha "1.91.1392"]]}}
+             :test {:resource-paths ["test-support"] ; loaded from source, kept out of AOT
+                    :dependencies [[lambdaisland/kaocha "1.91.1392"]]}}
 
   :aliases {"test" ["with-profile" "+test" "run" "-m" "kaocha.runner"]})

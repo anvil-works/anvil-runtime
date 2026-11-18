@@ -55,6 +55,8 @@ import {
     s_remove_from_parent,
     s_show,
     s_slots,
+    s_x_anvil_associated_with_form,
+    s_x_anvil_associated_with_layout,
     s_x_anvil_classic_hide,
     s_x_anvil_classic_show,
     strError,
@@ -453,6 +455,7 @@ export interface WithLayout extends Component {
         _pyLayout?: Component | null;
         _withLayoutSubclass?: LayoutSubclassHooks;
     };
+    $associateLayout(this: WithLayout, layout: Component): pyObject | Suspension;
     $setupPageState(this: WithLayout): void;
     $requireLayout(this: WithLayout, fn: (layout: Component) => any): any;
 }
@@ -516,6 +519,17 @@ export const WithLayout: WithLayoutConstructor = Sk.abstr.buildNativeClass("anvi
         },
     },
     proto: {
+        $associateLayout(layout) {
+            this._withLayout.pyLayout = layout;
+            // Notify the direct pair only, after its components and bindings are set up.
+            // An unchanged outer pair is not notified again when an inner page changes.
+            return chainOrSuspend(
+                this._withLayout.onAssociate?.(layout, this),
+                () => raiseEventOrSuspend(this, s_x_anvil_associated_with_layout, ["layout", layout]),
+                () => raiseEventOrSuspend(layout, s_x_anvil_associated_with_form, ["form", this]),
+                () => pyNone
+            );
+        },
         $requireLayout(fn) {
             return chainOrSuspend(Sk.abstr.gattr<Component>(this, s_layout, true), (pyLayout) => {
                 return chainOrSuspend(pyLayout.anvil$hooks.setupDom(), () => fn(pyLayout));
@@ -620,7 +634,7 @@ export const WithLayout: WithLayoutConstructor = Sk.abstr.buildNativeClass("anvi
     getsets: {
         layout: {
             $get() {
-                const { pyLayout, kwargs, onAssociate, _withLayoutSubclass } = this._withLayout;
+                const { pyLayout, kwargs, _withLayoutSubclass } = this._withLayout;
                 if (pyLayout) {
                     return pyLayout;
                 }
@@ -646,10 +660,7 @@ export const WithLayout: WithLayoutConstructor = Sk.abstr.buildNativeClass("anvi
                                     )
                                   : (kws?: Kws) => pyCallOrSuspend(l.constructor, [], kws),
                             (instantiate) => instantiate(kwargs) as Component,
-                            (pyL) => {
-                                this._withLayout.pyLayout = pyL;
-                                return onAssociate?.(pyL, this);
-                            },
+                            (pyL) => this.$associateLayout(pyL),
                             () => this._withLayout.pyLayout!
                         ),
                     (e) => {
@@ -667,7 +678,7 @@ export const WithLayout: WithLayoutConstructor = Sk.abstr.buildNativeClass("anvi
                 );
             },
             $set(newLayout) {
-                const { onAssociate, pyLayout } = this._withLayout;
+                const { pyLayout } = this._withLayout;
                 if (pyLayout) {
                     throw new Sk.builtin.ValueError(
                         "Cannot overwrite the 'layout' property of a form after it has been initialised."
@@ -683,8 +694,7 @@ export const WithLayout: WithLayoutConstructor = Sk.abstr.buildNativeClass("anvi
                         )} object.`
                     );
                 }
-                this._withLayout.pyLayout = newLayout as Component;
-                return onAssociate?.(newLayout as Component, this);
+                return this.$associateLayout(newLayout as Component);
             },
         },
         __dict__: Sk.generic.getSetDict, // useful in designer

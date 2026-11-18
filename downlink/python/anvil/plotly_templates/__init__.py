@@ -53,6 +53,17 @@ class Templates:
         except Exception:
             raise KeyError(theme)
         else:
+            # Plotly.py 7 removed Mapbox classes. Keep the shared theme files
+            # usable by older servers and adapt them only for the new schema.
+            if not hasattr(go, "Scattermapbox"):
+                trace_defaults = data.get("data", {})
+                if "scattermapbox" in trace_defaults:
+                    trace_defaults["scattermap"] = trace_defaults.pop("scattermapbox")
+                    for trace in trace_defaults["scattermap"]:
+                        trace["type"] = "scattermap"
+                layout_defaults = data.get("layout", {})
+                if "mapbox" in layout_defaults:
+                    layout_defaults["map"] = layout_defaults.pop("mapbox")
             _cache[theme] = data
             _register_template(theme, data)
 

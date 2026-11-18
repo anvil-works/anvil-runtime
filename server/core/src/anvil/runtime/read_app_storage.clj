@@ -262,6 +262,8 @@ If you want to get to the basics as quickly as possible, each section of this do
          yaml))
      yaml tree)))
 
+;; File and folder names in extra_files are keywords, like every other key in an app's YAML. That way an app read
+;; here matches one sent from a remote git node, which is decoded from JSON with keyword keys.
 (defn- add-extra-files-to-yaml [yaml tm path top-level? ignore-py? ignore-yaml? ignore-one-level-only?]
   (reduce (fn [yaml [^String name subtree]]
             (cond
@@ -269,14 +271,14 @@ If you want to get to the basics as quickly as possible, each section of this do
                   (and ignore-yaml? (.endsWith name ".html"))  ;; Also ignore .html files in forms/client_code
                   (and ignore-py? (.endsWith name ".py"))
                   (and top-level? (#{"anvil.yaml" ".anvil_editor.yaml" "theme" "CONFLICTS.yaml" "anvil-server-requirements.txt"} name))
-                  (and (= path [:extra_files "server_code"]) (= name "requirements.txt"))
+                  (and (= path [:extra_files :server_code]) (= name "requirements.txt"))
                   (and top-level? (tree-file? subtree)
                        (contains? default-file-contents name)
                        (some #(Arrays/equals ^bytes (:bytes subtree) (.getBytes ^String %)) (get default-file-contents name))))
               yaml
 
               (tree-dir? subtree)
-              (add-extra-files-to-yaml yaml subtree (concat path [name]) false
+              (add-extra-files-to-yaml yaml subtree (concat path [(keyword name)]) false
                                        (or (and ignore-py? (not ignore-one-level-only?))
                                            (and top-level?
                                                 (#{"server_code" "client_code" "server_modules" "modules" "forms" "scripts"} name)))
@@ -286,7 +288,7 @@ If you want to get to the basics as quickly as possible, each section of this do
                                        (and top-level? (#{"scripts"} name)))
 
               (tree-file? subtree)
-              (assoc-in yaml (concat path [name]) (Base64/encodeBase64String ^bytes (:bytes subtree)))
+              (assoc-in yaml (concat path [(keyword name)]) (Base64/encodeBase64String ^bytes (:bytes subtree)))
 
               :else
               yaml))

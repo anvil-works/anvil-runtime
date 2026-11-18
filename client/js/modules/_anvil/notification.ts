@@ -14,12 +14,15 @@ import {
 } from "@Sk";
 import notify from "@runtime/modules/notify";
 import { PyModMap, funcFastCall } from "@runtime/runner/py-util";
+import { warn } from "@runtime/runner/warnings";
 
 interface NotificationState {
     message: string;
     title: string;
+    /** @deprecated Retained for compatibility; use role and theme CSS. */
     style: string;
     timeout: number;
+    role: pyObject;
     notification?: { close?: () => void } | null;
 }
 
@@ -69,12 +72,13 @@ interface NotificationInstance extends pyObject {
           ```
           Notification("A message",
                        title="A message title",
-                       style="success").show()
+                       role="success").show()
           ```
 
-          As well as a message, notifications can also have a title. Use the `style`
-          keyword argument to set the colour of the notification. Use `"success"` for green,
-          `"danger"` for red, `"warning"` for yellow, or `"info"` for blue (default).
+          As well as a message, notifications can also have a title. Use `role="success"`
+          to apply a theme role to the notification surface, or pass a list of role names.
+          Style `.anvil-notification` in your theme CSS to change the default appearance of all notifications.
+          Define the role's appearance in your theme CSS using `.anvil-notification.anvil-role-success`.
 
 
         */
@@ -87,12 +91,13 @@ export function createNotificationClass(pyModule: PyModMap) {
                     throw new pyRuntimeError("Notification already visible");
                 }
 
-                const { message, title, style: type, timeout } = self._anvil;
+                const { message, title, style: type, timeout, role } = self._anvil;
 
                 self._anvil.notification = notify(
                     { message, title },
                     {
                         type,
+                        role,
                         timeout,
                         placement: { from: "top", align: "center" },
                         onClosed() {
@@ -105,20 +110,34 @@ export function createNotificationClass(pyModule: PyModMap) {
                 return chainOrSuspend(promiseToSuspension(new Promise((resolve) => setTimeout(resolve))), () => self);
             }
 
-            /*!defMethod(,message,[title=""],[style="info"], [timeout=2])!2*/ ("Create a popup notification. Call the show() method to display it.");
+            /*!defMethod(,message,[title=""], [timeout=2],[role=None])!2*/ ("Create a popup notification. Call the show() method to display it.\n\nSet timeout to None or 0 to keep it visible until dismissed.\nSet role to a theme role name or list of names.\nThe style argument is deprecated; use role and theme CSS instead.\nCan also be used as a context manager.");
             $loc["__init__"] = funcFastCall(function (args, kws) {
-                const [self, message, title, style, timeout] = copyKeywordsToNamedArgs(
+                const [self, message, title, style, timeout, role] = copyKeywordsToNamedArgs(
                     "Notification",
-                    [null, "message", "title", "style", "timeout"],
-                    args,
+                    [null, "message", "title", "style", "timeout", "role"],
+                    // Like alert(), ignore positional options after the message.
+                    args.slice(0, 2),
                     kws,
-                    [pyStr.$empty, new pyStr("info"), new pyInt(2)]
-                ) as [NotificationInstance, pyObject, pyObject, pyObject, pyObject];
+                    [pyStr.$empty, new pyStr("info"), new pyInt(2), pyNone]
+                ) as [NotificationInstance, pyObject, pyObject, pyObject, pyObject, pyObject];
 
+                if (args.length > 2) {
+                    warn(
+                        "Notification options must be passed as keyword arguments. Positional arguments after the message are ignored.",
+                        {
+                            key: "notification-positional-options",
+                            docUrl: "/editor/common-errors#popup-options-ignored",
+                            docLinkTitle: "How to pass popup options",
+                        }
+                    );
+                }
+
+                const styleName = style.toString();
                 self._anvil = {
                     message: (message === pyNone ? "" : message).toString(),
                     title: (title === pyNone ? "" : title).toString(),
-                    style: style.toString(),
+                    style: styleName,
+                    role,
                     timeout: (toJs(timeout) as number) * 1000,
                 };
 

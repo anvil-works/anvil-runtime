@@ -19,8 +19,10 @@ from ._server import (register,
                       Serializable,
                       serializable_type,
                       portable_class,
+                      _call_chain_supports_protocol_version,
                       _register_exception_type, 
                       AnvilWrappedError, 
+                      PortableException,
                       SerializationError, 
                       InternalError, 
                       InvalidResponseError, 
@@ -71,7 +73,7 @@ def __getattr__(name):
     raise AttributeError(name)
 
 # Must match PROTOCOL_VERSION in runtime/client/js/modules/_server/constants.ts
-PROTOCOL_VERSION = 8
+PROTOCOL_VERSION = 9
 
 _url = 'wss://anvil.works/uplink'
 

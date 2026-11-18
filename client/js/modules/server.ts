@@ -1,6 +1,7 @@
 "use strict";
 
 import {
+    arrayFromIterable,
     buildNativeClass,
     buildPyClass,
     chainOrSuspend,
@@ -16,6 +17,7 @@ import {
     pyCallable,
     pyCheckType,
     pyClassMethod,
+    pyDict,
     pyException,
     pyFunc,
     pyIterFor,
@@ -38,6 +40,7 @@ import {
     toJs,
     toPy,
     tryCatchOrSuspend,
+    typeLookup,
     typeName,
 } from "@Sk";
 import PyDefUtils from "PyDefUtils";
@@ -85,6 +88,48 @@ function server(appId: string, appOrigin: string) {
         }
         return true;
     };
+
+    const weakServerMethods = new WeakMap();
+    const sRegisteredTypeName = new pyStr("registered_type_name");
+
+    function registerExceptionType(pyName: pyStr, pyClass: pyNewableType<pyException>) {
+        if (!pyName || !(pyName instanceof pyStr) || !pyClass) {
+            throw new pyTypeError("Invalid call to _register_exception_type");
+        }
+        pyNamedExceptions[pyName.v] = pyClass;
+        try {
+            pyClass.tp$setattr(sRegisteredTypeName, pyName);
+        } catch {
+            // pass
+        }
+        return pyNone;
+    }
+
+    function registerPortableClass(pyClass: pyType, pyName: pyStr | pyNoneType) {
+        let tpName = pyName ? pyName.valueOf() : null;
+        if (tpName == null) {
+            // use gattr so that the appropriate error is thrown
+            let mod = Sk.abstr.gattr(pyClass, pyStr.$module).toString();
+            const name = Sk.abstr.gattr(pyClass, pyStr.$name).toString();
+            if (mod === "__main__" && window.anvilAppMainModule) {
+                mod = window.anvilAppMainPackage + "." + window.anvilAppMainModule;
+            }
+            tpName = `${mod}.${name}`;
+        } else if (!(typeof tpName === "string")) {
+            throw new pyTypeError("The second argument to portable_class must be a string, got " + typeName(pyName));
+        }
+        // match the server side implementation
+        setPortableClassSerializationInfo(pyClass, tpName);
+        pyValueTypes[tpName] = pyClass;
+
+        const registeredServerSideMethods = weakServerMethods.get(pyClass) ?? [];
+
+        for (const [methodName, method] of registeredServerSideMethods) {
+            method._server_name = "anvil.server_side/" + tpName + "." + methodName;
+        }
+
+        return tpName;
+    }
 
     pyMod["_call_http"] = funcFastCall((args, pyKwargs = []) => {
         const [pyCmd, ...callArgs] = args;
@@ -359,15 +404,10 @@ function server(appId: string, appOrigin: string) {
 
     pyMod["SerializationInfo"] = SerializationInfo;
 
-    pyMod["_register_exception_type"] = new pyFunc(function (pyName: pyStr, pyClass: pyNewableType<pyException>) {
-        if (!pyName || !(pyName instanceof pyStr) || !pyClass) {
-            throw new pyTypeError("Invalid call to _register_exception_type");
-        }
-        pyNamedExceptions[pyName.v] = pyClass;
-        return pyNone;
-    });
+    pyMod["_register_exception_type"] = new pyFunc(registerExceptionType);
 
     const s_message = new pyStr("message");
+    const ExceptionInit = pyException.tp$getattr<pyCallable>(pyStr.$init)!;
 
     pyMod["AnvilWrappedError"] = buildPyClass(
         pyMod,
@@ -391,6 +431,60 @@ function server(appId: string, appOrigin: string) {
             });
         },
         "AnvilWrappedError",
+        [pyException]
+    );
+
+    const sArgs = new pyStr("args");
+    const sDict = new pyStr("dict");
+    // These names are normally special exception/runtime attributes, not user
+    // payload, but filter them defensively if they appear in __dict__.
+    const portableExceptionInternalAttrs = new Set([
+        "__traceback__",
+        "__context__",
+        "__cause__",
+        "_anvil",
+        "nativeError",
+    ]);
+
+    /*!defClass(anvil.server,PortableException, __builtins__..Exception)!*/
+    pyMod["PortableException"] = buildPyClass(
+        pyMod,
+        function ($gbl, $loc) {
+            $loc["__init_subclass__"] = new pyClassMethod(
+                new pyFunc(function initSubclass(pyClass: pyType) {
+                    registerPortableClass(pyClass, pyNone);
+                    return pyNone;
+                }) as any
+            );
+
+            $loc["__serialize__"] = new pyFunc(function serialize(self: pyObject) {
+                const attrs = new pyDict([]);
+                const sourceAttrs = self.tp$getattr(pyStr.$dict) as pyDict | undefined;
+                for (const [key, value] of sourceAttrs?.$items() ?? []) {
+                    if (!(key instanceof pyStr) || !portableExceptionInternalAttrs.has(key.toString())) {
+                        attrs.mp$ass_subscript(key, value);
+                    }
+                }
+                return new pyDict([sArgs, self.tp$getattr(sArgs), sDict, attrs]);
+            });
+
+            $loc["__new_deserialized__"] = new pyClassMethod(
+                new pyFunc(function newDeserialized(pyClass: pyType, pyData: pyDict) {
+                    const pyArgs = pyData.mp$subscript(sArgs);
+                    const args = arrayFromIterable<pyObject>(pyArgs as any);
+                    const newMethod = typeLookup(pyClass, pyStr.$new)!;
+                    const self = pyCall(newMethod, [pyClass]) as pyObject;
+                    pyCall(ExceptionInit, [self, ...args]);
+
+                    const attrs = pyData.mp$subscript(sDict) as pyDict;
+                    for (const [key, value] of attrs.$items() as [pyStr, pyObject][]) {
+                        self.tp$setattr(key, value);
+                    }
+                    return self;
+                }) as any
+            );
+        },
+        "PortableException",
         [pyException]
     );
 
@@ -668,31 +762,8 @@ function server(appId: string, appOrigin: string) {
     setUpModuleMethods("anvil.server", pyMod, {
         portable_class: {
             $meth(pyClass: pyType | pyStr, pyName: pyStr | pyNoneType) {
-                const doRegister = (pyClass: pyType, pyName: pyStr) => {
-                    let tpName = pyName ? pyName.valueOf() : null;
-                    if (tpName == null) {
-                        // use gattr so that the appropriate error is thrown
-                        let mod = Sk.abstr.gattr(pyClass, pyStr.$module).toString();
-                        const name = Sk.abstr.gattr(pyClass, pyStr.$name).toString();
-                        if (mod === "__main__" && window.anvilAppMainModule) {
-                            mod = window.anvilAppMainPackage + "." + window.anvilAppMainModule;
-                        }
-                        tpName = `${mod}.${name}`;
-                    } else if (!(typeof tpName === "string")) {
-                        throw new pyTypeError(
-                            "The second argument to portable_class must be a string, got " + typeName(pyName)
-                        );
-                    }
-                    // match the server side implementation
-                    setPortableClassSerializationInfo(pyClass, tpName);
-                    pyValueTypes[tpName] = pyClass;
-
-                    const registeredServerSideMethods = weakServerMethods.get(pyClass) ?? [];
-
-                    for (const [methodName, method] of registeredServerSideMethods) {
-                        method._server_name = "anvil.server_side/" + tpName + "." + methodName;
-                    }
-
+                const doRegister = (pyClass: pyType, pyName: pyStr | pyNoneType) => {
+                    registerPortableClass(pyClass, pyName);
                     return pyClass;
                 };
                 if (pyName === pyNone && pyClass instanceof pyStr) {
@@ -813,8 +884,6 @@ function server(appId: string, appOrigin: string) {
             ip: null,
         }),
     });
-
-    const weakServerMethods = new WeakMap();
 
     function copyAttr(wrapper: pyCallable, wrapped: pyCallable, name: pyStr) {
         try {

@@ -348,13 +348,33 @@
         :else
         (unknown-dom-anvil-attribute-warning element attr-name options)))))
 
-(defn- collect-attribute-warnings [nodes options]
+(defn- anvil-tag-warning [element options]
+  (when (anvil-template-tag? element)
+    (when-let [{:keys [from to has-end-tag?]} (raw/html-start-tag-location element)]
+      (let [self-closing? (contains? (:self-closing-tag-offsets options) from)
+            incomplete-offsets (:incomplete-tag-offsets options)
+            tag-name (lower-tag-name element)]
+        ;; An unfinished tag can absorb following tags. Keep explicit slash
+        ;; warnings for completed start tags, and defer inferred missing ends.
+        (when (if self-closing?
+                (not-any? #(<= from % (dec to)) incomplete-offsets)
+                (and (empty? incomplete-offsets) (not has-end-tag?)))
+          {:code (if self-closing? "self-closing-anvil-tag" "unclosed-anvil-tag")
+           :path tag-name
+           :tag-name tag-name
+           :from from
+           :to to
+           :message (str "<" tag-name "> needs an explicit </" tag-name "> closing tag, even when empty.")})))))
+
+(defn- collect-node-warnings [nodes options]
   (if (or (not (warnings? options))
-          (:suppress-attribute-warnings options))
+          (:suppress-node-warnings options))
     []
     (let [warnings (state [])]
       (letfn [(walk [node]
                 (when (raw/element? node)
+                  (when-let [warning (anvil-tag-warning node options)]
+                    (state-swap! warnings conj warning))
                   (doseq [attribute (raw/attrs node)]
                     (let [attr-name (raw/attr-name attribute)]
                       (when-let [warning (attribute-warning node attr-name options)]
@@ -365,7 +385,11 @@
                     (walk child))))]
         (doseq [node nodes]
           (walk node)))
-      @warnings)))
+      ;; A self-closing Anvil tag can consume an ancestor's end tag. Report the
+      ;; slash first so recovery does not point the user at the ancestor.
+      (if (some #(= "self-closing-anvil-tag" (:code %)) @warnings)
+        (filterv #(not= "unclosed-anvil-tag" (:code %)) @warnings)
+        @warnings))))
 
 (declare parse-component parse-container-children render-nodes)
 
@@ -837,11 +861,32 @@
            :reserved-component-names
            (into reserved (collect-explicit-component-names nodes)))))
 
-(defn- raw-parse-options [options]
-  (when (or (:selection-name-maps options)
-            (warnings? options)
-            (:source-locations? options))
-    {:source-locations? true}))
+(defn- parse-form-fragment [html options]
+  (let [collect-warnings? (and (warnings? options) (not (:suppress-node-warnings options)))
+        self-closing-offsets (when collect-warnings? (state #{}))
+        incomplete-offsets (when collect-warnings? (state #{}))
+        raw-options (cond-> {:source-locations? (or (:selection-name-maps options)
+                                                    collect-warnings?
+                                                    (:source-locations? options))}
+                      collect-warnings? (assoc :on-parse-error
+                                               (fn [code offset]
+                                                 (cond
+                                                   (= code "non-void-html-element-start-tag-with-trailing-solidus")
+                                                   (state-swap! self-closing-offsets conj offset)
+
+                                                   (or (contains? #{"eof-in-tag" "eof-before-tag-name"} code)
+                                                       (and (= code "unexpected-solidus-in-tag")
+                                                            (<= 2 offset)
+                                                            (= "</" (subs html (- offset 2) offset)))
+                                                       (and (contains? #{"unexpected-character-in-attribute-name"
+                                                                         "unexpected-character-in-unquoted-attribute-value"} code)
+                                                            (= \< (nth html offset nil))))
+                                                   (state-swap! incomplete-offsets conj offset)))))
+        fragment (raw/parse-fragment html raw-options)]
+    [(raw/child-nodes fragment)
+     (cond-> options
+       collect-warnings? (assoc :self-closing-tag-offsets @self-closing-offsets
+                                :incomplete-tag-offsets @incomplete-offsets))]))
 
 (defn- root-html-name-ignored-warning [root-name element options]
   (cond-> {:code "root-html-name-ignored"
@@ -865,7 +910,7 @@
         container-event-bindings (state nil)
         container-data-bindings (state nil)
         container-layout-properties (state nil)
-        warnings (state (collect-attribute-warnings nodes options))
+        warnings (state (collect-node-warnings nodes options))
         flatten-segments (fn [segments] (vec (mapcat identity segments)))
         append-segments (fn [segments]
                           (doseq [segment segments]
@@ -962,8 +1007,8 @@
   ([html] (parse-container-form html "HtmlComponent" nil))
   ([html container-type] (parse-container-form html container-type nil))
   ([html container-type options]
-   (let [fragment (raw/parse-fragment html (raw-parse-options options))]
-     (parse-container-form-nodes html (raw/child-nodes fragment) container-type options))))
+   (let [[nodes options] (parse-form-fragment html options)]
+     (parse-container-form-nodes html nodes container-type options))))
 
 (defn- layout-root? [element]
   (and (= "anvil-form" (lower-tag-name element))
@@ -1004,15 +1049,15 @@
     (if-not @layout-element
       ;; If a layout parse is requested without a layout root, recover by
       ;; wrapping the input in an UnknownLayout anvil-form.
-      (let [warnings (collect-attribute-warnings nodes options)
+      (let [warnings (collect-node-warnings nodes options)
             parsed (parse-layout-form (str "<anvil-form layout=\"UnknownLayout\">" html "</anvil-form>")
-                                      (assoc options :suppress-attribute-warnings true))]
+                                      (assoc options :suppress-node-warnings true))]
         (cond-> parsed
           (seq warnings) (assoc :warnings warnings)))
       (let [{:keys [properties layout-event-bindings data-bindings event-bindings]} (extract-component-data @layout-element)
             layout-type (or (layout-type-attribute @layout-element) "UnknownLayout")
             context (create-context options true html)
-            warnings (collect-attribute-warnings nodes options)
+            warnings (collect-node-warnings nodes options)
             components-by-slot (state {})
             block-names (state #{})
             duplicate-counts (state {})
@@ -1075,8 +1120,8 @@
 (defn parse-layout-form
   ([html] (parse-layout-form html nil))
   ([html options]
-   (let [fragment (raw/parse-fragment html (raw-parse-options options))]
-     (parse-layout-form-nodes html (raw/child-nodes fragment) options))))
+   (let [[nodes options] (parse-form-fragment html options)]
+     (parse-layout-form-nodes html nodes options))))
 
 (defn- top-level-layout-element? [nodes]
   (some (fn [node]
@@ -1089,8 +1134,7 @@
 (defn parse-serialized-html
   ([html] (parse-serialized-html html nil))
   ([html options]
-   (let [fragment (raw/parse-fragment html (raw-parse-options options))
-         nodes (raw/child-nodes fragment)]
+   (let [[nodes options] (parse-form-fragment html options)]
      (if (top-level-layout-element? nodes)
        (parse-layout-form-nodes html nodes options)
        (parse-container-form-nodes html nodes "HtmlComponent" options)))))

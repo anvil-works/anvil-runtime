@@ -24,8 +24,8 @@ def set_up_app_server(config):
     origin = f"http://localhost:{config_file['port']}"
     output = tempfile.TemporaryFile(mode="w+")
     server_process = subprocess.Popen(
-        ["lein", "run", "--config-file", str(config_path)],
-        # Leiningen launches a child JVM; stop the whole group between test apps.
+        ["java", "-jar", "target/anvil-app-server.jar", "--config-file", str(config_path)],
+        # Stop the server and its child processes between test apps.
         start_new_session=True,
         stdout=output,
         stderr=subprocess.STDOUT,

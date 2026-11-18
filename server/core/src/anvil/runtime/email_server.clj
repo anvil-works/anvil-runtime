@@ -13,7 +13,7 @@
   (:import (org.subethamail.smtp.helper SimpleMessageListener SimpleMessageListenerAdapter)
            (javax.mail Session Header Part Multipart)
            (java.util Properties Timer TimerTask)
-           (javax.mail.internet MimeMessage InternetAddress AddressException MimePart)
+           (javax.mail.internet MimeMessage InternetAddress AddressException MimePart ParseException)
            anvil.dispatcher.types.InputStreamMedia
            (org.subethamail.smtp RejectException)
            (org.apache.james.jdkim.api Headers)
@@ -160,9 +160,13 @@
                                                                 (InputStreamMedia. (.getContentType mime-part) (.getInputStream mime-part) (or (.getFileName mime-part) "Attachment") (.getSize mime-part)))
                                                      ;; Otherwise, it's a normal attachment
                                                      (update-in transformed-email [:attachments] conj
-                                                                (InputStreamMedia. (.getContentType mime-part) (.getInputStream mime-part) (or (.getFileName mime-part) "Attachment") (.getSize mime-part)))))]
+                                                                (InputStreamMedia. (.getContentType mime-part) (.getInputStream mime-part) (or (.getFileName mime-part) "Attachment") (.getSize mime-part)))))
+                                  disposition (try
+                                                (.getDisposition m)
+                                                (catch ParseException _
+                                                  (throw (RejectException. "Invalid content disposition"))))]
 
-                              (if (= (.getDisposition m) Part/ATTACHMENT)
+                              (if (= disposition Part/ATTACHMENT)
                                 (add-attachment m)
 
                                 ;; Sometimes content-type headers have newlines in them, hence the (?s). Grr.

@@ -31,6 +31,7 @@ import {
 import PyDefUtils from "PyDefUtils";
 import { Remarkable } from "remarkable";
 import { getCssPrefix } from "@runtime/runner/legacy-features";
+import { warn } from "@runtime/runner/warnings";
 import { ClassicComponentConstructor } from "./ClassicComponent";
 import { ClassicContainer } from "./ClassicContainer";
 import { Component } from "./Component";
@@ -443,7 +444,7 @@ const RichTextFactory = (pyModule: PyModMap) => {
                     );
                 } catch (e: any) {
                     // For now display empty string and print a warning when formatting fails.
-                    Sk.builtin.print([
+                    warn(
                         `Warning: Could not format RichText slot value '${val.toString()}' in slot ${slotName} with format string '${
                             slot.format || ""
                         }': ${
@@ -451,7 +452,11 @@ const RichTextFactory = (pyModule: PyModMap) => {
                                 ? new pyStr(e).toString() // use the str representation
                                 : e?.message || "Internal error"
                         }`,
-                    ]);
+                        {
+                            docUrl: "/editor/common-errors#richtext-formatting-failed",
+                            docLinkTitle: "How to fix RichText formatting",
+                        }
+                    );
                 }
                 val = pyCall<Component>(pyModule["Label"] as pyType, [], ["text", formatted]);
             }

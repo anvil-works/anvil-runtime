@@ -17,8 +17,8 @@ def launch():
         return_code = subprocess.call(java_args + sys.argv[1:])
     except OSError:
         print("Failed to launch: java -jar {}".format(jar_path))
-        print("The Anvil App Server requires a Java Virtual Machine (JVM) installed.")
-        print("Install with 'apt install openjdk-8-jdk' or 'brew install openjdk', or")
+        print("The Anvil App Server requires Java 21 or newer.")
+        print("Install with 'apt install openjdk-21-jdk' or 'brew install openjdk', or")
         print("download it from https://adoptopenjdk.net")
         return_code = 1
     except KeyboardInterrupt:

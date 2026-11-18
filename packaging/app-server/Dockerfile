@@ -9,9 +9,10 @@ RUN wget https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.
     dnf -y install google-chrome-stable_current_x86_64.rpm && \
     rm google-chrome-stable_current_x86_64.rpm
 
+# Corretto 25.0.5.1.2 fixes CVE-2026-114938.
 RUN rpm --import https://yum.corretto.aws/corretto.key && \
     wget -O /etc/yum.repos.d/corretto.repo https://yum.corretto.aws/corretto.repo && \
-    dnf -y install java-25-amazon-corretto-devel
+    dnf -y install "(java-25-amazon-corretto-devel >= 1:25.0.5.1.2-1)"
 
 RUN dnf -y install python3.11 python3.11-pip && \
     pip3.11 install --no-cache --upgrade pip

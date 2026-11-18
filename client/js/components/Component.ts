@@ -14,7 +14,6 @@ import {
     lookupSpecial,
     objectRepr,
     pyAttributeError,
-    pyBool,
     pyCall,
     pyCallOrSuspend,
     pyCallable,
@@ -211,6 +210,7 @@ interface ComponentState {
         ancestorsVisible: boolean;
         currentlyMounted: boolean;
         currentlyVisible: boolean;
+        parentControlledVisible: boolean;
         addedFired: boolean;
         shownFired: boolean;
     };
@@ -253,6 +253,7 @@ export type StringPropertyType = "string";
 export type StringListPropertyType = "text[]"; // Consistency is the last resort of the unimaginative.
 export type ClassesPropertyType = "classes";
 export type StylePropertyType = "style";
+export type AttrsPropertyType = "attrs";
 export type NumberPropertyType = "number";
 export type BooleanPropertyType = "boolean";
 export type FormPropertyType = "form";
@@ -272,6 +273,7 @@ export type PropertyType =
     | StringListPropertyType
     | ClassesPropertyType
     | StylePropertyType
+    | AttrsPropertyType
     | EnumPropertyType
     | NumberPropertyType
     | BooleanPropertyType
@@ -300,6 +302,9 @@ export interface ClassesPropertyDescription extends PropertyDescriptionBase {
 }
 export interface StylePropertyDescription extends PropertyDescriptionBase {
     type: StylePropertyType;
+}
+export interface AttrsPropertyDescription extends PropertyDescriptionBase {
+    type: AttrsPropertyType;
 }
 export interface NumberPropertyDescription extends PropertyDescriptionBase {
     type: NumberPropertyType;
@@ -356,6 +361,7 @@ export type PropertyDescription<T extends PropertyType = PropertyType> = { type:
     | StringListPropertyDescription
     | ClassesPropertyDescription
     | StylePropertyDescription
+    | AttrsPropertyDescription
     | EnumPropertyDescription
     | NumberPropertyDescription
     | BooleanPropertyDescription
@@ -686,7 +692,13 @@ export interface Component extends pyObject {
             onRemove,
             setVisibility,
             isMounted,
-        }: { onRemove: () => void | Suspension; setVisibility?: (visible: boolean) => void; isMounted?: boolean }
+            shownByParent,
+        }: {
+            onRemove: () => void;
+            setVisibility?: (visible: boolean) => void;
+            isMounted?: boolean;
+            shownByParent?: boolean;
+        }
     ): Suspension | pyObject;
     $verifyEventName(this: Component, pyEventName: pyStr, msg: string): string;
     $verifyCallable(this: Component, eventName: string, pyHandler: pyObject): void;
@@ -870,12 +882,49 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
                 ancestorsVisible: false,
                 currentlyMounted: false,
                 currentlyVisible: true,
+                parentControlledVisible: true,
                 addedFired: false,
                 shownFired: false,
             };
             self._Component = {
                 allowedEvents,
-                eventHandlers: {},
+                eventHandlers: {
+                    "x-anvil-notify-added-to-dom": [
+                        funcFastCall(() => {
+                            // Determine parent context and handle accordingly
+                            const parent = self._Component.parent;
+                            return notifyMountedChange(self, true, parent == null);
+                        }),
+                    ],
+                    "x-anvil-notify-removed-from-dom": [
+                        funcFastCall(() => {
+                            // Determine parent context and handle accordingly
+                            const parent = self._Component.parent;
+                            return notifyMountedChange(self, false, parent == null);
+                        }),
+                    ],
+                    "x-anvil-notify-visibility-changed": [
+                        funcFastCall((args, kws) => {
+                            const eventArgs = kwsToObj(kws);
+                            if (!("visible" in eventArgs)) {
+                                throw new pyTypeError(
+                                    "'x-anvil-notify-visibility-changed' event requires 'visible' argument"
+                                );
+                            }
+                            return notifyVisibilityChange(self, isTrue(eventArgs.visible));
+                        }),
+                    ],
+                    "x-anvil-notify-shown-by-parent": [
+                        funcFastCall(() => {
+                            return notifyShownByParent(self);
+                        }),
+                    ],
+                    "x-anvil-notify-hidden-by-parent": [
+                        funcFastCall(() => {
+                            return notifyHiddenByParent(self);
+                        }),
+                    ],
+                },
                 tag: new ComponentTag(),
                 defaultDepAppId: defaultDepAppId as string,
                 pageState,
@@ -952,14 +1001,15 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
                 );
             }
         },
-        anvilComponent$setParent(pyParent, { onRemove, setVisibility, isMounted = true }) {
+        anvilComponent$setParent(pyParent, { onRemove, setVisibility, isMounted = true, shownByParent = true }) {
             if (!onRemove) {
                 // Invalid!
                 // debugger;
             }
             this._Component.parent = { pyParent, remove: [onRemove], setVisibility };
-            let currentlyVisible;
             const pageState = this._Component.pageState;
+            pageState.parentControlledVisible = !!shownByParent;
+            let currentlyVisible;
             if (isWithLayout(this)) {
                 currentlyVisible =
                     this._withLayout._pyLayout?._Component.pageState.currentlyVisible ?? pageState.currentlyVisible;
@@ -970,7 +1020,7 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
                 setVisibility?.(currentlyVisible);
             }
             const parentPageState = pyParent._Component.pageState;
-            pageState.ancestorsVisible = parentPageState.ancestorsVisible && parentPageState.currentlyVisible;
+            pageState.ancestorsVisible = parentPageState.ancestorsVisible && isEffectivelyVisible(parentPageState);
             pageState.ancestorsMounted = parentPageState.ancestorsMounted && parentPageState.currentlyMounted;
             if (isMounted) {
                 return chainOrSuspend(pyNone, ...getMountedCallbacks(this, pyParent));
@@ -1070,6 +1120,7 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
                     if (pageState.currentlyMounted) {
                         fns.push(...getUnmountedCallbacks(this, parent.pyParent));
                     }
+                    pageState.parentControlledVisible = true;
                     pageState.ancestorsMounted = false;
                     pageState.ancestorsVisible = false;
                 }
@@ -1077,20 +1128,6 @@ export const Component: ComponentConstructor = buildNativeClass("anvil.Component
             },
             $flags: { NoArgs: true },
             $doc: "Remove this component from its parent container.",
-        },
-        _notify_mounted_by_parent: {
-            $meth(mounted, root) {
-                return notifyMountedChange(this, isTrue(mounted), isTrue(root));
-            },
-            $flags: { NamedArgs: [null, "root"], Defaults: [pyFalse] },
-            $doc: "Notify this component, and all its children, that it has been mounted by its parent",
-        },
-        _notify_visibility_change: {
-            $meth(visible: pyBool) {
-                return notifyVisibilityChange(this, isTrue(visible));
-            },
-            $flags: { OneArg: true },
-            $doc: "Notify the component's parent and children that its visible status has changed",
         },
         /*!defBuiltinMethod(,smooth=False, align="center")!2*/ // "scroll_into_view";
         scroll_into_view: {
@@ -1263,13 +1300,17 @@ function shouldFirePageAdded(c: Component) {
     return false;
 }
 
+function isEffectivelyVisible(pageState: ComponentState["pageState"]): boolean {
+    return pageState.currentlyVisible && pageState.parentControlledVisible;
+}
+
 function shouldFirePageShown(c: Component) {
     const pageState = c._Component.pageState;
     if (
         pageState.currentlyMounted &&
         pageState.ancestorsMounted &&
         pageState.ancestorsVisible &&
-        pageState.currentlyVisible &&
+        isEffectivelyVisible(pageState) &&
         !pageState.shownFired
     ) {
         pageState.shownFired = true;
@@ -1336,7 +1377,7 @@ function getMountedCallbacks(c: Component, parent: null | Component = null) {
         if (parent) {
             pageState.ancestorsMounted = true;
             const parentPageState = parent._Component.pageState;
-            pageState.ancestorsVisible = parentPageState.ancestorsVisible && parentPageState.currentlyVisible;
+            pageState.ancestorsVisible = parentPageState.ancestorsVisible && isEffectivelyVisible(parentPageState);
             if (!pageState.currentlyMounted) return false;
         }
         if (shouldFirePageAdded(c)) {
@@ -1389,15 +1430,14 @@ function getUnmountedCallbacks(c: Component, parent: null | Component = null) {
 
 function getVisibilityShownCallbacks(c: Component) {
     const pageState = c._Component.pageState;
-    pageState.currentlyVisible = true;
-    if (!pageState.ancestorsVisible) return [];
+    if (!pageState.ancestorsVisible || !isEffectivelyVisible(pageState)) return [];
     const fns: PyCallback[] = [];
     const classicFns: PyCallback[] = [];
     const cb: ChildVisitor = (c, parent) => {
         const pageState = c._Component.pageState;
         if (parent) {
             pageState.ancestorsVisible = true;
-            if (!pageState.currentlyVisible) return false;
+            if (!isEffectivelyVisible(pageState)) return false;
         }
         if (shouldFirePageShown(c)) {
             fns.push(...getListenerCallbacks(c, "x-anvil-page-shown"));
@@ -1411,14 +1451,13 @@ function getVisibilityShownCallbacks(c: Component) {
 
 function getVisibilityHiddenCallbacks(c: Component) {
     const pageState = c._Component.pageState;
-    pageState.currentlyVisible = false;
     if (!pageState.ancestorsVisible) return [];
     const fns: PyCallback[] = [];
     const cb: ChildVisitor = (c, parent) => {
         const pageState = c._Component.pageState;
         if (parent) {
             pageState.ancestorsVisible = false;
-            if (!pageState.currentlyVisible) return false;
+            if (!isEffectivelyVisible(pageState)) return false;
         }
         if (shouldFirePageHidden(c)) {
             fns.push(...getListenerCallbacks(c, "x-anvil-page-hidden"));
@@ -1460,14 +1499,48 @@ export function notifyVisibilityChange(c: Component, visible: boolean) {
     const pageState = c._Component.pageState;
     const prevVisibility = pageState.currentlyVisible;
     if (prevVisibility === visible) return pyNone;
+    const wasEffectivelyVisible = isEffectivelyVisible(pageState);
     pageState.currentlyVisible = visible;
+    const isNowEffectivelyVisible = isEffectivelyVisible(pageState);
     const setVisibility = (c._Component.portalParent ?? c._Component.parent)?.setVisibility;
     setVisibility?.(visible);
+    // Only fire callbacks if the effective visibility actually changed
+    if (wasEffectivelyVisible === isNowEffectivelyVisible) return pyNone;
     let fns;
-    if (visible) {
+    if (isNowEffectivelyVisible) {
         fns = getVisibilityShownCallbacks(c);
     } else {
         fns = getVisibilityHiddenCallbacks(c);
     }
     return chainOrSuspend(pyNone, ...fns);
+}
+
+export function notifyShownByParent(c: Component) {
+    const pageState = c._Component.pageState;
+    if (pageState.parentControlledVisible === true) return pyNone; // already shown
+    const wasEffectivelyVisible = isEffectivelyVisible(pageState);
+    pageState.parentControlledVisible = true;
+    const isNowEffectivelyVisible = isEffectivelyVisible(pageState);
+    // Only fire callbacks if the effective visibility actually changed
+    if (wasEffectivelyVisible === isNowEffectivelyVisible) return pyNone;
+    if (isNowEffectivelyVisible) {
+        const fns = getVisibilityShownCallbacks(c);
+        return chainOrSuspend(pyNone, ...fns);
+    }
+    return pyNone;
+}
+
+export function notifyHiddenByParent(c: Component) {
+    const pageState = c._Component.pageState;
+    if (pageState.parentControlledVisible === false) return pyNone; // already hidden
+    const wasEffectivelyVisible = isEffectivelyVisible(pageState);
+    pageState.parentControlledVisible = false;
+    const isNowEffectivelyVisible = isEffectivelyVisible(pageState);
+    // Only fire callbacks if the effective visibility actually changed
+    if (wasEffectivelyVisible === isNowEffectivelyVisible) return pyNone;
+    if (!isNowEffectivelyVisible && pageState.shownFired) {
+        const fns = getVisibilityHiddenCallbacks(c);
+        return chainOrSuspend(pyNone, ...fns);
+    }
+    return pyNone;
 }

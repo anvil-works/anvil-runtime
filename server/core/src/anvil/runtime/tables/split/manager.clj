@@ -129,24 +129,37 @@
 (defn- get-index-changes-needed [db-c {:keys [all_indexes] :as table-record}]
   (let [TABLE-NAME (sql/TABLE-NAME table-record)
         INDEX-NAME-PREFIX (sql/INDEX-NAME-PREFIX table-record)
-        EXISTING-INDEX-NAMES (->> (jdbc/query db-c [(str "SELECT indexrelid::regclass::text AS indexname"
-                                                         " FROM pg_index WHERE indrelid=?::regclass OR indrelid::regclass::text like ?")
-                                                    TABLE-NAME (str TABLE-NAME "_link_%")])
-                                  (map :indexname)
-                                  (filter #(.startsWith % (str "data_tables." INDEX-NAME-PREFIX "_midx_")))
-                                  (set))
+        existing-indexes (->> (jdbc/query db-c [(str "WITH db AS (SELECT oid FROM pg_database WHERE datname = current_database())"
+                                                     " SELECT indexrelid::regclass::text AS indexname, indisvalid,"
+                                                     ;; CREATE INDEX CONCURRENTLY holds this lock on the table until it finishes.
+                                                     ;; DROP INDEX CONCURRENTLY holds it on the table and the index.
+                                                     "   EXISTS (SELECT 1 FROM pg_locks, db"
+                                                     "           WHERE database = db.oid AND relation = indrelid"
+                                                     "             AND mode = 'ShareUpdateExclusiveLock' AND granted AND pid <> pg_backend_pid())"
+                                                     "   AND NOT EXISTS (SELECT 1 FROM pg_locks, db"
+                                                     "           WHERE database = db.oid AND relation = indexrelid"
+                                                     "             AND mode = 'ShareUpdateExclusiveLock' AND pid <> pg_backend_pid()) AS maybe_being_built"
+                                                     " FROM pg_index WHERE indrelid=?::regclass OR indrelid::regclass::text like ?")
+                                                TABLE-NAME (str TABLE-NAME "_link_%")])
+                              (filter #(.startsWith ^String (:indexname %) (str "data_tables." INDEX-NAME-PREFIX "_midx_"))))
+        EXISTING-INDEX-NAMES (set (map :indexname existing-indexes))
+        ;; A failed CREATE INDEX CONCURRENTLY leaves an invalid index behind. Postgres never uses it, and
+        ;; CREATE INDEX IF NOT EXISTS would skip it, so drop it and build it again. An index that another connection is
+        ;; still building also looks invalid, so leave an invalid index alone while it might be being built. (VACUUM and
+        ;; other index builds and drops take the same table lock, so this can postpone a repair until the next index
+        ;; update.)
+        KEEP-INDEX-NAMES (set (map :indexname (filter #(or (:indisvalid %) (:maybe_being_built %)) existing-indexes)))
         required-indexes (for [{:keys [columns type]} all_indexes]
                            {:type type
                             :col-id-kws (map keyword columns)
                             :SQL-NAME (apply str INDEX-NAME-PREFIX "_midx_" (sql/SANITISE type) "_"
                                              (->> columns
                                                   (map sql/SANITISE)
-                                                  (interpose "_")))})]
-    ;(println "EXISTING" EXISTING-INDEX-NAMES)
-    ;(println "REQUIRED" (set (map #(str "data_tables." (:SQL-NAME %)) required-indexes)))
-    {:TO-REMOVE (set/difference EXISTING-INDEX-NAMES (set (map #(str "data_tables." (:SQL-NAME %)) required-indexes)))
+                                                  (interpose "_")))})
+        REQUIRED-INDEX-NAMES (set (map #(str "data_tables." (:SQL-NAME %)) required-indexes))]
+    {:TO-REMOVE (set/difference EXISTING-INDEX-NAMES (set/intersection REQUIRED-INDEX-NAMES KEEP-INDEX-NAMES))
      :to-create (for [{:keys [SQL-NAME] :as idx} required-indexes
-                      :when (not (contains? EXISTING-INDEX-NAMES (str "data_tables." SQL-NAME)))]
+                      :when (not (contains? KEEP-INDEX-NAMES (str "data_tables." SQL-NAME)))]
                   idx)}))
 
 (defn- GET-INDEX-EXPR [{:keys [columns] :as table-record} {:keys [type col-id-kws] :as index}]
@@ -183,9 +196,16 @@
     ;(util/next-console-color!)
     ;(println "TO REMOVE" TO-REMOVE)
     ;(println "TO CREATE" to-create)
+    ;; Carry on after a failure, so one bad index doesn't stop the others being built.
     (util/with-really-long-query
       (doseq [INDEX-NAME TO-REMOVE]
-        (jdbc/execute! db-c [(str "DROP INDEX CONCURRENTLY IF EXISTS " INDEX-NAME)] {:transaction? false}))
-      (doseq [{:keys [SQL-NAME] :as index} to-create
-              :let [INDEX-EXPR (GET-INDEX-EXPR table-record index)]]
-        (jdbc/execute! db-c [(str "CREATE INDEX CONCURRENTLY IF NOT EXISTS " SQL-NAME " ON " INDEX-EXPR)] {:transaction? false})))))
+        (try
+          (jdbc/execute! db-c [(str "DROP INDEX CONCURRENTLY IF EXISTS " INDEX-NAME)] {:transaction? false})
+          (catch Exception e
+            (log/error e "Failed to drop index" INDEX-NAME))))
+      (doseq [{:keys [SQL-NAME] :as index} to-create]
+        (try
+          (let [INDEX-EXPR (GET-INDEX-EXPR table-record index)]
+            (jdbc/execute! db-c [(str "CREATE INDEX CONCURRENTLY IF NOT EXISTS " SQL-NAME " ON " INDEX-EXPR)] {:transaction? false}))
+          (catch Exception e
+            (log/error e "Failed to create index" SQL-NAME)))))))

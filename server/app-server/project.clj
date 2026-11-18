@@ -13,8 +13,6 @@
                  [crypto-random "1.2.1"]
 
                  [org.clojure/tools.logging "0.4.1"]
-                 [org.slf4j/slf4j-reload4j "1.7.36"]
-                 [ch.qos.reload4j/reload4j "1.2.19" :exclusions [javax.mail/mail javax.jms/jms com.sun.jdmk/jmxtools com.sun.jmx/jmxri]]
                  [clj-logging-config "1.9.12" :exclusions [log4j]]
 
                  [org.subethamail/subethasmtp "3.1.7"]
@@ -42,8 +40,4 @@
   :uberjar-name "anvil-app-server.jar"
   :aot :all
   :omit-source true
-  :profiles {:provided {:dependencies [[org.bouncycastle/bcprov-jdk18on "1.78.1"]
-                                       [org.bouncycastle/bcpkix-jdk18on "1.78.1"]]}
-             :uberjar {:exclusions [org.bouncycastle/bcprov-jdk18on
-                                    org.bouncycastle/bcpkix-jdk18on]}}
   )

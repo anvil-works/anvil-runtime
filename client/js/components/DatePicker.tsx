@@ -1,11 +1,10 @@
+import { checkNone, checkString, isTrue, pyCall, pyFunc, pyNone, pyStr, pyType, toJs, toPy } from "@Sk";
+import PyDefUtils from "PyDefUtils";
 import DateRangePicker from "@runtime/modules/daterangepicker";
 import { getCssPrefix } from "@runtime/runner/legacy-features";
-import { datetimeMod, PyModMap, tzMod } from "@runtime/runner/py-util";
-import { checkNone, checkString, isTrue, pyCall, pyCallable, pyFunc, pyNone, pyStr, pyType, toJs, toPy } from "@Sk";
-import PyDefUtils from "PyDefUtils";
+import { PyModMap, datetimeMod, tzMod } from "@runtime/runner/py-util";
 import { ClassicComponent, ClassicComponentConstructor } from "./ClassicComponent";
-
-type Moment = ReturnType<typeof moment>;
+import { dateFormat, datePickerLocale, parsePickerDate, pythonDateToDate } from "./date-picker-dates";
 
 /*#
 id: datepicker
@@ -59,7 +58,7 @@ description: |
 interface DatePickerAnvil {
     elements: { input: HTMLInputElement; icon: HTMLElement };
     picker: HTMLInputElement;
-    dateMoment: Moment | null;
+    selectedDate: Date | null;
     dateRangePicker: DateRangePicker | null;
 }
 
@@ -70,88 +69,44 @@ const DatePickerFactory = (pyModule: PyModMap) => {
 
     const pyDatetime = datetimeMod.datetime as pyType;
     const pyDate = datetimeMod.date as pyType;
-    const strftimeStr = new pyStr("strftime");
-
-    // See http://momentjs.com/docs/#/displaying/format/
-    const pythonformatToMomentJS: Record<string, string> = {
-        "%a": "ddd",
-        "%A": "dddd",
-        "%b": "MMM",
-        "%B": "MMMM",
-        "%c": "llll",
-        "%d": "DD",
-        "%H": "HH",
-        "%I": "hh",
-        "%j": "DDDD",
-        "%m": "MM",
-        "%M": "mm",
-        "%p": "A",
-        "%S": "ss",
-        "%U": "ww", // This might be swapped with %W
-        "%w": "e",
-        "%W": "WW",
-        "%x": "L",
-        "%X": "LT",
-        "%y": "YY",
-        "%Y": "YYYY",
-        "%Z": "", // TODO: Timezone name. Should use moment.timezone
-        "%%": "%",
-    };
-
-    const formatRegex = /%[aAbBcdHIjmMpSUwWxXyYZ%]/g;
-
-    const convertFormat = (f: string) => f.replace(formatRegex, (match) => pythonformatToMomentJS[match]);
-
-    // Takes a string or a date or a datetime and converts into a moment().
-    const propValToMoment = (v: any, props: any, format: string): Moment | null => {
-        if (!isTrue(v)) {
-            return null;
-        } else if (checkString(v)) {
-            const date = v.toString();
-            if (date === "now") {
-                return moment();
-            } else {
-                return moment(date, [format, moment.ISO_8601]);
-            }
-        } else if (v instanceof pyDatetime) {
-            if (!isTrue(props["pick_time"])) {
-                throw new Sk.builtin.ValueError(
-                    "Cannot display a datetime object on a DatePicker without setting pick_time to True."
-                );
-            }
-            const strftime = v.tp$getattr<pyCallable>(strftimeStr);
-            const pyS = pyCall(strftime, [new pyStr("%Y-%m-%d %H:%M:%S.%f%z")]);
-            return moment(pyS.toString());
-        } else if (v instanceof pyDate) {
-            const strftime = v.tp$getattr<pyCallable>(strftimeStr);
-            const pyS = pyCall(strftime, [new pyStr("%Y-%m-%d")]);
-            return moment(pyS.toString());
+    // Keep invalid property values until the getter, as the existing API does.
+    const propValToDate = (v: any, props: any, format: string): Date | null => {
+        if (!isTrue(v)) return null;
+        if (checkString(v)) {
+            return v.toString() === "now" ? new Date() : parsePickerDate(v.toString(), format);
         }
-        return null;
+        if (v instanceof pyDatetime && !isTrue(props["pick_time"])) {
+            throw new Sk.builtin.ValueError(
+                "Cannot display a datetime object on a DatePicker without setting pick_time to True."
+            );
+        }
+        return v instanceof pyDate ? pythonDateToDate(v) : null;
     };
 
     function updatePicker(self: DatePicker) {
         const props = self._anvil.props;
         const defaultFormat = isTrue(props["pick_time"]) ? "%c" : "%x";
-        const format = convertFormat(props["format"].toString() || defaultFormat);
-        const minDate = propValToMoment(props["min_date"], props, format);
-        const maxDate = propValToMoment(props["max_date"], props, format);
-        // Convert to native Date for the picker API
-        const minDateDate = minDate ? minDate.toDate() : null;
-        const maxDateDate = maxDate ? maxDate.toDate() : null;
+        const rawFormat = props["format"].toString() || defaultFormat;
+        const format = dateFormat(rawFormat);
+        const minDate = propValToDate(props["min_date"], props, format);
+        const maxDate = propValToDate(props["max_date"], props, format);
 
         // Set initial date
-        self._anvil.dateMoment = propValToMoment(props["date"], props, format);
-        const initialDate = self._anvil.dateMoment ? self._anvil.dateMoment.toDate() : null;
-        if (self._anvil.dateMoment) {
-            self._anvil.picker.value = self._anvil.dateMoment.format(format);
-        }
+        self._anvil.selectedDate = propValToDate(props["date"], props, format);
+        const selectedDate = self._anvil.selectedDate;
+        const initialDate = selectedDate && !isNaN(selectedDate.getTime()) ? selectedDate : null;
 
+        const locale = datePickerLocale();
         const options = {
-            minDate: minDateDate,
-            maxDate: maxDateDate,
+            minDate,
+            maxDate,
             // The following may have been modified.
-            locale: { format },
+            locale: {
+                format: rawFormat,
+                daysOfWeek: locale.daysOfWeek,
+                monthNames: locale.months,
+                firstDay: locale.firstDay,
+            },
             timePicker: isTrue(props["pick_time"]),
             // We should probably expose properties for the following.
             timePickerIncrement: 1,
@@ -166,12 +121,7 @@ const DatePickerFactory = (pyModule: PyModMap) => {
 
         // Sk.builtin.print(["Creating new DateRangePicker"]);
         self._anvil.dateRangePicker = new DateRangePicker(self._anvil.picker, options, (d) => {
-            // Convert Date to moment for compatibility
-            if (d) {
-                self._anvil.dateMoment = moment(d);
-            } else {
-                self._anvil.dateMoment = null;
-            }
+            self._anvil.selectedDate = d;
             self._anvil.dataBindingWriteback(self, "date").finally(() => {
                 return PyDefUtils.raiseEventAsync({}, self, "change");
             });
@@ -255,26 +205,25 @@ const DatePickerFactory = (pyModule: PyModMap) => {
                         if (ANVIL_IN_DESIGNER) {
                             return self._anvil.props["date"];
                         }
-                        if (!self._anvil.dateMoment) {
+                        if (!self._anvil.selectedDate) {
                             return pyNone;
                         }
 
-                        const dateArray: any[] = self._anvil.dateMoment.toArray();
-                        dateArray[6] *= 1000; // Python works in microseconds, momentJS works in milliseconds.
-                        dateArray[1] += 1; // Python months are 0-indexed
+                        const date = self._anvil.selectedDate;
+                        if (isNaN(date.getTime())) throw new Sk.builtin.ValueError("Invalid date");
+                        const dateArray = [
+                            date.getFullYear(),
+                            date.getMonth() + 1,
+                            date.getDate(),
+                            date.getHours(),
+                            date.getMinutes(),
+                            date.getSeconds(),
+                            date.getMilliseconds() * 1000,
+                        ];
 
-                        // The datePicker gives us moments that are already in the timezone of the browser.
                         if (isTrue(self._anvil.props["pick_time"])) {
-                            const tzinfo = pyCall(
-                                tzMod.tzoffset,
-                                [],
-                                ["minutes", toPy(self._anvil.dateMoment.utcOffset())]
-                            );
-                            dateArray.push(tzinfo);
-                            return pyCall(
-                                pyDatetime,
-                                dateArray.map((x) => toPy(x))
-                            );
+                            const tzinfo = pyCall(tzMod.tzoffset, [], ["minutes", toPy(-date.getTimezoneOffset())]);
+                            return pyCall(pyDatetime, [...dateArray.map((x) => toPy(x)), tzinfo]);
                         } else {
                             return pyCall(
                                 pyDate,

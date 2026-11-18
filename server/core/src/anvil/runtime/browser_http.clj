@@ -77,7 +77,9 @@
       (serialisation/processBlob deserialiser data))))
 
 (defn- send-headers [channel]
-  (send! channel {:headers {"Content-Type" (str "multipart/x-mixed-replace;boundary=" serialisation/boundary)}} false))
+  ;; The client parses all JSON and binary parts itself; multipart/mixed is sufficient.
+  ;; Safari cancels fetch responses labelled multipart/x-mixed-replace.
+  (send! channel {:headers {"Content-Type" (str "multipart/mixed;boundary=" serialisation/boundary)}} false))
 
 (defn- get-session-liveobject-secret [app-session]
   (-> (swap! app-session

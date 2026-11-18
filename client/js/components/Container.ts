@@ -124,12 +124,12 @@ export const Container: ContainerConstructor = Sk.abstr.buildNativeClass("anvil.
             $meth(args, kws) {
                 checkOneArg("add_component", args);
                 const component = args[0] as Component;
-                const [on_remove, on_set_visibility, mounted, index] = copyKeywordsToNamedArgs(
+                const [on_remove, on_set_visibility, added_to_dom, index, shown_by_parent] = copyKeywordsToNamedArgs(
                     "add_component",
-                    ["on_remove", "on_set_visibility", "mounted", "index"],
+                    ["on_remove", "on_set_visibility", "added_to_dom", "index", "shown_by_parent"],
                     [],
                     kws,
-                    [pyNone, pyNone, pyTrue, pyNone]
+                    [pyNone, pyNone, pyTrue, pyNone, pyTrue]
                 );
                 if (index !== pyNone && !checkInt(index)) {
                     throw new pyValueError("Container.add_component(): index must be an integer or None");
@@ -179,7 +179,8 @@ export const Container: ContainerConstructor = Sk.abstr.buildNativeClass("anvil.
                 return component.anvilComponent$setParent(this, {
                     onRemove,
                     setVisibility,
-                    isMounted: isTrue(mounted),
+                    isMounted: isTrue(added_to_dom),
+                    shownByParent: isTrue(shown_by_parent),
                 });
             },
             $flags: { FastCall: true },

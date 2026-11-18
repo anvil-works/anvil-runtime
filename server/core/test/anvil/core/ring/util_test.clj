@@ -12,8 +12,9 @@
 (def test-async-handler (fn [req]
                           (http-kit/with-channel req chan
                             (worker-pool/spawn-thread!
-                              (Thread/sleep 1000)
-                              (http-kit/send! chan {:respond-to-request (dissoc req :async-channel ::ring-util/request-snapshots)})))))
+                              ;; Respond only once the caller has seen the stack return.
+                              @(::release-response req)
+                              (http-kit/send! chan {:respond-to-request (dissoc req :async-channel ::ring-util/request-snapshots ::release-response)})))))
 
 (def test-sync-middleware
   (fn [name] (fn [f]
@@ -49,11 +50,13 @@
 
 (deftest test-async-stack
   (let [response-promise (promise)
+        release-response (promise)
         chan (reify Channel
                (send! [_this data close?]
                  (deliver response-promise data)))]
-    (is (instance? Channel (:body (async-stack {:async-channel chan}))))
+    (is (instance? Channel (:body (async-stack {:async-channel chan, ::release-response release-response}))))
+    (deliver release-response true)
     (is (= {:respond-to-request {:in-order [:qux :baz :bar :foo]}
             :out-order          [:foo :bar :baz :qux]}
-           @response-promise))))
+           (deref response-promise 5000 :timed-out)))))
 

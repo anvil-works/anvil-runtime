@@ -24,7 +24,6 @@ export default [
                 $: "readonly",
                 JQuery: "readonly",
                 JSX: "readonly",
-                moment: "readonly",
                 b64: "readonly",
                 Sk: "readonly",
                 ANVIL_IN_DESIGNER: "readonly",

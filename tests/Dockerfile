@@ -17,13 +17,18 @@ COPY tsconfig.json /tsconfig.json
 COPY tsconfig.base.json /tsconfig.base.json
 RUN cd /runtime/client && npm i && npm run build
 
-# Get app server ready to be run
+# App Server resources/services-core points here; it must exist during packaging.
+COPY /runtime/services /runtime/services
+
+# Build the same uberjar that is shipped to App Server users
 COPY /runtime/server/app-server /runtime/server/app-server
 WORKDIR /runtime/server/app-server
-RUN mkdir /anvil-data && lein deps
+RUN mkdir /anvil-data && lein clean && lein uberjar
+COPY /runtime/tests/packaged_crypto.clj /runtime/tests/packaged_crypto.clj
+COPY /runtime/tests/fixtures/saml-response.xml /runtime/tests/fixtures/saml-response.xml
+RUN java -cp target/anvil-app-server.jar clojure.main /runtime/tests/packaged_crypto.clj
 
 # Set up everything needed for downlink
-COPY /runtime/services /runtime/services
 COPY /runtime/downlink/python/ /runtime/downlink/python/
 # anvil/_components.py is a symlink to doc/dist/_components.py (outside /runtime).
 # Docker COPY preserves symlinks, so we must copy the target explicitly.

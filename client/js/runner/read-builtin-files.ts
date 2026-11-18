@@ -35,6 +35,8 @@ function importSkulptStdLibFn(file: number) {
             return import("@runtime/lib/skulpt-stdlib-2.json");
         case 3:
             return import("@runtime/lib/skulpt-stdlib-3.json");
+        case 4:
+            return import("@runtime/lib/skulpt-stdlib-4.json");
         default:
             return Promise.resolve({ default: {} as any });
     }

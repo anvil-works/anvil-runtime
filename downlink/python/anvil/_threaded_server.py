@@ -111,6 +111,13 @@ class LocalCallInfo(ThreadLocal):
         self.dump_task_state = False
         self.enable_profiling = False
         self.debug_context = {}
+        # Isolation level ("serializable"/"relaxed") of a transaction our *caller* had open when
+        # this call started, or None. active_transaction is the outermost anvil.tables.Transaction
+        # opened by this call (or None), and txn_end_callbacks is non-None iff this call owns an
+        # open transaction (see anvil.tables.Transaction).
+        self.outer_transaction_isolation = None
+        self.active_transaction = None
+        self.txn_end_callbacks = None
 
     def __getitem__(self, item):
         return self.session.__getitem__(item)
@@ -140,6 +147,23 @@ call_info = LocalCallInfo()
 call_context = LocalCallContext()
 call_responses = {}
 waiting_for_calls = threading.Condition() if MULTITHREADED else None
+
+
+def _call_chain_supports_portable_exceptions():
+    return _server._call_chain_supports_protocol_version(
+        call_context, _server.PORTABLE_EXCEPTION_PROTOCOL_VERSION
+    )
+
+
+def _send_exception_response(send_reqresp_fn, response):
+    try:
+        send_reqresp_fn(response)
+    except:
+        # Preserve legacy error reporting if the portable exception payload is
+        # itself not serializable.
+        if response.get("error", {}).get("portableException") is None:
+            raise
+        send_reqresp_fn(_server.strip_portable_exception(response))
 
 
 # If MULTITHREADED is False, better overwrite this
@@ -210,6 +234,9 @@ class IncomingRequest(_serialise.IncomingReqResp):
                 call_info.stack_id = self.json.get('call-stack-id', None)
                 call_info.session_id = self.json.get('session-id')
                 call_info.debug_context = {"paused": self.json.get("paused", False)}
+                call_info.outer_transaction_isolation = self.json.get('in-transaction')
+                call_info.active_transaction = None
+                call_info.txn_end_callbacks = None
 
                 breakpoints = self.json.get('breakpoints')
                 if breakpoints:
@@ -326,7 +353,10 @@ class IncomingRequest(_serialise.IncomingReqResp):
                     pass
                 except:
 
-                    e = _server._report_exception(self.json["id"])
+                    e = _server._report_exception(
+                        self.json["id"],
+                        include_portable_exception=_call_chain_supports_portable_exceptions()
+                    )
 
                     if self.dump_task_state:
                         def err(*args):
@@ -345,7 +375,7 @@ class IncomingRequest(_serialise.IncomingReqResp):
                         e['moduleLoadFailed'] = True
 
                     try:
-                        send_reqresp(e)
+                        _send_exception_response(send_reqresp, e)
                     except:
                         trc = "\ncalled from ".join(["%s:%s" % (t[0], t[1]) for t in e["error"]["trace"]])
                         console_output.write(("Failed to report exception: %s: %s\nat %s\n" % (e["error"]["type"], e["error"]["message"], trc)).encode("utf-8"))
@@ -489,7 +519,12 @@ def do_call(args, kwargs, fn_name=None, live_object=None): # Yes, I do mean args
 
     # Now we're in the right thread, we can do any custom deserialisation
     if reqresp:
-        reqresp.reconstruct_remaining_data()
+        try:
+            reqresp.reconstruct_remaining_data()
+        except Exception as reconstruction_error:
+            if "error" not in r or "portableException" not in r["error"]:
+                raise
+            r = _server.strip_portable_exception(r, reconstruction_error)
 
     if "cacheUpdates" in r:
         # Apply updates to any of our own objects that were passed in
